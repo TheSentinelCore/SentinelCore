@@ -698,10 +698,21 @@ impl App {
                     }
                 }
 
+                let individual_count = tsp_points.len() - clusters.len();
+                self.status = format!(
+                    "Route points: {} clusters + {} individual = {} total ({} nodes)",
+                    clusters.len(),
+                    individual_count,
+                    tsp_points.len(),
+                    nodes.len()
+                );
+
                 if tsp_points.len() <= 30 {
                     self.status = format!(
-                        "Optimizing route via NavBuddy TSP ({} points)...",
-                        tsp_points.len()
+                        "Optimizing route via NavBuddy TSP ({} points: {} clusters + {} individual)...",
+                        tsp_points.len(),
+                        clusters.len(),
+                        individual_count
                     );
 
                     match NavBuddyClient::new(
