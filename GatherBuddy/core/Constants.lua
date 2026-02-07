@@ -111,6 +111,10 @@ Constants.EVENTS = freeze({
 
     -- State
     STATE_CHANGED           = "state:changed",
+
+    -- Navigation availability
+    NAV_UNAVAILABLE         = "nav:unavailable",
+    NAV_FAILURE_THRESHOLD   = "nav:failure_threshold",
 })
 
 ---Waypoint types for profiles

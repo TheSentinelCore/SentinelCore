@@ -152,17 +152,13 @@ function ProfileManager:load_profile(path)
         return false
     end
 
-    -- Debug: Log requirements to see what was parsed
+    -- Log parsed requirements at debug level
     if self._log and data.requirements then
-        self._log:info("DEBUG: requirements.map_id = %s", tostring(data.requirements.map_id))
-        self._log:info("DEBUG: requirements.continent_id = %s", tostring(data.requirements.continent_id))
-        self._log:info("DEBUG: requirements.zone = %s", tostring(data.requirements.zone))
-        -- List all keys in requirements
         local keys = {}
         for k, v in pairs(data.requirements) do
-            table.insert(keys, k .. "=" .. tostring(v))
+            keys[#keys + 1] = k .. "=" .. tostring(v)
         end
-        self._log:info("DEBUG: All requirements: %s", table.concat(keys, ", "))
+        self._log:debug("Profile requirements: %s", table.concat(keys, ", "))
     end
 
     -- Validate profile

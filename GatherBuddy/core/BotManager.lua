@@ -10,6 +10,9 @@
 ---@field private _last_tick_time number
 ---@field private _tick_interval number
 ---@field private _pause_system table
+---@field private _navlib_available boolean
+---@field private _navlib_error string|nil
+---@field private _nav_recovery_cancel function|nil
 local BotManager = {}
 BotManager.__index = BotManager
 
@@ -65,6 +68,10 @@ function BotManager:new(config)
     instance._consecutive_nav_failures = 0
     instance._max_consecutive_failures = 10
 
+    -- NavLib availability
+    instance._navlib_available = false
+    instance._navlib_error = nil
+
     -- Anti-detection
     instance._pause_system = {
         last_pause_time = 0,
@@ -100,13 +107,20 @@ function BotManager:initialize()
         self._modules.MovementModule = _G.NavLib.MovementModule:new(
             self._modules.NavigationClient, self._config.movement
         )
+        self._navlib_available = true
         if self._log then
             self._log:debug("Loaded NavigationClient + MovementModule from NavLib")
         end
     else
+        self._navlib_available = false
+        self._navlib_error = "NavLib plugin not loaded. Load NavLib before GatherBuddy for navigation."
         if self._log then
-            self._log:error("NavLib plugin not loaded — navigation unavailable")
+            self._log:error(self._navlib_error)
         end
+        self._event_bus:publish(EVENTS.NAV_UNAVAILABLE, {
+            error = self._navlib_error,
+            timestamp = core.time()
+        })
     end
 
     -- Load local modules in order
@@ -819,6 +833,18 @@ end
 ---@return table|nil
 function BotManager:get_module(name)
     return self._modules[name]
+end
+
+---Check if navigation is available
+---@return boolean
+function BotManager:is_navigation_available()
+    return self._navlib_available
+end
+
+---Get navigation error message
+---@return string|nil
+function BotManager:get_navigation_error()
+    return self._navlib_error
 end
 
 ---Get the event bus
