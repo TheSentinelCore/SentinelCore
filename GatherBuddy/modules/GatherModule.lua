@@ -351,6 +351,17 @@ function GatherModule:_process_interacting(player)
     -- Interact with node
     core.input.use_object(node)
     self._interact_time = core.time()
+
+    -- Verify node is still valid after interaction attempt
+    if not node or not node:is_valid() then
+        -- Node despawned during interaction — could be instant-gather success or despawn
+        if self._log then
+            self._log:debug("Node disappeared after interaction, treating as success")
+        end
+        self:_complete_gather()
+        return
+    end
+
     self._gather_state = GATHER_STATES.CASTING
 
     if self._log then

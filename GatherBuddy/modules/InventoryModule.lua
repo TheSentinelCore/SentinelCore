@@ -142,17 +142,36 @@ end
 ---@param bag_id number Bag index (0-4)
 ---@return number slot_count
 function InventoryModule:_get_bag_slot_count(bag_id)
-    -- Sylvannas doesn't have get_bag_info, use fixed sizes
-    -- Backpack is always 16 slots, other bags we estimate from items
+    -- Backpack is always 16 slots
     if bag_id == 0 then
-        return 16  -- Default backpack size
+        return 16
     end
 
-    -- For other bags, try to get items to see if bag exists
+    -- Use inventory_helper to get actual slot data if available
+    if self._inventory_helper == nil then
+        local ok, helper = pcall(require, "common/utility/inventory_helper")
+        self._inventory_helper = ok and helper or false
+    end
+
+    if self._inventory_helper then
+        local slots = self._inventory_helper:get_character_bag_slots()
+        if slots then
+            local max_slot = 0
+            for _, slot_data in ipairs(slots) do
+                if slot_data.bag_id == bag_id and slot_data.bag_slot > max_slot then
+                    max_slot = slot_data.bag_slot
+                end
+            end
+            if max_slot > 0 then
+                return max_slot
+            end
+        end
+    end
+
+    -- Fallback: check if bag has any items (exists)
     local items = core.inventory.get_items_in_bag(bag_id)
     if items and #items > 0 then
-        -- Assume standard bag sizes (16-slot bags common)
-        return 16
+        return #items  -- Best guess: use items array length
     end
 
     return 0

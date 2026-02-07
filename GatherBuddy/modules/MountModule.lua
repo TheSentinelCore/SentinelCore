@@ -201,6 +201,22 @@ function MountModule:mount(mount_index)
     -- Determine mount index
     local idx = mount_index or self._preferred_mount_index
 
+    -- Validate mount index
+    local mount_count = core.spell_book.get_mount_count()
+    if mount_count and (idx < 1 or idx > mount_count) then
+        if self._log then
+            self._log:error("Invalid mount index %d (available: %d)", idx, mount_count)
+        end
+        self._event_bus:publish(EVENTS.MOUNT_FAILED, {
+            reason = "invalid_index",
+            mount_index = idx,
+            available = mount_count,
+            timestamp = core.time()
+        })
+        self._mount_state = MOUNT_STATES.IDLE
+        return false
+    end
+
     -- Start mounting
     self._mount_state = MOUNT_STATES.MOUNTING
     self._mount_start_time = core.time()

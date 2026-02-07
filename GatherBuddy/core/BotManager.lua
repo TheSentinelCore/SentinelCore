@@ -307,6 +307,12 @@ function BotManager:stop()
     self._running = false
     self._paused = false
 
+    -- Cancel nav recovery timer if active
+    if self._nav_recovery_cancel then
+        self._nav_recovery_cancel()
+        self._nav_recovery_cancel = nil
+    end
+
     -- Stop movement
     local movement = self._modules.MovementModule
     if movement then
@@ -580,10 +586,25 @@ function BotManager:_process_traveling()
                     self._consecutive_nav_failures = self._consecutive_nav_failures + 1
                     if self._consecutive_nav_failures >= self._max_consecutive_failures then
                         if self._log then
-                            self._log:error("Too many consecutive navigation failures (%d), stopping bot",
+                            self._log:error("Too many consecutive navigation failures (%d), pausing for recovery",
                                 self._consecutive_nav_failures)
                         end
-                        self:stop()
+                        self._event_bus:publish(EVENTS.NAV_FAILURE_THRESHOLD, {
+                            failure_count = self._consecutive_nav_failures,
+                            timestamp = core.time()
+                        })
+                        self:pause()
+                        local izi = require("common/izi_sdk")
+                        self._nav_recovery_cancel = izi.after(30, function()
+                            self._consecutive_nav_failures = 0
+                            self._nav_recovery_cancel = nil
+                            if self._paused then
+                                self:resume()
+                                if self._log then
+                                    self._log:info("Navigation recovery: resumed after cooldown")
+                                end
+                            end
+                        end)
                         return
                     end
 
@@ -614,10 +635,25 @@ function BotManager:_process_traveling()
                         self._consecutive_nav_failures = self._consecutive_nav_failures + 1
                         if self._consecutive_nav_failures >= self._max_consecutive_failures then
                             if self._log then
-                                self._log:error("Too many consecutive navigation failures (%d), stopping bot",
+                                self._log:error("Too many consecutive navigation failures (%d), pausing for recovery",
                                     self._consecutive_nav_failures)
                             end
-                            self:stop()
+                            self._event_bus:publish(EVENTS.NAV_FAILURE_THRESHOLD, {
+                                failure_count = self._consecutive_nav_failures,
+                                timestamp = core.time()
+                            })
+                            self:pause()
+                            local izi = require("common/izi_sdk")
+                            self._nav_recovery_cancel = izi.after(30, function()
+                                self._consecutive_nav_failures = 0
+                                self._nav_recovery_cancel = nil
+                                if self._paused then
+                                    self:resume()
+                                    if self._log then
+                                        self._log:info("Navigation recovery: resumed after cooldown")
+                                    end
+                                end
+                            end)
                             return
                         end
 
