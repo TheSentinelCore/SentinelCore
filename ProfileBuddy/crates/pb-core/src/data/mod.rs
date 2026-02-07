@@ -6,7 +6,7 @@ mod nodes;
 mod zones;
 
 pub use nodes::{NodeCategory, NodeMapping, HERB_NODES, ORE_NODES};
-pub use zones::{GameVersion, ZoneBounds, ZONE_DATABASE};
+pub use zones::{ExclusionZone, GameVersion, ZoneBounds, ZONE_DATABASE};
 
 /// Get node name from node ID
 pub fn get_node_name(node_id: u16, category: NodeCategory) -> Option<&'static str> {

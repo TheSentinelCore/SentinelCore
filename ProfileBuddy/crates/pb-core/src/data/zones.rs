@@ -37,6 +37,26 @@ impl GameVersion {
     }
 }
 
+/// A rectangular area within a zone to exclude from route generation
+/// (e.g., cities embedded within outdoor zones)
+#[derive(Debug, Clone)]
+pub struct ExclusionZone {
+    pub name: &'static str,
+    /// World coordinate boundaries (X = North-South, Y = West-East)
+    pub x_min: f32,
+    pub x_max: f32,
+    pub y_min: f32,
+    pub y_max: f32,
+}
+
+impl ExclusionZone {
+    /// Check if a world coordinate falls within this exclusion zone
+    pub fn contains(&self, world_x: f32, world_y: f32) -> bool {
+        world_x >= self.x_min && world_x <= self.x_max
+            && world_y >= self.y_min && world_y <= self.y_max
+    }
+}
+
 /// Zone boundary information for coordinate conversion
 #[derive(Debug, Clone)]
 pub struct ZoneBounds {
@@ -60,6 +80,8 @@ pub struct ZoneBounds {
     pub default_z: f32,
     /// Game version this zone belongs to
     pub game_version: GameVersion,
+    /// Areas within this zone to exclude (e.g., cities)
+    pub exclusion_zones: &'static [ExclusionZone],
 }
 
 impl ZoneBounds {
@@ -106,6 +128,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -2000.00,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1417,
@@ -118,6 +141,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -3425.00,
         default_z: 40.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1418,
@@ -130,6 +154,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -6125.00,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1419,
@@ -142,6 +167,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -12333.33,
         default_z: 10.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1420,
@@ -154,6 +180,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -400.00,
         default_z: 50.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1421,
@@ -166,6 +193,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: 433.33,
         default_z: 40.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1422,
@@ -178,6 +206,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -3166.67,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1423,
@@ -190,6 +219,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -4766.67,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1424,
@@ -202,6 +232,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -2133.33,
         default_z: 30.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1425,
@@ -214,6 +245,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -4266.67,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1426,
@@ -226,6 +258,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -3122.92,
         default_z: 500.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1427,
@@ -238,6 +271,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -7508.33,
         default_z: 250.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1428,
@@ -250,6 +284,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -8600.00,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1429,
@@ -262,6 +297,13 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: 1535.42,
         default_z: 50.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[ExclusionZone {
+            name: "Stormwind City",
+            x_min: -9050.0,
+            x_max: -8150.0,
+            y_min: 370.0,
+            y_max: 1150.0,
+        }],
     },
     ZoneBounds {
         ui_map_id: 1430,
@@ -274,6 +316,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -10966.67,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1431,
@@ -286,6 +329,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -2033.33,
         default_z: 40.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1432,
@@ -298,6 +342,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -5010.42,
         default_z: 200.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1433,
@@ -310,6 +355,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -3466.67,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1434,
@@ -322,6 +368,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -5550.00,
         default_z: 10.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1435,
@@ -334,6 +381,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -11333.33,
         default_z: 30.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1436,
@@ -346,6 +394,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -483.33,
         default_z: 20.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1437,
@@ -358,6 +407,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -4525.00,
         default_z: 10.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     // ============================================
     // Kalimdor (Continent ID: 1)
@@ -373,6 +423,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -7250.00,
         default_z: 20.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1412,
@@ -385,6 +436,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -3089.58,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1413,
@@ -397,6 +449,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -7510.42,
         default_z: 30.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1438,
@@ -409,6 +462,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -2225.00,
         default_z: 600.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1439,
@@ -421,6 +475,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -2270.83,
         default_z: 10.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1440,
@@ -433,6 +488,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -4008.33,
         default_z: 30.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1441,
@@ -445,6 +501,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -7050.00,
         default_z: -100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1442,
@@ -457,6 +514,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -1637.50,
         default_z: 500.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1443,
@@ -469,6 +527,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: 766.67,
         default_z: 100.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1444,
@@ -481,6 +540,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -1508.33,
         default_z: 30.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1445,
@@ -493,6 +553,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -4900.00,
         default_z: 5.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1446,
@@ -505,6 +566,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -7118.75,
         default_z: 10.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1447,
@@ -517,6 +579,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -5000.00,
         default_z: 20.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1448,
@@ -529,6 +592,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -5350.00,
         default_z: 200.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1449,
@@ -541,6 +605,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -6216.67,
         default_z: -50.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1451,
@@ -553,6 +618,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -2308.33,
         default_z: 30.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1452,
@@ -565,6 +631,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -7395.83,
         default_z: 600.0,
         game_version: GameVersion::Era,
+        exclusion_zones: &[],
     },
     // ============================================
     // TBC Outland (Continent ID: 530)
@@ -580,6 +647,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -9350.00,
         default_z: 100.0,
         game_version: GameVersion::Tbc,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1946,
@@ -592,6 +660,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -4783.33,
         default_z: 20.0,
         game_version: GameVersion::Tbc,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1948,
@@ -604,6 +673,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -4516.67,
         default_z: 50.0,
         game_version: GameVersion::Tbc,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1951,
@@ -616,6 +686,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: 33.33,
         default_z: 60.0,
         game_version: GameVersion::Tbc,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1952,
@@ -628,6 +699,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -3633.33,
         default_z: 200.0,
         game_version: GameVersion::Tbc,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1953,
@@ -640,6 +712,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -8133.33,
         default_z: 300.0,
         game_version: GameVersion::Tbc,
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1950,
@@ -652,6 +725,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: -8350.00,
         default_z: 100.0,
         game_version: GameVersion::Tbc,
+        exclusion_zones: &[],
     },
 ];
 

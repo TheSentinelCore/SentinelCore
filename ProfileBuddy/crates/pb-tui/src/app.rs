@@ -595,6 +595,25 @@ impl App {
             );
         }
 
+        // Filter out nodes in exclusion zones (e.g., Stormwind within Elwynn Forest)
+        if let Some(bounds) = ZONE_DATABASE.iter().find(|z| z.ui_map_id == zone_id) {
+            if !bounds.exclusion_zones.is_empty() {
+                let before = nodes.len();
+                nodes.retain(|n| {
+                    !bounds.exclusion_zones.iter().any(|ez| ez.contains(n.world_x, n.world_y))
+                });
+                let excluded = before - nodes.len();
+                if excluded > 0 {
+                    let zone_names: Vec<_> = bounds.exclusion_zones.iter().map(|ez| ez.name).collect();
+                    self.status = format!(
+                        "Excluded {} nodes in {}",
+                        excluded,
+                        zone_names.join(", ")
+                    );
+                }
+            }
+        }
+
         // Validate nodes via NavBuddy if enabled
         self.validation_result = None;
         if self.validator_config.enabled {
