@@ -10,6 +10,8 @@
 ---@field private _last_tick_time number
 ---@field private _tick_interval number
 ---@field private _pause_system table
+---@field private _consecutive_nav_failures number
+---@field private _max_consecutive_failures number
 ---@field private _navlib_available boolean
 ---@field private _navlib_error string|nil
 ---@field private _nav_recovery_cancel function|nil
@@ -22,6 +24,9 @@ local StateMachine = require("core/StateMachine")
 local Constants = require("core/Constants")
 local Helpers = require("utils/Helpers")
 local Settings = require("data/Settings")
+
+local ModuleFactory = require("core/ModuleFactory")
+local TravelingController = require("core/TravelingController")
 
 local EVENTS = Constants.EVENTS
 local STATES = Constants.STATES
@@ -197,47 +202,12 @@ end
 ---@param module_class table Module class
 ---@return table|nil instance
 function BotManager:_create_module_instance(name, module_class)
-    if not module_class.new then
-        return nil
-    end
-
-    -- Different modules need different dependencies
-    if name == "Settings" then
-        module_class.init()
-        return module_class  -- Settings is a singleton
-    elseif name == "ProfileManager" then
-        return module_class:new(self._event_bus)
-    elseif name == "NavigationClient" then
-        return module_class:new(self._config.navigation)
-    elseif name == "MovementModule" then
-        local nav_client = self._modules.NavigationClient
-        return module_class:new(nav_client, self._config.movement)
-    elseif name == "NodeScanner" then
-        local profile_mgr = self._modules.ProfileManager
-        return module_class:new(self._event_bus, self._state_machine, profile_mgr, self._config.gathering)
-    elseif name == "GatherModule" then
-        local node_scanner = self._modules.NodeScanner
-        return module_class:new(self._event_bus, self._state_machine, node_scanner, self._config.gathering)
-    elseif name == "MountModule" then
-        return module_class:new(self._event_bus, self._state_machine, self._config.movement)
-    elseif name == "SafetyModule" then
-        return module_class:new(self._event_bus, self._state_machine, self._config.safety)
-    elseif name == "InventoryModule" then
-        return module_class:new(self._event_bus, self._config.inventory)
-    elseif name == "StatisticsModule" then
-        return module_class:new(self._event_bus)
-    elseif name == "PathVisualizer" then
-        local movement = self._modules.MovementModule
-        local profile_mgr = self._modules.ProfileManager
-        return module_class:new(movement, profile_mgr)
-    else
-        -- Generic creation with event_bus
-        if module_class.new then
-            return module_class:new(self._event_bus)
-        end
-    end
-
-    return nil
+    return ModuleFactory.create(name, module_class, {
+        event_bus = self._event_bus,
+        state_machine = self._state_machine,
+        config = self._config,
+        modules = self._modules,
+    })
 end
 
 ---Count loaded modules
@@ -282,6 +252,7 @@ function BotManager:start(profile_path)
     self._running = true
     self._paused = false
     self._last_tick_time = core.time()
+    TravelingController.reset()
 
     -- Transition to loading/traveling
     self._state_machine:transition(STATES.LOADING)
@@ -306,6 +277,7 @@ function BotManager:stop()
 
     self._running = false
     self._paused = false
+    TravelingController.reset()
 
     -- Cancel nav recovery timer if active
     if self._nav_recovery_cancel then
@@ -531,143 +503,42 @@ end
 
 ---Process traveling state
 function BotManager:_process_traveling()
-    local profile_mgr = self._modules.ProfileManager
-    local movement = self._modules.MovementModule
-    local scanner = self._modules.NodeScanner
-    local safety = self._modules.SafetyModule
-
-    if not profile_mgr or not movement then
-        return
-    end
-
-    -- Check for nearby nodes first
-    if scanner then
-        local nodes = scanner:scan()
-        if #nodes > 0 and safety and safety:is_safe_to_gather() then
-            local node = scanner:get_node_with_variance()
-            if node then
-                -- Node found, approach it
-                self._state_machine:transition(STATES.APPROACHING, {
-                    target_node = node
-                })
-
-                movement:move_to(node.position, nil, {
-                    use_navmesh = true
-                })
-
+    TravelingController.process({
+        modules = self._modules,
+        state_machine = self._state_machine,
+        event_bus = self._event_bus,
+        log = self._log,
+        on_nav_failure = function()
+            self._consecutive_nav_failures = self._consecutive_nav_failures + 1
+            if self._consecutive_nav_failures >= self._max_consecutive_failures then
                 if self._log then
-                    self._log:info("Found node: %s, approaching", node.name)
+                    self._log:error("Too many consecutive navigation failures (%d), pausing",
+                        self._consecutive_nav_failures)
                 end
-                return
-            end
-        end
-    end
-
-    -- Continue to next waypoint if not already moving
-    if not movement:is_moving() then
-        local waypoint = profile_mgr:get_current_waypoint()
-
-        if waypoint then
-            local target = {
-                x = waypoint.x,
-                y = waypoint.y,
-                z = waypoint.z
-            }
-
-            -- Look-ahead validation: Check if destination is reachable BEFORE moving
-            movement:validate_destination_reachable(target, function(reachable, reason, distance)
-                if not reachable then
-                    -- Destination unreachable, skip waypoint immediately
-                    if self._log then
-                        self._log:warn("Waypoint %d pre-validation failed: %s, skipping",
-                            waypoint.id or 0, reason or "unknown")
-                    end
-
-                    self._consecutive_nav_failures = self._consecutive_nav_failures + 1
-                    if self._consecutive_nav_failures >= self._max_consecutive_failures then
+                self._event_bus:publish(EVENTS.NAV_FAILURE_THRESHOLD, {
+                    failure_count = self._consecutive_nav_failures,
+                    timestamp = core.time()
+                })
+                self:pause()
+                local izi = require("common/izi_sdk")
+                self._nav_recovery_cancel = izi.after(30, function()
+                    self._consecutive_nav_failures = 0
+                    self._nav_recovery_cancel = nil
+                    if self._paused then
+                        self:resume()
                         if self._log then
-                            self._log:error("Too many consecutive navigation failures (%d), pausing for recovery",
-                                self._consecutive_nav_failures)
+                            self._log:info("Navigation recovery: resumed after cooldown")
                         end
-                        self._event_bus:publish(EVENTS.NAV_FAILURE_THRESHOLD, {
-                            failure_count = self._consecutive_nav_failures,
-                            timestamp = core.time()
-                        })
-                        self:pause()
-                        local izi = require("common/izi_sdk")
-                        self._nav_recovery_cancel = izi.after(30, function()
-                            self._consecutive_nav_failures = 0
-                            self._nav_recovery_cancel = nil
-                            if self._paused then
-                                self:resume()
-                                if self._log then
-                                    self._log:info("Navigation recovery: resumed after cooldown")
-                                end
-                            end
-                        end)
-                        return
                     end
-
-                    profile_mgr:advance_waypoint()
-                    return
-                end
-
-                -- Destination validated, proceed with movement
-                if self._log then
-                    self._log:debug("Waypoint %d validated (%.0f yards), moving",
-                        waypoint.id or 0, distance or 0)
-                end
-
-                movement:move_to(target, function(success, move_reason)
-                    if success then
-                        self._consecutive_nav_failures = 0
-                        profile_mgr:advance_waypoint()
-                        self._event_bus:publish(EVENTS.WAYPOINT_REACHED, {
-                            waypoint = waypoint,
-                            timestamp = core.time()
-                        })
-                    else
-                        -- Movement failed despite validation (stuck, etc)
-                        if self._log then
-                            self._log:warn("Waypoint movement failed: %s, skipping", move_reason or "unknown")
-                        end
-
-                        self._consecutive_nav_failures = self._consecutive_nav_failures + 1
-                        if self._consecutive_nav_failures >= self._max_consecutive_failures then
-                            if self._log then
-                                self._log:error("Too many consecutive navigation failures (%d), pausing for recovery",
-                                    self._consecutive_nav_failures)
-                            end
-                            self._event_bus:publish(EVENTS.NAV_FAILURE_THRESHOLD, {
-                                failure_count = self._consecutive_nav_failures,
-                                timestamp = core.time()
-                            })
-                            self:pause()
-                            local izi = require("common/izi_sdk")
-                            self._nav_recovery_cancel = izi.after(30, function()
-                                self._consecutive_nav_failures = 0
-                                self._nav_recovery_cancel = nil
-                                if self._paused then
-                                    self:resume()
-                                    if self._log then
-                                        self._log:info("Navigation recovery: resumed after cooldown")
-                                    end
-                                end
-                            end)
-                            return
-                        end
-
-                        profile_mgr:advance_waypoint()
-                    end
-                end, { use_navmesh = true })
-            end)
-        else
-            -- No waypoint, might be end of route
-            if self._log then
-                self._log:debug("No current waypoint")
+                end)
+                return true  -- signal: bot paused
             end
-        end
-    end
+            return false
+        end,
+        on_nav_success = function()
+            self._consecutive_nav_failures = 0
+        end,
+    })
 end
 
 ---Process scanning state (at hotspot)
