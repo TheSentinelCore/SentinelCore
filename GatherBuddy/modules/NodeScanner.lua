@@ -12,6 +12,7 @@ NodeScanner.__index = NodeScanner
 local Helpers = require("utils/Helpers")
 local Constants = require("core/Constants")
 local Nodes = require("data/Nodes")
+local JSON = require("utils/JSON")
 
 -- Import vec3 for ceiling detection
 local vec3 = require("common/geometry/vector_3")
@@ -129,6 +130,9 @@ function NodeScanner:new(event_bus, state_machine, profile_manager, config)
 
     -- Check player skills on creation
     instance:_check_player_skills()
+
+    -- Load persisted blacklist from disk
+    instance:_load_blacklist()
 
     return instance
 end
@@ -560,6 +564,9 @@ function NodeScanner:blacklist_node(guid, reason)
         expiry = expiry,
         timestamp = core.time()
     })
+
+    -- Persist to disk
+    self:_save_blacklist()
 end
 
 ---Check if a node is blacklisted
@@ -603,6 +610,44 @@ end
 ---Clear blacklist
 function NodeScanner:clear_blacklist()
     self._blacklisted_nodes = {}
+end
+
+local BLACKLIST_FILE = "gatherbuddy/blacklist.json"
+
+---Save blacklist to disk
+function NodeScanner:_save_blacklist()
+    local entries = {}
+    local now = core.time()
+    for guid, expiry in pairs(self._blacklisted_nodes) do
+        if expiry > now then
+            entries[#entries + 1] = {
+                guid = guid,
+                expires_at = expiry
+            }
+        end
+    end
+    local json_str = JSON.encode({ nodes = entries })
+    core.write_data_file(BLACKLIST_FILE, json_str)
+end
+
+---Load blacklist from disk
+function NodeScanner:_load_blacklist()
+    local json_str = core.read_data_file(BLACKLIST_FILE)
+    if not json_str or json_str == "" then return end
+
+    local ok, data = pcall(JSON.decode, json_str)
+    if not ok or not data or not data.nodes then return end
+
+    local now = core.time()
+    for _, entry in ipairs(data.nodes) do
+        if entry.guid and entry.expires_at and entry.expires_at > now then
+            self._blacklisted_nodes[entry.guid] = entry.expires_at
+        end
+    end
+
+    if self._log then
+        self._log:debug("Loaded %d blacklisted nodes from disk", self:get_blacklist_count())
+    end
 end
 
 ---Enable/disable scanning

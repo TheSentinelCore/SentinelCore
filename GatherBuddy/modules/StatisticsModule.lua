@@ -1,12 +1,14 @@
 ---@class StatisticsModule
 ---@field private _event_bus EventBus
 ---@field private _log Logger|nil
+---@field private _last_save_time number
 local StatisticsModule = {}
 StatisticsModule.__index = StatisticsModule
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
 local Helpers = require("utils/Helpers")
 local Constants = require("core/Constants")
+local JSON = require("utils/JSON")
 
 local EVENTS = Constants.EVENTS
 
@@ -72,8 +74,14 @@ function StatisticsModule:new(event_bus, config)
     -- Combat time tracking
     instance._combat_start_time = nil
 
+    -- Auto-save tracking
+    instance._last_save_time = 0
+
     -- Subscribe to events
     instance:_subscribe_events()
+
+    -- Load persisted statistics from disk
+    instance:load()
 
     return instance
 end
@@ -86,6 +94,7 @@ function StatisticsModule:_subscribe_events()
     end, 50, false, "StatisticsModule")
 
     self._event_bus:subscribe(EVENTS.BOT_STOP, function()
+        self:save()
         self:end_session()
     end, 50, false, "StatisticsModule")
 
@@ -155,6 +164,12 @@ function StatisticsModule:update()
     if now - self._last_position_time >= self._position_track_interval then
         self:_track_distance()
         self._last_position_time = now
+    end
+
+    -- Auto-save every 60 seconds
+    if self._session.active and now - self._last_save_time >= 60 then
+        self:save()
+        self._last_save_time = now
     end
 end
 
@@ -375,6 +390,43 @@ function StatisticsModule:get_summary()
     }
 
     return table.concat(lines, "\n")
+end
+
+local STATS_FILE = "gatherbuddy/statistics.json"
+
+---Save session statistics to disk
+function StatisticsModule:save()
+    local data = Helpers.deep_copy(self._session)
+    data.saved_at = core.time()
+    local json_str = JSON.encode(data)
+    core.write_data_file(STATS_FILE, json_str)
+    if self._log then
+        self._log:debug("Statistics saved to disk")
+    end
+end
+
+---Load session statistics from disk
+function StatisticsModule:load()
+    local json_str = core.read_data_file(STATS_FILE)
+    if not json_str or json_str == "" then return end
+
+    local ok, data = pcall(JSON.decode, json_str)
+    if not ok or not data then return end
+
+    -- Restore numeric fields
+    for k, v in pairs(data) do
+        if self._session[k] ~= nil and k ~= "items_looted" then
+            self._session[k] = v
+        end
+    end
+    -- Restore items_looted table
+    if data.items_looted then
+        self._session.items_looted = data.items_looted
+    end
+
+    if self._log then
+        self._log:debug("Statistics loaded from disk (gathered: %d)", self._session.nodes_gathered or 0)
+    end
 end
 
 ---Clean up module
