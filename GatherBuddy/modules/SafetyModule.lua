@@ -291,9 +291,9 @@ function SafetyModule:_update_threat_level()
             end
         end
 
-        if min_distance < 10 then
+        if min_distance < Constants.OPERATIONAL.THREAT_DISTANCE_DANGER then
             new_level = THREAT_LEVELS.DANGER
-        elseif min_distance < 20 then
+        elseif min_distance < Constants.OPERATIONAL.THREAT_DISTANCE_CAUTION then
             new_level = THREAT_LEVELS.CAUTION
         end
     end

@@ -71,7 +71,7 @@ function BotManager:new(config)
     instance._last_tick_time = 0
     instance._tick_interval = 0.05  -- 50ms (20 ticks per second)
     instance._consecutive_nav_failures = 0
-    instance._max_consecutive_failures = 10
+    instance._max_consecutive_failures = Constants.OPERATIONAL.MAX_CONSECUTIVE_NAV_FAILURES
 
     -- NavLib availability
     instance._navlib_available = false
@@ -521,7 +521,7 @@ function BotManager:_process_traveling()
                 })
                 self:pause()
                 local izi = require("common/izi_sdk")
-                self._nav_recovery_cancel = izi.after(30, function()
+                self._nav_recovery_cancel = izi.after(Constants.OPERATIONAL.NAV_RECOVERY_COOLDOWN, function()
                     self._consecutive_nav_failures = 0
                     self._nav_recovery_cancel = nil
                     if self._paused then
@@ -585,7 +585,7 @@ function BotManager:_process_approaching()
             -- First time noticing we're stuck, record start time
             ctx.data = ctx.data or {}
             ctx.data.approach_start_time = core.time()
-        elseif core.time() - approach_start > 2.0 then
+        elseif core.time() - approach_start > Constants.OPERATIONAL.APPROACH_TIMEOUT then
             -- Stuck for over 2 seconds, abort approach
             if self._log then
                 self._log:warn("Stuck in APPROACHING state, returning to TRAVELING")
@@ -650,7 +650,7 @@ function BotManager:_process_corpse_run()
         local player_pos = player:get_position()
         local dist = Helpers.distance_3d(player_pos, corpse_pos)
 
-        if dist > 10 then
+        if dist > Constants.OPERATIONAL.RESURRECT_DISTANCE then
             movement:move_to(corpse_pos, nil, {
                 use_navmesh = true
             })

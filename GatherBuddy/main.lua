@@ -12,6 +12,7 @@ local GatherBuddy = require("init")
 local color = require("common/color")
 local JSON = require("utils/JSON")
 local UIWindow = require("ui/window")
+local Constants = require("core/Constants")
 
 -- Module state
 local _is_loaded = false
@@ -233,7 +234,7 @@ core.register_on_update_callback(function()
 
     -- Periodically scan for profiles
     local now = core.time()
-    if now - _ui_state.last_profile_scan > 5 then
+    if now - _ui_state.last_profile_scan > Constants.OPERATIONAL.PROFILE_SCAN_INTERVAL then
         _ui_state.profiles = scan_profiles()
         _ui_state.last_profile_scan = now
     end

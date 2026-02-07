@@ -400,6 +400,30 @@ Constants.SMOOTHING_ALGORITHMS = {
     { id = "bezier", name = "Bezier", description = "Bezier curve smoothing" },
 }
 
+---Operational constants (hardcoded thresholds extracted for visibility)
+Constants.OPERATIONAL = freeze({
+    -- Gathering timing
+    LOOT_WINDOW_TIMEOUT = 0.5,        -- Seconds to wait for loot window after cast
+    INTERACTION_TIMEOUT = 1.0,        -- Seconds to wait for cast to start after interact
+
+    -- Threat distance thresholds (yards)
+    THREAT_DISTANCE_DANGER = 10,
+    THREAT_DISTANCE_CAUTION = 20,
+
+    -- Navigation recovery
+    MAX_CONSECUTIVE_NAV_FAILURES = 10,
+    NAV_RECOVERY_COOLDOWN = 30,       -- Seconds to pause before retry
+
+    -- Approach
+    APPROACH_TIMEOUT = 2.0,           -- Seconds before aborting approach
+
+    -- Corpse run
+    RESURRECT_DISTANCE = 10,          -- Yards from corpse to resurrect
+
+    -- UI
+    PROFILE_SCAN_INTERVAL = 5,        -- Seconds between profile rescans
+})
+
 ---Run unit tests
 ---@return table<string, boolean> Test results
 function Constants._test()

@@ -396,8 +396,8 @@ function GatherModule:_process_casting(player)
         self._cast_complete_time = core.time()
     end
 
-    -- Wait up to 0.5s for loot window to appear
-    if core.time() - self._cast_complete_time < 0.5 then
+    -- Wait for loot window to appear
+    if core.time() - self._cast_complete_time < Constants.OPERATIONAL.LOOT_WINDOW_TIMEOUT then
         self._gather_state = GATHER_STATES.WAITING_LOOT
     else
         -- No loot window appeared but node may have been gathered
