@@ -40,6 +40,22 @@ pub struct PathResponse {
     pub computation_time_ms: f64,
 }
 
+/// Response from NavBuddy's path-tsp endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TspResponse {
+    pub success: bool,
+    pub path: Vec<PathWaypoint>,
+    pub total_distance: f32,
+    pub visit_order: Vec<usize>,
+    pub leg_distances: Vec<f32>,
+    #[serde(default)]
+    pub leg_boundaries: Vec<usize>,
+    #[serde(default)]
+    pub partial_legs: Vec<usize>,
+    #[serde(default)]
+    pub computation_time_ms: f64,
+}
+
 /// HTTP client for communicating with NavBuddy.
 #[derive(Debug, Clone)]
 pub struct NavBuddyClient {
@@ -193,6 +209,46 @@ impl NavBuddyClient {
     ) -> Result<bool> {
         let path_response = self.find_path(map_id, reference, target)?;
         Ok(path_response.success && !path_response.partial)
+    }
+
+    /// Optimize visit order for a set of points using navmesh-aware TSP.
+    /// Maximum 30 points.
+    pub fn path_tsp(
+        &self,
+        map_id: u32,
+        points: &[(f32, f32, f32)],
+        return_to_start: bool,
+    ) -> Result<TspResponse> {
+        if points.len() > 30 {
+            return Err(Error::InvalidCoordinate(
+                "Maximum 30 points for TSP".into(),
+            ));
+        }
+
+        let points_str: String = points
+            .iter()
+            .map(|(x, y, z)| format!("{},{},{}", x, y, z))
+            .collect::<Vec<_>>()
+            .join(";");
+
+        let url = format!(
+            "{}/api/v1/path-tsp?map_id={}&points={}&return_to_start={}",
+            self.base_url, map_id, points_str, return_to_start
+        );
+
+        let response = self.client.get(&url).send().map_err(Error::HttpError)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(Error::InvalidCoordinate(format!(
+                "NavBuddy TSP returned {}: {}",
+                status, body
+            )));
+        }
+
+        let tsp_response: TspResponse = response.json().map_err(Error::HttpError)?;
+        Ok(tsp_response)
     }
 }
 
