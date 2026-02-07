@@ -219,7 +219,7 @@ impl TspOptimizer {
         super::identify_hotspots(nodes, 50.0, 3)
     }
 
-    /// Create waypoints from route, marking hotspots appropriately
+    /// Create waypoints from route, collapsing hotspot clusters into single centroids
     fn create_waypoints(
         &self,
         route: &[&DecodedNode],
@@ -228,41 +228,52 @@ impl TspOptimizer {
     ) -> Vec<RouteWaypoint> {
         let mut rng = rand::thread_rng();
         let mut waypoints = Vec::new();
+        let mut emitted_clusters: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
 
         for node in route {
-            // Check if this node is in a hotspot
-            let in_hotspot = hotspots.iter().find(|h| {
-                distance_2d(h.center_x, h.center_y, node.world_x, node.world_y) <= h.radius
-            });
+            // Check if this node belongs to a hotspot cluster
+            let cluster_match = hotspots
+                .iter()
+                .enumerate()
+                .find(|(_, h)| h.node_ids.contains(&node.node_id));
 
-            // Apply jitter if configured
-            let (x, y, z) = if matches!(
-                config.randomization,
-                RandomStrategy::RouteVariation | RandomStrategy::Both
-            ) {
-                let jitter_x = rng.gen_range(-config.jitter_range..config.jitter_range);
-                let jitter_y = rng.gen_range(-config.jitter_range..config.jitter_range);
-                (node.world_x + jitter_x, node.world_y + jitter_y, node.world_z)
-            } else {
-                (node.world_x, node.world_y, node.world_z)
-            };
-
-            let waypoint_type = if let Some(hotspot) = in_hotspot {
-                WaypointType::Hotspot {
-                    radius: hotspot.radius as u32,
+            if let Some((cluster_idx, cluster)) = cluster_match {
+                // Only emit ONE waypoint per cluster (the centroid)
+                if emitted_clusters.insert(cluster_idx) {
+                    waypoints.push(RouteWaypoint {
+                        x: cluster.center_x,
+                        y: cluster.center_y,
+                        z: cluster.center_z,
+                        waypoint_type: WaypointType::Hotspot {
+                            radius: cluster.radius as u32,
+                        },
+                        source_node_id: None,
+                        note: Some(format!("{} nodes", cluster.node_count)),
+                    });
                 }
             } else {
-                WaypointType::Path
-            };
+                // Not in any cluster - emit as path waypoint
+                let (x, y, z) = if matches!(
+                    config.randomization,
+                    RandomStrategy::RouteVariation | RandomStrategy::Both
+                ) {
+                    let jitter_x = rng.gen_range(-config.jitter_range..config.jitter_range);
+                    let jitter_y = rng.gen_range(-config.jitter_range..config.jitter_range);
+                    (node.world_x + jitter_x, node.world_y + jitter_y, node.world_z)
+                } else {
+                    (node.world_x, node.world_y, node.world_z)
+                };
 
-            waypoints.push(RouteWaypoint {
-                x,
-                y,
-                z,
-                waypoint_type,
-                source_node_id: Some(node.node_id),
-                note: None,
-            });
+                waypoints.push(RouteWaypoint {
+                    x,
+                    y,
+                    z,
+                    waypoint_type: WaypointType::Path,
+                    source_node_id: Some(node.node_id),
+                    note: None,
+                });
+            }
         }
 
         waypoints
@@ -398,5 +409,50 @@ mod tests {
 
         assert!(route.waypoints.is_empty());
         assert_eq!(route.total_distance, 0.0);
+    }
+
+    fn test_node() -> DecodedNode {
+        DecodedNode {
+            id: 0,
+            zone_id: 1429,
+            zone_name: "Elwynn Forest".to_string(),
+            map_x: 0.5,
+            map_y: 0.5,
+            world_x: 0.0,
+            world_y: 0.0,
+            world_z: 0.0,
+            category: NodeCategory::Ore,
+            node_id: 1,
+            node_name: "Copper Vein".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_hotspot_collapsing() {
+        // 5 nearby nodes (1 cluster) + 2 isolated = should produce 3 waypoints
+        let nodes = vec![
+            DecodedNode { world_x: 100.0, world_y: 200.0, world_z: 50.0, node_id: 1, ..test_node() },
+            DecodedNode { world_x: 102.0, world_y: 201.0, world_z: 50.0, node_id: 2, ..test_node() },
+            DecodedNode { world_x: 104.0, world_y: 203.0, world_z: 50.0, node_id: 3, ..test_node() },
+            DecodedNode { world_x: 98.0, world_y: 199.0, world_z: 50.0, node_id: 4, ..test_node() },
+            DecodedNode { world_x: 101.0, world_y: 202.0, world_z: 50.0, node_id: 5, ..test_node() },
+            // 2 isolated
+            DecodedNode { world_x: 500.0, world_y: 500.0, world_z: 60.0, node_id: 6, ..test_node() },
+            DecodedNode { world_x: 800.0, world_y: 800.0, world_z: 70.0, node_id: 7, ..test_node() },
+        ];
+
+        let optimizer = TspOptimizer::default();
+        let config = OptimizerConfig {
+            randomization: RandomStrategy::None,
+            ..Default::default()
+        };
+        let route = optimizer.optimize(&nodes, &config);
+
+        assert_eq!(route.waypoints.len(), 3, "Expected 3 waypoints (1 hotspot + 2 path), got {}", route.waypoints.len());
+
+        let hotspot_count = route.waypoints.iter()
+            .filter(|w| matches!(w.waypoint_type, WaypointType::Hotspot { .. }))
+            .count();
+        assert_eq!(hotspot_count, 1, "Expected 1 hotspot centroid, got {}", hotspot_count);
     }
 }
