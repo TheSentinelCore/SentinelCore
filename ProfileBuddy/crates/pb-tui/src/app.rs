@@ -3,8 +3,9 @@
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use pb_core::{
-    Algorithm, GameVersion, HeightValidator, NodeDatabase, OptimizerConfig, Parser, Profile,
-    ProfileGenerator, RandomStrategy, Route, ValidationResult, ValidatorConfig, ZONE_DATABASE,
+    Algorithm, GameVersion, HeightValidator, NavBuddyClient, NodeDatabase, OptimizerConfig, Parser,
+    Profile, ProfileGenerator, RandomStrategy, Route, RouteWaypoint, ValidationResult,
+    ValidatorConfig, WaypointType, ZONE_DATABASE, deduplicate_nodes, identify_hotspots,
 };
 use std::path::PathBuf;
 
@@ -571,7 +572,7 @@ impl App {
             .map(|n| n.node_id)
             .collect();
 
-        let mut nodes: Vec<_> = zone
+        let nodes: Vec<_> = zone
             .all_nodes()
             .filter(|n| {
                 selected_herb_ids.contains(&n.node_id) || selected_ore_ids.contains(&n.node_id)
@@ -583,13 +584,22 @@ impl App {
             return Err(anyhow::anyhow!("No nodes match selection"));
         }
 
+        // Deduplicate near-duplicate spawn points (GatherMate2 crowd-sourced data)
+        let original_count = nodes.len();
+        let mut nodes = deduplicate_nodes(&nodes, 5.0);
+        if nodes.len() < original_count {
+            self.status = format!(
+                "Deduplicated: {} → {} nodes",
+                original_count,
+                nodes.len()
+            );
+        }
+
         // Validate nodes via NavBuddy if enabled
         self.validation_result = None;
         if self.validator_config.enabled {
             // Get zone bounds for map_id and default_z
-            let zone_bounds = ZONE_DATABASE
-                .iter()
-                .find(|z| z.ui_map_id == zone_id);
+            let zone_bounds = ZONE_DATABASE.iter().find(|z| z.ui_map_id == zone_id);
 
             if let Some(bounds) = zone_bounds {
                 let map_id = bounds.map_id;
@@ -624,17 +634,142 @@ impl App {
             return Err(anyhow::anyhow!("No valid nodes after validation"));
         }
 
-        // Create optimizer
-        let optimizer = pb_core::create_optimizer(self.algorithm);
-        let config = OptimizerConfig {
-            algorithm: self.algorithm,
-            randomization: self.randomization,
-            ..Default::default()
-        };
+        // Try NavBuddy TSP for navmesh-aware route ordering
+        let mut used_navbuddy_tsp = false;
+        if self.validator_config.enabled {
+            if let Some(bounds) = ZONE_DATABASE.iter().find(|z| z.ui_map_id == zone_id) {
+                let map_id = bounds.map_id;
 
-        // Generate route
-        let route = optimizer.optimize(&nodes, &config);
-        self.route = Some(route);
+                // Identify hotspot clusters
+                let node_refs: Vec<&_> = nodes.iter().collect();
+                let clusters = identify_hotspots(&node_refs, 50.0, 3);
+
+                // Build point list: one centroid per cluster + each non-cluster node
+                let clustered_node_ids: std::collections::HashSet<u16> = clusters
+                    .iter()
+                    .flat_map(|c| c.node_ids.iter().copied())
+                    .collect();
+
+                struct TspPoint {
+                    x: f32,
+                    y: f32,
+                    z: f32,
+                    cluster: Option<usize>,
+                }
+
+                let mut tsp_points: Vec<TspPoint> = Vec::new();
+
+                for (idx, cluster) in clusters.iter().enumerate() {
+                    tsp_points.push(TspPoint {
+                        x: cluster.center_x,
+                        y: cluster.center_y,
+                        z: cluster.center_z,
+                        cluster: Some(idx),
+                    });
+                }
+
+                for node in &nodes {
+                    if !clustered_node_ids.contains(&node.node_id) {
+                        tsp_points.push(TspPoint {
+                            x: node.world_x,
+                            y: node.world_y,
+                            z: node.world_z,
+                            cluster: None,
+                        });
+                    }
+                }
+
+                if tsp_points.len() <= 30 {
+                    self.status = format!(
+                        "Optimizing route via NavBuddy TSP ({} points)...",
+                        tsp_points.len()
+                    );
+
+                    match NavBuddyClient::new(
+                        &self.validator_config.navbuddy_url,
+                        self.validator_config.timeout_ms,
+                    ) {
+                        Ok(client) => {
+                            let points: Vec<(f32, f32, f32)> =
+                                tsp_points.iter().map(|p| (p.x, p.y, p.z)).collect();
+
+                            match client.path_tsp(map_id, &points, true) {
+                                Ok(tsp_result) if tsp_result.success => {
+                                    let mut waypoints = Vec::new();
+                                    for &visit_idx in &tsp_result.visit_order {
+                                        let point = &tsp_points[visit_idx];
+                                        if let Some(cluster_idx) = point.cluster {
+                                            let cluster = &clusters[cluster_idx];
+                                            waypoints.push(RouteWaypoint {
+                                                x: cluster.center_x,
+                                                y: cluster.center_y,
+                                                z: cluster.center_z,
+                                                waypoint_type: WaypointType::Hotspot {
+                                                    radius: cluster.radius as u32,
+                                                },
+                                                source_node_id: None,
+                                                note: Some(format!(
+                                                    "{} nodes",
+                                                    cluster.node_count
+                                                )),
+                                            });
+                                        } else {
+                                            waypoints.push(RouteWaypoint {
+                                                x: point.x,
+                                                y: point.y,
+                                                z: point.z,
+                                                waypoint_type: WaypointType::Path,
+                                                source_node_id: None,
+                                                note: None,
+                                            });
+                                        }
+                                    }
+
+                                    let route = Route {
+                                        waypoints,
+                                        total_distance: tsp_result.total_distance,
+                                        hotspots: clusters,
+                                        algorithm: Algorithm::Tsp,
+                                        randomized: false,
+                                        source_nodes: nodes.clone(),
+                                    };
+                                    self.route = Some(route);
+                                    self.status = format!(
+                                        "NavBuddy TSP route: {} waypoints, {:.0} yards",
+                                        tsp_result.visit_order.len(),
+                                        tsp_result.total_distance
+                                    );
+                                    used_navbuddy_tsp = true;
+                                }
+                                Ok(_) => {
+                                    self.status = "NavBuddy TSP returned failure, falling back to built-in optimizer".into();
+                                }
+                                Err(e) => {
+                                    self.status =
+                                        format!("NavBuddy TSP failed: {}, falling back", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.status =
+                                format!("NavBuddy unavailable for TSP: {}, falling back", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: built-in optimizer
+        if !used_navbuddy_tsp {
+            let optimizer = pb_core::create_optimizer(self.algorithm);
+            let config = OptimizerConfig {
+                algorithm: self.algorithm,
+                randomization: self.randomization,
+                ..Default::default()
+            };
+            let route = optimizer.optimize(&nodes, &config);
+            self.route = Some(route);
+        }
 
         Ok(())
     }
