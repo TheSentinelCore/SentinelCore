@@ -369,7 +369,7 @@ function GatherModule:_process_interacting(player)
     end
 
     -- Publish gather start event (safely get name in case node despawns)
-    local node_name = node:is_valid() and node:get_name() or "Unknown"
+    local node_name = Helpers.safe_name(node)
     self._event_bus:publish(EVENTS.GATHER_START, {
         node = node,
         name = node_name,
@@ -488,7 +488,7 @@ function GatherModule:_complete_gather()
     local node = self._current_node
     local node_guid = self._current_node_guid
     -- Check is_valid() before calling get_name() to avoid "Invalid game object" error
-    local node_name = (node and node:is_valid()) and node:get_name() or "Unknown"
+    local node_name = Helpers.safe_name(node)
     local duration = core.time() - self._gather_start_time
 
     if self._log then

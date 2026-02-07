@@ -329,6 +329,22 @@ function Helpers.set_nested(tbl, path, value)
     return true
 end
 
+---Safely get a game object's name with fallback
+---Replaces the repeated pattern: (obj and obj:is_valid()) and obj:get_name() or "Unknown"
+---@param obj table|nil Game object
+---@param fallback? string Fallback name (default "Unknown")
+---@return string
+function Helpers.safe_name(obj, fallback)
+    fallback = fallback or "Unknown"
+    if not obj then return fallback end
+    if type(obj.is_valid) == "function" and not obj:is_valid() then return fallback end
+    if type(obj.get_name) == "function" then
+        local ok, name = pcall(obj.get_name, obj)
+        if ok and name and name ~= "" then return name end
+    end
+    return fallback
+end
+
 ---Run unit tests
 ---@return table<string, boolean> Test results
 function Helpers._test()

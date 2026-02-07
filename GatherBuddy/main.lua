@@ -10,7 +10,6 @@
 -- Imports
 local GatherBuddy = require("init")
 local color = require("common/color")
-local JSON = require("utils/JSON")
 local UIWindow = require("ui/window")
 local Constants = require("core/Constants")
 
@@ -86,49 +85,14 @@ local menu_elements = {
 -- PROFILE SCANNING
 -- =============================================================================
 
----Load profile metadata from JSON file
----@param path string
----@return table|nil
-local function load_profile_metadata(path)
-    local json_str = core.read_data_file(path)
-    if not json_str or json_str == "" then return nil end
-
-    local data, _ = JSON.decode(json_str)
-    if not data then return nil end
-
-    return {
-        name = (data.metadata and data.metadata.name) or path:match("([^/]+)%.json$"),
-        path = path,
-        zone = data.requirements and data.requirements.zone,
-        map_id = data.requirements and data.requirements.map_id,
-        waypoint_count = data.waypoints and #data.waypoints or 0
-    }
-end
-
----Scan for available profiles using directory listing
----@return table[] profiles
+-- Profile scanning delegated to ProfileManager
 local function scan_profiles()
-    local profiles = {
-        { name = "Select profile...", path = nil }
-    }
-
-    local base_path = "gatherbuddy/profiles/"
-    local entries = core.read_dir("gatherbuddy/profiles")
-    if not entries then
-        return profiles
+    local profile_mgr = GatherBuddy and GatherBuddy:get_module("ProfileManager")
+    if profile_mgr and profile_mgr.scan_available_profiles then
+        return profile_mgr:scan_available_profiles()
     end
-
-    for _, filename in ipairs(entries) do
-        if filename:match("%.json$") and filename ~= "manifest.json" then
-            local full_path = base_path .. filename
-            local metadata = load_profile_metadata(full_path)
-            if metadata then
-                table.insert(profiles, metadata)
-            end
-        end
-    end
-
-    return profiles
+    -- Fallback: return empty list
+    return { { name = "Select profile...", path = nil } }
 end
 
 -- =============================================================================
@@ -149,8 +113,7 @@ local function render_path_overlay()
         return
     end
 
-    local bot_mgr = GatherBuddy:get_bot_manager()
-    local movement = bot_mgr and bot_mgr._modules and bot_mgr._modules.MovementModule
+    local movement = GatherBuddy:get_module("MovementModule")
     if not movement then return end
 
     local current_path = movement._current_path

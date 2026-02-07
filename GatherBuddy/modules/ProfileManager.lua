@@ -916,4 +916,39 @@ function ProfileManager:_test()
     return results
 end
 
+---Scan for available profiles using directory listing
+---@return table[] profiles Array of {name, path, zone, map_id, waypoint_count}
+function ProfileManager:scan_available_profiles()
+    local profiles = {
+        { name = "Select profile...", path = nil }
+    }
+
+    local base_path = "gatherbuddy/profiles/"
+    local entries = core.read_dir("gatherbuddy/profiles")
+    if not entries then
+        return profiles
+    end
+
+    for _, filename in ipairs(entries) do
+        if filename:match("%.json$") and filename ~= "manifest.json" then
+            local full_path = base_path .. filename
+            local json_str = core.read_data_file(full_path)
+            if json_str and json_str ~= "" then
+                local data, _ = JSON.decode(json_str)
+                if data then
+                    profiles[#profiles + 1] = {
+                        name = (data.metadata and data.metadata.name) or filename:match("(.+)%.json$"),
+                        path = full_path,
+                        zone = data.requirements and data.requirements.zone,
+                        map_id = data.requirements and data.requirements.map_id,
+                        waypoint_count = data.waypoints and #data.waypoints or 0,
+                    }
+                end
+            end
+        end
+    end
+
+    return profiles
+end
+
 return ProfileManager

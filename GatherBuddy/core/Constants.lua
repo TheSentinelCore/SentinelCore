@@ -7,12 +7,17 @@ local Constants = {}
 local function freeze(tbl)
     local frozen = {}
     for k, v in pairs(tbl) do
-        frozen[k] = v
+        if type(v) == "table" then
+            frozen[k] = freeze(v)  -- Recursively freeze nested tables
+        else
+            frozen[k] = v
+        end
     end
     return setmetatable(frozen, {
         __newindex = function()
             error("Attempt to modify read-only table")
-        end
+        end,
+        __metatable = false
     })
 end
 
