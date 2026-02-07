@@ -13,6 +13,9 @@
 ---@field public DEFAULT_DISK_CACHE_FOLDER string
 ---@field public DEFAULT_HTTP_THROTTLE_SECONDS number
 ---@field public DEFAULT_PROBE_THROTTLE_SECONDS number
+---@field public WOWHEAD_SPELL_BASE string
+---@field public DEFAULT_SPELL_CACHE_FILE string
+---@field public MAX_REDIRECTS number
 
 ---@class icons_helper_icon_entry
 ---@field public key string
@@ -43,6 +46,8 @@
 
 ---@class icons_helper
 ---@field public draw_icon fun(self: icons_helper, icon_name_or_url: string, position: vec2|vec3, width: number, height: number, tint?: color, is_for_window?: boolean, opts?: icons_helper_draw_opts): boolean
+---@field public draw_spell_icon fun(self: icons_helper, spell_id: number, position: vec2|vec3, width: number, height: number, tint?: color, is_for_window?: boolean, opts?: icons_helper_draw_opts): boolean
+---@field public get_spell_icon_name fun(self: icons_helper, spell_id: number): string|nil
 ---@field public clear_cache fun(self: icons_helper): nil
 
 --------------------------------------------------------------------------------
@@ -85,8 +90,44 @@
 --     )
 -- end
 -- core.register_on_render_callback(on_render)
+--
+--
+-- Example 3, draw an icon resolved dynamically from a spell ID
+--
+-- local vec2 = require("common/geometry/vector_2")
+-- local icons_helper = require("common/utility/icons_helper")
+-- local color = require("common/color")
+--
+-- local function on_render()
+--     -- Spell 100 = Charge -> scrapes Wowhead once -> "ability_warrior_charge"
+--     icons_helper:draw_spell_icon(
+--         100,
+--         vec2.new(30, 30),
+--         64, 64,
+--         color.white(255),
+--         false,
+--         {
+--             size = "large",
+--             persist_to_disk = true,
+--         }
+--     )
+-- end
+-- core.register_on_render_callback(on_render)
+--
+--
+-- Example 4, resolve a spell icon name without drawing
+--
+-- local icons_helper = require("common/utility/icons_helper")
+--
+-- local function on_update()
+--     local name = icons_helper:get_spell_icon_name(100)
+--     if name then
+--         -- name == "ability_warrior_charge"
+--         core.log("Resolved: " .. name)
+--     end
+-- end
+-- core.register_on_update_callback(on_update)
 
 ---@type icons_helper
 local tbl
 return tbl
-

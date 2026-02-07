@@ -1252,6 +1252,8 @@
 ---@field load_local_data fun(data_path: string, default_value?: string): string
 ---@field load_http_data fun(url: string, callback: fun(ok: boolean, data: string, http_code: integer, content_type: string, response_headers: string), headers?: table<string, string>): nil
 ---@field draw_icon fun(icon_name_or_url: string, position: vec2|vec3, width: number, height: number, tint?: color, is_for_window?: boolean, opts?: icons_helper_draw_opts): boolean
+---@field draw_spell_icon fun(spell_id: number, position: vec2|vec3, width: number, height: number, tint?: color, is_for_window?: boolean, opts?: icons_helper_draw_opts): boolean
+---@field get_spell_icon_name fun(spell_id: number): string|nil
 ---@field clear_icon_cache fun(): nil
 ---@field assets_helper assets_helper
 ---@field icons_helper icons_helper

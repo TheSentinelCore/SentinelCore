@@ -94,12 +94,25 @@ function BotManager:initialize()
         self._log:info("Initializing modules...")
     end
 
-    -- Load modules in order (use relative paths since we're in GatherBuddy folder)
+    -- Load NavLib modules from global (NavLib plugin must load before GatherBuddy)
+    if _G.NavLib then
+        self._modules.NavigationClient = _G.NavLib.NavigationClient:new(self._config.navigation)
+        self._modules.MovementModule = _G.NavLib.MovementModule:new(
+            self._modules.NavigationClient, self._config.movement
+        )
+        if self._log then
+            self._log:debug("Loaded NavigationClient + MovementModule from NavLib")
+        end
+    else
+        if self._log then
+            self._log:error("NavLib plugin not loaded — navigation unavailable")
+        end
+    end
+
+    -- Load local modules in order
     local module_order = {
         { name = "Settings",        path = "data/Settings" },
         { name = "ProfileManager",  path = "modules/ProfileManager" },
-        { name = "NavigationClient", path = "modules/NavigationClient" },
-        { name = "MovementModule",  path = "modules/MovementModule" },
         { name = "NodeScanner",     path = "modules/NodeScanner" },
         { name = "GatherModule",    path = "modules/GatherModule" },
         { name = "MountModule",     path = "modules/MountModule" },
