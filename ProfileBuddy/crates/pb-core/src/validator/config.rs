@@ -46,10 +46,10 @@ impl Default for ValidatorConfig {
             navbuddy_url: "http://localhost:47110".to_string(),
             timeout_ms: 500,
             fallback_on_error: true,
-            remove_invalid: true,
+            remove_invalid: false,
             exclude_caves: true,
             cave_threshold: 15.0,
-            validate_connectivity: true,
+            validate_connectivity: false,
             reference_point: None,
         }
     }
@@ -84,10 +84,10 @@ mod tests {
         assert_eq!(config.navbuddy_url, "http://localhost:47110");
         assert_eq!(config.timeout_ms, 500);
         assert!(config.fallback_on_error);
-        assert!(config.remove_invalid);
+        assert!(!config.remove_invalid);
         assert!(config.exclude_caves);
         assert!((config.cave_threshold - 15.0).abs() < 0.01);
-        assert!(config.validate_connectivity);
+        assert!(!config.validate_connectivity);
     }
 
     #[test]
