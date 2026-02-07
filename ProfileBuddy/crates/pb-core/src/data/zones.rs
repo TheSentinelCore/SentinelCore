@@ -297,13 +297,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_right: 1535.42,
         default_z: 50.0,
         game_version: GameVersion::Era,
-        exclusion_zones: &[ExclusionZone {
-            name: "Stormwind City",
-            x_min: -9050.0,
-            x_max: -8150.0,
-            y_min: 370.0,
-            y_max: 1150.0,
-        }],
+        exclusion_zones: &[],
     },
     ZoneBounds {
         ui_map_id: 1430,
