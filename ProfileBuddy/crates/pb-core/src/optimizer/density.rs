@@ -333,7 +333,7 @@ impl DensityOptimizer {
                     sum_x += nodes[idx].world_x;
                     sum_y += nodes[idx].world_y;
                     sum_z += nodes[idx].world_z;
-                    node_ids.push(nodes[idx].node_id);
+                    node_ids.push(nodes[idx].id);
                 }
 
                 let count = cluster_nodes.len() as f32;

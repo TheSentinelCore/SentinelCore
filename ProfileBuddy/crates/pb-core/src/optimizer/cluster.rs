@@ -52,7 +52,7 @@ impl RouteOptimizer for ClusterOptimizer {
         // Step 2: For unclustered nodes, treat as individual waypoints
         let unclustered: Vec<&DecodedNode> = nodes
             .iter()
-            .filter(|n| !clusters.iter().any(|c| c.node_ids.contains(&n.node_id)))
+            .filter(|n| !clusters.iter().any(|c| c.node_ids.contains(&n.id)))
             .collect();
 
         // Step 3: Create waypoints from cluster centroids
@@ -180,7 +180,7 @@ impl ClusterOptimizer {
             sum_x += nodes[idx].world_x;
             sum_y += nodes[idx].world_y;
             sum_z += nodes[idx].world_z;
-            node_ids.push(nodes[idx].node_id);
+            node_ids.push(nodes[idx].id);
         }
 
         let count = indices.len() as f32;

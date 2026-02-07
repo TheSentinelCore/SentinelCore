@@ -645,7 +645,7 @@ impl App {
                 let clusters = identify_hotspots(&node_refs, 50.0, 3);
 
                 // Build point list: one centroid per cluster + each non-cluster node
-                let clustered_node_ids: std::collections::HashSet<u16> = clusters
+                let clustered_node_ids: std::collections::HashSet<u64> = clusters
                     .iter()
                     .flat_map(|c| c.node_ids.iter().copied())
                     .collect();
@@ -669,7 +669,7 @@ impl App {
                 }
 
                 for node in &nodes {
-                    if !clustered_node_ids.contains(&node.node_id) {
+                    if !clustered_node_ids.contains(&node.id) {
                         tsp_points.push(TspPoint {
                             x: node.world_x,
                             y: node.world_y,
@@ -799,7 +799,7 @@ impl App {
         );
 
         // Create output directory
-        let output_dir = PathBuf::from("scripts_data/gatherbuddy/profiles");
+        let output_dir = PathBuf::from("../../scripts_data/gatherbuddy/profiles");
         std::fs::create_dir_all(&output_dir)?;
 
         let output_path = output_dir.join(&filename);

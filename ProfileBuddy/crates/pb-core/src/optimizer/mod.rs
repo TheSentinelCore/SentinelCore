@@ -117,7 +117,7 @@ pub struct NodeCluster {
     pub center_z: f32,
     pub radius: f32,
     pub node_count: usize,
-    pub node_ids: Vec<u16>,
+    pub node_ids: Vec<u64>,
 }
 
 /// Result of route optimization
@@ -218,7 +218,7 @@ pub fn identify_hotspots(
                 sum_x += nodes[idx].world_x;
                 sum_y += nodes[idx].world_y;
                 sum_z += nodes[idx].world_z;
-                node_ids.push(nodes[idx].node_id);
+                node_ids.push(nodes[idx].id);
             }
 
             let count = cluster_nodes.len() as f32;
@@ -397,6 +397,30 @@ mod tests {
         ];
         let result = deduplicate_nodes(&nodes, 0.0);
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_identify_hotspots_same_node_type() {
+        // All nodes are same type (Copper Vein, node_id=201) but unique IDs
+        // Only the 3 close nodes should cluster; the 2 far nodes should NOT be in the cluster
+        let nodes = vec![
+            DecodedNode { id: 1001, world_x: 100.0, world_y: 200.0, world_z: 50.0, node_id: 201, ..test_node() },
+            DecodedNode { id: 1002, world_x: 110.0, world_y: 205.0, world_z: 50.0, node_id: 201, ..test_node() },
+            DecodedNode { id: 1003, world_x: 105.0, world_y: 210.0, world_z: 50.0, node_id: 201, ..test_node() },
+            // Far away - should NOT be in the cluster
+            DecodedNode { id: 1004, world_x: 500.0, world_y: 500.0, world_z: 50.0, node_id: 201, ..test_node() },
+            DecodedNode { id: 1005, world_x: 800.0, world_y: 800.0, world_z: 50.0, node_id: 201, ..test_node() },
+        ];
+        let refs: Vec<&DecodedNode> = nodes.iter().collect();
+        let clusters = identify_hotspots(&refs, 50.0, 3);
+        assert_eq!(clusters.len(), 1, "Expected 1 cluster");
+        assert_eq!(clusters[0].node_count, 3, "Expected 3 nodes in cluster");
+        // Verify node_ids contain unique IDs, not type IDs
+        assert!(clusters[0].node_ids.contains(&1001));
+        assert!(clusters[0].node_ids.contains(&1002));
+        assert!(clusters[0].node_ids.contains(&1003));
+        assert!(!clusters[0].node_ids.contains(&1004));
+        assert!(!clusters[0].node_ids.contains(&1005));
     }
 
     #[test]

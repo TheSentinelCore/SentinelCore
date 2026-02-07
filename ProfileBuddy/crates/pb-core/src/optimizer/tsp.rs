@@ -236,7 +236,7 @@ impl TspOptimizer {
             let cluster_match = hotspots
                 .iter()
                 .enumerate()
-                .find(|(_, h)| h.node_ids.contains(&node.node_id));
+                .find(|(_, h)| h.node_ids.contains(&node.id));
 
             if let Some((cluster_idx, cluster)) = cluster_match {
                 // Only emit ONE waypoint per cluster (the centroid)
@@ -428,17 +428,52 @@ mod tests {
     }
 
     #[test]
+    fn test_hotspot_collapsing_same_node_type() {
+        // All 7 nodes are same type (node_id=201) but unique IDs
+        // 5 close nodes = 1 cluster + 2 isolated = 3 waypoints
+        let nodes = vec![
+            DecodedNode { id: 2001, world_x: 100.0, world_y: 200.0, world_z: 50.0, node_id: 201, ..test_node() },
+            DecodedNode { id: 2002, world_x: 102.0, world_y: 201.0, world_z: 50.0, node_id: 201, ..test_node() },
+            DecodedNode { id: 2003, world_x: 104.0, world_y: 203.0, world_z: 50.0, node_id: 201, ..test_node() },
+            DecodedNode { id: 2004, world_x: 98.0, world_y: 199.0, world_z: 50.0, node_id: 201, ..test_node() },
+            DecodedNode { id: 2005, world_x: 101.0, world_y: 202.0, world_z: 50.0, node_id: 201, ..test_node() },
+            // 2 isolated
+            DecodedNode { id: 2006, world_x: 500.0, world_y: 500.0, world_z: 60.0, node_id: 201, ..test_node() },
+            DecodedNode { id: 2007, world_x: 800.0, world_y: 800.0, world_z: 70.0, node_id: 201, ..test_node() },
+        ];
+
+        let optimizer = TspOptimizer::default();
+        let config = OptimizerConfig {
+            randomization: RandomStrategy::None,
+            ..Default::default()
+        };
+        let route = optimizer.optimize(&nodes, &config);
+
+        assert_eq!(route.waypoints.len(), 3, "Expected 3 waypoints (1 hotspot + 2 path), got {}", route.waypoints.len());
+
+        let hotspot_count = route.waypoints.iter()
+            .filter(|w| matches!(w.waypoint_type, WaypointType::Hotspot { .. }))
+            .count();
+        let path_count = route.waypoints.iter()
+            .filter(|w| matches!(w.waypoint_type, WaypointType::Path))
+            .count();
+        assert_eq!(hotspot_count, 1, "Expected 1 hotspot centroid, got {}", hotspot_count);
+        assert_eq!(path_count, 2, "Expected 2 path waypoints, got {}", path_count);
+    }
+
+    #[test]
     fn test_hotspot_collapsing() {
         // 5 nearby nodes (1 cluster) + 2 isolated = should produce 3 waypoints
+        // Each node needs a unique `id` for cluster membership tracking
         let nodes = vec![
-            DecodedNode { world_x: 100.0, world_y: 200.0, world_z: 50.0, node_id: 1, ..test_node() },
-            DecodedNode { world_x: 102.0, world_y: 201.0, world_z: 50.0, node_id: 2, ..test_node() },
-            DecodedNode { world_x: 104.0, world_y: 203.0, world_z: 50.0, node_id: 3, ..test_node() },
-            DecodedNode { world_x: 98.0, world_y: 199.0, world_z: 50.0, node_id: 4, ..test_node() },
-            DecodedNode { world_x: 101.0, world_y: 202.0, world_z: 50.0, node_id: 5, ..test_node() },
+            DecodedNode { id: 1, world_x: 100.0, world_y: 200.0, world_z: 50.0, node_id: 1, ..test_node() },
+            DecodedNode { id: 2, world_x: 102.0, world_y: 201.0, world_z: 50.0, node_id: 2, ..test_node() },
+            DecodedNode { id: 3, world_x: 104.0, world_y: 203.0, world_z: 50.0, node_id: 3, ..test_node() },
+            DecodedNode { id: 4, world_x: 98.0, world_y: 199.0, world_z: 50.0, node_id: 4, ..test_node() },
+            DecodedNode { id: 5, world_x: 101.0, world_y: 202.0, world_z: 50.0, node_id: 5, ..test_node() },
             // 2 isolated
-            DecodedNode { world_x: 500.0, world_y: 500.0, world_z: 60.0, node_id: 6, ..test_node() },
-            DecodedNode { world_x: 800.0, world_y: 800.0, world_z: 70.0, node_id: 7, ..test_node() },
+            DecodedNode { id: 6, world_x: 500.0, world_y: 500.0, world_z: 60.0, node_id: 6, ..test_node() },
+            DecodedNode { id: 7, world_x: 800.0, world_y: 800.0, world_z: 70.0, node_id: 7, ..test_node() },
         ];
 
         let optimizer = TspOptimizer::default();
