@@ -295,7 +295,7 @@ pub static ZONE_DATABASE: &[ZoneBounds] = &[
         loc_bottom: -10254.17,
         loc_left: -1935.42,
         loc_right: 1535.42,
-        default_z: 50.0,
+        default_z: 59.5,
         game_version: GameVersion::Era,
         exclusion_zones: &[],
     },
