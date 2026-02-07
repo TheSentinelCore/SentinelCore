@@ -39,6 +39,6 @@ pub mod validator;
 pub use data::{GameVersion, NodeCategory, ZoneBounds, ZONE_DATABASE};
 pub use error::{Error, Result};
 pub use generator::{Profile, ProfileGenerator};
-pub use optimizer::{Algorithm, OptimizerConfig, RandomStrategy, Route, RouteOptimizer, create_optimizer, deduplicate_nodes};
+pub use optimizer::{Algorithm, NodeCluster, OptimizerConfig, RandomStrategy, Route, RouteOptimizer, RouteWaypoint, WaypointType, create_optimizer, deduplicate_nodes, identify_hotspots};
 pub use parser::{DecodedNode, NodeDatabase, Parser, RawNode};
 pub use validator::{HeightValidator, NavBuddyClient, ValidationResult, ValidatorConfig};

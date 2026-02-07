@@ -177,6 +177,79 @@ pub(crate) fn distance_3d(x1: f32, y1: f32, z1: f32, x2: f32, y2: f32, z2: f32) 
     (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
+/// Identify clusters of nearby nodes as potential hotspots.
+pub fn identify_hotspots(
+    nodes: &[&DecodedNode],
+    cluster_radius: f32,
+    min_cluster_size: usize,
+) -> Vec<NodeCluster> {
+    if nodes.len() < min_cluster_size {
+        return Vec::new();
+    }
+
+    let mut hotspots = Vec::new();
+    let mut used = vec![false; nodes.len()];
+
+    for (i, &node) in nodes.iter().enumerate() {
+        if used[i] {
+            continue;
+        }
+
+        let mut cluster_nodes: Vec<usize> = vec![i];
+        for (j, &other) in nodes.iter().enumerate() {
+            if i == j || used[j] {
+                continue;
+            }
+
+            let dist = distance_2d(node.world_x, node.world_y, other.world_x, other.world_y);
+            if dist <= cluster_radius {
+                cluster_nodes.push(j);
+            }
+        }
+
+        if cluster_nodes.len() >= min_cluster_size {
+            let mut sum_x = 0.0;
+            let mut sum_y = 0.0;
+            let mut sum_z = 0.0;
+            let mut max_dist = 0.0f32;
+            let mut node_ids = Vec::new();
+
+            for &idx in &cluster_nodes {
+                sum_x += nodes[idx].world_x;
+                sum_y += nodes[idx].world_y;
+                sum_z += nodes[idx].world_z;
+                node_ids.push(nodes[idx].node_id);
+            }
+
+            let count = cluster_nodes.len() as f32;
+            let center_x = sum_x / count;
+            let center_y = sum_y / count;
+            let center_z = sum_z / count;
+
+            for &idx in &cluster_nodes {
+                let dist =
+                    distance_2d(center_x, center_y, nodes[idx].world_x, nodes[idx].world_y);
+                max_dist = max_dist.max(dist);
+            }
+
+            hotspots.push(NodeCluster {
+                center_x,
+                center_y,
+                center_z,
+                radius: max_dist + 10.0,
+                node_count: cluster_nodes.len(),
+                node_ids,
+            });
+
+            for &idx in &cluster_nodes {
+                used[idx] = true;
+            }
+        }
+    }
+
+    hotspots
+}
+
 /// Merge nodes within `min_distance` yards by averaging positions.
 /// Keeps first node's metadata. Returns original vec if min_distance <= 0.
 pub fn deduplicate_nodes(nodes: &[DecodedNode], min_distance: f32) -> Vec<DecodedNode> {
@@ -324,5 +397,21 @@ mod tests {
         ];
         let result = deduplicate_nodes(&nodes, 0.0);
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_identify_hotspots_standalone() {
+        let nodes = vec![
+            DecodedNode { world_x: 100.0, world_y: 200.0, world_z: 50.0, node_id: 1, ..test_node() },
+            DecodedNode { world_x: 110.0, world_y: 205.0, world_z: 50.0, node_id: 2, ..test_node() },
+            DecodedNode { world_x: 105.0, world_y: 210.0, world_z: 50.0, node_id: 3, ..test_node() },
+            DecodedNode { world_x: 115.0, world_y: 195.0, world_z: 50.0, node_id: 4, ..test_node() },
+            // Far away - not in cluster
+            DecodedNode { world_x: 500.0, world_y: 500.0, world_z: 50.0, node_id: 5, ..test_node() },
+        ];
+        let refs: Vec<&DecodedNode> = nodes.iter().collect();
+        let clusters = identify_hotspots(&refs, 50.0, 3);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].node_count, 4);
     }
 }
