@@ -176,3 +176,153 @@ pub(crate) fn distance_3d(x1: f32, y1: f32, z1: f32, x2: f32, y2: f32, z2: f32) 
     let dz = z2 - z1;
     (dx * dx + dy * dy + dz * dz).sqrt()
 }
+
+/// Merge nodes within `min_distance` yards by averaging positions.
+/// Keeps first node's metadata. Returns original vec if min_distance <= 0.
+pub fn deduplicate_nodes(nodes: &[DecodedNode], min_distance: f32) -> Vec<DecodedNode> {
+    if min_distance <= 0.0 || nodes.is_empty() {
+        return nodes.to_vec();
+    }
+
+    let mut used = vec![false; nodes.len()];
+    let mut result = Vec::new();
+
+    for i in 0..nodes.len() {
+        if used[i] {
+            continue;
+        }
+
+        // Find all nodes within min_distance of node i
+        let mut group = vec![i];
+        for j in (i + 1)..nodes.len() {
+            if used[j] {
+                continue;
+            }
+            let dist = distance_2d(
+                nodes[i].world_x,
+                nodes[i].world_y,
+                nodes[j].world_x,
+                nodes[j].world_y,
+            );
+            if dist <= min_distance {
+                group.push(j);
+            }
+        }
+
+        // Average positions, keep first node's metadata
+        let count = group.len() as f32;
+        let mut merged = nodes[i].clone();
+        if group.len() > 1 {
+            let (sum_x, sum_y, sum_z) =
+                group
+                    .iter()
+                    .fold((0.0, 0.0, 0.0), |(sx, sy, sz), &idx| {
+                        (
+                            sx + nodes[idx].world_x,
+                            sy + nodes[idx].world_y,
+                            sz + nodes[idx].world_z,
+                        )
+                    });
+            merged.world_x = sum_x / count;
+            merged.world_y = sum_y / count;
+            merged.world_z = sum_z / count;
+        }
+
+        for &idx in &group {
+            used[idx] = true;
+        }
+        result.push(merged);
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::NodeCategory;
+
+    fn test_node() -> DecodedNode {
+        DecodedNode {
+            id: 0,
+            zone_id: 1429,
+            zone_name: "Elwynn Forest".to_string(),
+            map_x: 0.5,
+            map_y: 0.5,
+            world_x: 0.0,
+            world_y: 0.0,
+            world_z: 0.0,
+            category: NodeCategory::Ore,
+            node_id: 1,
+            node_name: "Copper Vein".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_deduplicate_nearby_nodes() {
+        let nodes = vec![
+            DecodedNode {
+                world_x: 100.0,
+                world_y: 200.0,
+                world_z: 50.0,
+                node_id: 1,
+                ..test_node()
+            },
+            DecodedNode {
+                world_x: 101.0,
+                world_y: 201.0,
+                world_z: 51.0,
+                node_id: 2,
+                ..test_node()
+            },
+        ];
+        let result = deduplicate_nodes(&nodes, 5.0);
+        assert_eq!(result.len(), 1);
+        assert!((result[0].world_x - 100.5).abs() < 0.01);
+        assert!((result[0].world_y - 200.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_deduplicate_far_nodes_stay_separate() {
+        let nodes = vec![
+            DecodedNode {
+                world_x: 100.0,
+                world_y: 200.0,
+                world_z: 50.0,
+                node_id: 1,
+                ..test_node()
+            },
+            DecodedNode {
+                world_x: 200.0,
+                world_y: 300.0,
+                world_z: 60.0,
+                node_id: 2,
+                ..test_node()
+            },
+        ];
+        let result = deduplicate_nodes(&nodes, 5.0);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_deduplicate_zero_distance_disables() {
+        let nodes = vec![
+            DecodedNode {
+                world_x: 100.0,
+                world_y: 200.0,
+                world_z: 50.0,
+                node_id: 1,
+                ..test_node()
+            },
+            DecodedNode {
+                world_x: 101.0,
+                world_y: 201.0,
+                world_z: 51.0,
+                node_id: 2,
+                ..test_node()
+            },
+        ];
+        let result = deduplicate_nodes(&nodes, 0.0);
+        assert_eq!(result.len(), 2);
+    }
+}
