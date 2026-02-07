@@ -104,7 +104,7 @@ local function load_profile_metadata(path)
     }
 end
 
----Scan for available profiles using manifest + discovery
+---Scan for available profiles using directory listing
 ---@return table[] profiles
 local function scan_profiles()
     local profiles = {
@@ -112,50 +112,17 @@ local function scan_profiles()
     }
 
     local base_path = "gatherbuddy/profiles/"
-    local found_files = {}
-
-    -- Step 1: Try to load manifest
-    local manifest_path = base_path .. "manifest.json"
-    local manifest_str = core.read_data_file(manifest_path)
-
-    if manifest_str and manifest_str ~= "" then
-        local data, _ = JSON.decode(manifest_str)
-        if data and data.profiles then
-            for _, entry in ipairs(data.profiles) do
-                local full_path = base_path .. entry.filename
-                local size = core.get_data_file_size(full_path)
-                if size and size > 0 then
-                    table.insert(profiles, {
-                        name = entry.name or entry.filename:gsub("%.json$", ""),
-                        path = full_path,
-                        zone = entry.zone,
-                        map_id = entry.map_id
-                    })
-                    found_files[entry.filename] = true
-                end
-            end
-        end
+    local entries = core.read_dir("gatherbuddy/profiles")
+    if not entries then
+        return profiles
     end
 
-    -- Step 2: Probe for common profile filenames not in manifest
-    local known_files = {
-        "elwynn_copper.json",
-        "westfall_iron.json",
-        "durotar_copper.json",
-        "mulgore_copper.json",
-        "tirisfal_glades.json",
-    }
-
-    for _, filename in ipairs(known_files) do
-        if not found_files[filename] then
+    for _, filename in ipairs(entries) do
+        if filename:match("%.json$") and filename ~= "manifest.json" then
             local full_path = base_path .. filename
-            local size = core.get_data_file_size(full_path)
-            if size and size > 0 then
-                local metadata = load_profile_metadata(full_path)
-                if metadata then
-                    table.insert(profiles, metadata)
-                    found_files[filename] = true
-                end
+            local metadata = load_profile_metadata(full_path)
+            if metadata then
+                table.insert(profiles, metadata)
             end
         end
     end
