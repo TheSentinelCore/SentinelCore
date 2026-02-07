@@ -1,0 +1,131 @@
+
+-- Syntax / IntelliSense helper for: common/utility/evade_helper
+-- Usage:
+-- ---@type evade_helper_helper
+-- local ev = require("common/utility/evade_helper")
+-- ev: -- IntelliSense
+-- Warning: Access with ":", not "."
+
+---@class evade_helper
+---@field public get_database_info fun(self: evade_helper): any
+---@field public get_geometry fun(self: evade_helper): any
+---@field public get_geometry_inst fun(self: evade_helper): any
+---@field public get_customizations fun(self: evade_helper): any
+---@field public is_point_safe fun(self: evade_helper, point: vec3): boolean
+---@field public is_point_safe_full fun(self: evade_helper, point: vec3, fall_threshold?: number): boolean
+---@field public add_debug_spells fun(self: evade_helper, key: string, add_cone: boolean, add_rect: boolean, add_circle: boolean): any
+--- Simplified adders (safe to call every frame; dedup by key and by geometry+object_id)
+---@field public add_custom fun(self: evade_helper, key: string, data: table): boolean, string
+---@field public add_circle fun(self: evade_helper, key: string, params: table): boolean, string
+---@field public add_rect fun(self: evade_helper, key: string, params: table): boolean, string
+---@field public add_cone fun(self: evade_helper, key: string, params: table): boolean, string
+---@field public has_entry fun(self: evade_helper, key: string): boolean
+---@field public clear_cache fun(self: evade_helper): nil
+
+-- ===============
+-- param reference
+-- ===============
+-- add_circle(key, {
+--   name?: string,
+--   radius: number,                 -- required
+--   time_alive?: number,            -- default 5.0
+--   growth_ratio?: number,          -- default 0.0
+--   object_id?: integer,            -- used for dedup with geometry
+--   caster_id?: integer,            -- default 0
+--   danger_level?: integer,         -- default visual
+--   danger_level_dropdown?: integer,-- default same as danger_level
+--   is_debug?: boolean              -- default false
+-- })
+--
+-- add_rect(key, {
+--   name?: string,
+--   width: number,                  -- required
+--   length: number,                 -- required
+--   time_alive?: number,            -- default 5.0
+--   growth_ratio?: number,          -- default 0.0
+--   is_projectile?: boolean,        -- default false
+--   object_id?: integer,
+--   caster_id?: integer,            -- default 0
+--   danger_level?: integer,
+--   danger_level_dropdown?: integer,
+--   is_debug?: boolean
+-- })
+--
+-- add_cone(key, {
+--   name?: string,
+--   radius: number,                 -- required
+--   angle: number,                  -- required (degrees)
+--   time_alive?: number,            -- default 3.0
+--   growth_ratio?: number,          -- default 0.0
+--   anim_speed?: number,            -- default 2.0
+--   object_id?: integer,
+--   caster_id?: integer,            -- default -1
+--   danger_level?: integer,
+--   danger_level_dropdown?: integer,
+--   is_debug?: boolean
+-- })
+--
+-- add_custom(key, data)
+--   forwards your exact table to the database
+--   must include data.geometry_type and the geometry-specific fields
+--   still deduped by key and by geometry+object_id
+
+-- =========
+-- examples
+-- =========
+
+-- example: add a circle (safe every frame; added once)
+-- ---@type evade_helper_helper
+-- local ev = require("common/utility/evade_helper")
+-- local db = require("root/core_lua/proxy/evade/danger_database")
+-- local ok, why = ev:add_circle("my_spell_circle", {
+--     name = "My Spell Circle",
+--     radius = 6.5,
+--     time_alive = 8.0,
+--     object_id = 123456,
+--     danger_level = db.danger_level_enum.extreme,
+--     danger_level_dropdown = db.danger_level_enum.extreme
+-- })
+-- if not ok then core.log("[evade_helper] not added: " .. why) end
+
+-- example: add a rect
+-- ev:add_rect("boss_line_aoe", {
+--     name = "Boss Line AOE",
+--     width = 4.0,
+--     length = 18.0,
+--     time_alive = 4.0,
+--     object_id = 998877
+-- })
+
+-- example: add a cone
+-- ev:add_cone("frontal_breath", {
+--     name = "Frontal Breath",
+--     radius = 12.0,
+--     angle = 60.0,
+--     anim_speed = 1.5,
+--     time_alive = 3.0,
+--     is_debug = true
+-- })
+
+-- example: full custom
+-- local db = require("root/core_lua/proxy/evade/danger_database")
+-- ev:add_custom("rare_custom_shape", {
+--     name = "Rare Shape",
+--     geometry_type = db.geometry_type_enum.rect,
+--     danger_level = db.danger_level_enum.visual,
+--     danger_level_dropdown = db.danger_level_enum.extreme,
+--     enable_check = core.menu.checkbox(true, "rare_custom_shape:enable_check"),
+--     color = core.menu.colorpicker(db.danger_level_colors.extreme, "rare_custom_shape:color"),
+--     object_id = -1,
+--     caster_id = 0,
+--     width = 3.0,
+--     length = 9.0,
+--     time_alive = 6.0,
+--     is_projectile = false,
+--     growth_ratio = 10.0,
+--     is_debug = true
+-- })
+
+---@type evade_helper
+local tbl
+return tbl

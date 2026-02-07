@@ -1,0 +1,13 @@
+[package]
+name = "tc-mmap"
+version.workspace = true
+edition.workspace = true
+description = "TrinityCore mmap file loader"
+
+[dependencies]
+detour = { path = "../detour" }
+thiserror.workspace = true
+byteorder.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true

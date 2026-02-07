@@ -1,0 +1,8 @@
+[package]
+name = "polygon-sampling"
+version.workspace = true
+edition.workspace = true
+description = "Bridson's Poisson Disk Sampling for polygon exploration"
+
+[dependencies]
+rand.workspace = true

@@ -1,0 +1,70 @@
+//! NavBuddy - High-performance navigation server for WoW pathfinding.
+//!
+//! This server provides HTTP endpoints for pathfinding using TrinityCore
+//! navigation mesh files (mmaps).
+
+use std::net::SocketAddr;
+use std::time::Duration;
+
+use tower_http::timeout::TimeoutLayer;
+
+mod cache;
+mod config;
+mod error;
+mod pipeline;
+mod routes;
+mod state;
+mod validation;
+
+use config::Config;
+use state::AppState;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Initialize logging with multiple directives
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("navbuddy=info".parse()?)
+                .add_directive("tc_mmap=info".parse()?)
+                .add_directive("detour=warn".parse()?),
+        )
+        .init();
+
+    tracing::info!(
+        "NavBuddy v{} starting...",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    // Load configuration
+    let config = Config::load()?;
+    tracing::info!(
+        "Configuration loaded: host={}, port={}, mmap_path={:?}",
+        config.server.host,
+        config.server.port,
+        config.navmesh.mmap_path
+    );
+
+    // Create application state (triggers map preloading if configured)
+    let state = AppState::new(config.clone())?;
+    tracing::info!(
+        "Application state initialized, {} maps preloaded",
+        state.mmap_manager.loaded_map_count()
+    );
+
+    // Build router with timeout middleware
+    let app = routes::build_router(state)
+        .layer(TimeoutLayer::new(Duration::from_secs(30)));
+
+    // Start server
+    let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
+        .parse()
+        .expect("Invalid address");
+
+    tracing::info!("Listening on http://{}", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}

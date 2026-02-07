@@ -1,0 +1,436 @@
+﻿<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blubber</title>
+  <link rel="stylesheet" href="https://stackedit.io/style.css" />
+</head>
+
+<body class="stackedit">
+  <div class="stackedit__html"><h1 id="rotation-settings-ui-library-guide">Rotation Settings UI Library Guide</h1>
+<p>This guide is for people with little or no UI experience. It explains how to use the shared library</p>
+<p><code>shared/rotation_settings_ui.lua</code> to build a custom settings window (with tabs, sliders, checkboxes, and keybinds)</p>
+<p>for your own rotation.</p>
+<h2 id="what-this-library-does-in-simple-words">What this library does (in simple words)</h2>
+<ul>
+<li>
+<p>Creates a custom <strong>window</strong> you can show/hide.</p>
+</li>
+<li>
+<p>Renders a <strong>tab bar</strong> across the top.</p>
+</li>
+<li>
+<p>Inside each tab, you can render common widgets:</p>
+</li>
+<li>
+<p><strong>Keybind rows</strong> (bind a key, toggle ON/OFF, clear)</p>
+</li>
+<li>
+<p><strong>Checkbox grids</strong></p>
+</li>
+<li>
+<p><strong>Slider lists</strong></p>
+</li>
+<li>
+<p><strong>Combobox lists</strong></p>
+</li>
+<li>
+<p>Saves window position/size/tab selection using “ghost” menu elements (so it persists across injections).</p>
+</li>
+</ul>
+<p>You still need to:</p>
+<ul>
+<li>
+<p>Create your menu elements (checkboxes/sliders/combos/keybinds) in your rotation file.</p>
+</li>
+<li>
+<p>Call <code>ui:on_menu_render()</code> and <code>ui:on_render()</code> from your rotation callbacks.</p>
+</li>
+</ul>
+<h2 id="quick-start-minimal-steps">Quick start (minimal steps)</h2>
+<ol>
+<li>
+<p><strong>Create menu elements</strong> (normal <code>core.menu.*</code> elements) in your rotation.</p>
+</li>
+<li>
+<p><strong>Create a window</strong> via <code>rotation_settings_ui.new({ ... })</code>.</p>
+</li>
+<li>
+<p><strong>Define tabs and content</strong> using <code>ui:add_tab(...)</code> (recommended) or <code>ui:register_section(...)</code> (legacy).</p>
+</li>
+<li>
+<p><strong>Hook it into callbacks</strong>:</p>
+</li>
+</ol>
+<ul>
+<li>
+<p>call <code>ui:on_menu_render()</code> in <code>on_menu_render</code></p>
+</li>
+<li>
+<p>call <code>ui:on_render()</code> in <code>on_render</code></p>
+</li>
+</ul>
+<h2 id="full-minimal-example-copypaste-template">Full minimal example (copy/paste template)</h2>
+<p>This is a complete working structure you can adapt.</p>
+<pre class=" language-lua"><code class="prism  language-lua">
+<span class="token keyword">local</span>  my_rotation <span class="token operator">=</span> <span class="token punctuation">{</span><span class="token punctuation">}</span>
+
+<span class="token keyword">local</span>  rotation_settings_ui <span class="token operator">=</span> <span class="token function">require</span><span class="token punctuation">(</span><span class="token string">"shared/rotation_settings_ui"</span><span class="token punctuation">)</span>
+
+  
+
+<span class="token comment">-- 1) Create menu elements (these store settings + persist automatically)</span>
+
+<span class="token keyword">local</span>  menu_elements <span class="token operator">=</span> <span class="token punctuation">{</span>
+
+main_tree <span class="token operator">=</span> core<span class="token punctuation">.</span>menu<span class="token punctuation">.</span><span class="token function">tree_node</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+
+  
+
+enable_script_check <span class="token operator">=</span> core<span class="token punctuation">.</span>menu<span class="token punctuation">.</span><span class="token function">checkbox</span><span class="token punctuation">(</span><span class="token keyword">true</span><span class="token punctuation">,</span> <span class="token string">"my_rotation_enable_script"</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+
+  
+
+<span class="token comment">-- Keybinds</span>
+
+enable_toggle <span class="token operator">=</span> core<span class="token punctuation">.</span>menu<span class="token punctuation">.</span><span class="token function">keybind</span><span class="token punctuation">(</span><span class="token number">999</span><span class="token punctuation">,</span> <span class="token keyword">true</span><span class="token punctuation">,</span> <span class="token string">"my_rotation_enable_toggle"</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+
+cooldowns_toggle <span class="token operator">=</span> core<span class="token punctuation">.</span>menu<span class="token punctuation">.</span><span class="token function">keybind</span><span class="token punctuation">(</span><span class="token number">999</span><span class="token punctuation">,</span> <span class="token keyword">true</span><span class="token punctuation">,</span> <span class="token string">"my_rotation_cooldowns_toggle"</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+
+  
+
+<span class="token comment">-- Checkboxes + sliders + combos</span>
+
+auto_pot_enabled <span class="token operator">=</span> core<span class="token punctuation">.</span>menu<span class="token punctuation">.</span><span class="token function">checkbox</span><span class="token punctuation">(</span><span class="token keyword">true</span><span class="token punctuation">,</span> <span class="token string">"my_rotation_auto_pot"</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+
+auto_pot_threshold <span class="token operator">=</span> core<span class="token punctuation">.</span>menu<span class="token punctuation">.</span><span class="token function">slider_int</span><span class="token punctuation">(</span><span class="token number">0</span><span class="token punctuation">,</span> <span class="token number">100</span><span class="token punctuation">,</span> <span class="token number">25</span><span class="token punctuation">,</span> <span class="token string">"my_rotation_auto_pot_hp"</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+
+  
+
+burst_mode <span class="token operator">=</span> core<span class="token punctuation">.</span>menu<span class="token punctuation">.</span><span class="token function">combobox</span><span class="token punctuation">(</span><span class="token number">1</span><span class="token punctuation">,</span> <span class="token string">"my_rotation_burst_mode"</span><span class="token punctuation">)</span>
+
+<span class="token punctuation">}</span>
+
+  
+
+<span class="token comment">-- 2) Create the custom UI window</span>
+
+<span class="token keyword">local</span>  ui <span class="token operator">=</span> rotation_settings_ui<span class="token punctuation">.</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">{</span>
+
+id <span class="token operator">=</span> <span class="token string">"my_rotation"</span><span class="token punctuation">,</span>
+
+title <span class="token operator">=</span> <span class="token string">"My Rotation Settings"</span><span class="token punctuation">,</span>
+
+default_x <span class="token operator">=</span> <span class="token number">700</span><span class="token punctuation">,</span>
+
+default_y <span class="token operator">=</span> <span class="token number">200</span><span class="token punctuation">,</span>
+
+default_w <span class="token operator">=</span> <span class="token number">520</span><span class="token punctuation">,</span>
+
+default_h <span class="token operator">=</span> <span class="token number">650</span><span class="token punctuation">,</span>
+
+theme <span class="token operator">=</span> <span class="token string">"neutral"</span> <span class="token comment">-- "rogue", "hunter", ...</span>
+
+<span class="token punctuation">}</span><span class="token punctuation">)</span>
+
+  
+
+<span class="token comment">-- 3) Define tabs and content (recommended API)</span>
+
+<span class="token keyword">local</span>  <span class="token keyword">function</span>  <span class="token function">auto_pot_enabled</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+<span class="token keyword">return</span>  menu_elements<span class="token punctuation">.</span>auto_pot_enabled<span class="token punctuation">:</span><span class="token function">get_state</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token operator">==</span> <span class="token keyword">true</span>
+
+<span class="token keyword">end</span>
+
+  
+
+ui<span class="token punctuation">:</span><span class="token function">add_tab</span><span class="token punctuation">(</span><span class="token punctuation">{</span> id <span class="token operator">=</span> <span class="token string">"core"</span><span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Core"</span> <span class="token punctuation">}</span><span class="token punctuation">,</span> <span class="token keyword">function</span><span class="token punctuation">(</span>t<span class="token punctuation">)</span>
+
+t<span class="token punctuation">:</span><span class="token function">keybind_grid</span><span class="token punctuation">(</span><span class="token punctuation">{</span>
+
+elements <span class="token operator">=</span> <span class="token punctuation">{</span> menu_elements<span class="token punctuation">.</span>enable_toggle<span class="token punctuation">,</span> menu_elements<span class="token punctuation">.</span>cooldowns_toggle <span class="token punctuation">}</span><span class="token punctuation">,</span>
+
+labels <span class="token operator">=</span> <span class="token punctuation">{</span> <span class="token string">"Enable Rotation"</span><span class="token punctuation">,</span> <span class="token string">"Burst Cooldowns"</span> <span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span><span class="token punctuation">)</span>
+
+<span class="token keyword">end</span><span class="token punctuation">)</span>
+
+  
+
+ui<span class="token punctuation">:</span><span class="token function">add_tab</span><span class="token punctuation">(</span><span class="token punctuation">{</span> id <span class="token operator">=</span> <span class="token string">"survival"</span><span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Survival"</span> <span class="token punctuation">}</span><span class="token punctuation">,</span> <span class="token keyword">function</span><span class="token punctuation">(</span>t<span class="token punctuation">)</span>
+
+t<span class="token punctuation">:</span><span class="token function">checkbox_grid</span><span class="token punctuation">(</span><span class="token punctuation">{</span>
+
+label <span class="token operator">=</span> <span class="token string">"Consumables"</span><span class="token punctuation">,</span>
+
+columns <span class="token operator">=</span> <span class="token number">2</span><span class="token punctuation">,</span>
+
+elements <span class="token operator">=</span> <span class="token punctuation">{</span>
+
+<span class="token punctuation">{</span> element <span class="token operator">=</span> menu_elements<span class="token punctuation">.</span>auto_pot_enabled<span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Auto Potion"</span> <span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span><span class="token punctuation">)</span>
+
+  
+
+t<span class="token punctuation">:</span><span class="token function">slider_list</span><span class="token punctuation">(</span><span class="token punctuation">{</span>
+
+label <span class="token operator">=</span> <span class="token string">"Thresholds"</span><span class="token punctuation">,</span>
+
+elements <span class="token operator">=</span> <span class="token punctuation">{</span>
+
+<span class="token punctuation">{</span> element <span class="token operator">=</span> menu_elements<span class="token punctuation">.</span>auto_pot_threshold<span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Potion HP%"</span><span class="token punctuation">,</span> suffix <span class="token operator">=</span> <span class="token string">"%"</span><span class="token punctuation">,</span> visible_when <span class="token operator">=</span> auto_pot_enabled <span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span><span class="token punctuation">)</span>
+
+  
+
+t<span class="token punctuation">:</span><span class="token function">combo_list</span><span class="token punctuation">(</span><span class="token punctuation">{</span>
+
+label <span class="token operator">=</span> <span class="token string">"Modes"</span><span class="token punctuation">,</span>
+
+elements <span class="token operator">=</span> <span class="token punctuation">{</span>
+
+<span class="token punctuation">{</span> element <span class="token operator">=</span> menu_elements<span class="token punctuation">.</span>burst_mode<span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Burst Mode"</span><span class="token punctuation">,</span> options <span class="token operator">=</span> <span class="token punctuation">{</span> <span class="token string">"Smart"</span><span class="token punctuation">,</span> <span class="token string">"Always"</span> <span class="token punctuation">}</span> <span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span><span class="token punctuation">)</span>
+
+<span class="token keyword">end</span><span class="token punctuation">)</span>
+
+  
+
+<span class="token comment">-- 4) Hook into your rotation callbacks</span>
+
+<span class="token keyword">function</span>  my_rotation<span class="token punctuation">:</span><span class="token function">on_menu_render</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+<span class="token comment">-- Lets the user toggle the custom window from the normal menu</span>
+
+ui<span class="token punctuation">:</span><span class="token function">on_menu_render</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+  
+
+menu_elements<span class="token punctuation">.</span>main_tree<span class="token punctuation">:</span><span class="token function">render</span><span class="token punctuation">(</span><span class="token string">"My Rotation"</span><span class="token punctuation">,</span> <span class="token keyword">function</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+menu_elements<span class="token punctuation">.</span>enable_script_check<span class="token punctuation">:</span><span class="token function">render</span><span class="token punctuation">(</span><span class="token string">"Enable Script"</span><span class="token punctuation">)</span>
+
+<span class="token keyword">if</span>  ui <span class="token keyword">and</span> ui<span class="token punctuation">.</span>menu <span class="token keyword">and</span> ui<span class="token punctuation">.</span>menu<span class="token punctuation">.</span>enable  <span class="token keyword">then</span>
+
+ui<span class="token punctuation">.</span>menu<span class="token punctuation">.</span>enable<span class="token punctuation">:</span><span class="token function">render</span><span class="token punctuation">(</span><span class="token string">"Show Custom UI Window"</span><span class="token punctuation">)</span>
+
+<span class="token keyword">end</span>
+
+<span class="token keyword">end</span><span class="token punctuation">)</span>
+
+<span class="token keyword">end</span>
+
+  
+
+<span class="token keyword">function</span>  my_rotation<span class="token punctuation">:</span><span class="token function">on_render</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+<span class="token comment">-- Draw the custom window every frame (it only shows if enabled)</span>
+
+ui<span class="token punctuation">:</span><span class="token function">on_render</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+<span class="token keyword">end</span>
+
+  
+
+<span class="token keyword">return</span>  my_rotation
+
+</code></pre>
+<h2 id="building-tabs-with-the-builder-api-recommended">Building tabs with the Builder API (recommended)</h2>
+<p>Use <code>ui:add_tab({ ... }, function(t) ... end)</code>.</p>
+<p>Inside the callback, <code>t</code> is a tab builder.</p>
+<p>Supported builder methods:</p>
+<ul>
+<li>
+<p><code>t:keybind_grid({ elements = {keybind1, keybind2, ...}, labels = {"Label1", ...} })</code></p>
+</li>
+<li>
+<p><code>t:checkbox_grid({ label?, columns?, elements = { {element=checkbox, label="..."}, ... } })</code></p>
+</li>
+<li>
+<p><code>t:slider_list({ label?, elements = { {element=slider, label="...", suffix?, visible_when?}, ... } })</code></p>
+</li>
+<li>
+<p><code>t:combo_list({ label?, elements = { {element=combobox, label="...", options={...}, suffix?, visible_when?}, ... } })</code></p>
+</li>
+</ul>
+<h3 id="what-“elements”-look-like">What “elements” look like</h3>
+<h4 id="checkbox-grid-entry">Checkbox grid entry</h4>
+<pre class=" language-lua"><code class="prism  language-lua">
+<span class="token punctuation">{</span> element <span class="token operator">=</span> menu_elements<span class="token punctuation">.</span>auto_pot_enabled<span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Auto Potion"</span><span class="token punctuation">,</span> visible_when <span class="token operator">=</span> <span class="token keyword">function</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token keyword">return</span>  <span class="token keyword">true</span>  <span class="token keyword">end</span> <span class="token punctuation">}</span>
+
+</code></pre>
+<h4 id="slider-list-entry">Slider list entry</h4>
+<pre class=" language-lua"><code class="prism  language-lua">
+<span class="token punctuation">{</span> element <span class="token operator">=</span> menu_elements<span class="token punctuation">.</span>auto_pot_threshold<span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Potion HP%"</span><span class="token punctuation">,</span> suffix <span class="token operator">=</span> <span class="token string">"%"</span><span class="token punctuation">,</span> visible_when <span class="token operator">=</span> auto_pot_enabled <span class="token punctuation">}</span>
+
+</code></pre>
+<h4 id="combobox-list-entry">Combobox list entry</h4>
+<pre class=" language-lua"><code class="prism  language-lua">
+<span class="token punctuation">{</span> element <span class="token operator">=</span> menu_elements<span class="token punctuation">.</span>burst_mode<span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Burst Mode"</span><span class="token punctuation">,</span> options <span class="token operator">=</span> <span class="token punctuation">{</span> <span class="token string">"Smart"</span><span class="token punctuation">,</span> <span class="token string">"Always"</span> <span class="token punctuation">}</span> <span class="token punctuation">}</span>
+
+</code></pre>
+<h2 id="conditional-visibility-visible_when">Conditional visibility (<code>visible_when</code>)</h2>
+<p>You can hide:</p>
+<ul>
+<li>
+<p>a full <strong>tab</strong> (<code>ui:add_tab({ ..., visible_when = fn }, ...)</code>)</p>
+</li>
+<li>
+<p>a <strong>group</strong> (pass <code>visible_when</code> to <code>checkbox_grid</code> / <code>slider_list</code> / …)</p>
+</li>
+<li>
+<p>a single <strong>entry</strong> in a group (each entry can contain <code>visible_when</code>)</p>
+</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>
+<p><code>visible_when</code> must be a function that returns <code>true</code> or <code>false</code>.</p>
+</li>
+<li>
+<p>Keep it quick and safe: don’t do heavy work inside it.</p>
+</li>
+</ul>
+<p>Example:</p>
+<pre class=" language-lua"><code class="prism  language-lua">
+<span class="token keyword">local</span>  <span class="token keyword">function</span>  <span class="token function">advanced_enabled</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+<span class="token keyword">return</span>  menu_elements<span class="token punctuation">.</span>show_advanced<span class="token punctuation">:</span><span class="token function">get_state</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token operator">==</span> <span class="token keyword">true</span>
+
+<span class="token keyword">end</span>
+
+  
+
+ui<span class="token punctuation">:</span><span class="token function">add_tab</span><span class="token punctuation">(</span><span class="token punctuation">{</span> id<span class="token operator">=</span><span class="token string">"advanced"</span><span class="token punctuation">,</span> label<span class="token operator">=</span><span class="token string">"Advanced"</span><span class="token punctuation">,</span> visible_when <span class="token operator">=</span> advanced_enabled <span class="token punctuation">}</span><span class="token punctuation">,</span> <span class="token keyword">function</span><span class="token punctuation">(</span>t<span class="token punctuation">)</span>
+
+t<span class="token punctuation">:</span><span class="token function">slider_list</span><span class="token punctuation">(</span><span class="token punctuation">{</span> elements <span class="token operator">=</span> <span class="token punctuation">{</span> <span class="token punctuation">{</span> element <span class="token operator">=</span> menu_elements<span class="token punctuation">.</span>some_slider<span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Extra"</span> <span class="token punctuation">}</span> <span class="token punctuation">}</span> <span class="token punctuation">}</span><span class="token punctuation">)</span>
+
+<span class="token keyword">end</span><span class="token punctuation">)</span>
+
+</code></pre>
+<h2 id="themes-and-window-identity">Themes and window identity</h2>
+<h3 id="theme">Theme</h3>
+<p><code>theme</code> only affects colors. Available themes are defined in <code>shared/rotation_settings_ui.lua</code> (e.g. <code>neutral</code>, <code>rogue</code>, <code>hunter</code>).</p>
+<h3 id="id-important"><code>id</code> (important)</h3>
+<p><code>id</code> must be unique per window. It is used for persistence menu element IDs:</p>
+<ul>
+<li>
+<p>window position / size</p>
+</li>
+<li>
+<p>active tab</p>
+</li>
+<li>
+<p>enable checkbox (show/hide window)</p>
+</li>
+</ul>
+<p>If two windows share the same <code>id</code>, they will fight over saved state.</p>
+<h2 id="interaction-notes-keybinds-and-sliders">Interaction notes (keybinds and sliders)</h2>
+<h3 id="keybind-capture">Keybind capture</h3>
+<ul>
+<li>
+<p>Click the key badge to start capture, then press a key.</p>
+</li>
+<li>
+<p>Supports keyboard + mouse buttons (except LMB/RMB).</p>
+</li>
+<li>
+<p><code>Del</code> clears the bind, <code>Esc</code> cancels.</p>
+</li>
+</ul>
+<h3 id="sliders">Sliders</h3>
+<ul>
+<li>
+<p>Click the bar to start dragging and hold left mouse button.</p>
+</li>
+<li>
+<p>Dragging clamps at min/max.</p>
+</li>
+</ul>
+<p>If a slider “jumps”, it usually means the backend provides mouse position in a different coordinate space.</p>
+<p>This library already tries to normalize that, but if you find a backend where it still jumps, report:</p>
+<ul>
+<li>
+<p>which slider it happens on</p>
+</li>
+<li>
+<p>where the window is on screen (left/right/top/bottom)</p>
+</li>
+</ul>
+<h2 id="legacy-api-still-supported">Legacy API (still supported)</h2>
+<p>You can still build the UI with <code>register_section(...)</code> if you prefer:</p>
+<pre class=" language-lua"><code class="prism  language-lua">
+ui<span class="token punctuation">:</span><span class="token function">register_section</span><span class="token punctuation">(</span><span class="token punctuation">{</span>
+
+id <span class="token operator">=</span> <span class="token string">"combat"</span><span class="token punctuation">,</span>
+
+label <span class="token operator">=</span> <span class="token string">"Combat"</span><span class="token punctuation">,</span>
+
+type <span class="token operator">=</span> <span class="token string">"tab"</span><span class="token punctuation">,</span>
+
+groups <span class="token operator">=</span> <span class="token punctuation">{</span>
+
+<span class="token punctuation">{</span>
+
+label <span class="token operator">=</span> <span class="token string">"Thresholds"</span><span class="token punctuation">,</span>
+
+type <span class="token operator">=</span> <span class="token string">"slider_list"</span><span class="token punctuation">,</span>
+
+elements <span class="token operator">=</span> <span class="token punctuation">{</span>
+
+<span class="token punctuation">{</span> element <span class="token operator">=</span> menu_elements<span class="token punctuation">.</span>auto_pot_threshold<span class="token punctuation">,</span> label <span class="token operator">=</span> <span class="token string">"Potion HP%"</span><span class="token punctuation">,</span> suffix <span class="token operator">=</span> <span class="token string">"%"</span> <span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span>
+
+<span class="token punctuation">}</span><span class="token punctuation">)</span>
+
+</code></pre>
+<h2 id="troubleshooting-common-mistakes">Troubleshooting (common mistakes)</h2>
+<h3 id="“nothing-shows-up”">“Nothing shows up”</h3>
+<ul>
+<li>
+<p>Make sure you call <code>ui:on_render()</code> inside your rotation <code>on_render</code> callback.</p>
+</li>
+<li>
+<p>Enable the window: either call <code>ui:on_menu_render()</code> and toggle “Show Custom UI Window”, or set <code>ui.menu.enable:set(true)</code> once for debugging.</p>
+</li>
+</ul>
+<h3 id="“tab-is-empty”">“Tab is empty”</h3>
+<ul>
+<li>
+<p>Ensure you added groups inside the <code>add_tab</code> callback.</p>
+</li>
+<li>
+<p>Check <code>visible_when</code> isn’t returning false.</p>
+</li>
+</ul>
+<h3 id="“my-widgets-don’t-change-values”">“My widgets don’t change values”</h3>
+<ul>
+<li>
+<p>Ensure your menu elements are real <code>core.menu.*</code> objects (checkbox/slider/combobox/keybind), not plain Lua values.</p>
+</li>
+<li>
+<p>For sliders: keep min/max sensible (min &lt;= max).</p>
+</li>
+</ul>
+</div>
+</body>
+
+</html>

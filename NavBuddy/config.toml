@@ -1,0 +1,31 @@
+# NavBuddy Configuration
+# High-performance navigation server for WoW pathfinding
+
+[server]
+# Host to bind to (0.0.0.0 for all interfaces)
+host = "0.0.0.0"
+# Port to listen on
+port = 47110
+# Maximum concurrent pathfinding requests
+max_concurrent_requests = 100
+
+[navmesh]
+# Path to TrinityCore mmap files directory
+# Relative to NavBuddy directory or absolute path
+mmap_path = "./mmaps"
+
+# Maps to preload at startup (empty = lazy load on first request)
+# Common map IDs:
+#   0   = Eastern Kingdoms (Elwynn, Stormwind, etc.)
+#   1   = Kalimdor (Durotar, Orgrimmar, etc.)
+#   530 = Outland
+#   571 = Northrend
+preload_maps = [0]
+
+[pathfinding]
+# Default smoothing algorithm: "none", "chaikin", "catmull_rom", "bezier"
+default_smoothing = "none"
+# Maximum waypoints in a path
+max_path_length = 2048
+# Query pool size per map (number of concurrent queries per map)
+query_pool_size = 4

@@ -1,0 +1,147 @@
+
+-- dispel_external_filters_helper.lua
+-- how to use the internal external filters for universal dispels
+-- this file is documentation plus ready-to-copy examples
+-- everything below is commented so nothing registers by default
+
+-- why pcall
+-- the module lives inside the plugin at:
+--   root/ext_0_plugin_universal_dispels/dispel/external_filters
+-- if the plugin is not loaded, a direct require would error
+-- wrap with pcall so it fails gracefully when the module is not present
+
+-- safely require
+-- local prefix = "ext_0_plugin_universal_dispels/"
+-- local dispels_exist, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+-- if not dispels_exist or not ext then
+--     return
+-- end
+
+-- from here on, 'ext' is the filters api: register, unregister, clear, priority_enum
+-- you never call ext.apply here, the dispel system calls ext.apply during its decision pass
+
+-- 1) stealth test, block dispels while stealthed
+-- do
+--     local prefix = "ext_0_plugin_universal_dispels/"
+--     local ok_require, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+--     if ok_require and ext then
+--         ext.register("block_while_stealth",
+--             function(local_player, target, data_packet)
+--                 local stealth_data = buff_manager:get_buff_data(local_player, enums.buff_db.STEALTH, 50)
+--                 local is_stealthed = stealth_data and stealth_data.is_active == true
+--                 if is_stealthed then
+--                     return false, "stealth_active"
+--                 end
+--                 return true
+--             end,
+--             { type = "block", label = "no dispel while stealth" }
+--         )
+--     end
+-- end
+
+-- 2) block low priority debuffs for a short window
+-- do
+--     local prefix = "ext_0_plugin_universal_dispels/"
+--     local ok_require, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+--     if ok_require and ext then
+--         ext.register("no_low_priority_for_0_7s",
+--             function(_, _, data_packet)
+--                 local prio = (data_packet and data_packet.details and data_packet.details.priority) or 0
+--                 if prio <= ext.priority_enum.medium then
+--                     return false, "priority_low"
+--                 end
+--                 return true
+--             end,
+--             { type = "block", time = 0.7, label = "low priority gate" }
+--         )
+--     end
+-- end
+
+-- 3) allow only a specific target pointer for 2s
+-- do
+--     local prefix = "ext_0_plugin_universal_dispels/"
+--     local ok_require, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+--     if ok_require and ext then
+--         local my_unit_pointer = my_module and my_module.get_primary_target and my_module.get_primary_target() or nil
+--         if my_unit_pointer then
+--             ext.register("allow_only_primary_target",
+--                 function(_, target)
+--                     return target == my_unit_pointer or false, "not_primary_target"
+--                 end,
+--                 { type = "allow", time = 2.0, label = "only primary target" }
+--             )
+--         end
+--     end
+-- end
+
+-- 4) block a specific debuff id exactly once
+-- do
+--     local prefix = "ext_0_plugin_universal_dispels/"
+--     local ok_require, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+--     if ok_require and ext then
+--         local blocked_id = 388392
+--         ext.register("ban_debuff_388392_once",
+--             function(_, _, data_packet)
+--                 local id = data_packet and data_packet.details and data_packet.details.id
+--                 return id ~= blocked_id or false, "id_388392_blocked"
+--             end,
+--             { type = "block", count = 1, label = "ban 388392 once" }
+--         )
+--     end
+-- end
+
+-- 5) temporary global mute for next 3 checks
+-- do
+--     local prefix = "ext_0_plugin_universal_dispels/"
+--     local ok_require, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+--     if ok_require and ext then
+--         ext.register("block_next_3_checks",
+--             function() return false, "temp_mute" end,
+--             { type = "block", count = 3, label = "mute next 3" }
+--         )
+--     end
+-- end
+
+-- 6) single frame guard
+-- do
+--     local prefix = "ext_0_plugin_universal_dispels/"
+--     local ok_require, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+--     if ok_require and ext then
+--         ext.register("block_once_frame",
+--             function() return false, "single_guard" end,
+--             { type = "block", frames = 1, label = "single check guard" }
+--         )
+--     end
+-- end
+
+-- 7) content window, allow only boss target for 1.5s
+-- do
+--     local prefix = "ext_0_plugin_universal_dispels/"
+--     local ok_require, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+--     if ok_require and ext then
+--         local boss_ptr = encounter and encounter.get_boss_ptr and encounter.get_boss_ptr() or nil
+--         if boss_ptr then
+--             ext.register("allow_only_boss",
+--                 function(_, target) return target == boss_ptr or false, "not_boss" end,
+--                 { type = "allow", time = 1.5, label = "boss only window" }
+--             )
+--         end
+--     end
+-- end
+
+-- 8) class form example, druid cat form disable
+-- register on enter cat form, unregister on exit
+-- do
+--     local prefix = "ext_0_plugin_universal_dispels/"
+--     local ok_require, ext = pcall(require, "root/" .. prefix .. "dispel/external_filters")
+--     if ok_require and ext then
+--         if is_cat_form then
+--             ext.register("druid_no_dispel",
+--                 function() return false, "cat_form" end,
+--                 { type = "block", label = "no dispel in cat form" }
+--             )
+--         else
+--             ext.unregister("druid_no_dispel")
+--         end
+--     end
+-- end

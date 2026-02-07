@@ -1,0 +1,88 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/detour-sys",
+    "crates/detour",
+    "crates/tc-mmap",
+    "crates/path-smoothing",
+    "crates/polygon-sampling",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["NavBuddy Contributors"]
+license = "MIT"
+repository = "https://github.com/navbuddy/navbuddy"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# HTTP framework
+axum = "0.7"
+tower-http = { version = "0.5", features = ["trace", "timeout"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Concurrency
+parking_lot = "0.12"
+dashmap = "6.0"
+
+# Config
+toml = "0.8"
+
+# Build dependencies (for detour-sys)
+cc = "1.0"
+bindgen = "0.69"
+
+# Binary format parsing
+byteorder = "1.5"
+
+# Random number generation
+rand = "0.8"
+
+[package]
+name = "navbuddy"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+detour = { path = "crates/detour" }
+tc-mmap = { path = "crates/tc-mmap" }
+path-smoothing = { path = "crates/path-smoothing" }
+polygon-sampling = { path = "crates/polygon-sampling" }
+tokio.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dashmap.workspace = true
+toml.workspace = true
+tower-http.workspace = true
+rand.workspace = true
+
+[lib]
+name = "navbuddy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "navbuddy"
+path = "src/main.rs"
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"

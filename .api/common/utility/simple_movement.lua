@@ -1,0 +1,153 @@
+
+--- Simple Movement - Type Definitions for IntelliSense
+--- 
+--- Example:
+--- ---@type simple_movement
+--- local movement = require("common/utility/simple_movement")
+--- movement: -> IntelliSense
+--- Warning: Access with ":", not "."
+---
+--- Basic usage:
+--- movement:move_to_position(vec3.new(100, 200, 30))
+--- movement:navigate({vec3.new(100,200,30), vec3.new(150,250,30)})
+--- local reached = movement:process()  -- Call every frame!
+
+---@class simple_movement
+---
+--- Move to a specific world position
+---@field public move_to_position fun(self: simple_movement, position: vec3): boolean
+---
+--- Navigate through a sequence of waypoints (automatically smoothed)
+---@field public navigate fun(self: simple_movement, waypoints: vec3[], is_loop?: boolean, start_from_beginning?: boolean): boolean
+---
+--- Stop all movement immediately
+---@field public stop fun(self: simple_movement): nil
+---
+--- Clear current navigation and stop movement
+---@field public clear_navigation fun(self: simple_movement): nil
+---
+--- Pause movement temporarily (can be resumed)
+---@field public pause fun(self: simple_movement): nil
+---
+--- Resume movement after pause
+---@field public resume fun(self: simple_movement): nil
+---
+--- Process one frame of movement - MUST be called every frame!
+--- Returns true when destination is reached
+---@field public process fun(self: simple_movement): boolean
+---
+--- Check if currently moving or paused (has active destination)
+---@field public is_moving fun(self: simple_movement): boolean
+---
+--- Get the current target waypoint
+---@field public get_target fun(self: simple_movement): vec3|nil
+---
+--- Get remaining waypoints (not yet visited)
+---@field public get_remaining_waypoints fun(self: simple_movement): vec3[]
+---
+--- Get original waypoints before smoothing
+---@field public get_original_waypoints fun(self: simple_movement): vec3[]
+---
+--- Skip current waypoint and move to next
+---@field public skip_waypoint fun(self: simple_movement): boolean
+---
+--- Restart navigation from waypoint 1 (useful for loops)
+---@field public restart_from_beginning fun(self: simple_movement): boolean
+---
+--- Strafe in a direction ("left", "right", or nil to stop)
+---@field public strafe fun(self: simple_movement, direction: string|nil): boolean
+---
+--- Enable or disable debug logging
+---@field public set_debug fun(self: simple_movement, enabled: boolean): boolean
+---
+--- Set movement system: true = look_at (smooth), false = turns (legacy)
+---@field public set_use_look_at fun(self: simple_movement, use_look_at: boolean): nil
+---
+--- Check if using look_at system (true) or turns system (false)
+---@field public is_using_look_at fun(self: simple_movement): boolean
+---
+--- Get current movement constants (legacy API)
+---@field public get_constants fun(self: simple_movement): table
+---
+--- Customize movement constants (legacy API - use set_threshold/set_turn_speed instead)
+---@field public set_constants fun(self: simple_movement, constants: table): boolean
+---
+--- Get current internal state for debugging
+---@field public get_state fun(self: simple_movement): simple_movement_state
+---
+--- Check if game window is tabbed out (minimized)
+---@field public is_tabbed_out fun(self: simple_movement): boolean
+---
+--- Enable or disable flying mode for outdoor navigation
+---@field public set_flying_enabled fun(self: simple_movement, enabled: boolean, flying_mod?: table): boolean
+---
+--- Check if flying mode is enabled
+---@field public is_flying_enabled fun(self: simple_movement): boolean
+---
+--- Get flying module state (if loaded)
+---@field public get_flying_state fun(self: simple_movement): string|nil
+---
+--- Enable or disable Catmull-Rom path smoothing
+---@field public set_smoothing_enabled fun(self: simple_movement, enabled: boolean): nil
+---
+--- Check if path smoothing is enabled
+---@field public is_smoothing_enabled fun(self: simple_movement): boolean
+---
+--- Set smoothing subdivisions (1-20, higher = smoother)
+---@field public set_smoothing_subdivisions fun(self: simple_movement, subdivisions: number): nil
+---
+--- Get current smoothing subdivisions
+---@field public get_smoothing_subdivisions fun(self: simple_movement): number
+---
+--- Set waypoint arrival threshold (1-10 yards)
+---@field public set_threshold fun(self: simple_movement, threshold: number): nil
+---
+--- Get current arrival threshold
+---@field public get_threshold fun(self: simple_movement): number
+---
+--- Set final destination threshold (0.5-5 yards, smaller = more precise stop)
+---@field public set_final_threshold fun(self: simple_movement, threshold: number): nil
+---
+--- Get final destination threshold
+---@field public get_final_threshold fun(self: simple_movement): number
+---
+--- Set turn speed (0.05-0.5, higher = faster turning)
+---@field public set_turn_speed fun(self: simple_movement, speed: number): nil
+---
+--- Get current turn speed
+---@field public get_turn_speed fun(self: simple_movement): number
+---
+--- Set look-ahead distance (5-50 yards)
+---@field public set_look_distance fun(self: simple_movement, distance: number): nil
+---
+--- Get current look distance
+---@field public get_look_distance fun(self: simple_movement): number
+---
+--- Get current waypoint index
+---@field public get_current_index fun(self: simple_movement): number
+---
+--- Get total waypoint count (after smoothing)
+---@field public get_waypoint_count fun(self: simple_movement): number
+---
+--- Get progress as percentage (0-100)
+---@field public get_progress fun(self: simple_movement): number
+
+---@class simple_movement_state
+---@field public state string "idle" | "moving" | "paused"
+---@field public current_index number Current waypoint index
+---@field public waypoint_count number Total waypoints (after smoothing)
+---@field public original_waypoint_count number Original waypoints (before smoothing)
+---@field public target vec3|nil Current target position
+---@field public is_moving_forward boolean Forward input active
+---@field public is_strafing_left boolean Strafe left input active
+---@field public is_strafing_right boolean Strafe right input active
+---@field public is_turning_left boolean Turn left input active (turns system)
+---@field public is_turning_right boolean Turn right input active (turns system)
+---@field public is_tabbed_out boolean Game window not focused
+---@field public flying_enabled boolean Flying mode enabled (always false - WIP)
+---@field public smooth_enabled boolean Path smoothing enabled
+---@field public use_look_at boolean true = look_at system, false = turns system
+
+---@type simple_movement
+local tbl
+return tbl
