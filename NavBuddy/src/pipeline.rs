@@ -35,9 +35,10 @@ pub const MAX_PATH_POLYS: usize = 1024;
 /// Maximum waypoints in the straight path.
 pub const MAX_STRAIGHT_PATH: usize = 2048;
 
-/// Z-extent tiers (unused — flat z=500 proved more reliable for multi-floor).
-#[allow(dead_code)]
-const Z_TIERS: [f32; 3] = [10.0, 50.0, 500.0];
+/// Tiered Z-extents for polygon search: tight first (correct floor), broader as fallback.
+/// Tight vertical search prevents snapping to the wrong floor in multi-level structures.
+/// Reference: TrinityCore uses Y≈4 (Detour vertical axis) for floor-accurate queries.
+const Z_SEARCH_TIERS: [f32; 3] = [5.0, 50.0, 500.0];
 
 /// Options controlling how a path is computed.
 #[derive(Debug, Clone, Default)]
@@ -133,20 +134,34 @@ pub fn create_smoothing_config(
     config
 }
 
-/// Find nearest polygon using full search extents (z=500).
+/// Find the nearest polygon using tiered Z-extent search.
 ///
-/// Uses the same flat z=500 approach as the proven worktree version.
-/// Detour's `find_nearest_poly` returns the polygon closest to `pos`,
-/// so the correct floor is selected by the position's Z coordinate.
+/// Tries tight vertical extents first to pick the correct floor in multi-level
+/// structures (towers, bridges, stacked rooms). Falls back to broader extents
+/// for positions on cliffs, steep terrain, or far from navmesh.
 pub fn find_poly_tiered(
     query: &NavMeshQuery,
     pos: Vec3,
     filter: &QueryFilter,
-    _z_override: Option<f32>,
+    z_override: Option<f32>,
 ) -> Result<(PolyRef, Vec3), AppError> {
-    query
-        .find_nearest_poly(pos, SEARCH_EXTENTS, filter)
-        .map_err(|_| AppError::PathfindingFailed("Position not on navmesh".into()))
+    // If caller provides explicit z_extent, use it directly
+    if let Some(z) = z_override {
+        let extents = Vec3::new(SEARCH_EXTENTS.x, SEARCH_EXTENTS.y, z);
+        return query
+            .find_nearest_poly(pos, extents, filter)
+            .map_err(|_| AppError::PathfindingFailed("Position not on navmesh".into()));
+    }
+
+    // Tiered search: tight vertical extents first for correct floor selection
+    for &z_ext in &Z_SEARCH_TIERS {
+        let extents = Vec3::new(SEARCH_EXTENTS.x, SEARCH_EXTENTS.y, z_ext);
+        if let Ok(result) = query.find_nearest_poly(pos, extents, filter) {
+            return Ok(result);
+        }
+    }
+
+    Err(AppError::PathfindingFailed("Position not on navmesh".into()))
 }
 
 /// Execute the full pathfinding pipeline: find → straight → optimize → smooth → project → validate.
@@ -227,6 +242,52 @@ pub fn execute_pathfind(
     })
 }
 
+/// Max 3D deviation (yards) allowed when string-pulling skips intermediate waypoints.
+/// Prevents collapsing ramp/staircase waypoints on vertical terrain.
+const MAX_STRING_PULL_DEVIATION: f32 = 3.0;
+
+/// Calculate the maximum perpendicular 3D distance from any intermediate waypoint
+/// to the line segment between `waypoints[from]` and `waypoints[to]`.
+///
+/// Used to prevent string-pulling from collapsing curved or vertical paths
+/// (ramps, spiral staircases, switchbacks) where intermediate waypoints
+/// deviate significantly from the direct line.
+fn max_deviation_from_segment(waypoints: &[Vec3], from: usize, to: usize) -> f32 {
+    if to <= from + 1 {
+        return 0.0;
+    }
+
+    let a = waypoints[from];
+    let b = waypoints[to];
+    let ab_x = b.x - a.x;
+    let ab_y = b.y - a.y;
+    let ab_z = b.z - a.z;
+    let ab_len_sq = ab_x * ab_x + ab_y * ab_y + ab_z * ab_z;
+
+    // If start and end overlap, return max distance to that point
+    if ab_len_sq < 0.0001 {
+        let mut max_dev = 0.0f32;
+        for wp in &waypoints[(from + 1)..to] {
+            max_dev = max_dev.max(wp.distance(&a));
+        }
+        return max_dev;
+    }
+
+    let mut max_dev = 0.0f32;
+    for p in &waypoints[(from + 1)..to] {
+        let ap_x = p.x - a.x;
+        let ap_y = p.y - a.y;
+        let ap_z = p.z - a.z;
+        let t = ((ap_x * ab_x + ap_y * ab_y + ap_z * ab_z) / ab_len_sq).clamp(0.0, 1.0);
+        let dx = p.x - (a.x + t * ab_x);
+        let dy = p.y - (a.y + t * ab_y);
+        let dz = p.z - (a.z + t * ab_z);
+        let dev = (dx * dx + dy * dy + dz * dz).sqrt();
+        max_dev = max_dev.max(dev);
+    }
+    max_dev
+}
+
 /// String-pulling optimization to reduce waypoint count while maintaining a valid path.
 ///
 /// Uses raycast to find the furthest visible waypoint from each position,
@@ -240,7 +301,7 @@ pub fn string_pull_path(
         return waypoints.to_vec();
     }
 
-    let search_extents = Vec3::new(10.0, 10.0, 50.0);
+    let search_extents = Vec3::new(10.0, 10.0, 10.0);
     let mut result = Vec::with_capacity(waypoints.len());
 
     // Always include start point
@@ -268,7 +329,10 @@ pub fn string_pull_path(
             match query.raycast(current_ref, current_pos, target_pos, filter) {
                 Ok((hit_t, _)) => {
                     if hit_t >= 1.0 {
-                        furthest_visible = target_idx;
+                        let dev = max_deviation_from_segment(waypoints, current_idx, target_idx);
+                        if dev <= MAX_STRING_PULL_DEVIATION {
+                            furthest_visible = target_idx;
+                        }
                     }
                 }
                 Err(_) => {
