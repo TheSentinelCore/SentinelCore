@@ -569,12 +569,16 @@ function MovementModule:_check_stuck(player)
 
     if simple_movement:is_moving() and moved < self._config.stuck_distance_min then
         self._stuck_count = self._stuck_count + 1
+        local moved_2d = pos:dist_to_ignore_z(self._last_stuck_pos)
+        local dz = math.abs(pos.z - self._last_stuck_pos.z)
         core.log_warning("[Movement] Stuck #" .. self._stuck_count
-            .. " (moved " .. string.format("%.2f", moved) .. " yards)")
+            .. " (3D=" .. string.format("%.2f", moved)
+            .. " 2D=" .. string.format("%.2f", moved_2d)
+            .. " dZ=" .. string.format("%.2f", dz) .. ")")
         self:_handle_stuck()
     else
         if self._stuck_count > 0 then
-            core.log("[Movement] Unstuck (moved " .. string.format("%.2f", moved) .. " yards)")
+            core.log("[Movement] Unstuck (3D=" .. string.format("%.2f", moved) .. " yards)")
         end
         self._stuck_count = 0
     end

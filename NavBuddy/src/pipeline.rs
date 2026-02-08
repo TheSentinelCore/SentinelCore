@@ -207,12 +207,9 @@ pub fn execute_pathfind(
         waypoints = string_pull_path(&waypoints, query, filter);
     }
 
-    // Apply wall clearance — push waypoints away from nearby walls/obstacles
-    if let Some(clearance) = options.wall_clearance {
-        if clearance > 0.0 {
-            waypoints = apply_wall_clearance(&waypoints, query, filter, clearance);
-        }
-    }
+    // Densify long segments — insert midpoints projected to navmesh surface.
+    // On spiral ramps, this snaps chord midpoints onto the actual ramp arc.
+    waypoints = densify_segments(&waypoints, query, filter);
 
     // Store original waypoints before smoothing (for corner validation)
     let original_waypoints = waypoints.clone();
@@ -233,7 +230,15 @@ pub fn execute_pathfind(
     project_waypoints_to_surface(&mut waypoints, query, filter);
 
     // Validate smoothed path doesn't cut through walls at corners
-    let waypoints = validate_smoothed_path(&waypoints, &original_waypoints, query, filter);
+    let mut waypoints = validate_smoothed_path(&waypoints, &original_waypoints, query, filter);
+
+    // Apply wall clearance LAST — after validation, so validation can't undo the push
+    // by inserting pre-clearance original waypoints.
+    if let Some(clearance) = options.wall_clearance {
+        if clearance > 0.0 {
+            waypoints = apply_wall_clearance(&waypoints, query, filter, clearance);
+        }
+    }
 
     // Calculate total path distance
     let distance = calculate_path_distance(&waypoints);
@@ -247,7 +252,7 @@ pub fn execute_pathfind(
 
 /// Max 3D deviation (yards) allowed when string-pulling skips intermediate waypoints.
 /// Prevents collapsing ramp/staircase waypoints on vertical terrain.
-const MAX_STRING_PULL_DEVIATION: f32 = 3.0;
+const MAX_STRING_PULL_DEVIATION: f32 = 1.5;
 
 /// Calculate the maximum perpendicular 3D distance from any intermediate waypoint
 /// to the line segment between `waypoints[from]` and `waypoints[to]`.
@@ -289,6 +294,36 @@ fn max_deviation_from_segment(waypoints: &[Vec3], from: usize, to: usize) -> f32
         max_dev = max_dev.max(dev);
     }
     max_dev
+}
+
+/// Max cumulative 2D heading change (radians) allowed when string-pulling.
+/// Prevents collapsing spiral ramp/switchback waypoints where the walking
+/// arc diverges significantly from the straight-line chord.
+const MAX_HEADING_CHANGE: f32 = 0.524; // 30 degrees
+
+/// Compute cumulative absolute heading change through waypoints[from..=to].
+///
+/// Sums the absolute turn angle at each intermediate waypoint. High values
+/// indicate curved paths (spiral ramps, switchbacks) where skipping waypoints
+/// would create chords that cut through walls.
+fn cumulative_heading_change(waypoints: &[Vec3], from: usize, to: usize) -> f32 {
+    if to <= from + 1 {
+        return 0.0;
+    }
+    let mut total = 0.0f32;
+    for i in (from + 1)..to {
+        let prev = &waypoints[i - 1];
+        let curr = &waypoints[i];
+        let next = &waypoints[i + 1];
+        let h1 = (curr.y - prev.y).atan2(curr.x - prev.x);
+        let h2 = (next.y - curr.y).atan2(next.x - curr.x);
+        let mut delta = (h2 - h1).abs();
+        if delta > std::f32::consts::PI {
+            delta = 2.0 * std::f32::consts::PI - delta;
+        }
+        total += delta;
+    }
+    total
 }
 
 /// String-pulling optimization to reduce waypoint count while maintaining a valid path.
@@ -333,9 +368,17 @@ pub fn string_pull_path(
                 Ok((hit_t, _)) => {
                     if hit_t >= 1.0 {
                         let dev = max_deviation_from_segment(waypoints, current_idx, target_idx);
-                        if dev <= MAX_STRING_PULL_DEVIATION {
-                            furthest_visible = target_idx;
+                        if dev > MAX_STRING_PULL_DEVIATION {
+                            continue;
                         }
+                        // Guard: don't skip if path curves too much in 2D (spiral ramps).
+                        // The character walks a straight chord between waypoints, so a
+                        // large heading change means the chord cuts through the arc interior.
+                        let turn = cumulative_heading_change(waypoints, current_idx, target_idx);
+                        if turn > MAX_HEADING_CHANGE {
+                            break; // Path curves too much — stop looking further
+                        }
+                        furthest_visible = target_idx;
                     }
                 }
                 Err(_) => {
@@ -558,6 +601,60 @@ pub fn calculate_path_distance(waypoints: &[Vec3]) -> f32 {
         .windows(2)
         .map(|w| w[0].distance(&w[1]))
         .sum()
+}
+
+/// Max segment length (yards) before inserting intermediate waypoints.
+/// Short segments keep the walking chord close to the navmesh arc on curves
+/// (spiral ramps, switchbacks). Midpoints are projected to the navmesh surface,
+/// which snaps them from the chord onto the actual walkable surface.
+const MAX_SEGMENT_LENGTH: f32 = 3.0;
+
+/// Split long segments by inserting midpoints projected to the navmesh surface.
+///
+/// On curved paths (spiral ramps), linear interpolation between waypoints
+/// creates chords that cut inside the curve. By inserting midpoints and
+/// projecting them to the navmesh, the points snap onto the actual surface,
+/// effectively following the arc.
+pub fn densify_segments(
+    waypoints: &[Vec3],
+    query: &NavMeshQuery,
+    filter: &QueryFilter,
+) -> Vec<Vec3> {
+    if waypoints.len() < 2 {
+        return waypoints.to_vec();
+    }
+
+    let mut result = Vec::with_capacity(waypoints.len() * 2);
+    result.push(waypoints[0]);
+
+    for i in 0..waypoints.len() - 1 {
+        let a = waypoints[i];
+        let b = waypoints[i + 1];
+        let dist = a.distance(&b);
+
+        if dist > MAX_SEGMENT_LENGTH {
+            let splits = (dist / MAX_SEGMENT_LENGTH).ceil() as usize;
+            for j in 1..splits {
+                let t = j as f32 / splits as f32;
+                let mid = Vec3::new(
+                    a.x + (b.x - a.x) * t,
+                    a.y + (b.y - a.y) * t,
+                    a.z + (b.z - a.z) * t,
+                );
+                // Project to navmesh — on curved surfaces this snaps
+                // from the chord onto the actual walkable surface.
+                if let Ok((poly_ref, _)) = query.find_nearest_poly(mid, HEIGHT_EXTENTS, filter) {
+                    if let Ok((snapped, _)) = query.closest_point_on_poly(poly_ref, mid) {
+                        result.push(snapped);
+                    }
+                }
+            }
+        }
+
+        result.push(b);
+    }
+
+    result
 }
 
 /// Project waypoints to navmesh surface for correct Z heights.
