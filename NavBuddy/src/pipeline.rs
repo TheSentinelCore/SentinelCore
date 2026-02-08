@@ -23,10 +23,12 @@ pub const SEARCH_EXTENTS: Vec3 = Vec3 {
 };
 
 /// Height extents for waypoint surface projection (smaller for accuracy).
+/// Tight z keeps wall-clearance, surface projection, and validation on the correct floor
+/// in multi-level structures (towers, ramps, bridges).
 pub const HEIGHT_EXTENTS: Vec3 = Vec3 {
     x: 5.0,
     y: 5.0,
-    z: 50.0,
+    z: 5.0,
 };
 
 /// Maximum polygons in the path corridor.
@@ -175,16 +177,17 @@ pub fn execute_pathfind(
     options: &PathOptions,
 ) -> Result<PathResult, AppError> {
     // Find nearest polygons to start and end positions (tiered Z fallback for multi-floor safety)
-    let (start_ref, _start_nearest) = find_poly_tiered(query, start_pos, filter, options.z_extent)?;
-    let (end_ref, _end_nearest) = find_poly_tiered(query, end_pos, filter, options.z_extent)?;
+    // Use the snapped positions so find_path/find_straight_path operate on polygon-accurate coords.
+    let (start_ref, start_nearest) = find_poly_tiered(query, start_pos, filter, options.z_extent)?;
+    let (end_ref, end_nearest) = find_poly_tiered(query, end_pos, filter, options.z_extent)?;
 
     // Find polygon corridor from start to end
     let (poly_path, is_partial) = query
         .find_path(
             start_ref,
             end_ref,
-            start_pos,
-            end_pos,
+            start_nearest,
+            end_nearest,
             filter,
             MAX_PATH_POLYS,
         )
@@ -196,7 +199,7 @@ pub fn execute_pathfind(
 
     // Convert polygon corridor to straight path (waypoints)
     let mut waypoints = query
-        .find_straight_path(start_pos, end_pos, &poly_path, MAX_STRAIGHT_PATH)
+        .find_straight_path(start_nearest, end_nearest, &poly_path, MAX_STRAIGHT_PATH)
         .map_err(|e| AppError::PathfindingFailed(e.to_string()))?;
 
     // Apply string-pulling optimization if requested
@@ -370,7 +373,7 @@ pub fn apply_wall_clearance(
     }
 
     let max_radius = clearance * 2.0;
-    let snap_extents = Vec3::new(clearance * 0.5, clearance * 0.5, 50.0);
+    let snap_extents = Vec3::new(clearance * 0.5, clearance * 0.5, 5.0);
     let mut result = Vec::with_capacity(waypoints.len() * 2);
 
     // Always keep start point as-is
@@ -421,22 +424,25 @@ pub fn apply_wall_clearance(
                     a.z + (b.z - a.z) * t,
                 );
 
-                // Check wall distance at this sample point
-                let poly_ref = match query.find_nearest_poly(sample, HEIGHT_EXTENTS, filter) {
-                    Ok((pr, _)) => pr,
-                    Err(_) => continue,
-                };
+                // Snap sample to navmesh surface — on ramps, linear interpolation
+                // between waypoints drifts off the polygon surface, making
+                // find_distance_to_wall inaccurate.
+                let (poly_ref, on_surface) =
+                    match query.find_nearest_poly(sample, HEIGHT_EXTENTS, filter) {
+                        Ok(result) => result,
+                        Err(_) => continue,
+                    };
 
                 if let Ok((hit_dist, _hit_pos, hit_normal)) =
-                    query.find_distance_to_wall(poly_ref, sample, max_radius, filter)
+                    query.find_distance_to_wall(poly_ref, on_surface, max_radius, filter)
                 {
                     if hit_dist < clearance {
                         // Segment passes too close to a wall — insert offset waypoint
                         let push_dist = clearance - hit_dist;
                         let candidate = Vec3::new(
-                            sample.x + hit_normal.x * push_dist,
-                            sample.y + hit_normal.y * push_dist,
-                            sample.z,
+                            on_surface.x + hit_normal.x * push_dist,
+                            on_surface.y + hit_normal.y * push_dist,
+                            on_surface.z,
                         );
 
                         if let Ok((snap_ref, snapped)) =
@@ -445,14 +451,14 @@ pub fn apply_wall_clearance(
                             if snapped.distance_2d(&candidate) < clearance {
                                 // Verify pushed point is reachable (no wall in either direction)
                                 let forward_ok = query
-                                    .raycast(poly_ref, sample, snapped, filter)
+                                    .raycast(poly_ref, on_surface, snapped, filter)
                                     .map(|(t, _)| t >= 1.0)
                                     .unwrap_or(false);
 
                                 // Also check reverse direction
                                 let reverse_ok = if forward_ok {
                                     query
-                                        .raycast(snap_ref, snapped, sample, filter)
+                                        .raycast(snap_ref, snapped, on_surface, filter)
                                         .map(|(t, _)| t >= 1.0)
                                         .unwrap_or(false)
                                 } else {
@@ -494,18 +500,19 @@ fn try_push_from_wall(
     max_radius: f32,
     snap_extents: &Vec3,
 ) -> Vec3 {
-    let poly_ref = match query.find_nearest_poly(wp, HEIGHT_EXTENTS, filter) {
-        Ok((pr, _)) => pr,
+    // Snap to surface first — waypoint may be slightly off-polygon on ramps
+    let (poly_ref, on_surface) = match query.find_nearest_poly(wp, HEIGHT_EXTENTS, filter) {
+        Ok(result) => result,
         Err(_) => return wp,
     };
 
-    match query.find_distance_to_wall(poly_ref, wp, max_radius, filter) {
+    match query.find_distance_to_wall(poly_ref, on_surface, max_radius, filter) {
         Ok((hit_dist, _hit_pos, hit_normal)) if hit_dist < clearance => {
             let push_dist = clearance - hit_dist;
             let candidate = Vec3::new(
-                wp.x + hit_normal.x * push_dist,
-                wp.y + hit_normal.y * push_dist,
-                wp.z,
+                on_surface.x + hit_normal.x * push_dist,
+                on_surface.y + hit_normal.y * push_dist,
+                on_surface.z,
             );
 
             if let Ok((snap_ref, snapped)) =
@@ -514,13 +521,13 @@ fn try_push_from_wall(
                 if snapped.distance_2d(&candidate) < clearance {
                     // Verify pushed point is reachable (no wall in either direction)
                     let forward_ok = query
-                        .raycast(poly_ref, wp, snapped, filter)
+                        .raycast(poly_ref, on_surface, snapped, filter)
                         .map(|(t, _)| t >= 1.0)
                         .unwrap_or(false);
 
                     let reverse_ok = if forward_ok {
                         query
-                            .raycast(snap_ref, snapped, wp, filter)
+                            .raycast(snap_ref, snapped, on_surface, filter)
                             .map(|(t, _)| t >= 1.0)
                             .unwrap_or(false)
                     } else {
@@ -833,7 +840,7 @@ pub fn apply_avoidance(
                 );
 
                 // Snap projected point to navmesh
-                let search = Vec3::new(buffer * 2.0, buffer * 2.0, 50.0);
+                let search = Vec3::new(buffer * 2.0, buffer * 2.0, 5.0);
                 if let Ok((_, snapped)) = query.find_nearest_poly(projected, search, filter) {
                     // Try to re-path: prev_safe → snapped → next_safe
                     let prev = *result.last().unwrap();

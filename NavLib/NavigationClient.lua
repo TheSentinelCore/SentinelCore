@@ -176,7 +176,8 @@ NavigationClient.__index = NavigationClient
 function NavigationClient:new(config)
     config = config or {}
     local o = setmetatable({}, NavigationClient)
-    o._base_url = config.base_url or "http://3.137.184.168:47110"
+    -- o._base_url = config.base_url or "http://3.137.184.168:47110"
+    o._base_url = config.base_url or "http://127.0.0.1:47110"
     o._max_retries = config.max_retries or 3
     o._is_connected = false
     o._consecutive_failures = 0

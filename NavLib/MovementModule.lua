@@ -26,17 +26,17 @@ local DEFAULT_CONFIG = {
     anti_detection       = false,
     max_deviation        = 3.0,
     allow_partial        = true,
-    smooth_iterations    = 2,
+    smooth_iterations    = 3,
     smooth_samples       = 10,
-    smooth_ratio         = 0.75,
-    min_corner_angle     = 0,
+    smooth_ratio         = 0.50,
+    min_corner_angle     = 90,
     keep_originals       = false,
     filter_ground        = 1.0,
     filter_water         = 10.0,
     filter_lava          = 100.0,
     use_corridor_indoor  = true,
     corridor_probe_dist  = 15.0,
-    wall_clearance       = 0,
+    wall_clearance       = 1.0,
 }
 
 -- Class ------------------------------------------------------------------
