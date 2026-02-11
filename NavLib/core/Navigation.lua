@@ -197,15 +197,21 @@ function Navigation:_build_url(endpoint, params)
 
     local parts = {}
     for k, v in pairs(params) do
-        local val
-        if type(v) == "number" then
-            val = string.format("%g", v)
-        elseif type(v) == "boolean" then
-            val = v and "true" or "false"
+        if type(v) == "table" then
+            for _, item in ipairs(v) do
+                parts[#parts + 1] = k .. "=" .. tostring(item)
+            end
         else
-            val = tostring(v)
+            local val
+            if type(v) == "number" then
+                val = string.format("%g", v)
+            elseif type(v) == "boolean" then
+                val = v and "true" or "false"
+            else
+                val = tostring(v)
+            end
+            parts[#parts + 1] = k .. "=" .. val
         end
-        parts[#parts + 1] = k .. "=" .. val
     end
     return url .. "?" .. table.concat(parts, "&")
 end
@@ -534,7 +540,7 @@ function Navigation:find_path_avoid(start_pos, dest, avoid_zones, callback, opts
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
 
-    -- Build pipe-separated avoid param (matches Rust parser)
+    -- Build avoid zones as table — _build_url emits repeated avoid= query params
     local avoid_parts = {}
     for _, zone in ipairs(avoid_zones) do
         avoid_parts[#avoid_parts + 1] = string.format(
@@ -542,7 +548,7 @@ function Navigation:find_path_avoid(start_pos, dest, avoid_zones, callback, opts
             zone.x, zone.y, zone.z, zone.radius, zone.cost
         )
     end
-    params.avoid = table.concat(avoid_parts, "|")
+    params.avoid = avoid_parts
 
     local url = self:_build_url("/api/v1/path-avoid", params)
 
