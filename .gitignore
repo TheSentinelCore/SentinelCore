@@ -1,4 +1,11 @@
 target
-mmaps
 NavBuddy/reference
-mmaps-v1
+mmaps*
+common
+core_lua
+core_universal_kicks
+core_universal_utility
+.api
+documentation
+CLAUDE.md
+seri
