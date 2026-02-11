@@ -1,4 +1,4 @@
----@class GatherModule
+---@class Gather
 ---@field private _event_bus EventBus
 ---@field private _state_machine StateMachine
 ---@field private _node_scanner NodeScanner
@@ -20,8 +20,8 @@
 ---@field private _items_looted table
 ---@field private _regather_node table|nil Node data for pending regather
 ---@field private _regather_time number|nil Time to attempt regather
-local GatherModule = {}
-GatherModule.__index = GatherModule
+local Gather = {}
+Gather.__index = Gather
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
 local Helpers = require("utils/Helpers")
@@ -55,19 +55,19 @@ local function get_logger()
         end
     end
     if Logger then
-        return Logger:new("GatherModule")
+        return Logger:new("Gather")
     end
     return nil
 end
 
----Create a new GatherModule instance
+---Create a new Gather instance
 ---@param event_bus EventBus
 ---@param state_machine StateMachine
 ---@param node_scanner NodeScanner
 ---@param config? table Optional configuration
----@return GatherModule
-function GatherModule:new(event_bus, state_machine, node_scanner, config)
-    local instance = setmetatable({}, GatherModule)
+---@return Gather
+function Gather:new(event_bus, state_machine, node_scanner, config)
+    local instance = setmetatable({}, Gather)
 
     instance._event_bus = event_bus
     instance._state_machine = state_machine
@@ -101,7 +101,7 @@ function GatherModule:new(event_bus, state_machine, node_scanner, config)
 end
 
 ---Subscribe to relevant events
-function GatherModule:_subscribe_events()
+function Gather:_subscribe_events()
     -- Listen for movement completed (arrived at node)
     self._event_bus:subscribe(EVENTS.MOVEMENT_COMPLETED, function(data)
         if self._state_machine:get_state() == STATES.APPROACHING then
@@ -128,25 +128,25 @@ function GatherModule:_subscribe_events()
                 self._state_machine:transition(STATES.TRAVELING)
             end
         end
-    end, 50, false, "GatherModule")
+    end, 50, false, "Gather")
 
     -- Listen for combat to interrupt gathering
     self._event_bus:subscribe(EVENTS.COMBAT_ENTERED, function()
         if self:is_gathering() then
             self:_interrupt_gather("Combat entered")
         end
-    end, 10, false, "GatherModule")
+    end, 10, false, "Gather")
 
     -- Listen for bot stop
     self._event_bus:subscribe(EVENTS.BOT_STOP, function()
         self:cancel_gather()
-    end, 50, false, "GatherModule")
+    end, 50, false, "Gather")
 end
 
 ---Start gathering a node
 ---@param node table Node data from NodeScanner
 ---@return boolean started Whether gathering started
-function GatherModule:start_gather(node)
+function Gather:start_gather(node)
     if self:is_gathering() then
         if self._log then
             self._log:warn("Already gathering, cannot start new gather")
@@ -210,7 +210,7 @@ function GatherModule:start_gather(node)
 end
 
 ---Update gathering logic (call each tick)
-function GatherModule:update()
+function Gather:update()
     -- Check for pending regather (multi-tap nodes)
     local regather_node_data = self._regather_node
     local regather_time = self._regather_time
@@ -285,7 +285,7 @@ end
 
 ---Process facing state
 ---@param player game_object
-function GatherModule:_process_facing(player)
+function Gather:_process_facing(player)
     local node = self._current_node
     if not node or not node:is_valid() then
         self:_fail_gather("Node despawned")
@@ -316,7 +316,7 @@ end
 
 ---Process dismounting state
 ---@param player game_object
-function GatherModule:_process_dismounting(player)
+function Gather:_process_dismounting(player)
     -- Wait until dismounted
     if not player:is_mounted() then
         -- Small delay after dismount
@@ -331,7 +331,7 @@ end
 
 ---Process interacting state
 ---@param player game_object
-function GatherModule:_process_interacting(player)
+function Gather:_process_interacting(player)
     local node = self._current_node
     if not node or not node:is_valid() then
         self:_fail_gather("Node despawned")
@@ -380,7 +380,7 @@ end
 
 ---Process casting state
 ---@param player game_object
-function GatherModule:_process_casting(player)
+function Gather:_process_casting(player)
     -- Check if we're casting
     if player:is_casting_spell() or player:is_channelling_spell() then
         -- Still casting, publish progress
@@ -411,7 +411,7 @@ function GatherModule:_process_casting(player)
 end
 
 ---Process waiting for loot window state
-function GatherModule:_process_waiting_loot()
+function Gather:_process_waiting_loot()
     local loot_count = core.game_ui.get_loot_item_count()
 
     if loot_count and loot_count > 0 then
@@ -436,7 +436,7 @@ function GatherModule:_process_waiting_loot()
 end
 
 ---Process looting state
-function GatherModule:_process_looting()
+function Gather:_process_looting()
     local loot_count = core.game_ui.get_loot_item_count()
 
     if not loot_count or loot_count == 0 then
@@ -484,7 +484,7 @@ function GatherModule:_process_looting()
 end
 
 ---Complete gathering successfully
-function GatherModule:_complete_gather()
+function Gather:_complete_gather()
     local node = self._current_node
     local node_guid = self._current_node_guid
     -- Check is_valid() before calling get_name() to avoid "Invalid game object" error
@@ -542,7 +542,7 @@ end
 
 ---Fail gathering
 ---@param reason string Failure reason
-function GatherModule:_fail_gather(reason)
+function Gather:_fail_gather(reason)
     local node = self._current_node
     local node_guid = self._current_node_guid
 
@@ -567,7 +567,7 @@ end
 
 ---Interrupt gathering (e.g., combat)
 ---@param reason string Interrupt reason
-function GatherModule:_interrupt_gather(reason)
+function Gather:_interrupt_gather(reason)
     if self._log then
         self._log:warn("Gather interrupted: %s", reason)
     end
@@ -589,7 +589,7 @@ function GatherModule:_interrupt_gather(reason)
 end
 
 ---Reset internal state
-function GatherModule:_reset_state()
+function Gather:_reset_state()
     self._gather_state = GATHER_STATES.NONE
     self._current_node = nil
     self._current_node_guid = nil
@@ -603,7 +603,7 @@ function GatherModule:_reset_state()
 end
 
 ---Cancel current gather
-function GatherModule:cancel_gather()
+function Gather:cancel_gather()
     -- Clear any pending regather
     self._regather_node = nil
     self._regather_time = nil
@@ -615,25 +615,25 @@ end
 
 ---Check if currently gathering
 ---@return boolean
-function GatherModule:is_gathering()
+function Gather:is_gathering()
     return self._gather_state ~= GATHER_STATES.NONE
 end
 
 ---Get current gathering state
 ---@return string
-function GatherModule:get_gather_state()
+function Gather:get_gather_state()
     return self._gather_state
 end
 
 ---Get current node being gathered
 ---@return game_object|nil
-function GatherModule:get_current_node()
+function Gather:get_current_node()
     return self._current_node
 end
 
 ---Get time spent gathering current node
 ---@return number|nil
-function GatherModule:get_gather_duration()
+function Gather:get_gather_duration()
     if not self._gather_start_time then
         return nil
     end
@@ -641,14 +641,14 @@ function GatherModule:get_gather_duration()
 end
 
 ---Clean up module
-function GatherModule:destroy()
+function Gather:destroy()
     self:cancel_gather()
-    self._event_bus:unsubscribe_owner("GatherModule")
+    self._event_bus:unsubscribe_owner("Gather")
 end
 
 ---Run unit tests
 ---@return table<string, boolean> Test results
-function GatherModule:_test()
+function Gather:_test()
     local results = {}
 
     -- Create mock dependencies
@@ -676,7 +676,7 @@ function GatherModule:_test()
     }
 
     -- Test 1: Create module
-    local module = GatherModule:new(mock_bus, mock_state, mock_scanner)
+    local module = Gather:new(mock_bus, mock_state, mock_scanner)
     results.create = (module ~= nil)
 
     -- Test 2: Initial state
@@ -702,4 +702,4 @@ function GatherModule:_test()
     return results
 end
 
-return GatherModule
+return Gather

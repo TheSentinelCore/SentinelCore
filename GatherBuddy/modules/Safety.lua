@@ -1,9 +1,9 @@
----@class SafetyModule
+---@class Safety
 ---@field private _event_bus EventBus
 ---@field private _state_machine StateMachine
 ---@field private _log Logger|nil
-local SafetyModule = {}
-SafetyModule.__index = SafetyModule
+local Safety = {}
+Safety.__index = Safety
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
 local Helpers = require("utils/Helpers")
@@ -27,18 +27,18 @@ local function get_logger()
         end
     end
     if Logger then
-        return Logger:new("SafetyModule")
+        return Logger:new("Safety")
     end
     return nil
 end
 
----Create a new SafetyModule instance
+---Create a new Safety instance
 ---@param event_bus EventBus
 ---@param state_machine StateMachine
 ---@param config? table Optional configuration
----@return SafetyModule
-function SafetyModule:new(event_bus, state_machine, config)
-    local instance = setmetatable({}, SafetyModule)
+---@return Safety
+function Safety:new(event_bus, state_machine, config)
+    local instance = setmetatable({}, Safety)
 
     instance._event_bus = event_bus
     instance._state_machine = state_machine
@@ -71,15 +71,15 @@ function SafetyModule:new(event_bus, state_machine, config)
 end
 
 ---Subscribe to relevant events
-function SafetyModule:_subscribe_events()
+function Safety:_subscribe_events()
     -- Bot stop
     self._event_bus:subscribe(EVENTS.BOT_STOP, function()
         self:_reset_state()
-    end, 50, false, "SafetyModule")
+    end, 50, false, "Safety")
 end
 
 ---Update safety checks (call each tick)
-function SafetyModule:update()
+function Safety:update()
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return
@@ -104,7 +104,7 @@ end
 
 ---Check and handle death state
 ---@param player game_object
-function SafetyModule:_check_death_state(player)
+function Safety:_check_death_state(player)
     local is_dead = player:is_dead()
     local is_ghost = player:is_ghost()
 
@@ -172,7 +172,7 @@ end
 
 ---Check and handle combat state
 ---@param player game_object
-function SafetyModule:_check_combat_state(player)
+function Safety:_check_combat_state(player)
     local is_in_combat = player:is_in_combat()
 
     if is_in_combat and not self._was_in_combat then
@@ -234,7 +234,7 @@ end
 
 ---Scan for nearby threats
 ---@param player game_object
-function SafetyModule:_scan_threats(player)
+function Safety:_scan_threats(player)
     local player_pos = player:get_position()
 
     -- Use unit_helper to get enemies
@@ -265,7 +265,7 @@ function SafetyModule:_scan_threats(player)
 end
 
 ---Update threat level based on current situation
-function SafetyModule:_update_threat_level()
+function Safety:_update_threat_level()
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return
@@ -316,7 +316,7 @@ end
 
 ---Check health and trigger flee if needed
 ---@param player game_object
-function SafetyModule:_check_health(player)
+function Safety:_check_health(player)
     if not self._flee_on_combat then
         return
     end
@@ -346,7 +346,7 @@ end
 
 ---Check if it's safe to gather (no nearby threats)
 ---@return boolean
-function SafetyModule:is_safe_to_gather()
+function Safety:is_safe_to_gather()
     if not self._skip_if_enemies_near then
         return true
     end
@@ -372,36 +372,36 @@ end
 
 ---Get current threat level
 ---@return number
-function SafetyModule:get_threat_level()
+function Safety:get_threat_level()
     return self._current_threat_level
 end
 
 ---Get nearby enemies
 ---@return table[]
-function SafetyModule:get_nearby_enemies()
+function Safety:get_nearby_enemies()
     return self._nearby_enemies
 end
 
 ---Get enemy count
 ---@return number
-function SafetyModule:get_enemy_count()
+function Safety:get_enemy_count()
     return #self._nearby_enemies
 end
 
 ---Check if player is dead
 ---@return boolean
-function SafetyModule:is_dead()
+function Safety:is_dead()
     return self._was_dead
 end
 
 ---Get corpse position (if dead)
 ---@return table|nil
-function SafetyModule:get_corpse_position()
+function Safety:get_corpse_position()
     return self._corpse_position
 end
 
 ---Handle death (release spirit)
-function SafetyModule:release_spirit()
+function Safety:release_spirit()
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return
@@ -416,7 +416,7 @@ function SafetyModule:release_spirit()
 end
 
 ---Resurrect at corpse
-function SafetyModule:resurrect()
+function Safety:resurrect()
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return
@@ -432,24 +432,24 @@ end
 
 ---Set enemy scan radius
 ---@param radius number Scan radius in yards
-function SafetyModule:set_scan_radius(radius)
+function Safety:set_scan_radius(radius)
     self._enemy_scan_radius = Helpers.clamp(radius, 5, 100)
 end
 
 ---Get enemy scan radius
 ---@return number
-function SafetyModule:get_scan_radius()
+function Safety:get_scan_radius()
     return self._enemy_scan_radius
 end
 
 ---Set flee health threshold
 ---@param percent number Health percent (1-100)
-function SafetyModule:set_flee_threshold(percent)
+function Safety:set_flee_threshold(percent)
     self._flee_health_threshold = Helpers.clamp(percent, 1, 100)
 end
 
 ---Reset internal state
-function SafetyModule:_reset_state()
+function Safety:_reset_state()
     self._current_threat_level = THREAT_LEVELS.SAFE
     self._nearby_enemies = {}
     self._was_in_combat = false
@@ -459,14 +459,14 @@ function SafetyModule:_reset_state()
 end
 
 ---Clean up module
-function SafetyModule:destroy()
+function Safety:destroy()
     self:_reset_state()
-    self._event_bus:unsubscribe_owner("SafetyModule")
+    self._event_bus:unsubscribe_owner("Safety")
 end
 
 ---Run unit tests
 ---@return table<string, boolean> Test results
-function SafetyModule:_test()
+function Safety:_test()
     local results = {}
 
     -- Create mock dependencies
@@ -491,7 +491,7 @@ function SafetyModule:_test()
     }
 
     -- Test 1: Create module
-    local module = SafetyModule:new(mock_bus, mock_state)
+    local module = Safety:new(mock_bus, mock_state)
     results.create = (module ~= nil)
 
     -- Test 2: Initial state
@@ -529,4 +529,4 @@ function SafetyModule:_test()
     return results
 end
 
-return SafetyModule
+return Safety

@@ -1,9 +1,9 @@
----@class MountModule
+---@class Mount
 ---@field private _event_bus EventBus
 ---@field private _state_machine StateMachine
 ---@field private _log Logger|nil
-local MountModule = {}
-MountModule.__index = MountModule
+local Mount = {}
+Mount.__index = Mount
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
 local Helpers = require("utils/Helpers")
@@ -31,18 +31,18 @@ local function get_logger()
         end
     end
     if Logger then
-        return Logger:new("MountModule")
+        return Logger:new("Mount")
     end
     return nil
 end
 
----Create a new MountModule instance
+---Create a new Mount instance
 ---@param event_bus EventBus
 ---@param state_machine StateMachine
 ---@param config? table Optional configuration
----@return MountModule
-function MountModule:new(event_bus, state_machine, config)
-    local instance = setmetatable({}, MountModule)
+---@return Mount
+function Mount:new(event_bus, state_machine, config)
+    local instance = setmetatable({}, Mount)
 
     instance._event_bus = event_bus
     instance._state_machine = state_machine
@@ -67,47 +67,47 @@ function MountModule:new(event_bus, state_machine, config)
 end
 
 ---Subscribe to relevant events
-function MountModule:_subscribe_events()
+function Mount:_subscribe_events()
     -- Auto-mount when starting long distance travel
     self._event_bus:subscribe(EVENTS.MOVEMENT_STARTED, function(data)
         if data.destination then
             self:_check_auto_mount(data.destination)
         end
-    end, 50, false, "MountModule")
+    end, 50, false, "Mount")
 
     -- Auto-dismount before gathering
     self._event_bus:subscribe(EVENTS.GATHER_START, function()
         if self:is_mounted() then
             self:dismount()
         end
-    end, 10, false, "MountModule")
+    end, 10, false, "Mount")
 
     -- Dismount on combat
     self._event_bus:subscribe(EVENTS.COMBAT_ENTERED, function()
         if self:is_mounted() then
             self:dismount()
         end
-    end, 10, false, "MountModule")
+    end, 10, false, "Mount")
 
     -- Handle mount request event
     self._event_bus:subscribe(EVENTS.MOUNT_REQUESTED, function(data)
         self:mount(data and data.mount_index)
-    end, 50, false, "MountModule")
+    end, 50, false, "Mount")
 
     -- Handle dismount request event
     self._event_bus:subscribe(EVENTS.DISMOUNT_REQUESTED, function()
         self:dismount()
-    end, 50, false, "MountModule")
+    end, 50, false, "Mount")
 
     -- Bot stop
     self._event_bus:subscribe(EVENTS.BOT_STOP, function()
         self:_reset_state()
-    end, 50, false, "MountModule")
+    end, 50, false, "Mount")
 end
 
 ---Check if should auto-mount for distance
 ---@param destination vec3|table Target destination
-function MountModule:_check_auto_mount(destination)
+function Mount:_check_auto_mount(destination)
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return
@@ -143,7 +143,7 @@ end
 ---Start mounting
 ---@param mount_index? number Optional specific mount index
 ---@return boolean started Whether mount was initiated
-function MountModule:mount(mount_index)
+function Mount:mount(mount_index)
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return false
@@ -244,7 +244,7 @@ end
 
 ---Dismount
 ---@return boolean started Whether dismount was initiated
-function MountModule:dismount()
+function Mount:dismount()
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return false
@@ -270,7 +270,7 @@ function MountModule:dismount()
 end
 
 ---Update mount state (call each tick)
-function MountModule:update()
+function Mount:update()
     if self._mount_state == MOUNT_STATES.NONE then
         return
     end
@@ -290,7 +290,7 @@ end
 
 ---Process mounting state
 ---@param player game_object
-function MountModule:_process_mounting(player)
+function Mount:_process_mounting(player)
     -- Check if now mounted
     if player:is_mounted() then
         if self._log then
@@ -375,7 +375,7 @@ end
 
 ---Process dismounting state
 ---@param player game_object
-function MountModule:_process_dismounting(player)
+function Mount:_process_dismounting(player)
     if not player:is_mounted() then
         if self._log then
             self._log:debug("Dismount complete")
@@ -385,14 +385,14 @@ function MountModule:_process_dismounting(player)
 end
 
 ---Reset internal state
-function MountModule:_reset_state()
+function Mount:_reset_state()
     self._mount_state = MOUNT_STATES.NONE
     self._mount_start_time = nil
 end
 
 ---Check if player is currently mounted
 ---@return boolean
-function MountModule:is_mounted()
+function Mount:is_mounted()
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return false
@@ -402,14 +402,14 @@ end
 
 ---Check if currently in mount/dismount process
 ---@return boolean
-function MountModule:is_mounting()
+function Mount:is_mounting()
     return self._mount_state == MOUNT_STATES.MOUNTING
 end
 
 ---Check if should mount for a given distance
 ---@param distance number Distance in yards
 ---@return boolean
-function MountModule:should_mount(distance)
+function Mount:should_mount(distance)
     if not distance then
         return false
     end
@@ -439,37 +439,37 @@ end
 
 ---Set mount threshold
 ---@param threshold number Distance in yards
-function MountModule:set_mount_threshold(threshold)
+function Mount:set_mount_threshold(threshold)
     self._mount_threshold = Helpers.clamp(threshold, 0, 500)
 end
 
 ---Get mount threshold
 ---@return number
-function MountModule:get_mount_threshold()
+function Mount:get_mount_threshold()
     return self._mount_threshold
 end
 
 ---Set preferred mount index
 ---@param index number Mount index
-function MountModule:set_preferred_mount(index)
+function Mount:set_preferred_mount(index)
     self._preferred_mount_index = index
 end
 
 ---Get preferred mount index
 ---@return number
-function MountModule:get_preferred_mount()
+function Mount:get_preferred_mount()
     return self._preferred_mount_index
 end
 
 ---Clean up module
-function MountModule:destroy()
+function Mount:destroy()
     self:_reset_state()
-    self._event_bus:unsubscribe_owner("MountModule")
+    self._event_bus:unsubscribe_owner("Mount")
 end
 
 ---Run unit tests
 ---@return table<string, boolean> Test results
-function MountModule:_test()
+function Mount:_test()
     local results = {}
 
     -- Create mock dependencies
@@ -492,7 +492,7 @@ function MountModule:_test()
     }
 
     -- Test 1: Create module
-    local module = MountModule:new(mock_bus, mock_state)
+    local module = Mount:new(mock_bus, mock_state)
     results.create = (module ~= nil)
 
     -- Test 2: Initial state
@@ -526,4 +526,4 @@ function MountModule:_test()
     return results
 end
 
-return MountModule
+return Mount

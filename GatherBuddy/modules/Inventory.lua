@@ -1,8 +1,8 @@
----@class InventoryModule
+---@class Inventory
 ---@field private _event_bus EventBus
 ---@field private _log Logger|nil
-local InventoryModule = {}
-InventoryModule.__index = InventoryModule
+local Inventory = {}
+Inventory.__index = Inventory
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
 local Helpers = require("utils/Helpers")
@@ -21,17 +21,17 @@ local function get_logger()
         end
     end
     if Logger then
-        return Logger:new("InventoryModule")
+        return Logger:new("Inventory")
     end
     return nil
 end
 
----Create a new InventoryModule instance
+---Create a new Inventory instance
 ---@param event_bus EventBus
 ---@param config? table Optional configuration
----@return InventoryModule
-function InventoryModule:new(event_bus, config)
-    local instance = setmetatable({}, InventoryModule)
+---@return Inventory
+function Inventory:new(event_bus, config)
+    local instance = setmetatable({}, Inventory)
 
     instance._event_bus = event_bus
     instance._log = get_logger()
@@ -54,11 +54,11 @@ function InventoryModule:new(event_bus, config)
 end
 
 ---Subscribe to relevant events
-function InventoryModule:_subscribe_events()
+function Inventory:_subscribe_events()
     -- Scan after looting
     self._event_bus:subscribe(EVENTS.LOOT_WINDOW_CLOSED, function()
         self:_refresh_inventory()
-    end, 50, false, "InventoryModule")
+    end, 50, false, "Inventory")
 
     -- Track looted items
     self._event_bus:subscribe(EVENTS.ITEM_LOOTED, function(data)
@@ -67,16 +67,16 @@ function InventoryModule:_subscribe_events()
         end
         -- Invalidate cache to force rescan
         self._cached_free_slots = nil
-    end, 50, false, "InventoryModule")
+    end, 50, false, "Inventory")
 
     -- Bot stop
     self._event_bus:subscribe(EVENTS.BOT_STOP, function()
         self:_reset_state()
-    end, 50, false, "InventoryModule")
+    end, 50, false, "Inventory")
 end
 
 ---Update inventory state (call each tick)
-function InventoryModule:update()
+function Inventory:update()
     local now = core.time()
 
     -- Periodic scan
@@ -87,7 +87,7 @@ function InventoryModule:update()
 end
 
 ---Refresh inventory counts
-function InventoryModule:_refresh_inventory()
+function Inventory:_refresh_inventory()
     local free_slots = 0
     local total_slots = 0
 
@@ -141,7 +141,7 @@ end
 ---Get slot count for a bag
 ---@param bag_id number Bag index (0-4)
 ---@return number slot_count
-function InventoryModule:_get_bag_slot_count(bag_id)
+function Inventory:_get_bag_slot_count(bag_id)
     -- Backpack is always 16 slots
     if bag_id == 0 then
         return 16
@@ -180,7 +180,7 @@ end
 ---Get item count in a bag
 ---@param bag_id number Bag index (0-4)
 ---@return number item_count
-function InventoryModule:_get_bag_item_count(bag_id)
+function Inventory:_get_bag_item_count(bag_id)
     local items = core.inventory.get_items_in_bag(bag_id)
     if items then
         local count = 0
@@ -196,7 +196,7 @@ end
 
 ---Get number of free bag slots
 ---@return number
-function InventoryModule:get_free_slots()
+function Inventory:get_free_slots()
     if self._cached_free_slots == nil then
         self:_refresh_inventory()
     end
@@ -205,7 +205,7 @@ end
 
 ---Get total bag slots
 ---@return number
-function InventoryModule:get_total_slots()
+function Inventory:get_total_slots()
     if self._cached_total_slots == nil then
         self:_refresh_inventory()
     end
@@ -214,20 +214,20 @@ end
 
 ---Check if bags are (nearly) full
 ---@return boolean
-function InventoryModule:is_bags_full()
+function Inventory:is_bags_full()
     return self:get_free_slots() < self._min_free_slots
 end
 
 ---Check if should go to vendor
 ---@return boolean
-function InventoryModule:should_vendor()
+function Inventory:should_vendor()
     return self:is_bags_full()
 end
 
 ---Count specific item across all bags
 ---@param item_id number Item ID to count
 ---@return number count
-function InventoryModule:get_item_count(item_id)
+function Inventory:get_item_count(item_id)
     if not item_id then
         return 0
     end
@@ -251,7 +251,7 @@ end
 ---Get all items of a specific name pattern
 ---@param name_pattern string Name to search for (case-insensitive partial match)
 ---@return table[] items Array of matching items
-function InventoryModule:find_items_by_name(name_pattern)
+function Inventory:find_items_by_name(name_pattern)
     local found = {}
     local pattern_lower = name_pattern:lower()
 
@@ -279,7 +279,7 @@ end
 
 ---Get summary of gathered items (herbs and ores)
 ---@return table summary {herbs={}, ores={}, total_count=n}
-function InventoryModule:get_gathered_summary()
+function Inventory:get_gathered_summary()
     local Nodes = require("data/Nodes")
 
     local summary = {
@@ -314,37 +314,37 @@ end
 
 ---Set minimum free slots threshold
 ---@param slots number Minimum free slots before "full"
-function InventoryModule:set_min_free_slots(slots)
+function Inventory:set_min_free_slots(slots)
     self._min_free_slots = Helpers.clamp(slots, 0, 100)
 end
 
 ---Get minimum free slots threshold
 ---@return number
-function InventoryModule:get_min_free_slots()
+function Inventory:get_min_free_slots()
     return self._min_free_slots
 end
 
 ---Force refresh inventory cache
-function InventoryModule:refresh()
+function Inventory:refresh()
     self:_refresh_inventory()
 end
 
 ---Reset internal state
-function InventoryModule:_reset_state()
+function Inventory:_reset_state()
     self._cached_free_slots = nil
     self._cached_total_slots = nil
     self._was_bags_full = false
 end
 
 ---Clean up module
-function InventoryModule:destroy()
+function Inventory:destroy()
     self:_reset_state()
-    self._event_bus:unsubscribe_owner("InventoryModule")
+    self._event_bus:unsubscribe_owner("Inventory")
 end
 
 ---Run unit tests
 ---@return table<string, boolean> Test results
-function InventoryModule:_test()
+function Inventory:_test()
     local results = {}
 
     -- Create mock dependencies
@@ -362,7 +362,7 @@ function InventoryModule:_test()
     }
 
     -- Test 1: Create module
-    local module = InventoryModule:new(mock_bus)
+    local module = Inventory:new(mock_bus)
     results.create = (module ~= nil)
 
     -- Test 2: Initial state
@@ -395,4 +395,4 @@ function InventoryModule:_test()
     return results
 end
 
-return InventoryModule
+return Inventory

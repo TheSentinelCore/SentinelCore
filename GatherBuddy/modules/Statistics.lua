@@ -1,9 +1,9 @@
----@class StatisticsModule
+---@class Statistics
 ---@field private _event_bus EventBus
 ---@field private _log Logger|nil
 ---@field private _last_save_time number
-local StatisticsModule = {}
-StatisticsModule.__index = StatisticsModule
+local Statistics = {}
+Statistics.__index = Statistics
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
 local Helpers = require("utils/Helpers")
@@ -22,17 +22,17 @@ local function get_logger()
         end
     end
     if Logger then
-        return Logger:new("StatisticsModule")
+        return Logger:new("Statistics")
     end
     return nil
 end
 
----Create a new StatisticsModule instance
+---Create a new Statistics instance
 ---@param event_bus EventBus
 ---@param config? table Optional configuration
----@return StatisticsModule
-function StatisticsModule:new(event_bus, config)
-    local instance = setmetatable({}, StatisticsModule)
+---@return Statistics
+function Statistics:new(event_bus, config)
+    local instance = setmetatable({}, Statistics)
 
     instance._event_bus = event_bus
     instance._log = get_logger()
@@ -87,16 +87,16 @@ function StatisticsModule:new(event_bus, config)
 end
 
 ---Subscribe to relevant events
-function StatisticsModule:_subscribe_events()
+function Statistics:_subscribe_events()
     -- Session lifecycle
     self._event_bus:subscribe(EVENTS.BOT_START, function()
         self:start_session()
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     self._event_bus:subscribe(EVENTS.BOT_STOP, function()
         self:save()
         self:end_session()
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     -- Gathering events
     self._event_bus:subscribe(EVENTS.GATHER_SUCCESS, function(data)
@@ -110,29 +110,29 @@ function StatisticsModule:_subscribe_events()
                 self._session.ores_gathered = self._session.ores_gathered + 1
             end
         end
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     self._event_bus:subscribe(EVENTS.GATHER_FAILED, function()
         self._session.nodes_failed = self._session.nodes_failed + 1
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     -- Item looting
     self._event_bus:subscribe(EVENTS.ITEM_LOOTED, function(data)
         local name = data.item_name or "Unknown"
         self._session.items_looted[name] = (self._session.items_looted[name] or 0) + 1
         self._session.total_items = self._session.total_items + 1
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     -- Waypoints
     self._event_bus:subscribe(EVENTS.WAYPOINT_REACHED, function()
         self._session.waypoints_reached = self._session.waypoints_reached + 1
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     -- Combat
     self._event_bus:subscribe(EVENTS.COMBAT_ENTERED, function()
         self._session.combat_entries = self._session.combat_entries + 1
         self._combat_start_time = core.time()
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     self._event_bus:subscribe(EVENTS.COMBAT_EXITED, function()
         if self._combat_start_time then
@@ -140,21 +140,21 @@ function StatisticsModule:_subscribe_events()
                 (core.time() - self._combat_start_time)
             self._combat_start_time = nil
         end
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     -- Death
     self._event_bus:subscribe(EVENTS.PLAYER_DIED, function()
         self._session.deaths = self._session.deaths + 1
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 
     -- Stuck
     self._event_bus:subscribe(EVENTS.MOVEMENT_STUCK, function()
         self._session.stuck_count = self._session.stuck_count + 1
-    end, 50, false, "StatisticsModule")
+    end, 50, false, "Statistics")
 end
 
 ---Update statistics (call each tick)
-function StatisticsModule:update()
+function Statistics:update()
     if not self._session.active then
         return
     end
@@ -174,7 +174,7 @@ function StatisticsModule:update()
 end
 
 ---Track distance traveled
-function StatisticsModule:_track_distance()
+function Statistics:_track_distance()
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
         return
@@ -201,7 +201,7 @@ function StatisticsModule:_track_distance()
 end
 
 ---Start a new session
-function StatisticsModule:start_session()
+function Statistics:start_session()
     self:_reset_session()
     self._session.start_time = core.time()
     self._session.active = true
@@ -212,7 +212,7 @@ function StatisticsModule:start_session()
 end
 
 ---End the current session
-function StatisticsModule:end_session()
+function Statistics:end_session()
     if not self._session.active then
         return
     end
@@ -236,7 +236,7 @@ function StatisticsModule:end_session()
 end
 
 ---Reset session statistics
-function StatisticsModule:_reset_session()
+function Statistics:_reset_session()
     self._session = {
         start_time = nil,
         end_time = nil,
@@ -261,7 +261,7 @@ end
 
 ---Get session duration in seconds
 ---@return number
-function StatisticsModule:get_session_duration()
+function Statistics:get_session_duration()
     if not self._session.start_time then
         return 0
     end
@@ -272,7 +272,7 @@ end
 
 ---Get nodes per hour rate
 ---@return number
-function StatisticsModule:get_nodes_per_hour()
+function Statistics:get_nodes_per_hour()
     local duration = self:get_session_duration()
     if duration < 1 then
         return 0
@@ -284,7 +284,7 @@ end
 
 ---Get items per hour rate
 ---@return number
-function StatisticsModule:get_items_per_hour()
+function Statistics:get_items_per_hour()
     local duration = self:get_session_duration()
     if duration < 1 then
         return 0
@@ -296,7 +296,7 @@ end
 
 ---Get all session statistics
 ---@return table
-function StatisticsModule:get_stats()
+function Statistics:get_stats()
     local stats = Helpers.deep_copy(self._session)
 
     -- Add calculated values
@@ -311,7 +311,7 @@ end
 
 ---Get success rate (successful gathers / total attempts)
 ---@return number percentage (0-100)
-function StatisticsModule:get_success_rate()
+function Statistics:get_success_rate()
     local total = self._session.nodes_gathered + self._session.nodes_failed
     if total == 0 then
         return 100
@@ -321,37 +321,37 @@ end
 
 ---Get total nodes gathered
 ---@return number
-function StatisticsModule:get_nodes_gathered()
+function Statistics:get_nodes_gathered()
     return self._session.nodes_gathered
 end
 
 ---Get total items looted
 ---@return number
-function StatisticsModule:get_items_looted()
+function Statistics:get_items_looted()
     return self._session.total_items
 end
 
 ---Get distance traveled
 ---@return number yards
-function StatisticsModule:get_distance_traveled()
+function Statistics:get_distance_traveled()
     return self._session.distance_traveled
 end
 
 ---Get death count
 ---@return number
-function StatisticsModule:get_deaths()
+function Statistics:get_deaths()
     return self._session.deaths
 end
 
 ---Get combat entries
 ---@return number
-function StatisticsModule:get_combat_entries()
+function Statistics:get_combat_entries()
     return self._session.combat_entries
 end
 
 ---Get time spent in combat
 ---@return number seconds
-function StatisticsModule:get_time_in_combat()
+function Statistics:get_time_in_combat()
     local time = self._session.time_in_combat
 
     -- Add current combat time if in combat
@@ -364,19 +364,19 @@ end
 
 ---Get items looted breakdown
 ---@return table<string, number>
-function StatisticsModule:get_items_breakdown()
+function Statistics:get_items_breakdown()
     return Helpers.deep_copy(self._session.items_looted)
 end
 
 ---Check if session is active
 ---@return boolean
-function StatisticsModule:is_active()
+function Statistics:is_active()
     return self._session.active
 end
 
 ---Get formatted summary string
 ---@return string
-function StatisticsModule:get_summary()
+function Statistics:get_summary()
     local stats = self:get_stats()
 
     local lines = {
@@ -395,7 +395,7 @@ end
 local STATS_FILE = "gatherbuddy/statistics.json"
 
 ---Save session statistics to disk
-function StatisticsModule:save()
+function Statistics:save()
     local data = Helpers.deep_copy(self._session)
     data.saved_at = core.time()
     local json_str = JSON.encode(data)
@@ -406,7 +406,7 @@ function StatisticsModule:save()
 end
 
 ---Load session statistics from disk
-function StatisticsModule:load()
+function Statistics:load()
     local json_str = core.read_data_file(STATS_FILE)
     if not json_str or json_str == "" then return end
 
@@ -430,14 +430,14 @@ function StatisticsModule:load()
 end
 
 ---Clean up module
-function StatisticsModule:destroy()
+function Statistics:destroy()
     self:end_session()
-    self._event_bus:unsubscribe_owner("StatisticsModule")
+    self._event_bus:unsubscribe_owner("Statistics")
 end
 
 ---Run unit tests
 ---@return table<string, boolean> Test results
-function StatisticsModule:_test()
+function Statistics:_test()
     local results = {}
 
     -- Create mock dependencies
@@ -455,7 +455,7 @@ function StatisticsModule:_test()
     }
 
     -- Test 1: Create module
-    local module = StatisticsModule:new(mock_bus)
+    local module = Statistics:new(mock_bus)
     results.create = (module ~= nil)
 
     -- Test 2: Initial state
@@ -504,4 +504,4 @@ function StatisticsModule:_test()
     return results
 end
 
-return StatisticsModule
+return Statistics
