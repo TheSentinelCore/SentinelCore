@@ -10,6 +10,7 @@ All pathfinding methods are **asynchronous** -- they issue an HTTP GET to NavBud
 - [Pathfinding](#pathfinding)
   - [find_path](#find_path)
   - [find_path_corridor](#find_path_corridor)
+  - [find_path_avoid](#find_path_avoid)
   - [find_route_tsp](#find_route_tsp)
   - [find_route_multi](#find_route_multi)
   - [check_path](#check_path)
@@ -171,6 +172,62 @@ nav:find_path_corridor(start, dest, function(ok, data, err)
 end, {
     probe_distance = 15.0,
     smoothing = "chaikin",
+})
+```
+
+---
+
+### find_path_avoid
+
+```lua
+nav:find_path_avoid(start_pos, dest, avoid_zones, callback, opts?)
+```
+
+Request a navmesh path that routes around avoidance zones. Used by [MovementModule](MovementModule.md) when an [ObstacleModule](ObstacleModule.md) has detected doodad collisions. Falls back to `find_path()` if no zones are provided or if the avoid endpoint fails.
+
+**Endpoint:** `GET /api/v1/path-avoid`
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `start_pos` | vec3 | yes | Start position `{x, y, z}` |
+| `dest` | vec3 | yes | Destination position `{x, y, z}` |
+| `avoid_zones` | table[] | yes | Avoidance zones to route around |
+| `callback` | function | yes | `function(success, data, error)` |
+| `opts` | table | no | Same options as [find_path](#find_path) |
+
+**Avoidance zone format:**
+```lua
+{
+    x = number,      -- Zone center X
+    y = number,      -- Zone center Y
+    z = number,      -- Zone center Z
+    radius = number, -- Avoidance radius in yards
+    cost = number,   -- Cost multiplier (higher = more strongly avoided)
+}
+```
+
+Zones are sent to NavBuddy as a pipe-separated `avoid` query parameter: `x,y,z,radius,cost|x,y,z,radius,cost|...`
+
+**Callback data (on success):** Same as [find_path](#find_path).
+
+**Fallback behavior:**
+- If `avoid_zones` is empty or nil, delegates to `find_path()` directly
+- If the `/path-avoid` endpoint returns an error, automatically falls back to `find_path()` without avoidance and logs a warning
+
+**Example:**
+```lua
+local zones = obstacle:get_avoidance_zones()
+nav:find_path_avoid(player_pos, dest, zones, function(ok, data, err)
+    if ok then
+        -- data.waypoints routes around the obstacle zones
+        core.log(string.format("Avoid path: %d waypoints, %.0f yards",
+            #data.waypoints, data.distance))
+    end
+end, {
+    smoothing = "chaikin",
+    optimize = true,
 })
 ```
 
