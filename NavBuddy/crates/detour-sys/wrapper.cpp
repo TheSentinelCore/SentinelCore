@@ -369,4 +369,30 @@ unsigned short wrapper_dtQueryFilter_getExcludeFlags(const dtQueryFilter* filter
     return 0; // Default: exclude none
 }
 
+// =============================================================================
+// NavMesh - Polygon Queries
+// =============================================================================
+
+dtStatus wrapper_dtNavMesh_getPolyFlags(
+    const dtNavMesh* nav,
+    dtPolyRef ref,
+    unsigned short* flags
+) {
+    if (!nav || !flags) {
+        return DT_FAILURE | DT_INVALID_PARAM;
+    }
+    return nav->getPolyFlags(ref, flags);
+}
+
+dtStatus wrapper_dtNavMesh_getPolyArea(
+    const dtNavMesh* nav,
+    dtPolyRef ref,
+    unsigned char* area
+) {
+    if (!nav || !area) {
+        return DT_FAILURE | DT_INVALID_PARAM;
+    }
+    return nav->getPolyArea(ref, area);
+}
+
 } // extern "C"

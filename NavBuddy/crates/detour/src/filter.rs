@@ -4,6 +4,13 @@ use std::ptr::NonNull;
 
 use crate::error::DetourError;
 
+/// CMaNGOS area IDs from MoveMapSharedDefines.h.
+/// These match the area values stored in mmtile polygon data.
+pub const NAV_AREA_GROUND: u8 = 11;
+pub const NAV_AREA_GROUND_STEEP: u8 = 10;
+pub const NAV_AREA_WATER: u8 = 9;
+pub const NAV_AREA_MAGMA_SLIME: u8 = 8;
+
 /// Query filter for controlling pathfinding behavior.
 ///
 /// QueryFilter controls which polygons are considered during pathfinding
@@ -93,6 +100,18 @@ impl QueryFilter {
         }
     }
 
+    /// Create a filter that only includes water polygons.
+    ///
+    /// Used for water-aware polygon selection: when a ground polygon is found
+    /// at a position that might be underwater, this filter searches for water
+    /// polygons above it.
+    pub fn water_only() -> Result<Self, DetourError> {
+        let mut filter = Self::new()?;
+        filter.set_include_flags(0x04); // NAV_WATER only
+        filter.set_exclude_flags(!0x04 & 0xFFFF);
+        Ok(filter)
+    }
+
     /// Get raw pointer for FFI calls.
     pub(crate) fn as_ptr(&self) -> *const detour_sys::dtQueryFilter {
         self.ptr.as_ptr()
@@ -102,11 +121,11 @@ impl QueryFilter {
 impl Default for QueryFilter {
     fn default() -> Self {
         let mut filter = Self::new().expect("Failed to allocate QueryFilter");
-        // Set WoW-appropriate default area costs
-        filter.set_area_cost(0, 1.0);    // Ground
-        filter.set_area_cost(1, 1.0);    // Road
-        filter.set_area_cost(2, 10.0);   // Water (expensive)
-        filter.set_area_cost(3, 100.0);  // Lava (very expensive)
+        // CMaNGOS area IDs (from MoveMapSharedDefines.h)
+        filter.set_area_cost(NAV_AREA_GROUND, 1.0);          // area 11: ground
+        filter.set_area_cost(NAV_AREA_GROUND_STEEP, 1.0);    // area 10: steep slopes (walkable)
+        filter.set_area_cost(NAV_AREA_WATER, 1.5);            // area 9: water (mild penalty)
+        filter.set_area_cost(NAV_AREA_MAGMA_SLIME, 100.0);    // area 8: magma/slime (very expensive)
         filter
     }
 }
@@ -137,9 +156,9 @@ impl QueryFilterBuilder {
     /// Create a new builder with default values.
     pub fn new() -> Self {
         let mut area_costs = [1.0f32; 64];
-        // WoW defaults
-        area_costs[2] = 10.0;   // Water
-        area_costs[3] = 100.0;  // Lava
+        // CMaNGOS area IDs (from MoveMapSharedDefines.h)
+        area_costs[NAV_AREA_WATER as usize] = 1.5;           // area 9: water
+        area_costs[NAV_AREA_MAGMA_SLIME as usize] = 100.0;   // area 8: magma/slime
 
         Self {
             include_flags: 0xFFFF,

@@ -3,7 +3,11 @@
 //! Extracts the core find → straight → optimize → smooth → project → validate
 //! pipeline so it can be reused by path, path-random, path-multi, path-tsp, etc.
 
-use detour::filter::{QueryFilter, QueryFilterBuilder};
+use detour::filter::{
+    NAV_AREA_GROUND, NAV_AREA_GROUND_STEEP, NAV_AREA_MAGMA_SLIME, NAV_AREA_WATER, QueryFilter,
+    QueryFilterBuilder,
+};
+use detour::mesh::NavMesh;
 use detour::query::NavMeshQuery;
 use detour::types::{PolyRef, Vec3};
 use path_smoothing::{SmoothingAlgorithm, SmoothingConfig};
@@ -12,14 +16,15 @@ use crate::error::AppError;
 
 /// Default area costs for WoW pathfinding.
 pub const DEFAULT_GROUND_COST: f32 = 1.0;
-pub const DEFAULT_WATER_COST: f32 = 10.0;
+pub const DEFAULT_WATER_COST: f32 = 1.5;
 pub const DEFAULT_LAVA_COST: f32 = 100.0;
 
-/// Search extents for finding polygons (in yards).
+/// Search extents for general polygon searches (recovery, avoidance, etc.).
+/// Reduced from 50/50/500 to match reference implementations.
 pub const SEARCH_EXTENTS: Vec3 = Vec3 {
     x: 50.0,
     y: 50.0,
-    z: 500.0,
+    z: 50.0,
 };
 
 /// Height extents for waypoint surface projection (smaller for accuracy).
@@ -37,10 +42,20 @@ pub const MAX_PATH_POLYS: usize = 1024;
 /// Maximum waypoints in the straight path.
 pub const MAX_STRAIGHT_PATH: usize = 2048;
 
-/// Tiered Z-extents for polygon search: tight first (correct floor), broader as fallback.
-/// Tight vertical search prevents snapping to the wrong floor in multi-level structures.
-/// Reference: TrinityCore uses Y≈4 (Detour vertical axis) for floor-accurate queries.
-const Z_SEARCH_TIERS: [f32; 3] = [5.0, 50.0, 500.0];
+/// Tiered 3D search extents (x, y, z) for polygon search.
+/// Tight first for correct floor selection, broader as fallback.
+/// Reference: CMaNGOS uses 5/10, AmeisenNavigation uses 6, BloogBot uses 3.
+/// Previous NavBuddy XY=50 was 10x larger than all references, causing water/edge issues.
+const SEARCH_TIERS: [(f32, f32, f32); 3] = [
+    (6.0, 6.0, 6.0),    // Tight — matches AmeisenNavigation
+    (10.0, 10.0, 10.0),  // Medium — matches CMaNGOS far search
+    (50.0, 50.0, 50.0),  // Fallback — imprecise coordinates
+];
+
+/// NAV_GROUND flag (1 << (11-11) = 0x01).
+const NAV_FLAG_GROUND: u16 = 0x01;
+/// NAV_WATER flag (1 << (11-9) = 0x04).
+const NAV_FLAG_WATER: u16 = 0x04;
 
 /// Options controlling how a path is computed.
 #[derive(Debug, Clone, Default)]
@@ -100,10 +115,10 @@ pub fn create_custom_filter(
     let lava = filter_lava.unwrap_or(DEFAULT_LAVA_COST);
 
     QueryFilterBuilder::new()
-        .area_cost(0, ground) // Ground
-        .area_cost(1, ground) // Road (use same as ground)
-        .area_cost(2, water)  // Water
-        .area_cost(3, lava)   // Lava
+        .area_cost(NAV_AREA_GROUND, ground)        // area 11: ground
+        .area_cost(NAV_AREA_GROUND_STEEP, ground)  // area 10: steep slopes (same cost as ground)
+        .area_cost(NAV_AREA_WATER, water)           // area 9: water
+        .area_cost(NAV_AREA_MAGMA_SLIME, lava)      // area 8: magma/slime
         .build()
         .map_err(|e| AppError::Internal(format!("Failed to create filter: {}", e)))
 }
@@ -136,13 +151,18 @@ pub fn create_smoothing_config(
     config
 }
 
-/// Find the nearest polygon using tiered Z-extent search.
+/// Find the nearest polygon using tiered 3D-extent search with water-aware selection.
 ///
-/// Tries tight vertical extents first to pick the correct floor in multi-level
+/// Tries tight extents first to pick the correct floor in multi-level
 /// structures (towers, bridges, stacked rooms). Falls back to broader extents
 /// for positions on cliffs, steep terrain, or far from navmesh.
+///
+/// Water-aware: if a ground polygon is found but a water polygon exists above it
+/// (lake/ocean scenario), prefers the water polygon so paths route along the
+/// water surface instead of the lake bottom.
 pub fn find_poly_tiered(
     query: &NavMeshQuery,
+    mesh: &NavMesh,
     pos: Vec3,
     filter: &QueryFilter,
     z_override: Option<f32>,
@@ -150,20 +170,54 @@ pub fn find_poly_tiered(
     // If caller provides explicit z_extent, use it directly
     if let Some(z) = z_override {
         let extents = Vec3::new(SEARCH_EXTENTS.x, SEARCH_EXTENTS.y, z);
-        return query
+        let result = query
             .find_nearest_poly(pos, extents, filter)
-            .map_err(|_| AppError::PathfindingFailed("Position not on navmesh".into()));
+            .map_err(|_| AppError::PathfindingFailed("Position not on navmesh".into()))?;
+        return maybe_prefer_water(query, mesh, pos, result);
     }
 
-    // Tiered search: tight vertical extents first for correct floor selection
-    for &z_ext in &Z_SEARCH_TIERS {
-        let extents = Vec3::new(SEARCH_EXTENTS.x, SEARCH_EXTENTS.y, z_ext);
+    // Tiered search: tight 3D extents first for correct floor/position selection
+    for &(x_ext, y_ext, z_ext) in &SEARCH_TIERS {
+        let extents = Vec3::new(x_ext, y_ext, z_ext);
         if let Ok(result) = query.find_nearest_poly(pos, extents, filter) {
-            return Ok(result);
+            return maybe_prefer_water(query, mesh, pos, result);
         }
     }
 
     Err(AppError::PathfindingFailed("Position not on navmesh".into()))
+}
+
+/// If the found polygon is ground and a water polygon exists above it,
+/// prefer the water polygon (lake/ocean surface routing).
+fn maybe_prefer_water(
+    query: &NavMeshQuery,
+    mesh: &NavMesh,
+    pos: Vec3,
+    (poly_ref, snapped): (PolyRef, Vec3),
+) -> Result<(PolyRef, Vec3), AppError> {
+    let flags = mesh.get_poly_flags(poly_ref).unwrap_or(0);
+    if flags & NAV_FLAG_GROUND == 0 {
+        // Not ground — keep as-is (already water, steep, etc.)
+        return Ok((poly_ref, snapped));
+    }
+
+    // Found ground — check if water polygon exists above (lake scenario)
+    let water_filter = match QueryFilter::water_only() {
+        Ok(f) => f,
+        Err(_) => return Ok((poly_ref, snapped)),
+    };
+
+    // Search with generous Z to find water surface above ground
+    let water_extents = Vec3::new(6.0, 6.0, 50.0);
+    if let Ok((w_ref, w_snapped)) = query.find_nearest_poly(pos, water_extents, &water_filter) {
+        let w_flags = mesh.get_poly_flags(w_ref).unwrap_or(0);
+        // Water polygon must be above the ground polygon (lake surface > lake bottom)
+        if w_flags & NAV_FLAG_WATER != 0 && w_snapped.z > snapped.z + 2.0 {
+            return Ok((w_ref, w_snapped));
+        }
+    }
+
+    Ok((poly_ref, snapped))
 }
 
 /// Execute the full pathfinding pipeline: find → straight → optimize → smooth → project → validate.
@@ -171,15 +225,16 @@ pub fn find_poly_tiered(
 /// This is the core shared function used by all pathfinding endpoints.
 pub fn execute_pathfind(
     query: &NavMeshQuery,
+    mesh: &NavMesh,
     filter: &QueryFilter,
     start_pos: Vec3,
     end_pos: Vec3,
     options: &PathOptions,
 ) -> Result<PathResult, AppError> {
-    // Find nearest polygons to start and end positions (tiered Z fallback for multi-floor safety)
-    // Use the snapped positions so find_path/find_straight_path operate on polygon-accurate coords.
-    let (start_ref, start_nearest) = find_poly_tiered(query, start_pos, filter, options.z_extent)?;
-    let (end_ref, end_nearest) = find_poly_tiered(query, end_pos, filter, options.z_extent)?;
+    // Find nearest polygons to start and end positions (tiered 3D fallback for multi-floor safety)
+    // Water-aware: prefers water polygon over ground when position is in a lake.
+    let (start_ref, start_nearest) = find_poly_tiered(query, mesh, start_pos, filter, options.z_extent)?;
+    let (end_ref, end_nearest) = find_poly_tiered(query, mesh, end_pos, filter, options.z_extent)?;
 
     // Find polygon corridor from start to end
     let (poly_path, is_partial) = query

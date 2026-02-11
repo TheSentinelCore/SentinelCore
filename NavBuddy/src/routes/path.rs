@@ -300,7 +300,7 @@ pub async fn find_path(
         wall_clearance: params.wall_clearance,
     };
 
-    let result = execute_pathfind(&query, filter, start_pos, end_pos, &options)?;
+    let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
 
     // Handle partial paths with recovery suggestions
     let (partial_endpoint, recovery_suggestions) = if result.partial
@@ -418,7 +418,7 @@ pub async fn find_path_random(
     let mut raw_options = options.clone();
     raw_options.smoothing = Some("none".to_string());
 
-    let raw_result = execute_pathfind(&query, filter, start_pos, end_pos, &raw_options)?;
+    let raw_result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &raw_options)?;
     let mut waypoints = raw_result.waypoints;
 
     // Apply random deviation

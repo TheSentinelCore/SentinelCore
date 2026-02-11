@@ -3,7 +3,7 @@
 use std::ptr::NonNull;
 
 use crate::error::{dt_status_failed, DetourError, DetourStatus};
-use crate::types::TileRef;
+use crate::types::{PolyRef, TileRef};
 
 /// Configuration parameters for initializing a NavMesh.
 ///
@@ -131,6 +131,38 @@ impl NavMesh {
     /// Get the maximum number of tiles this NavMesh can hold.
     pub fn max_tiles(&self) -> i32 {
         unsafe { detour_sys::wrapper_dtNavMesh_getMaxTiles(self.ptr.as_ptr()) }
+    }
+
+    /// Get the flags for a polygon.
+    pub fn get_poly_flags(&self, poly_ref: PolyRef) -> Result<u16, DetourError> {
+        let mut flags: u16 = 0;
+        let status = unsafe {
+            detour_sys::wrapper_dtNavMesh_getPolyFlags(
+                self.ptr.as_ptr(),
+                poly_ref,
+                &mut flags,
+            )
+        };
+        if dt_status_failed(status) {
+            return Err(DetourError::StatusError(status));
+        }
+        Ok(flags)
+    }
+
+    /// Get the area type for a polygon.
+    pub fn get_poly_area(&self, poly_ref: PolyRef) -> Result<u8, DetourError> {
+        let mut area: u8 = 0;
+        let status = unsafe {
+            detour_sys::wrapper_dtNavMesh_getPolyArea(
+                self.ptr.as_ptr(),
+                poly_ref,
+                &mut area,
+            )
+        };
+        if dt_status_failed(status) {
+            return Err(DetourError::StatusError(status));
+        }
+        Ok(area)
     }
 
     /// Get raw pointer for NavMeshQuery initialization.

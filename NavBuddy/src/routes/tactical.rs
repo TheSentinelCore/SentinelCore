@@ -182,7 +182,7 @@ pub async fn flee(
 
         // Snap target to navmesh
         if let Ok((_, snapped)) = query.find_nearest_poly(target, SEARCH_EXTENTS, filter) {
-            if let Ok(result) = execute_pathfind(&query, filter, player_pos, snapped, &options) {
+            if let Ok(result) = execute_pathfind(&query, pool.mesh(), filter, player_pos, snapped, &options) {
                 // Score: minimum distance from any waypoint to any threat
                 let min_dist = result
                     .waypoints

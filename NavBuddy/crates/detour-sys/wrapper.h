@@ -542,6 +542,36 @@ void wrapper_dtQueryFilter_setExcludeFlags(dtQueryFilter* filter, unsigned short
  */
 unsigned short wrapper_dtQueryFilter_getExcludeFlags(const dtQueryFilter* filter);
 
+// =============================================================================
+// NavMesh - Polygon Queries
+// =============================================================================
+
+/**
+ * @brief Get the flags for a polygon.
+ * @param nav The NavMesh.
+ * @param ref Polygon reference.
+ * @param flags Output: polygon flags.
+ * @return Status code.
+ */
+dtStatus wrapper_dtNavMesh_getPolyFlags(
+    const dtNavMesh* nav,
+    dtPolyRef ref,
+    unsigned short* flags
+);
+
+/**
+ * @brief Get the area type for a polygon.
+ * @param nav The NavMesh.
+ * @param ref Polygon reference.
+ * @param area Output: area type (0-63).
+ * @return Status code.
+ */
+dtStatus wrapper_dtNavMesh_getPolyArea(
+    const dtNavMesh* nav,
+    dtPolyRef ref,
+    unsigned char* area
+);
+
 #ifdef __cplusplus
 }
 #endif

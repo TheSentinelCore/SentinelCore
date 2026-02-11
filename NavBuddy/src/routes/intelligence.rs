@@ -136,7 +136,7 @@ pub async fn path_multi(
     let mut total_distance = 0.0f32;
 
     for i in 0..stops.len() - 1 {
-        let result = execute_pathfind(&query, filter, stops[i], stops[i + 1], &options)?;
+        let result = execute_pathfind(&query, pool.mesh(), filter, stops[i], stops[i + 1], &options)?;
 
         if result.partial {
             partial_legs.push(i);
@@ -413,6 +413,7 @@ pub async fn path_tsp(
             for j in (i + 1)..n {
                 let dist = match execute_pathfind(
                     &query,
+                    pool.mesh(),
                     filter,
                     points[i],
                     points[j],
@@ -471,6 +472,7 @@ pub async fn path_tsp(
     for i in 0..ordered_stops.len() - 1 {
         let result = execute_pathfind(
             &query,
+            pool.mesh(),
             filter,
             ordered_stops[i],
             ordered_stops[i + 1],
@@ -613,7 +615,7 @@ pub async fn path_avoid(
         wall_clearance: params.wall_clearance,
     };
 
-    let result = execute_pathfind(&query, filter, start_pos, end_pos, &options)?;
+    let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
 
     // Apply avoidance post-processing
     let waypoints = apply_avoidance(&result.waypoints, &zones, &query, filter);
@@ -870,7 +872,7 @@ pub async fn path_corridor(
         wall_clearance: params.wall_clearance,
     };
 
-    let result = execute_pathfind(&query, filter, start_pos, end_pos, &options)?;
+    let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
     let corridor_widths = compute_corridor_widths(&result.waypoints, &query, filter, params.probe_distance);
 
     Ok(Json(CorridorPathResponse {
@@ -1080,7 +1082,7 @@ pub async fn explore_route(
     let point_count = valid_points.len();
 
     for i in 0..valid_points.len().saturating_sub(1) {
-        match execute_pathfind(&query, filter, valid_points[i], valid_points[i + 1], &options) {
+        match execute_pathfind(&query, pool.mesh(), filter, valid_points[i], valid_points[i + 1], &options) {
             Ok(result) => {
                 total_distance += result.distance;
                 if all_waypoints.is_empty() {
