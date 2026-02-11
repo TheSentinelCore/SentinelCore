@@ -9,10 +9,10 @@ local NodeScanner = {}
 NodeScanner.__index = NodeScanner
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
-local Helpers = require("utils/Helpers")
+local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")
 local Nodes = require("data/Nodes")
-local JSON = require("utils/JSON")
+local JSON = require("lib/JSON")
 
 -- Import vec3 for ceiling detection
 local vec3 = require("common/geometry/vector_3")
@@ -61,7 +61,7 @@ local PROFESSION_SPELL_IDS = Constants.PROFESSION_SPELL_IDS
 local Settings
 local function get_settings()
     if not Settings then
-        local success, result = pcall(require, "data/Settings")
+        local success, result = pcall(require, "core/Settings")
         if success then
             Settings = result
         end
@@ -73,7 +73,7 @@ end
 local Logger
 local function get_logger()
     if not Logger then
-        local success, result = pcall(require, "utils/Logger")
+        local success, result = pcall(require, "lib/Logger")
         if success then
             Logger = result
         end

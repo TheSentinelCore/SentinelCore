@@ -22,8 +22,8 @@ BotManager.__index = BotManager
 local EventBus = require("core/EventBus")
 local StateMachine = require("core/StateMachine")
 local Constants = require("core/Constants")
-local Helpers = require("utils/Helpers")
-local Settings = require("data/Settings")
+local Helpers = require("lib/Helpers")
+local Settings = require("core/Settings")
 
 local ModuleFactory = require("core/ModuleFactory")
 local TravelingController = require("core/TravelingController")
@@ -35,7 +35,7 @@ local STATES = Constants.STATES
 local Logger
 local function get_logger()
     if not Logger then
-        local success, result = pcall(require, "utils/Logger")
+        local success, result = pcall(require, "lib/Logger")
         if success then
             Logger = result
         end
@@ -152,7 +152,7 @@ function BotManager:initialize()
 
     -- Load local modules in order
     local module_order = {
-        { name = "Settings",        path = "data/Settings" },
+        { name = "Settings",        path = "core/Settings" },
         { name = "ProfileManager",  path = "modules/ProfileManager" },
         { name = "NodeScanner",     path = "modules/NodeScanner" },
         { name = "GatherModule",    path = "modules/GatherModule" },

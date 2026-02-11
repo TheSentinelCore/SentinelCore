@@ -4,7 +4,7 @@
     Called once per frame from the UI orchestrator.
 ]]
 
-local Settings = require("data/Settings")
+local Settings = require("core/Settings")
 
 local SettingsSync = {}
 

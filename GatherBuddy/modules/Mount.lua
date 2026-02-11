@@ -6,7 +6,7 @@ local Mount = {}
 Mount.__index = Mount
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
-local Helpers = require("utils/Helpers")
+local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")
 
 local EVENTS = Constants.EVENTS
@@ -25,7 +25,7 @@ local MOUNT_STATES = {
 local Logger
 local function get_logger()
     if not Logger then
-        local success, result = pcall(require, "utils/Logger")
+        local success, result = pcall(require, "lib/Logger")
         if success then
             Logger = result
         end

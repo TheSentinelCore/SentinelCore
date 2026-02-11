@@ -57,8 +57,8 @@ local ProfileManager = {}
 ProfileManager.__index = ProfileManager
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
-local JSON = require("utils/JSON")
-local Helpers = require("utils/Helpers")
+local JSON = require("lib/JSON")
+local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")
 
 local EVENTS = Constants.EVENTS
@@ -71,7 +71,7 @@ local PROFILES_PATH = "profiles"
 local Logger
 local function get_logger()
     if not Logger then
-        local success, result = pcall(require, "utils/Logger")
+        local success, result = pcall(require, "lib/Logger")
         if success then
             Logger = result
         end

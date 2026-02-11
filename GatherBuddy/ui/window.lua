@@ -18,7 +18,7 @@ local SafetyTab = require("ui/tabs/safety_tab")
 local StatsTab = require("ui/tabs/stats_tab")
 
 -- Settings sync
-local SettingsSync = require("ui/settings_sync")
+local SettingsSync = require("ui/SettingsSync")
 
 local LAYOUT = rotation_settings_ui.LAYOUT
 

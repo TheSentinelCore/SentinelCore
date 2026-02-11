@@ -11,13 +11,13 @@ PathVisualizer.__index = PathVisualizer
 -- Import dependencies
 local color = require("common/color")
 local vec3 = require("common/geometry/vector_3")
-local Helpers = require("utils/Helpers")
+local Helpers = require("lib/Helpers")
 
 -- Import logger if available
 local Logger
 local function get_logger()
     if not Logger then
-        local success, result = pcall(require, "utils/Logger")
+        local success, result = pcall(require, "lib/Logger")
         if success then
             Logger = result
         end

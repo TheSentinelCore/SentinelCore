@@ -6,9 +6,9 @@ local Statistics = {}
 Statistics.__index = Statistics
 
 -- Import dependencies (relative paths since we're in GatherBuddy folder)
-local Helpers = require("utils/Helpers")
+local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")
-local JSON = require("utils/JSON")
+local JSON = require("lib/JSON")
 
 local EVENTS = Constants.EVENTS
 
@@ -16,7 +16,7 @@ local EVENTS = Constants.EVENTS
 local Logger
 local function get_logger()
     if not Logger then
-        local success, result = pcall(require, "utils/Logger")
+        local success, result = pcall(require, "lib/Logger")
         if success then
             Logger = result
         end

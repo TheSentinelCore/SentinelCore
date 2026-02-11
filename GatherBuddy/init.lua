@@ -257,22 +257,22 @@ function GatherBuddy:run_tests()
 
     -- Test modules (use relative paths since we're in GatherBuddy folder)
     local test_modules = {
-        { name = "JSON", path = "utils/JSON" },
-        { name = "Helpers", path = "utils/Helpers" },
-        { name = "Logger", path = "utils/Logger" },
+        { name = "JSON", path = "lib/JSON" },
+        { name = "Helpers", path = "lib/Helpers" },
+        { name = "Logger", path = "lib/Logger" },
         { name = "EventBus", path = "core/EventBus" },
         { name = "StateMachine", path = "core/StateMachine" },
         { name = "Nodes", path = "data/Nodes" },
-        { name = "Settings", path = "data/Settings" },
+        { name = "Settings", path = "core/Settings" },
         { name = "ProfileManager", path = "modules/ProfileManager" },
-        { name = "NavigationClient", path = "modules/NavigationClient" },
-        { name = "MovementModule", path = "modules/MovementModule" },
+        { name = "Navigation", path = "modules/Navigation" },
+        { name = "Movement", path = "modules/Movement" },
         { name = "NodeScanner", path = "modules/NodeScanner" },
-        { name = "GatherModule", path = "modules/GatherModule" },
-        { name = "MountModule", path = "modules/MountModule" },
-        { name = "SafetyModule", path = "modules/SafetyModule" },
-        { name = "InventoryModule", path = "modules/InventoryModule" },
-        { name = "StatisticsModule", path = "modules/StatisticsModule" },
+        { name = "Gather", path = "modules/Gather" },
+        { name = "Mount", path = "modules/Mount" },
+        { name = "Safety", path = "modules/Safety" },
+        { name = "Inventory", path = "modules/Inventory" },
+        { name = "Statistics", path = "modules/Statistics" },
         { name = "BotManager", path = "core/BotManager" },
     }
 
