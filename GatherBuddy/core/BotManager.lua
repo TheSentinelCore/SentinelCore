@@ -125,18 +125,18 @@ function BotManager:initialize()
         end
     elseif _G.NavLib then
         -- Fallback: old-style manual wiring (backward compat)
-        self._modules.NavigationClient = _G.NavLib.NavigationClient:new(self._config.navigation)
-        self._modules.MovementModule = _G.NavLib.MovementModule:new(
+        self._modules.NavigationClient = _G.NavLib.Navigation:new(self._config.navigation)
+        self._modules.MovementModule = _G.NavLib.Movement:new(
             self._modules.NavigationClient, self._config.movement
         )
-        if _G.NavLib.ObstacleModule then
-            self._modules.ObstacleModule = _G.NavLib.ObstacleModule:new(self._config.obstacles)
+        if _G.NavLib.Obstacle then
+            self._modules.ObstacleModule = _G.NavLib.Obstacle:new(self._config.obstacles)
             self._modules.MovementModule:set_obstacle_module(self._modules.ObstacleModule)
         end
 
         self._navlib_available = true
         if self._log then
-            self._log:debug("Loaded NavigationClient + MovementModule + ObstacleModule from NavLib (legacy)")
+            self._log:debug("Loaded Navigation + Movement + Obstacle from NavLib (legacy)")
         end
     else
         self._navlib_available = false
