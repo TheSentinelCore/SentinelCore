@@ -1,4 +1,4 @@
--- NavigationClient.lua
+-- Navigation.lua
 -- Thin HTTP client for the NavBuddy pathfinding REST API
 -- Zero external dependencies beyond Sylvannas core + izi SDK + existing JSON
 
@@ -161,21 +161,21 @@ end
 
 -- Class ------------------------------------------------------------------
 
----@class NavigationClient
+---@class Navigation
 ---@field private _base_url string
 ---@field private _max_retries number
 ---@field private _is_connected boolean
 ---@field private _consecutive_failures number
 ---@field private _last_success_time number
-local NavigationClient = {}
-NavigationClient.__index = NavigationClient
+local Navigation = {}
+Navigation.__index = Navigation
 
----Create a new NavigationClient
+---Create a new Navigation
 ---@param config? table { base_url?: string, max_retries?: number }
----@return NavigationClient
-function NavigationClient:new(config)
+---@return Navigation
+function Navigation:new(config)
     config = config or {}
-    local o = setmetatable({}, NavigationClient)
+    local o = setmetatable({}, Navigation)
     -- o._base_url = config.base_url or "http://3.137.184.168:47110"
     o._base_url = config.base_url or "http://127.0.0.1:47110"
     o._max_retries = config.max_retries or 3
@@ -191,7 +191,7 @@ end
 ---@param endpoint string e.g. "/api/v1/path"
 ---@param params? table key-value pairs
 ---@return string
-function NavigationClient:_build_url(endpoint, params)
+function Navigation:_build_url(endpoint, params)
     local url = self._base_url .. endpoint
     if not params or next(params) == nil then return url end
 
@@ -214,7 +214,7 @@ end
 ---@param url string Full URL
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param attempt? number Current attempt (1-based, internal)
-function NavigationClient:_request(url, callback, attempt)
+function Navigation:_request(url, callback, attempt)
     attempt = attempt or 1
 
     core.http_get(url, function(code, content_type, response, headers)
@@ -268,18 +268,18 @@ end
 
 ---Check if NavBuddy appears connected
 ---@return boolean
-function NavigationClient:is_available()
+function Navigation:is_available()
     return self._is_connected
 end
 
 ---Get consecutive failure count
 ---@return number
-function NavigationClient:get_consecutive_failures()
+function Navigation:get_consecutive_failures()
     return self._consecutive_failures
 end
 
 ---Reset connection state
-function NavigationClient:reset()
+function Navigation:reset()
     self._is_connected = false
     self._consecutive_failures = 0
     self._last_success_time = 0
@@ -292,7 +292,7 @@ end
 ---@param dest vec3 Destination position
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { smoothing?, optimize?, anti_detection?, max_deviation?, smooth_iterations?, smooth_samples?, smooth_ratio?, filter_ground?, filter_water?, filter_lava?, allow_partial?, z_extent?, map_id? }
-function NavigationClient:find_path(start_pos, dest, callback, opts)
+function Navigation:find_path(start_pos, dest, callback, opts)
     if not start_pos or not dest then
         if callback then callback(false, nil, "Missing start or dest") end
         return
@@ -340,7 +340,7 @@ end
 ---@param nodes vec3[] At least 2 node positions
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id?, start_pos?: vec3, return_to_start?, weights? }
-function NavigationClient:find_route_tsp(nodes, callback, opts)
+function Navigation:find_route_tsp(nodes, callback, opts)
     if not nodes or #nodes < 2 then
         if callback then callback(false, nil, "Need at least 2 nodes") end
         return
@@ -390,7 +390,7 @@ end
 ---@param stops vec3[] Ordered stop positions (at least 2)
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id? }
-function NavigationClient:find_route_multi(stops, callback, opts)
+function Navigation:find_route_multi(stops, callback, opts)
     if not stops or #stops < 2 then
         if callback then callback(false, nil, "Need at least 2 stops") end
         return
@@ -419,7 +419,7 @@ end
 ---@param waypoints vec3[] Remaining waypoints
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id?, max_check? }
-function NavigationClient:check_path(current_pos, waypoints, callback, opts)
+function Navigation:check_path(current_pos, waypoints, callback, opts)
     if not current_pos or not waypoints or #waypoints == 0 then
         if callback then callback(false, nil, "Missing pos or waypoints") end
         return
@@ -450,7 +450,7 @@ end
 ---@param dest vec3
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id?, probe_distance?, smoothing?, optimize?, smooth_iterations?, smooth_samples?, smooth_ratio?, min_corner_angle?, keep_originals?, filter_ground?, filter_water?, filter_lava?, allow_partial?, z_extent? }
-function NavigationClient:find_path_corridor(start_pos, dest, callback, opts)
+function Navigation:find_path_corridor(start_pos, dest, callback, opts)
     if not start_pos or not dest then
         if callback then callback(false, nil, "Missing start or dest") end
         return
@@ -505,7 +505,7 @@ end
 ---@param avoid_zones table[] Array of { x, y, z, radius, cost }
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table Same as find_path opts
-function NavigationClient:find_path_avoid(start_pos, dest, avoid_zones, callback, opts)
+function Navigation:find_path_avoid(start_pos, dest, avoid_zones, callback, opts)
     -- Fall back to regular find_path if no zones
     if not avoid_zones or #avoid_zones == 0 then
         return self:find_path(start_pos, dest, callback, opts)
@@ -575,7 +575,7 @@ end
 ---@param dest vec3
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id? }
-function NavigationClient:raycast(start_pos, dest, callback, opts)
+function Navigation:raycast(start_pos, dest, callback, opts)
     if not start_pos or not dest then
         if callback then callback(false, nil, "Missing start or dest") end
         return
@@ -608,7 +608,7 @@ end
 ---@param pos vec3
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id? }
-function NavigationClient:get_height(pos, callback, opts)
+function Navigation:get_height(pos, callback, opts)
     if not pos then
         if callback then callback(false, nil, "Missing position") end
         return
@@ -630,7 +630,7 @@ end
 ---Get random point on navmesh
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id?, center?: vec3, radius?: number }
-function NavigationClient:random_point(callback, opts)
+function Navigation:random_point(callback, opts)
     opts = opts or {}
     local params = { map_id = opts.map_id or get_continent_id() }
     if opts.center and opts.radius then
@@ -655,7 +655,7 @@ end
 ---@param threats vec3[] Threat positions
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id?, flee_distance?: number }
-function NavigationClient:flee(player_pos, threats, callback, opts)
+function Navigation:flee(player_pos, threats, callback, opts)
     if not player_pos or not threats or #threats == 0 then
         if callback then callback(false, nil, "Missing player_pos or threats") end
         return
@@ -686,7 +686,7 @@ end
 ---@param target_pos vec3
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id?, kite_radius?, arc_degrees?, direction?: string }
-function NavigationClient:kite(player_pos, target_pos, callback, opts)
+function Navigation:kite(player_pos, target_pos, callback, opts)
     if not player_pos or not target_pos then
         if callback then callback(false, nil, "Missing player_pos or target_pos") end
         return
@@ -717,7 +717,7 @@ end
 
 ---Check NavBuddy server health
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
-function NavigationClient:health_check(callback)
+function Navigation:health_check(callback)
     self:_request(self._base_url .. "/health", function(ok, data, err)
         if not ok then
             if callback then callback(false, nil, err) end
@@ -733,10 +733,10 @@ function NavigationClient:health_check(callback)
 end
 
 ---Check if the player is currently in an indoor (dungeon/raid) zone
----Static utility — does not require a NavigationClient instance
+---Static utility — does not require a Navigation instance
 ---@return boolean
-function NavigationClient.is_indoor()
+function Navigation.is_indoor()
     return is_indoor()
 end
 
-return NavigationClient
+return Navigation

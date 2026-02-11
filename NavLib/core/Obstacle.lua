@@ -1,4 +1,4 @@
--- ObstacleModule.lua
+-- Obstacle.lua
 -- Obstacle avoidance via trace_line probing + avoidance zone memory.
 -- Proactive: MovementModule scans upcoming waypoint segments every 1.5s.
 -- Reactive fallback: stuck handler probes from player position.
@@ -22,17 +22,17 @@ local DEFAULT_CONFIG = {
     lookahead_segments      = 3,   -- how many upcoming segments to check
 }
 
----@class ObstacleModule
+---@class Obstacle
 ---@field private _config table
 ---@field private _zones table[]  -- remembered avoidance zones
-local ObstacleModule = {}
-ObstacleModule.__index = ObstacleModule
+local Obstacle = {}
+Obstacle.__index = Obstacle
 
----Create a new ObstacleModule
+---Create a new Obstacle
 ---@param config? table Override default config values
----@return ObstacleModule
-function ObstacleModule:new(config)
-    local o = setmetatable({}, ObstacleModule)
+---@return Obstacle
+function Obstacle:new(config)
+    local o = setmetatable({}, Obstacle)
 
     o._config = {}
     for k, v in pairs(DEFAULT_CONFIG) do
@@ -51,7 +51,7 @@ end
 
 ---Update config values at runtime
 ---@param overrides table Key-value pairs to merge
-function ObstacleModule:update_config(overrides)
+function Obstacle:update_config(overrides)
     if not overrides then return end
     for k, v in pairs(overrides) do
         self._config[k] = v
@@ -59,7 +59,7 @@ function ObstacleModule:update_config(overrides)
 end
 
 ---Reset all remembered zones
-function ObstacleModule:clear()
+function Obstacle:clear()
     self._zones = {}
 end
 
@@ -70,7 +70,7 @@ end
 ---@param player_pos vec3 Current player position
 ---@param target_pos vec3 Direction to probe toward (next waypoint)
 ---@return vec3|nil hit_pos Approximate hit position, or nil if clear
-function ObstacleModule:probe_forward(player_pos, target_pos)
+function Obstacle:probe_forward(player_pos, target_pos)
     local cfg = self._config
     local flags = cfg.collision_flags
 
@@ -135,7 +135,7 @@ end
 ---@param pos_a vec3|table Start of segment
 ---@param pos_b vec3|table End of segment
 ---@return table|nil hit_pos Approximate obstacle center { x, y, z }, or nil if clear
-function ObstacleModule:probe_segment(pos_a, pos_b)
+function Obstacle:probe_segment(pos_a, pos_b)
     local cfg = self._config
     local flags = cfg.collision_flags
     local h = cfg.lookahead_height_offset
@@ -196,7 +196,7 @@ end
 ---@param max_segments? number How many segments to probe (default: config value)
 ---@return table|nil hit_pos First obstacle found, or nil if path is clear
 ---@return number|nil segment_index Which segment (1-based) had the hit
-function ObstacleModule:probe_path_ahead(waypoints, max_segments)
+function Obstacle:probe_path_ahead(waypoints, max_segments)
     if not waypoints or #waypoints < 2 then return nil, nil end
 
     local n = math.min(
@@ -219,7 +219,7 @@ end
 ---Add an avoidance zone at the given position
 ---@param pos table { x, y, z } Hit position from probe
 ---@param radius? number Override avoidance radius
-function ObstacleModule:add_zone(pos, radius)
+function Obstacle:add_zone(pos, radius)
     local cfg = self._config
     radius = radius or cfg.avoidance_radius
 
@@ -258,7 +258,7 @@ end
 
 ---Prune expired or distant zones. Call periodically (e.g. on repath).
 ---@param player_pos? vec3 Current player position for distance pruning
-function ObstacleModule:prune(player_pos)
+function Obstacle:prune(player_pos)
     local cfg = self._config
     local now = core.time()
     local kept = {}
@@ -291,20 +291,20 @@ end
 
 ---Get avoidance zones for NavBuddy /path-avoid endpoint
 ---@return table[] Array of { x, y, z, radius, cost }
-function ObstacleModule:get_avoidance_zones()
+function Obstacle:get_avoidance_zones()
     return self._zones
 end
 
 ---Get count of active zones
 ---@return number
-function ObstacleModule:get_zone_count()
+function Obstacle:get_zone_count()
     return #self._zones
 end
 
 ---No-op update for compatibility with BotManager's module update loop.
 ---Proactive probing is driven by MovementModule._check_proactive_obstacles().
 ---Reactive probing is driven by MovementModule._unstuck_probe_and_repath().
-function ObstacleModule:update()
+function Obstacle:update()
 end
 
-return ObstacleModule
+return Obstacle

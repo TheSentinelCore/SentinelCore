@@ -1,6 +1,6 @@
--- MovementModule.lua
+-- Movement.lua
 -- Path following and stuck recovery for GatherBuddy
--- Uses NavigationClient for pathfinding, simple_movement for locomotion
+-- Uses Navigation for pathfinding, simple_movement for locomotion
 
 local vec3 = require("common/geometry/vector_3")
 local simple_movement = require("common/utility/simple_movement")
@@ -43,8 +43,8 @@ local DEFAULT_CONFIG = {
 
 -- Class ------------------------------------------------------------------
 
----@class MovementModule
----@field private _nav_client NavigationClient
+---@class Movement
+---@field private _nav_client Navigation
 ---@field private _config table
 ---@field private _state string
 ---@field private _destination vec3|nil
@@ -62,19 +62,19 @@ local DEFAULT_CONFIG = {
 ---@field private _obstacle_module table|nil
 ---@field private _obstacle_lookahead_time number
 ---@field _path_index number
-local MovementModule = {}
-MovementModule.__index = MovementModule
+local Movement = {}
+Movement.__index = Movement
 
----Create a new MovementModule
----@param nav_client NavigationClient Navigation client instance
+---Create a new Movement
+---@param nav_client Navigation Navigation client instance
 ---@param config? table Override default config values
----@return MovementModule
-function MovementModule:new(nav_client, config)
+---@return Movement
+function Movement:new(nav_client, config)
     if not nav_client then
-        error("MovementModule requires a NavigationClient instance")
+        error("Movement requires a Navigation instance")
     end
 
-    local o = setmetatable({}, MovementModule)
+    local o = setmetatable({}, Movement)
 
     o._nav_client = nav_client
 
@@ -133,7 +133,7 @@ end
 
 ---Set state with log
 ---@param new_state string
-function MovementModule:_set_state(new_state)
+function Movement:_set_state(new_state)
     if self._state == new_state then return end
     core.log("[Movement] State: " .. self._state .. " -> " .. new_state)
     self._state = new_state
@@ -141,37 +141,37 @@ end
 
 ---Get current state
 ---@return string
-function MovementModule:get_state()
+function Movement:get_state()
     return self._state
 end
 
 ---Check if actively moving or requesting a path
 ---@return boolean
-function MovementModule:is_moving()
+function Movement:is_moving()
     return self._state == S_MOVING or self._state == S_REQUESTING
 end
 
 ---Get current waypoint path
 ---@return vec3[]|nil
-function MovementModule:get_current_path()
+function Movement:get_current_path()
     return self._current_path
 end
 
 ---Get current movement destination
 ---@return vec3|nil
-function MovementModule:get_destination()
+function Movement:get_destination()
     return self._destination
 end
 
 ---Get current waypoint index in the path
 ---@return number
-function MovementModule:get_path_index()
+function Movement:get_path_index()
     return self._path_index or 1
 end
 
 ---Update config values at runtime (e.g., from UI settings)
 ---@param overrides table Key-value pairs to merge into config
-function MovementModule:update_config(overrides)
+function Movement:update_config(overrides)
     if not overrides then return end
     for k, v in pairs(overrides) do
         self._config[k] = v
@@ -180,14 +180,14 @@ end
 
 ---Attach an ObstacleModule for avoidance-aware pathfinding
 ---@param obstacle_module table
-function MovementModule:set_obstacle_module(obstacle_module)
+function Movement:set_obstacle_module(obstacle_module)
     self._obstacle_module = obstacle_module
 end
 
 ---Build opts table for find_path from current config
 ---@param extra? table Additional opts to merge (e.g., map_id from caller)
 ---@return table
-function MovementModule:_build_path_opts(extra)
+function Movement:_build_path_opts(extra)
     local o = {
         smoothing         = self._config.smoothing,
         optimize          = self._config.optimize,
@@ -214,7 +214,7 @@ end
 ---Omits anti_detection/max_deviation (corridor has no random variant)
 ---@param extra? table Additional opts to merge
 ---@return table
-function MovementModule:_build_corridor_opts(extra)
+function Movement:_build_corridor_opts(extra)
     local o = {
         smoothing         = self._config.smoothing,
         optimize          = self._config.optimize,
@@ -238,15 +238,15 @@ end
 
 ---Determine if corridor pathfinding should be used (indoor + enabled)
 ---@return boolean
-function MovementModule:_should_use_corridor()
+function Movement:_should_use_corridor()
     if not self._config.use_corridor_indoor then return false end
-    local NavClient = require("NavigationClient")
+    local NavClient = require("Navigation")
     return NavClient.is_indoor()
 end
 
 ---Compute the minimum corridor width from stored corridor data
 ---@return number|nil min_width Minimum width in yards, or nil if no data
-function MovementModule:_compute_min_corridor_width()
+function Movement:_compute_min_corridor_width()
     if not self._corridor_widths or #self._corridor_widths == 0 then
         return nil
     end
@@ -261,13 +261,13 @@ end
 
 ---Get corridor widths for the current path (nil if outdoor or no data)
 ---@return number[]|nil
-function MovementModule:get_corridor_widths()
+function Movement:get_corridor_widths()
     return self._corridor_widths
 end
 
 ---Get progress information
 ---@return table { state, destination?, distance_remaining?, path_index?, path_count?, current_leg?, total_legs?, route_mode? }
-function MovementModule:get_progress()
+function Movement:get_progress()
     local progress = { state = self._state, destination = self._destination }
 
     if self._state == S_MOVING and self._destination then
@@ -289,7 +289,7 @@ function MovementModule:get_progress()
 end
 
 ---Stop all movement and reset to idle
-function MovementModule:stop()
+function Movement:stop()
     simple_movement:stop()
     self._state = S_IDLE
     self._destination = nil
@@ -309,7 +309,7 @@ end
 -- Update loop ------------------------------------------------------------
 
 ---Call every frame to drive movement
-function MovementModule:update()
+function Movement:update()
     -- Nothing to do in terminal/idle states
     if self._state == S_IDLE or self._state == S_ARRIVED or self._state == S_FAILED then
         return
@@ -379,7 +379,7 @@ end
 ---@param target vec3 Destination
 ---@param callback? fun(success: boolean, reason: string|nil)
 ---@param opts? table { use_navmesh?: boolean, map_id?: number }
-function MovementModule:move_to(target, callback, opts)
+function Movement:move_to(target, callback, opts)
     if not target then
         core.log_error("[Movement] move_to: no target")
         if callback then callback(false, "No target") end
@@ -509,13 +509,13 @@ end
 ---Move directly to target without pathfinding (short range / emergency)
 ---@param target vec3
 ---@param callback? fun(success: boolean, reason: string|nil)
-function MovementModule:move_direct(target, callback)
+function Movement:move_direct(target, callback)
     self:move_to(target, callback, { use_navmesh = false })
 end
 
 ---Start movement with a given waypoint list
 ---@param waypoints vec3[]
-function MovementModule:_start_movement(waypoints)
+function Movement:_start_movement(waypoints)
     if not waypoints or #waypoints == 0 then
         core.log_error("[Movement] _start_movement: empty waypoints")
         self:_set_state(S_FAILED)
@@ -556,7 +556,7 @@ function MovementModule:_start_movement(waypoints)
 end
 
 ---Handle arrival at destination
-function MovementModule:_on_arrival()
+function Movement:_on_arrival()
     simple_movement:stop()
 
     -- Route mode: fire leg/route callbacks
@@ -588,7 +588,7 @@ end
 
 ---Proactively scan upcoming waypoint segments for doodad obstacles.
 ---Runs on a throttled interval during S_MOVING.
-function MovementModule:_check_proactive_obstacles()
+function Movement:_check_proactive_obstacles()
     if not self._config.proactive_obstacle_check then return end
     if not self._obstacle_module then return end
 
@@ -618,7 +618,7 @@ end
 
 ---Check if player is stuck (called on interval while moving)
 ---@param player game_object
-function MovementModule:_check_stuck(player)
+function Movement:_check_stuck(player)
     local now = core.time()
     if now - self._last_stuck_time < self._config.stuck_check_interval then return end
     self._last_stuck_time = now
@@ -652,7 +652,7 @@ function MovementModule:_check_stuck(player)
 end
 
 ---Apply recovery strategy based on stuck count
-function MovementModule:_handle_stuck()
+function Movement:_handle_stuck()
     if self._stuck_count >= self._config.max_stuck_attempts then
         core.log_error("[Movement] Max stuck attempts reached, failing")
         self:_set_state(S_FAILED)
@@ -678,13 +678,13 @@ function MovementModule:_handle_stuck()
 end
 
 ---Strategy 1: Jump
-function MovementModule:_unstuck_jump()
+function Movement:_unstuck_jump()
     core.log("[Movement] Unstuck: jump")
     core.input.jump()
 end
 
 ---Strategy 2: Probe forward for doodad collision, add avoidance zone + repath
-function MovementModule:_unstuck_probe_and_repath()
+function Movement:_unstuck_probe_and_repath()
     if not self._obstacle_module or not self._destination then
         -- No obstacle module wired — fall back to strafe
         core.log("[Movement] Unstuck: no obstacle module, falling back to strafe")
@@ -723,7 +723,7 @@ function MovementModule:_unstuck_probe_and_repath()
 end
 
 ---Strategy 3 (fallback from probe): Random strafe + jump
-function MovementModule:_unstuck_strafe()
+function Movement:_unstuck_strafe()
     local dir = math.random() > 0.5 and "left" or "right"
     core.log("[Movement] Unstuck: strafe " .. dir)
     self._unstuck_phase = "strafe"
@@ -732,7 +732,7 @@ function MovementModule:_unstuck_strafe()
 end
 
 ---Strategy 4: Backward + jump
-function MovementModule:_unstuck_backward()
+function Movement:_unstuck_backward()
     core.log("[Movement] Unstuck: backward")
     self._unstuck_phase = "backward"
     self._unstuck_timer = core.time()
@@ -740,7 +740,7 @@ function MovementModule:_unstuck_backward()
 end
 
 ---Strategy 5: Request fresh path from current position
-function MovementModule:_unstuck_repath()
+function Movement:_unstuck_repath()
     if not self._destination then
         core.log_warning("[Movement] No destination for repath")
         return
@@ -785,7 +785,7 @@ function MovementModule:_unstuck_repath()
 end
 
 ---Process timed unstuck actions (called in update)
-function MovementModule:_process_unstuck_action()
+function Movement:_process_unstuck_action()
     local elapsed = core.time() - self._unstuck_timer
 
     if self._unstuck_phase == "strafe" then
@@ -809,7 +809,7 @@ end
 ---@param nodes vec3[] At least 2 node positions
 ---@param callback? fun(success: boolean, data: table|nil)
 ---@param opts? table { map_id?, return_to_start? }
-function MovementModule:plan_route(nodes, callback, opts)
+function Movement:plan_route(nodes, callback, opts)
     if not nodes or #nodes < 2 then
         core.log_error("[Movement] plan_route: need at least 2 nodes")
         if callback then callback(false, { error = "Need at least 2 nodes" }) end
@@ -869,7 +869,7 @@ function MovementModule:plan_route(nodes, callback, opts)
 end
 
 ---Check if we've crossed into a new route leg
-function MovementModule:_check_route_progress()
+function Movement:_check_route_progress()
     if not self._route_data then return end
 
     local idx = simple_movement:get_current_index()
@@ -897,7 +897,7 @@ end
 
 ---Replan route with remaining unvisited nodes
 ---@param reason? string Why we're replanning
-function MovementModule:replan(reason)
+function Movement:replan(reason)
     if not self._route_data then
         core.log_warning("[Movement] No route to replan")
         return
@@ -933,7 +933,7 @@ end
 
 ---Periodically check if the current path is still valid
 ---@param player game_object
-function MovementModule:_check_path_validity(player)
+function Movement:_check_path_validity(player)
     local now = core.time()
     if now - self._path_check_time < self._config.path_check_interval then return end
     self._path_check_time = now
@@ -957,7 +957,7 @@ end
 ---Pre-validate that a target is reachable via navmesh without starting movement
 ---@param target vec3|table Target position (must have x, y, z)
 ---@param callback fun(reachable: boolean, reason: string|nil, distance: number|nil)
-function MovementModule:validate_destination_reachable(target, callback)
+function Movement:validate_destination_reachable(target, callback)
     if not callback then return end
     if not target or not target.x then
         callback(false, "Invalid target", nil)
@@ -986,4 +986,4 @@ function MovementModule:validate_destination_reachable(target, callback)
     end, self:_build_path_opts())
 end
 
-return MovementModule
+return Movement
