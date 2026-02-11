@@ -4,7 +4,7 @@
 
 local vec3 = require("common/geometry/vector_3")
 local izi = require("common/izi_sdk")
-local JSON = require("JSON")
+local JSON = require("lib/JSON")
 
 -- Helpers ----------------------------------------------------------------
 

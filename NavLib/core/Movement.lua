@@ -240,7 +240,7 @@ end
 ---@return boolean
 function Movement:_should_use_corridor()
     if not self._config.use_corridor_indoor then return false end
-    local NavClient = require("Navigation")
+    local NavClient = require("core/Navigation")
     return NavClient.is_indoor()
 end
 

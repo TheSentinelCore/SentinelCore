@@ -1,9 +1,9 @@
 -- Facade.lua
 -- Single entry-point facade for NavLib: creates, wires, and drives all modules.
 
-local Navigation = require("Navigation")
-local Movement   = require("Movement")
-local Obstacle   = require("Obstacle")
+local Navigation = require("core/Navigation")
+local Movement   = require("core/Movement")
+local Obstacle   = require("core/Obstacle")
 
 ---@class Facade
 ---@field nav_client Navigation   Escape-hatch: raw HTTP client
