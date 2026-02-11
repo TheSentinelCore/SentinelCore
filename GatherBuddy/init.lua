@@ -217,7 +217,7 @@ end
 ---Get statistics
 ---@return table|nil
 function GatherBuddy:get_statistics()
-    local stats_module = self:get_module("StatisticsModule")
+    local stats_module = self:get_module("Statistics")
     if stats_module then
         return stats_module:get_stats()
     end

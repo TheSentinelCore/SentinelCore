@@ -1,5 +1,5 @@
 ---@class PathVisualizer
----@field private _movement_module MovementModule
+---@field private _movement_module Movement
 ---@field private _profile_manager ProfileManager
 ---@field private _enabled boolean
 ---@field private _show_profile_waypoints boolean
@@ -29,7 +29,7 @@ local function get_logger()
 end
 
 ---Create a new PathVisualizer instance
----@param movement_module MovementModule
+---@param movement_module Movement
 ---@param profile_manager ProfileManager
 ---@return PathVisualizer
 function PathVisualizer:new(movement_module, profile_manager)

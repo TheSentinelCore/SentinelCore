@@ -114,10 +114,10 @@ function BotManager:initialize()
             movement   = self._config.movement,
             obstacles  = self._config.obstacles,
         })
-        -- Keep module refs for code that accesses self._modules.MovementModule etc.
-        self._modules.NavigationClient = self._navlib.nav_client
-        self._modules.MovementModule   = self._navlib.movement
-        self._modules.ObstacleModule   = self._navlib.obstacle
+        -- Keep module refs for code that accesses self._modules.Navigation etc.
+        self._modules.Navigation = self._navlib.nav_client
+        self._modules.Movement   = self._navlib.movement
+        self._modules.Obstacle   = self._navlib.obstacle
 
         self._navlib_available = true
         if self._log then
@@ -125,13 +125,13 @@ function BotManager:initialize()
         end
     elseif _G.NavLib then
         -- Fallback: old-style manual wiring (backward compat)
-        self._modules.NavigationClient = _G.NavLib.Navigation:new(self._config.navigation)
-        self._modules.MovementModule = _G.NavLib.Movement:new(
-            self._modules.NavigationClient, self._config.movement
+        self._modules.Navigation = _G.NavLib.Navigation:new(self._config.navigation)
+        self._modules.Movement = _G.NavLib.Movement:new(
+            self._modules.Navigation, self._config.movement
         )
         if _G.NavLib.Obstacle then
-            self._modules.ObstacleModule = _G.NavLib.Obstacle:new(self._config.obstacles)
-            self._modules.MovementModule:set_obstacle_module(self._modules.ObstacleModule)
+            self._modules.Obstacle = _G.NavLib.Obstacle:new(self._config.obstacles)
+            self._modules.Movement:set_obstacle_module(self._modules.Obstacle)
         end
 
         self._navlib_available = true
@@ -155,11 +155,11 @@ function BotManager:initialize()
         { name = "Settings",        path = "core/Settings" },
         { name = "ProfileManager",  path = "modules/ProfileManager" },
         { name = "NodeScanner",     path = "modules/NodeScanner" },
-        { name = "GatherModule",    path = "modules/GatherModule" },
-        { name = "MountModule",     path = "modules/MountModule" },
-        { name = "SafetyModule",    path = "modules/SafetyModule" },
-        { name = "InventoryModule", path = "modules/InventoryModule" },
-        { name = "StatisticsModule", path = "modules/StatisticsModule" },
+        { name = "Gather",          path = "modules/Gather" },
+        { name = "Mount",           path = "modules/Mount" },
+        { name = "Safety",          path = "modules/Safety" },
+        { name = "Inventory",       path = "modules/Inventory" },
+        { name = "Statistics",      path = "modules/Statistics" },
         { name = "PathVisualizer",  path = "modules/PathVisualizer" },
     }
 
@@ -308,13 +308,13 @@ function BotManager:stop()
     end
 
     -- Stop movement
-    local movement = self._modules.MovementModule
+    local movement = self._modules.Movement
     if movement then
         movement:stop()
     end
 
     -- Cancel gathering
-    local gather = self._modules.GatherModule
+    local gather = self._modules.Gather
     if gather then
         gather:cancel_gather()
     end
@@ -341,7 +341,7 @@ function BotManager:pause()
     self._paused = true
 
     -- Stop movement
-    local movement = self._modules.MovementModule
+    local movement = self._modules.Movement
     if movement then
         movement:stop()
     end
@@ -461,7 +461,7 @@ function BotManager:_update_modules()
         })
     else
         -- Legacy: sync directly to modules
-        local movement = self._modules.MovementModule
+        local movement = self._modules.Movement
         if movement and movement.update_config then
             movement:update_config({
                 smoothing           = Settings.get("movement.preferred_smoothing", "chaikin"),
@@ -483,7 +483,7 @@ function BotManager:_update_modules()
                     and Settings.get("movement.wall_clearance", 1.5) or 0,
             })
         end
-        local obstacles = self._modules.ObstacleModule
+        local obstacles = self._modules.Obstacle
         if obstacles and obstacles.update_config then
             obstacles:update_config({
                 avoidance_cost   = Settings.get("obstacles.avoidance_cost", 5.0),
@@ -502,19 +502,19 @@ function BotManager:_update_modules()
 
     -- Update remaining modules
     local update_order = {
-        "NavigationClient",
-        "SafetyModule",
+        "Navigation",
+        "Safety",
         "NodeScanner",
-        "GatherModule",
-        "MountModule",
-        "InventoryModule",
-        "StatisticsModule",
+        "Gather",
+        "Mount",
+        "Inventory",
+        "Statistics",
     }
 
     -- If no facade, also update obstacle + movement in the module loop
     if not self._navlib then
-        table.insert(update_order, 3, "ObstacleModule")
-        table.insert(update_order, 4, "MovementModule")
+        table.insert(update_order, 3, "Obstacle")
+        table.insert(update_order, 4, "Movement")
     end
 
     for _, name in ipairs(update_order) do
@@ -541,11 +541,11 @@ function BotManager:_process_state()
     elseif state == STATES.APPROACHING then
         self:_process_approaching()
     elseif state == STATES.GATHERING then
-        -- Handled by GatherModule
+        -- Handled by Gather
     elseif state == STATES.LOOTING then
-        -- Handled by GatherModule
+        -- Handled by Gather
     elseif state == STATES.MOUNTING then
-        -- Handled by MountModule
+        -- Handled by Mount
     elseif state == STATES.COMBAT then
         self:_process_combat()
     elseif state == STATES.DEAD then
@@ -615,8 +615,8 @@ end
 ---Process scanning state (at hotspot)
 function BotManager:_process_scanning()
     local scanner = self._modules.NodeScanner
-    local safety = self._modules.SafetyModule
-    local movement = self._modules.MovementModule
+    local safety = self._modules.Safety
+    local movement = self._modules.Movement
 
     if scanner then
         local nodes = scanner:scan()
@@ -644,7 +644,7 @@ end
 
 ---Process approaching state
 function BotManager:_process_approaching()
-    local movement = self._modules.MovementModule
+    local movement = self._modules.Movement
 
     -- If movement stopped but we're still in APPROACHING, something went wrong
     if movement and not movement:is_moving() then
@@ -676,15 +676,15 @@ end
 
 ---Process combat state
 function BotManager:_process_combat()
-    local safety = self._modules.SafetyModule
+    local safety = self._modules.Safety
 
-    -- Combat handling is primarily done by SafetyModule
+    -- Combat handling is primarily done by Safety
     -- Could add flee logic here if needed
 end
 
 ---Process dead state
 function BotManager:_process_dead()
-    local safety = self._modules.SafetyModule
+    local safety = self._modules.Safety
 
     if safety then
         -- Auto-release after short delay
@@ -699,8 +699,8 @@ end
 
 ---Process corpse run state
 function BotManager:_process_corpse_run()
-    local safety = self._modules.SafetyModule
-    local movement = self._modules.MovementModule
+    local safety = self._modules.Safety
+    local movement = self._modules.Movement
 
     if not safety or not movement then
         return
@@ -736,7 +736,7 @@ end
 function BotManager:_process_stuck()
     -- Movement module handles unstuck attempts
     -- After unstuck, should transition back to traveling
-    local movement = self._modules.MovementModule
+    local movement = self._modules.Movement
 
     if movement and not movement:is_moving() then
         -- Unstuck complete, return to traveling

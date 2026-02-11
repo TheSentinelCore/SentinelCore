@@ -27,9 +27,9 @@ end
 ---@param ctx table { modules, state_machine, event_bus, log, on_nav_failure: fun(): boolean, on_nav_success: fun() }
 function TravelingController.process(ctx)
     local profile_mgr = ctx.modules.ProfileManager
-    local movement = ctx.modules.MovementModule
+    local movement = ctx.modules.Movement
     local scanner = ctx.modules.NodeScanner
-    local safety = ctx.modules.SafetyModule
+    local safety = ctx.modules.Safety
 
     if not profile_mgr or not movement then
         return
@@ -88,7 +88,7 @@ end
 ---@param target table
 function TravelingController._on_validation_complete(ctx, reachable, reason, distance, target)
     local profile_mgr = ctx.modules.ProfileManager
-    local movement = ctx.modules.MovementModule
+    local movement = ctx.modules.Movement
 
     if not reachable then
         if ctx.log then

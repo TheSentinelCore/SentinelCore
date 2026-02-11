@@ -113,7 +113,7 @@ local function render_path_overlay()
         return
     end
 
-    local movement = GatherBuddy:get_module("MovementModule")
+    local movement = GatherBuddy:get_module("Movement")
     if not movement then return end
 
     local current_path = movement:get_current_path()

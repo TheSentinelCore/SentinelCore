@@ -86,7 +86,7 @@ function StatsTab.render(ui, y_offset)
     y_offset = y_offset + LAYOUT.element_height + 4
 
     local bot_mgr = GatherBuddy:get_bot_manager()
-    local movement = bot_mgr and bot_mgr._modules and bot_mgr._modules.MovementModule
+    local movement = bot_mgr and bot_mgr._modules and bot_mgr._modules.Movement
 
     if movement and movement:get_current_path() then
         local path_count = #movement:get_current_path()
