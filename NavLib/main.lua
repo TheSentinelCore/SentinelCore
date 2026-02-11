@@ -4,14 +4,16 @@
 
 local NavigationClient = require("NavigationClient")
 local MovementModule = require("MovementModule")
+local ObstacleModule = require("ObstacleModule")
 local JSON = require("JSON")
 local Helpers = require("Helpers")
 
 _G.NavLib = {
     NavigationClient = NavigationClient,
     MovementModule = MovementModule,
+    ObstacleModule = ObstacleModule,
     JSON = JSON,
     Helpers = Helpers,
 }
 
-core.log("[NavLib] Loaded — NavigationClient + MovementModule available via _G.NavLib")
+core.log("[NavLib] Loaded — NavigationClient + MovementModule + ObstacleModule available via _G.NavLib")

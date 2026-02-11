@@ -112,9 +112,15 @@ function BotManager:initialize()
         self._modules.MovementModule = _G.NavLib.MovementModule:new(
             self._modules.NavigationClient, self._config.movement
         )
+        -- Create obstacle module and wire into movement
+        if _G.NavLib.ObstacleModule then
+            self._modules.ObstacleModule = _G.NavLib.ObstacleModule:new(self._config.obstacles)
+            self._modules.MovementModule:set_obstacle_module(self._modules.ObstacleModule)
+        end
+
         self._navlib_available = true
         if self._log then
-            self._log:debug("Loaded NavigationClient + MovementModule from NavLib")
+            self._log:debug("Loaded NavigationClient + MovementModule + ObstacleModule from NavLib")
         end
     else
         self._navlib_available = false
@@ -434,10 +440,20 @@ function BotManager:_update_modules()
         })
     end
 
+    -- Sync UI settings to ObstacleModule config
+    local obstacles = self._modules.ObstacleModule
+    if obstacles and obstacles.update_config then
+        obstacles:update_config({
+            avoidance_cost   = Settings.get("obstacles.avoidance_cost", 5.0),
+            avoidance_radius = Settings.get("obstacles.avoidance_radius", 3.0),
+        })
+    end
+
     -- Update modules that have update methods
     local update_order = {
         "NavigationClient",
         "SafetyModule",
+        "ObstacleModule",
         "MovementModule",
         "NodeScanner",
         "GatherModule",

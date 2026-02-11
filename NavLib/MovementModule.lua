@@ -37,6 +37,8 @@ local DEFAULT_CONFIG = {
     use_corridor_indoor  = true,
     corridor_probe_dist  = 15.0,
     wall_clearance       = 1.0,
+    proactive_obstacle_check    = true,
+    proactive_obstacle_interval = 1.5,
 }
 
 -- Class ------------------------------------------------------------------
@@ -57,6 +59,8 @@ local DEFAULT_CONFIG = {
 ---@field private _path_check_time number
 ---@field private _route_data table|nil
 ---@field private _corridor_widths number[]|nil
+---@field private _obstacle_module table|nil
+---@field private _obstacle_lookahead_time number
 ---@field _path_index number
 local MovementModule = {}
 MovementModule.__index = MovementModule
@@ -107,6 +111,10 @@ function MovementModule:new(nav_client, config)
 
     -- Corridor data
     o._corridor_widths = nil
+
+    -- Obstacle avoidance
+    o._obstacle_module = nil
+    o._obstacle_lookahead_time = 0
 
     -- Compatibility: consumers read _path_index directly
     o._path_index = 1
@@ -162,6 +170,12 @@ function MovementModule:update_config(overrides)
     for k, v in pairs(overrides) do
         self._config[k] = v
     end
+end
+
+---Attach an ObstacleModule for avoidance-aware pathfinding
+---@param obstacle_module table
+function MovementModule:set_obstacle_module(obstacle_module)
+    self._obstacle_module = obstacle_module
 end
 
 ---Build opts table for find_path from current config
@@ -280,6 +294,7 @@ function MovementModule:stop()
     self._unstuck_phase = nil
     self._route_data = nil
     self._corridor_widths = nil
+    self._obstacle_lookahead_time = 0
     self._path_index = 1
     simple_movement:set_threshold(self._config.waypoint_tolerance)
     simple_movement:set_final_threshold(self._config.final_tolerance)
@@ -341,6 +356,9 @@ function MovementModule:update()
 
         -- Periodic path validation
         self:_check_path_validity(player)
+
+        -- Proactive obstacle look-ahead
+        self:_check_proactive_obstacles()
     end
 
     -- Process timed unstuck actions (strafe / backward)
@@ -376,11 +394,12 @@ function MovementModule:move_to(target, callback, opts)
     self._callback = callback
     self._route_data = nil
 
-    -- Reset stuck detection
+    -- Reset stuck detection and obstacle look-ahead
     self._stuck_count = 0
     self._last_stuck_time = core.time()
     self._last_stuck_pos = player:get_position()
     self._path_check_time = core.time()
+    self._obstacle_lookahead_time = 0
     self._unstuck_phase = nil
 
     -- Defer if casting
@@ -466,8 +485,18 @@ function MovementModule:move_to(target, callback, opts)
         self._nav_client:find_path_corridor(start_pos, target, on_path,
             self:_build_corridor_opts({ map_id = opts.map_id }))
     else
-        self._nav_client:find_path(start_pos, target, on_path,
-            self:_build_path_opts({ map_id = opts.map_id }))
+        -- Use avoidance routing if obstacles are detected
+        local zones = self._obstacle_module
+            and self._obstacle_module:get_avoidance_zones()
+            or {}
+
+        if #zones > 0 then
+            self._nav_client:find_path_avoid(start_pos, target, zones, on_path,
+                self:_build_path_opts({ map_id = opts.map_id }))
+        else
+            self._nav_client:find_path(start_pos, target, on_path,
+                self:_build_path_opts({ map_id = opts.map_id }))
+        end
     end
 end
 
@@ -551,6 +580,36 @@ end
 
 -- Stuck detection & recovery ---------------------------------------------
 
+---Proactively scan upcoming waypoint segments for doodad obstacles.
+---Runs on a throttled interval during S_MOVING.
+function MovementModule:_check_proactive_obstacles()
+    if not self._config.proactive_obstacle_check then return end
+    if not self._obstacle_module then return end
+
+    local now = core.time()
+    if now - self._obstacle_lookahead_time < self._config.proactive_obstacle_interval then
+        return
+    end
+    self._obstacle_lookahead_time = now
+
+    local remaining = simple_movement:get_remaining_waypoints()
+    if not remaining or #remaining < 2 then return end
+
+    local hit_pos, seg_idx = self._obstacle_module:probe_path_ahead(remaining)
+    if not hit_pos then return end
+
+    core.log_warning("[Movement] Proactive: obstacle on segment "
+        .. tostring(seg_idx) .. ", adding zone and repathing")
+
+    local player = core.object_manager.get_local_player()
+    if player and player:is_valid() then
+        self._obstacle_module:prune(player:get_position())
+    end
+
+    self._obstacle_module:add_zone(hit_pos)
+    self:_unstuck_repath()
+end
+
 ---Check if player is stuck (called on interval while moving)
 ---@param player game_object
 function MovementModule:_check_stuck(player)
@@ -601,8 +660,11 @@ function MovementModule:_handle_stuck()
     if self._stuck_count == 1 then
         self:_unstuck_jump()
     elseif self._stuck_count == 2 then
-        self:_unstuck_strafe()
+        -- Reactive obstacle probe: check if a doodad is blocking
+        self:_unstuck_probe_and_repath()
     elseif self._stuck_count == 3 then
+        self:_unstuck_strafe()
+    elseif self._stuck_count == 4 then
         self:_unstuck_backward()
     else
         self:_unstuck_repath()
@@ -615,7 +677,46 @@ function MovementModule:_unstuck_jump()
     core.input.jump()
 end
 
----Strategy 2: Random strafe + jump
+---Strategy 2: Probe forward for doodad collision, add avoidance zone + repath
+function MovementModule:_unstuck_probe_and_repath()
+    if not self._obstacle_module or not self._destination then
+        -- No obstacle module wired — fall back to strafe
+        core.log("[Movement] Unstuck: no obstacle module, falling back to strafe")
+        self:_unstuck_strafe()
+        return
+    end
+
+    local player = core.object_manager.get_local_player()
+    if not player or not player:is_valid() then return end
+
+    local player_pos = player:get_position()
+
+    -- Determine probe target: next waypoint or final destination
+    local remaining = simple_movement:get_remaining_waypoints()
+    local probe_target = self._destination
+    if remaining and #remaining > 0 then
+        probe_target = remaining[1]
+    end
+
+    -- Prune old zones while we're here
+    self._obstacle_module:prune(player_pos)
+
+    -- Probe ahead with trace_line (DoodadCollision)
+    local hit_pos = self._obstacle_module:probe_forward(player_pos, probe_target)
+
+    if hit_pos then
+        -- Found a collision — add avoidance zone and repath around it
+        self._obstacle_module:add_zone(hit_pos)
+        core.log("[Movement] Unstuck: doodad detected, repathing with avoidance")
+        self:_unstuck_repath()
+    else
+        -- No collision detected — fall back to strafe
+        core.log("[Movement] Unstuck: no doodad collision, falling back to strafe")
+        self:_unstuck_strafe()
+    end
+end
+
+---Strategy 3 (fallback from probe): Random strafe + jump
 function MovementModule:_unstuck_strafe()
     local dir = math.random() > 0.5 and "left" or "right"
     core.log("[Movement] Unstuck: strafe " .. dir)
@@ -624,7 +725,7 @@ function MovementModule:_unstuck_strafe()
     simple_movement:strafe(dir)
 end
 
----Strategy 3: Backward + jump
+---Strategy 4: Backward + jump
 function MovementModule:_unstuck_backward()
     core.log("[Movement] Unstuck: backward")
     self._unstuck_phase = "backward"
@@ -632,7 +733,7 @@ function MovementModule:_unstuck_backward()
     core.input.move_backward_start()
 end
 
----Strategy 4: Request fresh path from current position
+---Strategy 5: Request fresh path from current position
 function MovementModule:_unstuck_repath()
     if not self._destination then
         core.log_warning("[Movement] No destination for repath")
@@ -663,8 +764,17 @@ function MovementModule:_unstuck_repath()
         self._nav_client:find_path_corridor(pos, self._destination, on_repath,
             self:_build_corridor_opts())
     else
-        self._nav_client:find_path(pos, self._destination, on_repath,
-            self:_build_path_opts())
+        local zones = self._obstacle_module
+            and self._obstacle_module:get_avoidance_zones()
+            or {}
+
+        if #zones > 0 then
+            self._nav_client:find_path_avoid(pos, self._destination, zones, on_repath,
+                self:_build_path_opts())
+        else
+            self._nav_client:find_path(pos, self._destination, on_repath,
+                self:_build_path_opts())
+        end
     end
 end
 

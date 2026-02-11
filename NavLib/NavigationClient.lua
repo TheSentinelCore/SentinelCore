@@ -496,6 +496,78 @@ function NavigationClient:find_path_corridor(start_pos, dest, callback, opts)
     end)
 end
 
+-- Avoidance Pathfinding --------------------------------------------------
+
+---Request a path with avoidance zones
+---Falls back to find_path if no zones provided
+---@param start_pos vec3 Starting position
+---@param dest vec3 Destination position
+---@param avoid_zones table[] Array of { x, y, z, radius, cost }
+---@param callback fun(success: boolean, data: table|nil, error: string|nil)
+---@param opts? table Same as find_path opts
+function NavigationClient:find_path_avoid(start_pos, dest, avoid_zones, callback, opts)
+    -- Fall back to regular find_path if no zones
+    if not avoid_zones or #avoid_zones == 0 then
+        return self:find_path(start_pos, dest, callback, opts)
+    end
+
+    if not start_pos or not dest then
+        if callback then callback(false, nil, "Missing start or dest") end
+        return
+    end
+    opts = opts or {}
+
+    local params = {
+        map_id = opts.map_id or get_continent_id(),
+        start_x = start_pos.x, start_y = start_pos.y, start_z = start_pos.z,
+        end_x = dest.x, end_y = dest.y, end_z = dest.z,
+    }
+    if opts.smoothing then params.smoothing = opts.smoothing end
+    if opts.optimize then params.optimize = true end
+    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
+    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
+    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
+    if opts.filter_ground then params.filter_ground = opts.filter_ground end
+    if opts.filter_water then params.filter_water = opts.filter_water end
+    if opts.filter_lava then params.filter_lava = opts.filter_lava end
+    if opts.allow_partial then params.allow_partial = true end
+    if opts.z_extent then params.z_extent = opts.z_extent end
+    if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+
+    -- Build pipe-separated avoid param (matches Rust parser)
+    local avoid_parts = {}
+    for _, zone in ipairs(avoid_zones) do
+        avoid_parts[#avoid_parts + 1] = string.format(
+            "%g,%g,%g,%g,%g",
+            zone.x, zone.y, zone.z, zone.radius, zone.cost
+        )
+    end
+    params.avoid = table.concat(avoid_parts, "|")
+
+    local url = self:_build_url("/api/v1/path-avoid", params)
+
+    core.log("[NavClient] path-avoid with " .. #avoid_zones .. " zones")
+
+    self:_request(url, function(ok, data, err)
+        if not ok then
+            -- Fall back to regular pathfinding without avoidance
+            core.log_warning("[NavClient] path-avoid failed (" .. (err or "?") .. "), falling back to find_path")
+            return self:find_path(start_pos, dest, callback, opts)
+        end
+        local wps = extract_waypoints(data)
+        if #wps == 0 then
+            if callback then callback(false, nil, "Empty path") end
+            return
+        end
+        callback(true, {
+            waypoints = wps,
+            distance = data.distance or 0,
+            partial = data.partial or false,
+            computation_time_ms = data.computation_time_ms or 0,
+        }, nil)
+    end)
+end
+
 -- Spatial Queries --------------------------------------------------------
 
 ---Raycast between two points on the navmesh
