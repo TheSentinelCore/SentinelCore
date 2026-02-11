@@ -21,8 +21,10 @@ NavLib/
 ├── Helpers.lua           Utility functions
 └── docs/
     ├── README.md                 This file
+    ├── NavLibFacade.md           NavLibFacade API reference (recommended)
     ├── NavigationClient.md       NavigationClient API reference
-    └── MovementModule.md         MovementModule API reference
+    ├── MovementModule.md         MovementModule API reference
+    └── ObstacleModule.md         ObstacleModule API reference
 ```
 
 ## Accessing NavLib
@@ -173,12 +175,13 @@ end)
 
 ## Architecture
 
-NavLib provides three layers that can be used independently:
+NavLib provides four layers that can be used independently:
 
 | Layer | Module | Purpose |
 |-------|--------|---------|
 | **Facade** | `NavLibFacade` | Single entry-point. Creates, wires, and drives all modules. Events. |
 | **High-level** | `MovementModule` | Wraps NavigationClient. Handles path following, stuck recovery, route planning. |
+| **Detection** | `ObstacleModule` | Doodad collision detection via ray probing. Avoidance zone memory. |
 | **Low-level** | `NavigationClient` | Raw HTTP calls to NavBuddy. Returns paths, raycasts, heights. No movement. |
 
 Use **NavLibFacade** (via `_G.NavLib.create()`) for the simplest integration — it handles module wiring, update ordering, and config distribution.
@@ -189,5 +192,7 @@ Use **NavigationClient** directly when you need raw pathfinding data (e.g., chec
 
 ## API Reference
 
-- [NavigationClient API](NavigationClient.md) - 13 endpoints, config, options, callbacks
+- [NavLibFacade API](NavLibFacade.md) - **Recommended entry point.** Create, move, events, config — all in one.
+- [NavigationClient API](NavigationClient.md) - 14 endpoints, config, options, callbacks
 - [MovementModule API](MovementModule.md) - Movement, routes, stuck recovery, state machine
+- [ObstacleModule API](ObstacleModule.md) - Doodad collision detection, avoidance zones, ray probing
