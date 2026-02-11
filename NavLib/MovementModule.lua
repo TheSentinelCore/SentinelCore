@@ -163,6 +163,12 @@ function MovementModule:get_destination()
     return self._destination
 end
 
+---Get current waypoint index in the path
+---@return number
+function MovementModule:get_path_index()
+    return self._path_index or 1
+end
+
 ---Update config values at runtime (e.g., from UI settings)
 ---@param overrides table Key-value pairs to merge into config
 function MovementModule:update_config(overrides)
