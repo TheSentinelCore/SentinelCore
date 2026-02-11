@@ -1,8 +1,8 @@
-# ObstacleModule API Reference
+# Obstacle API Reference
 
-Doodad collision detection via `core.graphics.trace_line` ray probing, with avoidance zone memory. Detected obstacles are stored as zones and fed to [NavigationClient:find_path_avoid()](NavigationClient.md#find_path_avoid) for rerouting.
+Doodad collision detection via `core.graphics.trace_line` ray probing, with avoidance zone memory. Detected obstacles are stored as zones and fed to [Navigation:find_path_avoid()](Navigation.md#find_path_avoid) for rerouting.
 
-ObstacleModule has two probing modes, both driven by [MovementModule](MovementModule.md):
+Obstacle has two probing modes, both driven by [Movement](Movement.md):
 
 - **Proactive:** Scans upcoming waypoint segments on a timer during movement (default every 1.5s)
 - **Reactive:** Probes forward from the player's position when stuck recovery triggers (2nd attempt)
@@ -24,14 +24,14 @@ ObstacleModule has two probing modes, both driven by [MovementModule](MovementMo
   - [Constructor Config](#constructor-config)
   - [update_config](#update_config)
 - [Update Loop](#update-loop)
-- [Integration with MovementModule](#integration-with-movementmodule)
+- [Integration with Movement](#integration-with-movement)
 - [How Ray Probing Works](#how-ray-probing-works)
 
 ---
 
 ## Constructor
 
-### `ObstacleModule:new(config?) -> ObstacleModule`
+### `Obstacle:new(config?) -> Obstacle`
 
 Create a new obstacle detection instance.
 
@@ -43,7 +43,7 @@ Create a new obstacle detection instance.
 
 **Example:**
 ```lua
-local obstacle = _G.NavLib.ObstacleModule:new({
+local obstacle = _G.NavLib.Obstacle:new({
     avoidance_radius = 4.0,
     max_zones = 8,
 })
@@ -77,7 +77,7 @@ Probe forward from the player toward a target using `core.graphics.trace_line`. 
 4. If any ray is blocked, returns the midpoint along that ray as the approximate obstacle center
 5. Logs the hit position for debugging
 
-**Used by:** MovementModule's reactive stuck handler (2nd stuck attempt)
+**Used by:** Movement's reactive stuck handler (2nd stuck attempt)
 
 ---
 
@@ -138,7 +138,7 @@ if hit then
 end
 ```
 
-**Used by:** MovementModule's proactive obstacle check (every 1.5s during movement)
+**Used by:** Movement's proactive obstacle check (every 1.5s during movement)
 
 ---
 
@@ -202,7 +202,7 @@ Remove all remembered avoidance zones immediately.
 obstacle:get_avoidance_zones() -> table[]
 ```
 
-Returns the current avoidance zones for passing to [`find_path_avoid()`](NavigationClient.md#find_path_avoid).
+Returns the current avoidance zones for passing to [`find_path_avoid()`](Navigation.md#find_path_avoid).
 
 **Returns:** Array of zone tables:
 ```lua
@@ -281,40 +281,40 @@ obstacle:update_config({
 obstacle:update()
 ```
 
-No-op method for compatibility with module update loops. Probing is not driven by `update()` — it is triggered by MovementModule:
+No-op method for compatibility with module update loops. Probing is not driven by `update()` — it is triggered by Movement:
 
-- **Proactive probing** is called by `MovementModule:_check_proactive_obstacles()` on a timer
-- **Reactive probing** is called by `MovementModule:_unstuck_probe_and_repath()` during stuck recovery
+- **Proactive probing** is called by `Movement:_check_proactive_obstacles()` on a timer
+- **Reactive probing** is called by `Movement:_unstuck_probe_and_repath()` during stuck recovery
 
-When using [NavLibFacade](NavLibFacade.md), `obstacle:update()` is called automatically by `facade:update()`.
+When using [Facade](Facade.md), `obstacle:update()` is called automatically by `facade:update()`.
 
 ---
 
-## Integration with MovementModule
+## Integration with Movement
 
-ObstacleModule is designed to work with MovementModule. The wiring is:
+Obstacle is designed to work with Movement. The wiring is:
 
 ```lua
 -- Manual wiring
-local obstacle = ObstacleModule:new()
+local obstacle = Obstacle:new()
 movement:set_obstacle_module(obstacle)
 
--- Or automatic via NavLibFacade
+-- Or automatic via Facade
 local nav = _G.NavLib.create()  -- wires everything internally
 ```
 
 Once wired:
 
 1. **Proactive scanning** (every 1.5s during movement):
-   - MovementModule calls `obstacle:probe_path_ahead(remaining_waypoints)`
+   - Movement calls `obstacle:probe_path_ahead(remaining_waypoints)`
    - If hit found: calls `obstacle:add_zone(hit_pos)`, then repaths with `find_path_avoid()`
 
 2. **Reactive scanning** (on 2nd stuck attempt):
-   - MovementModule calls `obstacle:probe_forward(player_pos, next_waypoint)`
+   - Movement calls `obstacle:probe_forward(player_pos, next_waypoint)`
    - If hit found: calls `obstacle:add_zone(hit_pos)`, then repaths with `find_path_avoid()`
 
 3. **Zone data flows to pathfinding:**
-   - `obstacle:get_avoidance_zones()` returns zones for `NavigationClient:find_path_avoid()`
+   - `obstacle:get_avoidance_zones()` returns zones for `Navigation:find_path_avoid()`
    - NavBuddy computes paths that avoid the zones with the specified cost multiplier
 
 ---

@@ -11,20 +11,22 @@ Standalone Sylvannas plugin providing navmesh pathfinding and path-following mov
 
 ```
 NavLib/
-├── header.lua            Plugin metadata
-├── main.lua              Entry point — registers _G.NavLib global
-├── NavLibFacade.lua      Single entry-point facade (create + update + events)
-├── NavigationClient.lua  HTTP client for NavBuddy (13 endpoints)
-├── MovementModule.lua    Path following, stuck recovery, route planning
-├── ObstacleModule.lua    Doodad collision detection and avoidance zones
-├── JSON.lua              JSON encoder/decoder
-├── Helpers.lua           Utility functions
+├── header.lua              Plugin metadata
+├── main.lua                Entry point — registers _G.NavLib global
+├── Facade.lua              Single entry-point facade (create + update + events)
+├── core/
+│   ├── Navigation.lua      HTTP client for NavBuddy (14 endpoints)
+│   ├── Movement.lua        Path following, stuck recovery, route planning
+│   └── Obstacle.lua        Doodad collision detection and avoidance zones
+├── lib/
+│   ├── JSON.lua            JSON encoder/decoder
+│   └── Helpers.lua         Utility functions
 └── docs/
-    ├── README.md                 This file
-    ├── NavLibFacade.md           NavLibFacade API reference (recommended)
-    ├── NavigationClient.md       NavigationClient API reference
-    ├── MovementModule.md         MovementModule API reference
-    └── ObstacleModule.md         ObstacleModule API reference
+    ├── README.md           This file
+    ├── Facade.md           Facade API reference (recommended)
+    ├── Navigation.md       Navigation API reference
+    ├── Movement.md         Movement API reference
+    └── Obstacle.md         Obstacle API reference
 ```
 
 ## Accessing NavLib
@@ -33,10 +35,10 @@ NavLib registers itself as `_G.NavLib` when loaded. All modules are available:
 
 ```lua
 if _G.NavLib then
-    local NavigationClient = _G.NavLib.NavigationClient
-    local MovementModule   = _G.NavLib.MovementModule
-    local JSON             = _G.NavLib.JSON
-    local Helpers          = _G.NavLib.Helpers
+    local Navigation = _G.NavLib.Navigation
+    local Movement   = _G.NavLib.Movement
+    local JSON       = _G.NavLib.JSON
+    local Helpers    = _G.NavLib.Helpers
 end
 ```
 
@@ -79,10 +81,10 @@ For advanced usage or direct module access, see the manual setup below.
 
 ## Manual Setup (Advanced)
 
-### 1. Create a NavigationClient
+### 1. Create a Navigation Client
 
 ```lua
-local nav = _G.NavLib.NavigationClient:new({
+local nav = _G.NavLib.Navigation:new({
     base_url = "http://localhost:47110",  -- default
     max_retries = 3,                      -- default
 })
@@ -114,7 +116,7 @@ end, {
 ### 3. Move Along a Path
 
 ```lua
-local movement = _G.NavLib.MovementModule:new(nav, {
+local movement = _G.NavLib.Movement:new(nav, {
     waypoint_tolerance = 3.0,
     stuck_check_interval = 2.0,
     smoothing = "chaikin",
@@ -179,20 +181,20 @@ NavLib provides four layers that can be used independently:
 
 | Layer | Module | Purpose |
 |-------|--------|---------|
-| **Facade** | `NavLibFacade` | Single entry-point. Creates, wires, and drives all modules. Events. |
-| **High-level** | `MovementModule` | Wraps NavigationClient. Handles path following, stuck recovery, route planning. |
-| **Detection** | `ObstacleModule` | Doodad collision detection via ray probing. Avoidance zone memory. |
-| **Low-level** | `NavigationClient` | Raw HTTP calls to NavBuddy. Returns paths, raycasts, heights. No movement. |
+| **Facade** | `Facade` | Single entry-point. Creates, wires, and drives all modules. Events. |
+| **High-level** | `Movement` | Wraps Navigation. Handles path following, stuck recovery, route planning. |
+| **Detection** | `Obstacle` | Doodad collision detection via ray probing. Avoidance zone memory. |
+| **Low-level** | `Navigation` | Raw HTTP calls to NavBuddy. Returns paths, raycasts, heights. No movement. |
 
-Use **NavLibFacade** (via `_G.NavLib.create()`) for the simplest integration — it handles module wiring, update ordering, and config distribution.
+Use **Facade** (via `_G.NavLib.create()`) for the simplest integration — it handles module wiring, update ordering, and config distribution.
 
-Use **MovementModule** directly when you need full control over module lifecycle.
+Use **Movement** directly when you need full control over module lifecycle.
 
-Use **NavigationClient** directly when you need raw pathfinding data (e.g., checking if a path exists, raycasting for line-of-sight, getting navmesh height).
+Use **Navigation** directly when you need raw pathfinding data (e.g., checking if a path exists, raycasting for line-of-sight, getting navmesh height).
 
 ## API Reference
 
-- [NavLibFacade API](NavLibFacade.md) - **Recommended entry point.** Create, move, events, config — all in one.
-- [NavigationClient API](NavigationClient.md) - 14 endpoints, config, options, callbacks
-- [MovementModule API](MovementModule.md) - Movement, routes, stuck recovery, state machine
-- [ObstacleModule API](ObstacleModule.md) - Doodad collision detection, avoidance zones, ray probing
+- [Facade API](Facade.md) - **Recommended entry point.** Create, move, events, config — all in one.
+- [Navigation API](Navigation.md) - 14 endpoints, config, options, callbacks
+- [Movement API](Movement.md) - Movement, routes, stuck recovery, state machine
+- [Obstacle API](Obstacle.md) - Doodad collision detection, avoidance zones, ray probing

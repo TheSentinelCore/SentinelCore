@@ -1,4 +1,4 @@
-# NavLibFacade API Reference
+# Facade API Reference
 
 Single entry-point facade for NavLib. Creates, wires, and drives all modules with one constructor call, one `update()` per frame, and a built-in event system for state-change notifications.
 
@@ -40,9 +40,9 @@ Single entry-point facade for NavLib. Creates, wires, and drives all modules wit
 
 ## Constructor
 
-### `_G.NavLib.create(config?) -> NavLibFacade`
+### `_G.NavLib.create(config?) -> Facade`
 
-Create a fully-wired NavLib instance. Internally creates a [NavigationClient](NavigationClient.md), [MovementModule](MovementModule.md), and [ObstacleModule](ObstacleModule.md), then wires the obstacle module into the movement module automatically.
+Create a fully-wired NavLib instance. Internally creates a [Navigation](Navigation.md), [Movement](Movement.md), and [Obstacle](Obstacle.md), then wires the obstacle module into the movement module automatically.
 
 **Parameters:**
 
@@ -53,19 +53,19 @@ Create a fully-wired NavLib instance. Internally creates a [NavigationClient](Na
 **Config structure:**
 ```lua
 {
-    navigation = {  -- NavigationClient config
+    navigation = {  -- Navigation config
         base_url = "http://localhost:47110",  -- default
         max_retries = 3,                      -- default
     },
-    movement = {    -- MovementModule config (24 fields)
+    movement = {    -- Movement config (24 fields)
         waypoint_tolerance = 3.0,
         smoothing = "chaikin",
-        -- ... see MovementModule docs for all fields
+        -- ... see Movement docs for all fields
     },
-    obstacles = {   -- ObstacleModule config (12 fields)
+    obstacles = {   -- Obstacle config (12 fields)
         avoidance_radius = 3.0,
         max_zones = 5,
-        -- ... see ObstacleModule docs for all fields
+        -- ... see Obstacle docs for all fields
     },
 }
 ```
@@ -117,7 +117,7 @@ end)
 
 ## Movement
 
-All movement methods delegate to the internal [MovementModule](MovementModule.md). See that doc for detailed behavior (casting deferral, corridor adaptation, stuck recovery, etc.).
+All movement methods delegate to the internal [Movement](Movement.md). See that doc for detailed behavior (casting deferral, corridor adaptation, stuck recovery, etc.).
 
 ### move_to
 
@@ -216,7 +216,7 @@ Check if a destination is reachable **without starting movement**.
 | `target` | vec3 | yes | Target position |
 | `callback` | function | yes | `function(reachable, reason, distance)` |
 
-> **Note:** This delegates to `MovementModule:validate_destination_reachable()`. The shorter name is a facade convenience.
+> **Note:** This delegates to `Movement:validate_destination_reachable()`. The shorter name is a facade convenience.
 
 ---
 
@@ -371,9 +371,9 @@ The `create()` config is **sectioned** — each key maps to a module's configura
 
 | Section | Module | Doc |
 |---------|--------|-----|
-| `navigation` | NavigationClient | [Config](NavigationClient.md#configuration) |
-| `movement` | MovementModule | [Config](MovementModule.md#constructor-config) |
-| `obstacles` | ObstacleModule | [Config](ObstacleModule.md#constructor-config) |
+| `navigation` | Navigation | [Config](Navigation.md#configuration) |
+| `movement` | Movement | [Config](Movement.md#constructor-config) |
+| `obstacles` | Obstacle | [Config](Obstacle.md#constructor-config) |
 
 See each module's doc for the full list of config fields and defaults.
 
@@ -479,9 +479,9 @@ For advanced use cases, the underlying module instances are exposed as public fi
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `nav.nav_client` | NavigationClient | Raw HTTP client — direct access to all 14 endpoints |
-| `nav.movement` | MovementModule | Path follower — full state machine, stuck recovery |
-| `nav.obstacle` | ObstacleModule | Obstacle detector — zone memory, ray probing |
+| `nav.nav_client` | Navigation | Raw HTTP client — direct access to all 14 endpoints |
+| `nav.movement` | Movement | Path follower — full state machine, stuck recovery |
+| `nav.obstacle` | Obstacle | Obstacle detector — zone memory, ray probing |
 
 **Example:**
 ```lua

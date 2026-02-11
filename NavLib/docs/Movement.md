@@ -1,6 +1,6 @@
-# MovementModule API Reference
+# Movement API Reference
 
-High-level path-following module that wraps [NavigationClient](NavigationClient.md). Handles waypoint traversal, stuck detection and recovery, route planning, indoor corridor adaptation, obstacle avoidance, and casting deferral.
+High-level path-following module that wraps [Navigation](Navigation.md). Handles waypoint traversal, stuck detection and recovery, route planning, indoor corridor adaptation, obstacle avoidance, and casting deferral.
 
 **Important:** You must call `movement:update()` every frame for the module to function.
 
@@ -41,7 +41,7 @@ High-level path-following module that wraps [NavigationClient](NavigationClient.
 
 ## Constructor
 
-### `MovementModule:new(nav_client, config) -> MovementModule`
+### `Movement:new(nav_client, config) -> Movement`
 
 Create a new movement module instance.
 
@@ -49,13 +49,13 @@ Create a new movement module instance.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `nav_client` | NavigationClient | yes | NavigationClient instance for pathfinding |
+| `nav_client` | Navigation | yes | Navigation instance for pathfinding |
 | `config` | table | no | Configuration overrides (see [Constructor Config](#constructor-config)) |
 
 **Example:**
 ```lua
-local nav = _G.NavLib.NavigationClient:new()
-local movement = _G.NavLib.MovementModule:new(nav, {
+local nav = _G.NavLib.Navigation:new()
+local movement = _G.NavLib.Movement:new(nav, {
     waypoint_tolerance = 3.0,
     smoothing = "chaikin",
     optimize = true,
@@ -72,7 +72,7 @@ local movement = _G.NavLib.MovementModule:new(nav, {
 movement:move_to(target, callback?, opts?)
 ```
 
-Move to a target position using navmesh pathfinding. Requests a path from NavigationClient, then follows it with stuck recovery.
+Move to a target position using navmesh pathfinding. Requests a path from Navigation, then follows it with stuck recovery.
 
 **Parameters:**
 
@@ -101,7 +101,7 @@ end
 1. If player is casting/channeling, defers until cast ends
 2. If `use_navmesh = false`, moves directly without pathfinding
 3. Otherwise requests path from NavBuddy (corridor path if indoors, normal path outdoors)
-4. If an ObstacleModule is attached and has avoidance zones, uses `find_path_avoid()` instead of `find_path()`
+4. If an Obstacle is attached and has avoidance zones, uses `find_path_avoid()` instead of `find_path()`
 5. On path received, starts following waypoints
 6. Adjusts waypoint tolerance for narrow indoor corridors (40% of min corridor width, minimum 1.0)
 
@@ -160,7 +160,7 @@ Stop all movement and reset to idle state.
 movement:plan_route(nodes, callback?, opts?)
 ```
 
-Plan and execute a TSP-optimized route through multiple nodes. NavBuddy calculates the optimal visit order, then MovementModule follows each leg sequentially.
+Plan and execute a TSP-optimized route through multiple nodes. NavBuddy calculates the optimal visit order, then Movement follows each leg sequentially.
 
 **Parameters:**
 
@@ -413,19 +413,19 @@ Returns corridor width data for the current path (indoor corridor paths only), o
 movement:set_obstacle_module(obstacle_module)
 ```
 
-Attach an [ObstacleModule](ObstacleModule.md) instance for avoidance-aware pathfinding. When set:
+Attach an [Obstacle](Obstacle.md) instance for avoidance-aware pathfinding. When set:
 
 - Proactive obstacle scanning runs every `proactive_obstacle_interval` seconds during movement
-- Detected obstacle zones are passed to [`find_path_avoid()`](NavigationClient.md#find_path_avoid) for rerouting
+- Detected obstacle zones are passed to [`find_path_avoid()`](Navigation.md#find_path_avoid) for rerouting
 - Reactive probing triggers on the 2nd stuck recovery attempt
 
 **Parameters:**
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `obstacle_module` | ObstacleModule | yes | Obstacle detection instance |
+| `obstacle_module` | Obstacle | yes | Obstacle detection instance |
 
-> **Note:** When using [NavLibFacade](NavLibFacade.md), this is called automatically during construction. You only need to call this if you're wiring modules manually.
+> **Note:** When using [Facade](Facade.md), this is called automatically during construction. You only need to call this if you're wiring modules manually.
 
 ---
 
@@ -534,7 +534,7 @@ When the player hasn't moved far enough during a check interval, stuck recovery 
 | Stuck Count | Strategy | Action | Duration |
 |-------------|----------|--------|----------|
 | 1 | Jump | `core.input.jump()` | Instant |
-| 2 | Strafe + Jump | Random left/right strafe, also probes for obstacles if ObstacleModule attached | 0.5s then jump |
+| 2 | Strafe + Jump | Random left/right strafe, also probes for obstacles if Obstacle attached | 0.5s then jump |
 | 3 | Backward + Jump | Move backward | 1.0s then jump |
 | 4+ | Repath | Request fresh path from current position | Async |
 | max (5) | Fail | Movement fails, callback called with error | — |
@@ -549,7 +549,7 @@ When the player hasn't moved far enough during a check interval, stuck recovery 
 - Stops current path
 - Requests new path from current position to original destination
 - Uses corridor pathfinding if indoors
-- Includes avoidance zones if ObstacleModule has detected obstacles
+- Includes avoidance zones if Obstacle has detected obstacles
 - Resets stuck counter on successful repath
 
 ---
@@ -565,20 +565,20 @@ When `use_corridor_indoor = true` and the player is in a dungeon/raid zone:
    - Minimum of 1.0 yards
    - Prevents overshooting in tight corridors
 
-**Detection:** Uses `NavigationClient.is_indoor()` which checks the current UiMapID against a built-in table of dungeon/raid zones.
+**Detection:** Uses `Navigation.is_indoor()` which checks the current UiMapID against a built-in table of dungeon/raid zones.
 
 ---
 
 ## Proactive Obstacle Detection
 
-When an [ObstacleModule](ObstacleModule.md) is attached via `set_obstacle_module()` and `proactive_obstacle_check = true`:
+When an [Obstacle](Obstacle.md) is attached via `set_obstacle_module()` and `proactive_obstacle_check = true`:
 
 1. Every `proactive_obstacle_interval` seconds (default: 1.5s) during movement, scans upcoming waypoint segments for doodad collisions
-2. Uses `ObstacleModule:probe_path_ahead()` with `core.graphics.trace_line` to check for blocked segments
-3. If an obstacle is detected: adds an avoidance zone to the ObstacleModule, then triggers a repath via [`find_path_avoid()`](NavigationClient.md#find_path_avoid) to route around it
+2. Uses `Obstacle:probe_path_ahead()` with `core.graphics.trace_line` to check for blocked segments
+3. If an obstacle is detected: adds an avoidance zone to the Obstacle, then triggers a repath via [`find_path_avoid()`](Navigation.md#find_path_avoid) to route around it
 4. **Reactive fallback:** On the 2nd stuck recovery attempt, probes forward from the player's position. If an obstacle is found, adds a zone and repaths immediately
 
-This feature is fully automatic when using [NavLibFacade](NavLibFacade.md) — the facade wires the ObstacleModule into MovementModule during construction.
+This feature is fully automatic when using [Facade](Facade.md) — the facade wires the Obstacle into Movement during construction.
 
 ---
 
@@ -601,7 +601,7 @@ During movement, paths are periodically validated:
 
 - Checked every `path_check_interval` seconds (default: 8.0s)
 - Only validates if 3+ waypoints remain
-- Uses `NavigationClient:check_path()` to verify navmesh walkability
+- Uses `Navigation:check_path()` to verify navmesh walkability
 - If invalid segment detected: triggers repath from current position
 - Logs the invalid segment index for debugging
 
@@ -610,7 +610,7 @@ During movement, paths are periodically validated:
 ## Complete Usage Example
 
 ```lua
--- Recommended: Use NavLibFacade for automatic setup
+-- Recommended: Use Facade for automatic setup
 local nav = _G.NavLib.create({
     movement = {
         waypoint_tolerance = 3.0,
@@ -652,13 +652,13 @@ end)
 
 **Manual setup (advanced):**
 ```lua
-local NavigationClient = _G.NavLib.NavigationClient
-local MovementModule = _G.NavLib.MovementModule
-local ObstacleModule = _G.NavLib.ObstacleModule
+local Navigation = _G.NavLib.Navigation
+local Movement = _G.NavLib.Movement
+local Obstacle = _G.NavLib.Obstacle
 
-local nav_client = NavigationClient:new()
-local movement = MovementModule:new(nav_client, { smoothing = "chaikin" })
-local obstacle = ObstacleModule:new()
+local nav_client = Navigation:new()
+local movement = Movement:new(nav_client, { smoothing = "chaikin" })
+local obstacle = Obstacle:new()
 movement:set_obstacle_module(obstacle)
 
 core.register_on_update_callback(function()

@@ -1,4 +1,4 @@
-# NavigationClient API Reference
+# Navigation API Reference
 
 HTTP client for the NavBuddy pathfinding server. Provides async pathfinding, raycasting, height queries, and tactical movement endpoints.
 
@@ -35,7 +35,7 @@ All pathfinding methods are **asynchronous** -- they issue an HTTP GET to NavBud
 
 ## Constructor
 
-### `NavigationClient:new(config) -> NavigationClient`
+### `Navigation:new(config) -> Navigation`
 
 Create a new client instance.
 
@@ -48,7 +48,7 @@ Create a new client instance.
 
 **Example:**
 ```lua
-local nav = NavigationClient:new({
+local nav = Navigation:new({
     base_url = "http://localhost:47110",
     max_retries = 3,
 })
@@ -183,7 +183,7 @@ end, {
 nav:find_path_avoid(start_pos, dest, avoid_zones, callback, opts?)
 ```
 
-Request a navmesh path that routes around avoidance zones. Used by [MovementModule](MovementModule.md) when an [ObstacleModule](ObstacleModule.md) has detected doodad collisions. Falls back to `find_path()` if no zones are provided or if the avoid endpoint fails.
+Request a navmesh path that routes around avoidance zones. Used by [Movement](Movement.md) when an [Obstacle](Obstacle.md) has detected doodad collisions. Falls back to `find_path()` if no zones are provided or if the avoid endpoint fails.
 
 **Endpoint:** `GET /api/v1/path-avoid`
 
@@ -593,13 +593,13 @@ Reset connection state (`_is_connected = false`, `_consecutive_failures = 0`, `_
 ### is_indoor
 
 ```lua
-NavigationClient.is_indoor() -> boolean
+Navigation.is_indoor() -> boolean
 ```
 
 **Static method** (no instance needed). Returns `true` if the current UiMapID is a dungeon or raid zone.
 
 ```lua
-if NavigationClient.is_indoor() then
+if Navigation.is_indoor() then
     -- Use corridor pathfinding for tighter navigation
 end
 ```
@@ -617,7 +617,7 @@ end
 
 ### Map ID Auto-Detection
 
-If `opts.map_id` is not provided, NavigationClient automatically detects the current continent by:
+If `opts.map_id` is not provided, Navigation automatically detects the current continent by:
 1. Calling `core.get_map_id()` to get the current UiMapID
 2. Looking up the UiMapID in `UI_MAP_TO_CONTINENT`
 3. Defaulting to `0` (Eastern Kingdoms) if the UiMapID is unmapped
