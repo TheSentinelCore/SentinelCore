@@ -202,8 +202,8 @@ function PathVisualizer:_render_current_path(player_pos)
 
     -- Get current path index if available
     local current_index = 1
-    if self._movement_module._path_index then
-        current_index = self._movement_module._path_index
+    if self._movement_module.get_path_index then
+        current_index = self._movement_module:get_path_index()
     end
 
     -- Draw path waypoints and lines

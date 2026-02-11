@@ -88,9 +88,9 @@ function StatsTab.render(ui, y_offset)
     local bot_mgr = GatherBuddy:get_bot_manager()
     local movement = bot_mgr and bot_mgr._modules and bot_mgr._modules.MovementModule
 
-    if movement and movement._current_path then
-        local path_count = #movement._current_path
-        local path_idx = movement._path_index or 0
+    if movement and movement:get_current_path() then
+        local path_count = #movement:get_current_path()
+        local path_idx = movement:get_path_index()
 
         -- Progress bar
         local window_size = window:get_size()

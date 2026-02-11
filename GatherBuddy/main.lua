@@ -116,8 +116,8 @@ local function render_path_overlay()
     local movement = GatherBuddy:get_module("MovementModule")
     if not movement then return end
 
-    local current_path = movement._current_path
-    local path_index = movement._path_index or 1
+    local current_path = movement:get_current_path()
+    local path_index = movement:get_path_index()
 
     if not current_path or #current_path == 0 then return end
 
