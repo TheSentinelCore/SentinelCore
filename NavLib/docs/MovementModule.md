@@ -1,6 +1,6 @@
 # MovementModule API Reference
 
-High-level path-following module that wraps [NavigationClient](NavigationClient.md). Handles waypoint traversal, stuck detection and recovery, route planning, indoor corridor adaptation, and casting deferral.
+High-level path-following module that wraps [NavigationClient](NavigationClient.md). Handles waypoint traversal, stuck detection and recovery, route planning, indoor corridor adaptation, obstacle avoidance, and casting deferral.
 
 **Important:** You must call `movement:update()` every frame for the module to function.
 
@@ -22,15 +22,20 @@ High-level path-following module that wraps [NavigationClient](NavigationClient.
   - [is_moving](#is_moving)
   - [get_current_path](#get_current_path)
   - [get_destination](#get_destination)
+  - [get_path_index](#get_path_index)
   - [get_progress](#get_progress)
   - [get_corridor_widths](#get_corridor_widths)
+- [Obstacle Integration](#obstacle-integration)
+  - [set_obstacle_module](#set_obstacle_module)
 - [Configuration](#configuration)
   - [Constructor Config](#constructor-config)
   - [update_config](#update_config)
 - [State Machine](#state-machine)
 - [Stuck Recovery](#stuck-recovery)
 - [Indoor Corridor Adaptation](#indoor-corridor-adaptation)
+- [Proactive Obstacle Detection](#proactive-obstacle-detection)
 - [Casting Deferral](#casting-deferral)
+- [Path Validation](#path-validation)
 
 ---
 
@@ -96,8 +101,9 @@ end
 1. If player is casting/channeling, defers until cast ends
 2. If `use_navmesh = false`, moves directly without pathfinding
 3. Otherwise requests path from NavBuddy (corridor path if indoors, normal path outdoors)
-4. On path received, starts following waypoints
-5. Adjusts waypoint tolerance for narrow indoor corridors (40% of min corridor width, minimum 1.0)
+4. If an ObstacleModule is attached and has avoidance zones, uses `find_path_avoid()` instead of `find_path()`
+5. On path received, starts following waypoints
+6. Adjusts waypoint tolerance for narrow indoor corridors (40% of min corridor width, minimum 1.0)
 
 **Example:**
 ```lua
@@ -285,7 +291,7 @@ end)
 movement:update()
 ```
 
-**Must be called every frame.** Drives the movement state machine: advances waypoints, checks for arrival, runs stuck detection, processes recovery actions, validates paths, and tracks route progress.
+**Must be called every frame.** Drives the movement state machine: advances waypoints, checks for arrival, runs stuck detection, processes recovery actions, validates paths, scans for obstacles, and tracks route progress.
 
 ```lua
 core.register_on_update_callback(function()
@@ -309,7 +315,7 @@ Returns the current state. One of:
 | `"requesting_path"` | Waiting for path from NavBuddy |
 | `"moving"` | Actively following waypoints |
 | `"stuck"` | Stuck recovery in progress |
-| `"arrived"` | Reached destination |
+| `"arrived"` | Reached destination (transitions to idle after callback) |
 | `"failed"` | Movement failed (max stuck attempts, path error, etc.) |
 
 ---
@@ -341,6 +347,16 @@ movement:get_destination() -> vec3|nil
 ```
 
 Returns the current destination, or `nil` if not moving.
+
+---
+
+### get_path_index
+
+```lua
+movement:get_path_index() -> number
+```
+
+Returns the current waypoint index in the active path. Returns `1` if no path is active.
 
 ---
 
@@ -389,6 +405,30 @@ Returns corridor width data for the current path (indoor corridor paths only), o
 
 ---
 
+## Obstacle Integration
+
+### set_obstacle_module
+
+```lua
+movement:set_obstacle_module(obstacle_module)
+```
+
+Attach an [ObstacleModule](ObstacleModule.md) instance for avoidance-aware pathfinding. When set:
+
+- Proactive obstacle scanning runs every `proactive_obstacle_interval` seconds during movement
+- Detected obstacle zones are passed to [`find_path_avoid()`](NavigationClient.md#find_path_avoid) for rerouting
+- Reactive probing triggers on the 2nd stuck recovery attempt
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `obstacle_module` | ObstacleModule | yes | Obstacle detection instance |
+
+> **Note:** When using [NavLibFacade](NavLibFacade.md), this is called automatically during construction. You only need to call this if you're wiring modules manually.
+
+---
+
 ## Configuration
 
 ### Constructor Config
@@ -403,22 +443,24 @@ All config fields with their defaults:
 | `stuck_distance_min` | number | `1.0` | Min yards moved to not be "stuck" |
 | `max_stuck_attempts` | number | `5` | Max recovery attempts before failing |
 | `path_check_interval` | number | `8.0` | Seconds between path validity checks |
-| `smoothing` | string | `"chaikin"` | Path smoothing algorithm |
+| `smoothing` | string | `"chaikin"` | Path smoothing algorithm (`"none"`, `"straight"`, `"catmull_rom"`, `"chaikin"`) |
 | `optimize` | boolean | `true` | Enable waypoint optimization |
 | `anti_detection` | boolean | `false` | Use randomized path endpoint |
 | `max_deviation` | number | `3.0` | Max yards for anti-detection deviation |
 | `allow_partial` | boolean | `true` | Accept partial paths |
-| `smooth_iterations` | number | `2` | Smoothing iterations |
+| `smooth_iterations` | number | `3` | Smoothing iterations |
 | `smooth_samples` | number | `10` | Smoothing sample count |
-| `smooth_ratio` | number | `0.75` | Smoothing interpolation ratio |
-| `min_corner_angle` | number | `0` | Min corner angle in degrees |
-| `keep_originals` | boolean | `false` | Keep original waypoints |
+| `smooth_ratio` | number | `0.50` | Smoothing interpolation ratio (0.0-1.0) |
+| `min_corner_angle` | number | `90` | Min corner angle in degrees |
+| `keep_originals` | boolean | `false` | Keep original waypoints alongside smoothed |
 | `filter_ground` | number | `1.0` | Ground polygon cost |
 | `filter_water` | number | `10.0` | Water polygon cost |
 | `filter_lava` | number | `100.0` | Lava polygon cost |
 | `use_corridor_indoor` | boolean | `true` | Use corridor pathfinding indoors |
-| `corridor_probe_dist` | number | `15.0` | Corridor probe distance |
-| `wall_clearance` | number | `0` | Wall clearance in yards |
+| `corridor_probe_dist` | number | `15.0` | Corridor probe distance in yards |
+| `wall_clearance` | number | `1.0` | Min distance from walls in yards (must be > 0 to take effect) |
+| `proactive_obstacle_check` | boolean | `true` | Enable proactive obstacle scanning on upcoming path segments |
+| `proactive_obstacle_interval` | number | `1.5` | Seconds between proactive obstacle scans |
 
 ---
 
@@ -456,27 +498,32 @@ movement:update_config({
        │                                    path received
        │                                         │
        │                                         v
-       │         arrival                    [MOVING]
-       │<────────────────────────────────────────┤
-       │                                         │
-       │         max stuck attempts              │ stuck detected
-       │<────── [FAILED]                         │
-                                                 v
-                                           [STUCK]
-                                             │ recovery action
-                                             v
-                                           [MOVING] (retry)
+       │                                    [MOVING]
+       │                                     │     │
+       │         arrival                     │     │ stuck detected
+       │         ┌───────────────────────────┘     │
+       │         v                                 v
+       │    [ARRIVED]                          [STUCK]
+       │         │                               │ recovery action
+       │         │ auto-reset                    v
+       │<────────┘                          [MOVING] (retry)
+       │
+       │         max stuck attempts
+       │<────── [FAILED]
+
+     Any state ──stop()──> [IDLE]
 ```
 
 **Transitions:**
 - `idle` -> `requesting_path`: `move_to()` or `plan_route()` called
 - `requesting_path` -> `moving`: Path received from NavBuddy
 - `requesting_path` -> `failed`: Path request failed
-- `moving` -> `idle`: Arrived at destination (or route complete)
+- `moving` -> `arrived`: Reached destination
+- `arrived` -> `idle`: Automatic reset after callback fires
 - `moving` -> `stuck`: Stuck detected (not enough movement)
 - `stuck` -> `moving`: Recovery action taken
-- Any -> `idle`: `stop()` called
 - `moving` -> `failed`: Max stuck attempts exceeded
+- Any -> `idle`: `stop()` called
 
 ---
 
@@ -487,7 +534,7 @@ When the player hasn't moved far enough during a check interval, stuck recovery 
 | Stuck Count | Strategy | Action | Duration |
 |-------------|----------|--------|----------|
 | 1 | Jump | `core.input.jump()` | Instant |
-| 2 | Strafe + Jump | Random left/right strafe | 0.5s then jump |
+| 2 | Strafe + Jump | Random left/right strafe, also probes for obstacles if ObstacleModule attached | 0.5s then jump |
 | 3 | Backward + Jump | Move backward | 1.0s then jump |
 | 4+ | Repath | Request fresh path from current position | Async |
 | max (5) | Fail | Movement fails, callback called with error | — |
@@ -502,6 +549,7 @@ When the player hasn't moved far enough during a check interval, stuck recovery 
 - Stops current path
 - Requests new path from current position to original destination
 - Uses corridor pathfinding if indoors
+- Includes avoidance zones if ObstacleModule has detected obstacles
 - Resets stuck counter on successful repath
 
 ---
@@ -518,6 +566,19 @@ When `use_corridor_indoor = true` and the player is in a dungeon/raid zone:
    - Prevents overshooting in tight corridors
 
 **Detection:** Uses `NavigationClient.is_indoor()` which checks the current UiMapID against a built-in table of dungeon/raid zones.
+
+---
+
+## Proactive Obstacle Detection
+
+When an [ObstacleModule](ObstacleModule.md) is attached via `set_obstacle_module()` and `proactive_obstacle_check = true`:
+
+1. Every `proactive_obstacle_interval` seconds (default: 1.5s) during movement, scans upcoming waypoint segments for doodad collisions
+2. Uses `ObstacleModule:probe_path_ahead()` with `core.graphics.trace_line` to check for blocked segments
+3. If an obstacle is detected: adds an avoidance zone to the ObstacleModule, then triggers a repath via [`find_path_avoid()`](NavigationClient.md#find_path_avoid) to route around it
+4. **Reactive fallback:** On the 2nd stuck recovery attempt, probes forward from the player's position. If an obstacle is found, adds a zone and repaths immediately
+
+This feature is fully automatic when using [NavLibFacade](NavLibFacade.md) — the facade wires the ObstacleModule into MovementModule during construction.
 
 ---
 
@@ -549,31 +610,28 @@ During movement, paths are periodically validated:
 ## Complete Usage Example
 
 ```lua
--- Get NavLib modules
-local NavigationClient = _G.NavLib.NavigationClient
-local MovementModule = _G.NavLib.MovementModule
-
--- Create instances
-local nav = NavigationClient:new()
-local movement = MovementModule:new(nav, {
-    waypoint_tolerance = 3.0,
-    smoothing = "chaikin",
-    optimize = true,
-    anti_detection = true,
-    max_deviation = 3.0,
-    use_corridor_indoor = true,
+-- Recommended: Use NavLibFacade for automatic setup
+local nav = _G.NavLib.create({
+    movement = {
+        waypoint_tolerance = 3.0,
+        smoothing = "chaikin",
+        optimize = true,
+        anti_detection = true,
+        max_deviation = 3.0,
+        use_corridor_indoor = true,
+    },
 })
 
 -- Register frame update
 core.register_on_update_callback(function()
-    movement:update()
+    nav:update()
 end)
 
 -- Move to a location
 local dest = { x = -8900, y = 560, z = 94 }
 
 -- Pre-validate first
-movement:validate_destination_reachable(dest, function(reachable, reason, distance)
+nav:validate_destination(dest, function(reachable, reason, distance)
     if not reachable then
         core.log_error("Can't reach destination: " .. tostring(reason))
         return
@@ -582,7 +640,7 @@ movement:validate_destination_reachable(dest, function(reachable, reason, distan
     core.log(string.format("Destination valid, %.0f yards away", distance))
 
     -- Start moving
-    movement:move_to(dest, function(success, reason)
+    nav:move_to(dest, function(success, reason)
         if success then
             core.log("Arrived at destination!")
         else
@@ -590,15 +648,21 @@ movement:validate_destination_reachable(dest, function(reachable, reason, distan
         end
     end)
 end)
+```
 
--- Check progress periodically
+**Manual setup (advanced):**
+```lua
+local NavigationClient = _G.NavLib.NavigationClient
+local MovementModule = _G.NavLib.MovementModule
+local ObstacleModule = _G.NavLib.ObstacleModule
+
+local nav_client = NavigationClient:new()
+local movement = MovementModule:new(nav_client, { smoothing = "chaikin" })
+local obstacle = ObstacleModule:new()
+movement:set_obstacle_module(obstacle)
+
 core.register_on_update_callback(function()
-    if movement:is_moving() then
-        local p = movement:get_progress()
-        -- p.state, p.distance_remaining, p.path_index, p.path_count
-    end
+    obstacle:update()
+    movement:update()
 end)
-
--- Stop movement when needed
--- movement:stop()
 ```
