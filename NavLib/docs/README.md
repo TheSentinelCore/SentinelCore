@@ -13,8 +13,10 @@ Standalone Sylvannas plugin providing navmesh pathfinding and path-following mov
 NavLib/
 ├── header.lua            Plugin metadata
 ├── main.lua              Entry point — registers _G.NavLib global
+├── NavLibFacade.lua      Single entry-point facade (create + update + events)
 ├── NavigationClient.lua  HTTP client for NavBuddy (13 endpoints)
 ├── MovementModule.lua    Path following, stuck recovery, route planning
+├── ObstacleModule.lua    Doodad collision detection and avoidance zones
 ├── JSON.lua              JSON encoder/decoder
 ├── Helpers.lua           Utility functions
 └── docs/
@@ -36,7 +38,44 @@ if _G.NavLib then
 end
 ```
 
-## Quick Start
+## Quick Start (Facade)
+
+The recommended way to use NavLib — one call to create, one call per frame:
+
+```lua
+-- Create a fully-wired NavLib instance
+local nav = _G.NavLib.create({
+    movement = { smoothing = "chaikin", waypoint_tolerance = 3.0 },
+})
+
+-- Move to a position
+nav:move_to(destination, function(ok, reason)
+    if ok then core.log("Arrived!") end
+end)
+
+-- Listen for events (optional)
+nav:on("arrived", function() core.log("Got there!") end)
+nav:on("failed", function() core.log_error("Movement failed") end)
+
+-- Call every frame
+core.register_on_update_callback(function()
+    nav:update()
+end)
+
+-- Update config at runtime (e.g., from UI settings)
+nav:update_config({
+    movement = { anti_detection = true, max_deviation = 5.0 },
+    obstacles = { avoidance_radius = 4.0 },
+})
+
+-- Access raw modules when needed (escape hatch)
+local raw_nav_client = nav.nav_client
+raw_nav_client:raycast(start, dest, function(ok, data) ... end)
+```
+
+For advanced usage or direct module access, see the manual setup below.
+
+## Manual Setup (Advanced)
 
 ### 1. Create a NavigationClient
 
@@ -132,18 +171,21 @@ movement:validate_destination_reachable(dest, function(reachable, reason, distan
 end)
 ```
 
-## Two-Layer Architecture
+## Architecture
 
-NavLib provides two layers that can be used independently:
+NavLib provides three layers that can be used independently:
 
 | Layer | Module | Purpose |
 |-------|--------|---------|
-| **Low-level** | `NavigationClient` | Raw HTTP calls to NavBuddy. Returns paths, raycasts, heights. No movement. |
+| **Facade** | `NavLibFacade` | Single entry-point. Creates, wires, and drives all modules. Events. |
 | **High-level** | `MovementModule` | Wraps NavigationClient. Handles path following, stuck recovery, route planning. |
+| **Low-level** | `NavigationClient` | Raw HTTP calls to NavBuddy. Returns paths, raycasts, heights. No movement. |
+
+Use **NavLibFacade** (via `_G.NavLib.create()`) for the simplest integration — it handles module wiring, update ordering, and config distribution.
+
+Use **MovementModule** directly when you need full control over module lifecycle.
 
 Use **NavigationClient** directly when you need raw pathfinding data (e.g., checking if a path exists, raycasting for line-of-sight, getting navmesh height).
-
-Use **MovementModule** when you want full move-to-destination behavior with automatic stuck recovery, path validation, and route planning.
 
 ## API Reference
 
