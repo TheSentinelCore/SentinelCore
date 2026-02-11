@@ -107,12 +107,28 @@ function BotManager:initialize()
     end
 
     -- Load NavLib modules from global (NavLib plugin must load before GatherBuddy)
-    if _G.NavLib then
+    if _G.NavLib and _G.NavLib.create then
+        -- Facade: single-call setup wires all modules internally
+        self._navlib = _G.NavLib.create({
+            navigation = self._config.navigation,
+            movement   = self._config.movement,
+            obstacles  = self._config.obstacles,
+        })
+        -- Keep module refs for code that accesses self._modules.MovementModule etc.
+        self._modules.NavigationClient = self._navlib.nav_client
+        self._modules.MovementModule   = self._navlib.movement
+        self._modules.ObstacleModule   = self._navlib.obstacle
+
+        self._navlib_available = true
+        if self._log then
+            self._log:debug("Loaded NavLib via facade (create)")
+        end
+    elseif _G.NavLib then
+        -- Fallback: old-style manual wiring (backward compat)
         self._modules.NavigationClient = _G.NavLib.NavigationClient:new(self._config.navigation)
         self._modules.MovementModule = _G.NavLib.MovementModule:new(
             self._modules.NavigationClient, self._config.movement
         )
-        -- Create obstacle module and wire into movement
         if _G.NavLib.ObstacleModule then
             self._modules.ObstacleModule = _G.NavLib.ObstacleModule:new(self._config.obstacles)
             self._modules.MovementModule:set_obstacle_module(self._modules.ObstacleModule)
@@ -120,7 +136,7 @@ function BotManager:initialize()
 
         self._navlib_available = true
         if self._log then
-            self._log:debug("Loaded NavigationClient + MovementModule + ObstacleModule from NavLib")
+            self._log:debug("Loaded NavigationClient + MovementModule + ObstacleModule from NavLib (legacy)")
         end
     else
         self._navlib_available = false
@@ -416,51 +432,90 @@ end
 
 ---Update all modules
 function BotManager:_update_modules()
-    -- Sync UI settings to MovementModule config
-    local movement = self._modules.MovementModule
-    if movement and movement.update_config then
-        movement:update_config({
-            smoothing         = Settings.get("movement.preferred_smoothing", "chaikin"),
-            optimize          = Settings.get("movement.path_optimize", true),
-            anti_detection    = Settings.get("movement.anti_detection", false),
-            max_deviation     = Settings.get("movement.max_deviation", 3.0),
-            waypoint_tolerance = Settings.get("movement.waypoint_tolerance", 3.0),
-            smooth_iterations = Settings.get("movement.smooth_iterations", 2),
-            smooth_samples    = Settings.get("movement.smooth_samples", 10),
-            smooth_ratio      = Settings.get("movement.smooth_ratio", 0.75),
-            min_corner_angle  = Settings.get("movement.min_corner_angle", 0),
-            keep_originals    = Settings.get("movement.keep_originals", false),
-            filter_ground     = Settings.get("movement.filter_ground", 1.0),
-            filter_water      = Settings.get("movement.filter_water", 10.0),
-            filter_lava       = Settings.get("movement.filter_lava", 100.0),
-            use_corridor_indoor = Settings.get("movement.use_corridor_indoor", true),
-            corridor_probe_dist = Settings.get("movement.corridor_probe_dist", 15.0),
-            wall_clearance = Settings.get("movement.wall_clearance_enabled", false)
-                and Settings.get("movement.wall_clearance", 1.5) or 0,
+    -- Sync UI settings through facade (or directly if legacy)
+    if self._navlib then
+        self._navlib:update_config({
+            movement = {
+                smoothing           = Settings.get("movement.preferred_smoothing", "chaikin"),
+                optimize            = Settings.get("movement.path_optimize", true),
+                anti_detection      = Settings.get("movement.anti_detection", false),
+                max_deviation       = Settings.get("movement.max_deviation", 3.0),
+                waypoint_tolerance  = Settings.get("movement.waypoint_tolerance", 3.0),
+                smooth_iterations   = Settings.get("movement.smooth_iterations", 2),
+                smooth_samples      = Settings.get("movement.smooth_samples", 10),
+                smooth_ratio        = Settings.get("movement.smooth_ratio", 0.75),
+                min_corner_angle    = Settings.get("movement.min_corner_angle", 0),
+                keep_originals      = Settings.get("movement.keep_originals", false),
+                filter_ground       = Settings.get("movement.filter_ground", 1.0),
+                filter_water        = Settings.get("movement.filter_water", 10.0),
+                filter_lava         = Settings.get("movement.filter_lava", 100.0),
+                use_corridor_indoor = Settings.get("movement.use_corridor_indoor", true),
+                corridor_probe_dist = Settings.get("movement.corridor_probe_dist", 15.0),
+                wall_clearance      = Settings.get("movement.wall_clearance_enabled", false)
+                    and Settings.get("movement.wall_clearance", 1.5) or 0,
+            },
+            obstacles = {
+                avoidance_cost   = Settings.get("obstacles.avoidance_cost", 5.0),
+                avoidance_radius = Settings.get("obstacles.avoidance_radius", 3.0),
+            },
         })
+    else
+        -- Legacy: sync directly to modules
+        local movement = self._modules.MovementModule
+        if movement and movement.update_config then
+            movement:update_config({
+                smoothing           = Settings.get("movement.preferred_smoothing", "chaikin"),
+                optimize            = Settings.get("movement.path_optimize", true),
+                anti_detection      = Settings.get("movement.anti_detection", false),
+                max_deviation       = Settings.get("movement.max_deviation", 3.0),
+                waypoint_tolerance  = Settings.get("movement.waypoint_tolerance", 3.0),
+                smooth_iterations   = Settings.get("movement.smooth_iterations", 2),
+                smooth_samples      = Settings.get("movement.smooth_samples", 10),
+                smooth_ratio        = Settings.get("movement.smooth_ratio", 0.75),
+                min_corner_angle    = Settings.get("movement.min_corner_angle", 0),
+                keep_originals      = Settings.get("movement.keep_originals", false),
+                filter_ground       = Settings.get("movement.filter_ground", 1.0),
+                filter_water        = Settings.get("movement.filter_water", 10.0),
+                filter_lava         = Settings.get("movement.filter_lava", 100.0),
+                use_corridor_indoor = Settings.get("movement.use_corridor_indoor", true),
+                corridor_probe_dist = Settings.get("movement.corridor_probe_dist", 15.0),
+                wall_clearance      = Settings.get("movement.wall_clearance_enabled", false)
+                    and Settings.get("movement.wall_clearance", 1.5) or 0,
+            })
+        end
+        local obstacles = self._modules.ObstacleModule
+        if obstacles and obstacles.update_config then
+            obstacles:update_config({
+                avoidance_cost   = Settings.get("obstacles.avoidance_cost", 5.0),
+                avoidance_radius = Settings.get("obstacles.avoidance_radius", 3.0),
+            })
+        end
     end
 
-    -- Sync UI settings to ObstacleModule config
-    local obstacles = self._modules.ObstacleModule
-    if obstacles and obstacles.update_config then
-        obstacles:update_config({
-            avoidance_cost   = Settings.get("obstacles.avoidance_cost", 5.0),
-            avoidance_radius = Settings.get("obstacles.avoidance_radius", 3.0),
-        })
+    -- Drive NavLib facade (obstacle + movement in correct order)
+    if self._navlib then
+        local ok, err = pcall(self._navlib.update, self._navlib)
+        if not ok and self._log then
+            self._log:error("Error updating NavLib: %s", tostring(err))
+        end
     end
 
-    -- Update modules that have update methods
+    -- Update remaining modules
     local update_order = {
         "NavigationClient",
         "SafetyModule",
-        "ObstacleModule",
-        "MovementModule",
         "NodeScanner",
         "GatherModule",
         "MountModule",
         "InventoryModule",
-        "StatisticsModule"
+        "StatisticsModule",
     }
+
+    -- If no facade, also update obstacle + movement in the module loop
+    if not self._navlib then
+        table.insert(update_order, 3, "ObstacleModule")
+        table.insert(update_order, 4, "MovementModule")
+    end
 
     for _, name in ipairs(update_order) do
         local module = self._modules[name]
