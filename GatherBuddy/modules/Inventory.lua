@@ -168,12 +168,8 @@ function Inventory:_get_bag_slot_count(bag_id)
         end
     end
 
-    -- Fallback: check if bag has any items (exists)
-    local items = core.inventory.get_items_in_bag(bag_id)
-    if items and #items > 0 then
-        return #items  -- Best guess: use items array length
-    end
-
+    -- Cannot reliably determine slot count without inventory_helper;
+    -- #items conflates item count with slot count
     return 0
 end
 

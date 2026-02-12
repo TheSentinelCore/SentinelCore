@@ -687,7 +687,7 @@ function ProfileManager:is_in_blackspot(pos)
 
     for _, bs in ipairs(self._current_profile.blackspots) do
         local bs_pos = { x = bs.x, y = bs.y, z = bs.z }
-        local dist = Helpers.distance_2d(pos, bs_pos)
+        local dist = Helpers.distance_3d(pos, bs_pos)
 
         if dist <= bs.radius then
             return true

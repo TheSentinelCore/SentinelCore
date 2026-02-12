@@ -215,10 +215,11 @@ function Safety:_check_combat_state(player)
 
         -- Get previous state from context
         local ctx = self._state_machine:get_context()
-        local return_state = ctx.data.previous_state or STATES.IDLE
+        local ctx_data = ctx and ctx.data or {}
+        local return_state = ctx_data.previous_state or STATES.IDLE
 
         self._event_bus:publish(EVENTS.COMBAT_EXITED, {
-            duration = core.time() - (ctx.data.entered_at or core.time()),
+            duration = core.time() - (ctx_data.entered_at or core.time()),
             timestamp = core.time()
         })
 

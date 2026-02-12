@@ -122,8 +122,8 @@ function StatsTab.render(ui, y_offset)
         y_offset = y_offset + bar_height + LAYOUT.element_spacing
 
         -- Target coordinates
-        if movement._current_destination then
-            local dest = movement._current_destination
+        if movement.get_destination and movement:get_destination() then
+            local dest = movement:get_destination()
             local target_text = string.format("Target: (%.0f, %.0f, %.0f)", dest.x, dest.y, dest.z)
             window:render_text(enums.window_enums.font_id.FONT_SMALL,
                 vec2.new(x_start, y_offset), colors.text_secondary, target_text)

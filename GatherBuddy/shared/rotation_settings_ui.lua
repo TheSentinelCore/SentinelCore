@@ -82,9 +82,13 @@ local LAYOUT = {
 
 -- Helper to lighten color for hover states
 local function lighten_color(base_color, amount)
-    -- Return a brightened version of the color for hover effects
-    -- This is a simplified version that returns a lighter shade
-    return color.new(60, 60, 70, 200)
+    local r, g, b, a = base_color:get()
+    return color.new(
+        math.min(255, r + amount),
+        math.min(255, g + amount),
+        math.min(255, b + amount),
+        a
+    )
 end
 
 -- ============================================================================

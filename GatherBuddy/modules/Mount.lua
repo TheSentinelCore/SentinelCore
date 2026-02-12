@@ -213,7 +213,7 @@ function Mount:mount(mount_index)
             available = mount_count,
             timestamp = core.time()
         })
-        self._mount_state = MOUNT_STATES.IDLE
+        self._mount_state = MOUNT_STATES.NONE
         return false
     end
 

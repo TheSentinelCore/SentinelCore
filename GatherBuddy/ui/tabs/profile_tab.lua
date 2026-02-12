@@ -253,7 +253,7 @@ function ProfileTab.render(ui, y_offset)
         -- Remove / Clear buttons
         local danger_color = color.new(200, 60, 60, 200)
         if render_button(window, x_start + 8, y_offset, btn_w - 4, btn_h,
-            "Remove Last", colors, danger_color) then
+            "Remove Current", colors, danger_color) then
             if profile_mgr then
                 local current_wp = profile_mgr:get_current_waypoint()
                 if current_wp then
