@@ -453,6 +453,7 @@ function BotManager:_update_modules()
                 corridor_probe_dist = Settings.get("movement.corridor_probe_dist", 15.0),
                 wall_clearance      = Settings.get("movement.wall_clearance_enabled", false)
                     and Settings.get("movement.wall_clearance", 1.5) or 0,
+                dynamic_speed       = Settings.get("movement.dynamic_speed", true),
             },
             obstacles = {
                 avoidance_cost   = Settings.get("obstacles.avoidance_cost", 5.0),
@@ -481,6 +482,7 @@ function BotManager:_update_modules()
                 corridor_probe_dist = Settings.get("movement.corridor_probe_dist", 15.0),
                 wall_clearance      = Settings.get("movement.wall_clearance_enabled", false)
                     and Settings.get("movement.wall_clearance", 1.5) or 0,
+                dynamic_speed       = Settings.get("movement.dynamic_speed", true),
             })
         end
         local obstacles = self._modules.Obstacle
