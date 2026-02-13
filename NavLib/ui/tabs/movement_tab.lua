@@ -1,5 +1,5 @@
 --[[
-    Movement Tab - Server, speed, tolerances, anti-detection, stuck recovery
+    Movement Tab - Speed, tolerances, anti-detection, stuck recovery
 ]]
 
 local MovementTab = {}
@@ -18,21 +18,12 @@ function MovementTab.register(ui, menu)
     end
 
     ui:add_tab({ id = "movement", label = "Movement" }, function(t)
-        -- Server connection
-        t:slider_list({
-            label = "Server",
-            elements = {
-                { element = menu.server_port, label = "Port" },
-                { element = menu.max_retries, label = "Max Retries" },
-            }
-        })
-
         -- Speed
         t:checkbox_grid({
             label = "Speed",
             columns = 1,
             elements = {
-                { element = menu.dynamic_speed, label = "Dynamic Speed" },
+                { element = menu.dynamic_speed, label = "Dynamic Speed", tooltip = "Adjusts movement speed based on path curvature and terrain" },
             }
         })
 
@@ -40,8 +31,8 @@ function MovementTab.register(ui, menu)
         t:slider_list({
             label = "Tolerances",
             elements = {
-                { element = menu.waypoint_tolerance, label = "Waypoint", suffix = " yd" },
-                { element = menu.final_tolerance, label = "Final", suffix = " yd" },
+                { element = menu.waypoint_tolerance, label = "Waypoint", suffix = " yd", tooltip = "Distance from waypoint before advancing to the next one" },
+                { element = menu.final_tolerance, label = "Final", suffix = " yd", tooltip = "Distance from destination to consider arrival complete" },
             }
         })
 
@@ -50,14 +41,14 @@ function MovementTab.register(ui, menu)
             label = "Anti-Detection",
             columns = 1,
             elements = {
-                { element = menu.anti_detection, label = "Enable" },
+                { element = menu.anti_detection, label = "Enable", tooltip = "Adds slight random deviations to movement path" },
             }
         })
 
         t:slider_list({
             visible_when = anti_detection_on,
             elements = {
-                { element = menu.max_deviation, label = "Max Deviation", suffix = " yd" },
+                { element = menu.max_deviation, label = "Max Deviation", suffix = " yd", tooltip = "Maximum random offset from the path" },
             }
         })
 
@@ -66,9 +57,9 @@ function MovementTab.register(ui, menu)
             label = "Stuck Recovery",
             visible_when = show_advanced,
             elements = {
-                { element = menu.stuck_interval, label = "Check Interval", suffix = " s" },
-                { element = menu.stuck_distance, label = "Min Distance", suffix = " yd" },
-                { element = menu.max_stuck, label = "Max Attempts" },
+                { element = menu.stuck_interval, label = "Check Interval", suffix = " s", tooltip = "How often to check if character is stuck" },
+                { element = menu.stuck_distance, label = "Min Distance", suffix = " yd", tooltip = "Minimum distance to travel between stuck checks" },
+                { element = menu.max_stuck, label = "Max Attempts", tooltip = "Number of stuck recoveries before aborting path" },
             }
         })
 
@@ -77,7 +68,7 @@ function MovementTab.register(ui, menu)
             label = "Path Validation",
             visible_when = show_advanced,
             elements = {
-                { element = menu.path_check, label = "Check Interval", suffix = " s" },
+                { element = menu.path_check, label = "Check Interval", suffix = " s", tooltip = "How often to revalidate the current path" },
             }
         })
     end)
