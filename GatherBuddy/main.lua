@@ -174,6 +174,12 @@ local function on_load()
         ui.menu.enable:set(true)
     end
 
+    -- Initialize NavLib settings UI (NavLib facade created by BotManager)
+    local bot_mgr = GatherBuddy:get_bot_manager()
+    if bot_mgr and bot_mgr._navlib and _G.NavLib and _G.NavLib.create_ui then
+        _G.NavLib.create_ui(bot_mgr._navlib)
+    end
+
     _is_loaded = true
     core.log("[GatherBuddy] Loaded successfully")
 end
@@ -206,6 +212,9 @@ end)
 core.register_on_render_callback(function()
     if not _is_loaded then return end
     UIWindow.on_render()
+    if _G.NavLib and _G.NavLib.ui then
+        _G.NavLib.ui:on_render()
+    end
     render_path_overlay()
 end)
 
@@ -213,6 +222,9 @@ core.register_on_render_menu_callback(function()
     if not _is_loaded then return end
 
     UIWindow.on_menu_render()
+    if _G.NavLib and _G.NavLib.ui then
+        _G.NavLib.ui:on_menu_render()
+    end
 
     -- Toggle button in Sylvannas main menu
     if menu_elements.open_btn:render("GatherBuddy") then
