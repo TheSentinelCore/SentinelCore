@@ -13,8 +13,12 @@ local S_STUCK = "stuck"
 local S_ARRIVED = "arrived"
 local S_FAILED = "failed"
 
+-- Speed constants
+local BASE_RUN_SPEED = 7.0 -- yards/sec, standard run speed
+
 -- Default configuration
 local DEFAULT_CONFIG = {
+    dynamic_speed        = true,   -- Enable adaptive speed scaling
     waypoint_tolerance   = 3.0,
     final_tolerance      = 1.5,
     stuck_check_interval = 2.0,
@@ -118,6 +122,9 @@ function Movement:new(nav_client, config)
 
     -- Compatibility: consumers read _path_index directly
     o._path_index = 1
+
+    -- Speed scaling state
+    o._last_applied_speed = 0
 
     -- Configure simple_movement
     simple_movement:set_threshold(o._config.waypoint_tolerance)
@@ -308,6 +315,47 @@ end
 
 -- Update loop ------------------------------------------------------------
 
+---Apply dynamic speed adaptation to movement parameters
+---@param player game_object
+function Movement:_apply_dynamic_speed(player)
+    if not self._config.dynamic_speed then return end
+
+    local cur_speed = player:get_movement_speed()
+    if not cur_speed or cur_speed < 0.1 then return end
+
+    -- Throttle updates: only apply if speed changed by > 5%
+    if self._last_applied_speed > 0 and math.abs(cur_speed - self._last_applied_speed) < (self._last_applied_speed * 0.05) then
+        return
+    end
+    self._last_applied_speed = cur_speed
+
+    -- Ratio vs base run speed (e.g. 14.0 / 7.0 = 2.0 for epic mount)
+    local ratio = cur_speed / BASE_RUN_SPEED
+
+    -- Scale parameters with strict safety clamps
+    -- Look-ahead: look further at high speeds (5-15 yards)
+    local look_dist = math.max(5.0, math.min(15.0, cur_speed * 0.5))
+    
+    -- Tolerance: loosen tolerance at high speeds to prevent spiraling (1.5-5 yards)
+    -- Base tolerance scales with ratio
+    local new_tolerance = math.max(1.5, math.min(5.0, self._config.waypoint_tolerance * ratio))
+
+    -- Turn speed: turn faster at high speeds (0.05 - 0.3)
+    local turn_speed = math.max(0.05, math.min(0.3, 0.05 * ratio))
+
+    -- Apply to simple_movement
+    simple_movement:set_look_distance(look_dist)
+    simple_movement:set_threshold(new_tolerance)
+    simple_movement:set_turn_speed(turn_speed)
+
+    -- Debug log (verbose only)
+    -- core.log_debug("[Movement] Speed " .. string.format("%.1f", cur_speed) 
+    --     .. " (x" .. string.format("%.2f", ratio) .. ") -> "
+    --     .. "Look: " .. string.format("%.1f", look_dist) 
+    --     .. ", Tol: " .. string.format("%.1f", new_tolerance)
+    --     .. ", Turn: " .. string.format("%.2f", turn_speed))
+end
+
 ---Call every frame to drive movement
 function Movement:update()
     -- Nothing to do in terminal/idle states
@@ -333,6 +381,9 @@ function Movement:update()
 
     -- Active movement
     if self._state == S_MOVING then
+        -- Adapt to speed changes (mount/dismount/sprint)
+        self:_apply_dynamic_speed(player)
+
         local reached = simple_movement:process()
         self._path_index = simple_movement:get_current_index() or 1
 
