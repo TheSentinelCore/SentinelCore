@@ -358,6 +358,12 @@ function RotationSettingsUI.new(config)
 
     self._active_slider = nil
     self._active_key_capture = nil
+    self._before_tabs_fn = nil
+    self._tooltip = nil
+    self._scroll_y = 0
+    self._content_height = 0
+    self._scroll_drag = false
+    self._last_scroll_mouse_y = nil
 
     return self
 end
@@ -439,6 +445,15 @@ function TabBuilder:keybind_grid(opts)
         type = "keybind_grid",
         elements = opts and opts.elements or nil,
         labels = opts and opts.labels or nil,
+        visible_when = opts and opts.visible_when or nil
+    })
+end
+
+---@param opts table {render_fn, visible_when?}
+function TabBuilder:custom_render(opts)
+    return self:_add_group({
+        type = "custom",
+        render_fn = opts and opts.render_fn or nil,
         visible_when = opts and opts.visible_when or nil
     })
 end
@@ -597,11 +612,11 @@ end
 -- TAB BAR RENDERING
 -- ============================================================================
 
-function RotationSettingsUI:_render_tab_bar()
+function RotationSettingsUI:_render_tab_bar(y_start_override)
     local window_size = self.window:get_size()
     local content_width = window_size.x - (2 * LAYOUT.padding_side)
     local x_start = LAYOUT.padding_side
-    local y_start = LAYOUT.padding_top
+    local y_start = y_start_override or LAYOUT.padding_top
 
     -- Calculate tab button width
     local num_tabs = #self.sections
@@ -955,6 +970,9 @@ function RotationSettingsUI:_render_checkbox_grid(section, y_offset)
             local row_click_start = vec2.new(x_pos, y_offset)
             local row_click_end = vec2.new(x_pos + column_width, y_offset + LAYOUT.checkbox_size)
             self.window:is_mouse_hovering_rect_block_movement(row_click_start, row_click_end)
+            if self.window:is_mouse_hovering_rect(row_click_start, row_click_end) and item.tooltip then
+                self._tooltip = item.tooltip
+            end
             if self.window:is_rect_clicked(row_click_start, row_click_end) then
                 pcall(function()
                     if element.set then
@@ -1230,7 +1248,12 @@ function RotationSettingsUI:_render_slider_list(section, y_offset)
                 value = 0
             end
 
-            local min_value, max_value = self:_get_slider_bounds(element)
+            local min_value, max_value
+            if item.min and item.max then
+                min_value, max_value = item.min, item.max
+            else
+                min_value, max_value = self:_get_slider_bounds(element)
+            end
             if max_value < min_value then
                 max_value = min_value
             end
@@ -1243,6 +1266,13 @@ function RotationSettingsUI:_render_slider_list(section, y_offset)
             -- Hover/Press state
             local is_hovered = self.window:is_mouse_hovering_rect(bar_start, bar_end)
             self.window:is_mouse_hovering_rect_block_movement(bar_start, bar_end)
+
+            -- Tooltip on row hover
+            local row_hover_start = vec2.new(x_start, y_offset)
+            local row_hover_end = vec2.new(x_start + content_width, y_offset + LAYOUT.slider_bar_height)
+            if self.window:is_mouse_hovering_rect(row_hover_start, row_hover_end) and item.tooltip then
+                self._tooltip = item.tooltip
+            end
 
             -- Custom Rendering - Label
             local label_y = y_offset + (LAYOUT.slider_bar_height - self.window:get_text_size(label).y) / 2
@@ -1375,6 +1405,13 @@ function RotationSettingsUI:_render_combo_list(section, y_offset)
             local is_hovered = self.window:is_mouse_hovering_rect(box_start, box_end)
             self.window:is_mouse_hovering_rect_block_movement(box_start, box_end)
 
+            -- Tooltip on row hover
+            local combo_row_start = vec2.new(x_start, y_offset)
+            local combo_row_end = vec2.new(x_start + content_width, y_offset + LAYOUT.slider_bar_height)
+            if self.window:is_mouse_hovering_rect(combo_row_start, combo_row_end) and item.tooltip then
+                self._tooltip = item.tooltip
+            end
+
             local label_y = y_offset + (LAYOUT.slider_bar_height - self.window:get_text_size(label).y) / 2
             self.window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x_start, label_y),
                 self.colors.text_primary, label)
@@ -1433,6 +1470,11 @@ function RotationSettingsUI:_render_tab_groups(section, y_offset)
             y_offset = self:_render_combo_list(group, y_offset)
         elseif group.type == "keybind_grid" then
             y_offset = self:_render_keybind_grid(group, y_offset)
+        elseif group.type == "custom" and group.render_fn then
+            local ok, new_y = pcall(group.render_fn, self, y_offset)
+            if ok and type(new_y) == "number" then
+                y_offset = new_y
+            end
         end
 
         ::continue_group::
@@ -1441,12 +1483,53 @@ function RotationSettingsUI:_render_tab_groups(section, y_offset)
     return y_offset
 end
 -- ============================================================================
+-- TOOLTIP RENDERING
+-- ============================================================================
+
+function RotationSettingsUI:_render_tooltip()
+    if not self._tooltip or not self.window then return end
+    local window_size = self.window:get_size()
+    local text = self._tooltip
+    local x_start = LAYOUT.padding_side
+    local content_width = window_size.x - (2 * LAYOUT.padding_side)
+
+    local text_size = self.window:get_text_size(text)
+    local bar_height = text_size.y + 8
+    local bar_y = window_size.y - bar_height
+
+    -- Background
+    self.window:render_rect_filled(
+        vec2.new(0, bar_y), vec2.new(window_size.x, window_size.y),
+        self.colors.section_bg, 0)
+
+    -- Separator
+    self.window:render_rect_filled(
+        vec2.new(x_start, bar_y), vec2.new(x_start + content_width, bar_y + 1),
+        self.colors.separator, 0)
+
+    -- Text
+    self.window:render_text(enums.window_enums.font_id.FONT_SMALL,
+        vec2.new(x_start, bar_y + 4), self.colors.text_secondary, text)
+end
+
+-- ============================================================================
 -- MAIN SECTION RENDERING
 -- ============================================================================
 
 function RotationSettingsUI:_render_sections()
+    self._tooltip = nil
+
+    -- Before-tabs hook (e.g. "Show Advanced" toggle)
+    local y_before = LAYOUT.padding_top
+    if self._before_tabs_fn then
+        local ok, new_y = pcall(self._before_tabs_fn, self, y_before)
+        if ok and type(new_y) == "number" then
+            y_before = new_y
+        end
+    end
+
     -- Render tab bar
-    local y_offset = self:_render_tab_bar()
+    local y_offset = self:_render_tab_bar(y_before)
 
     -- Add separator line below tabs
     local window_size = self.window:get_size()
@@ -1456,8 +1539,77 @@ function RotationSettingsUI:_render_sections()
 
     y_offset = y_offset + 2 + LAYOUT.tab_content_padding_top
 
-    -- Render active tab content
-    self:_render_active_tab_content(y_offset)
+    -- Scrollable tab content area
+    local tab_content_top = y_offset
+    local tooltip_reserve = 24
+    local tab_content_bottom = window_size.y - LAYOUT.padding_bottom - tooltip_reserve
+    local visible_height = tab_content_bottom - tab_content_top
+
+    -- Clamp scroll
+    local max_scroll = math.max(0, self._content_height - visible_height)
+    self._scroll_y = math.max(0, math.min(self._scroll_y, max_scroll))
+
+    -- Clip content area
+    self.window:push_clip_rect(
+        vec2.new(0, tab_content_top),
+        vec2.new(window_size.x, tab_content_bottom),
+        true)
+
+    -- Render content with scroll offset
+    local scrolled_y = y_offset - self._scroll_y
+    local final_y = self:_render_active_tab_content(scrolled_y)
+    self._content_height = final_y - scrolled_y
+
+    self.window:pop_clip_rect()
+
+    -- Scrollbar (only if content overflows)
+    if self._content_height > visible_height and max_scroll > 0 then
+        local sb_width = 6
+        local sb_x = window_size.x - LAYOUT.padding_side
+        local sb_track_height = visible_height
+        local sb_thumb_height = math.max(20, (visible_height / self._content_height) * sb_track_height)
+        local sb_thumb_y = tab_content_top + (self._scroll_y / max_scroll) * (sb_track_height - sb_thumb_height)
+
+        -- Track background
+        self.window:render_rect_filled(
+            vec2.new(sb_x, tab_content_top),
+            vec2.new(sb_x + sb_width, tab_content_bottom),
+            self.colors.slider_bg, 2)
+
+        -- Thumb
+        self.window:render_rect_filled(
+            vec2.new(sb_x, sb_thumb_y),
+            vec2.new(sb_x + sb_width, sb_thumb_y + sb_thumb_height),
+            self.colors.primary_accent, 2)
+
+        -- Scrollbar drag interaction
+        local sb_track_start = vec2.new(sb_x - 4, tab_content_top)
+        local sb_track_end = vec2.new(sb_x + sb_width + 4, tab_content_bottom)
+        self.window:is_mouse_hovering_rect_block_movement(sb_track_start, sb_track_end)
+
+        if self.window:is_mouse_hovering_rect(sb_track_start, sb_track_end) and is_mouse_clicked_left(self.window) then
+            self._scroll_drag = true
+        end
+
+        if self._scroll_drag then
+            if is_mouse_pressed_left(self.window) then
+                local mouse_pos = self:_get_window_local_mouse_pos("raw")
+                if mouse_pos then
+                    local track_progress = (mouse_pos.y - tab_content_top - sb_thumb_height / 2) / (sb_track_height - sb_thumb_height)
+                    track_progress = math.max(0, math.min(1, track_progress))
+                    self._scroll_y = track_progress * max_scroll
+                end
+                self.window:block_input_capture()
+            else
+                self._scroll_drag = false
+            end
+        end
+    else
+        self._scroll_y = 0
+    end
+
+    -- Tooltip bar at bottom
+    self:_render_tooltip()
 
     if self._active_key_capture then
         self.window:block_input_capture()
@@ -1517,5 +1669,7 @@ end
 -- ============================================================================
 
 return {
-    new = RotationSettingsUI.new
+    new = RotationSettingsUI.new,
+    LAYOUT = LAYOUT,
+    THEMES = THEMES,
 }

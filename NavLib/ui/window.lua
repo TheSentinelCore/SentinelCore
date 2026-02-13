@@ -15,6 +15,7 @@ local AstroUI = require("shared/AstroUI")
 local MovementTab    = require("ui/tabs/movement_tab")
 local PathfindingTab = require("ui/tabs/pathfinding_tab")
 local ObstaclesTab   = require("ui/tabs/obstacles_tab")
+local DebugTab       = require("ui/tabs/debug_tab")
 
 local LAYOUT = AstroUI.LAYOUT
 
@@ -40,10 +41,6 @@ local function create_menu_elements()
         -- Window-level
         show_advanced = cb(false, "navlib_show_advanced"),
 
-        -- Server (Tab 1)
-        server_port   = si(1024, 65535, 47110, "navlib_server_port"),
-        max_retries   = si(1, 10, 3, "navlib_max_retries"),
-
         -- Movement basics (Tab 1)
         dynamic_speed      = cb(true, "navlib_dynamic_speed"),
         waypoint_tolerance = sf(0.5, 10.0, 3.0, "navlib_waypoint_tolerance"),
@@ -65,7 +62,7 @@ local function create_menu_elements()
         smoothing         = combo(2, "navlib_smoothing"),  -- default: Chaikin (index 2)
         smooth_iterations = si(1, 5, 3, "navlib_smooth_iterations"),
         smooth_samples    = si(5, 50, 10, "navlib_smooth_samples"),
-        smooth_ratio      = sf(0.50, 0.95, 0.50, "navlib_smooth_ratio"),
+        smooth_ratio      = si(50, 95, 50, "navlib_smooth_ratio_pct"),
         corner_angle      = sf(0.0, 120.0, 90.0, "navlib_corner_angle"),
         keep_originals    = cb(false, "navlib_keep_originals"),
 
@@ -83,7 +80,7 @@ local function create_menu_elements()
         corridor_probe = sf(5.0, 30.0, 15.0, "navlib_corridor_probe"),
 
         -- Wall Clearance (Tab 2)
-        wall_clearance_en = cb(false, "navlib_wall_clearance_en"),
+        wall_clearance_en = cb(true, "navlib_wall_clearance_en"),
         wall_clearance    = sf(0.5, 5.0, 1.0, "navlib_wall_clearance"),
 
         -- Obstacle Avoidance (Tab 3)
@@ -106,6 +103,10 @@ local function create_menu_elements()
         look_height   = sf(0.5, 5.0, 1.5, "navlib_look_height"),
         look_spread   = sf(5.0, 45.0, 15.0, "navlib_look_spread"),
         look_segments = si(1, 10, 3, "navlib_look_segments"),
+
+        -- Debug (Tab 4)
+        debug_verbose = cb(false, "navlib_debug_verbose"),
+        debug_tsp     = cb(false, "navlib_debug_tsp"),
     }
 end
 
@@ -182,10 +183,6 @@ local function sync_to_facade()
     local wall_cl = _menu.wall_clearance_en:get_state() and _menu.wall_clearance:get() or 0
 
     _facade:update_config({
-        navigation = {
-            base_url    = "http://127.0.0.1:" .. _menu.server_port:get(),
-            max_retries = _menu.max_retries:get(),
-        },
         movement = {
             dynamic_speed               = _menu.dynamic_speed:get_state(),
             waypoint_tolerance          = _menu.waypoint_tolerance:get(),
@@ -199,7 +196,7 @@ local function sync_to_facade()
             smoothing                   = smoothing_id,
             smooth_iterations           = _menu.smooth_iterations:get(),
             smooth_samples              = _menu.smooth_samples:get(),
-            smooth_ratio                = _menu.smooth_ratio:get(),
+            smooth_ratio                = _menu.smooth_ratio:get() / 100,
             min_corner_angle            = _menu.corner_angle:get(),
             keep_originals              = _menu.keep_originals:get_state(),
             optimize                    = _menu.optimize:get_state(),
@@ -212,6 +209,7 @@ local function sync_to_facade()
             wall_clearance              = wall_cl,
             proactive_obstacle_check    = _menu.proactive_obstacle:get_state(),
             proactive_obstacle_interval = _menu.obstacle_interval:get(),
+            debug_verbose               = _menu.debug_verbose:get_state(),
         },
         obstacles = {
             avoidance_radius        = _menu.avoidance_radius:get(),
@@ -259,6 +257,7 @@ function Window.init(facade)
     MovementTab.register(_ui, _menu)
     PathfindingTab.register(_ui, _menu)
     ObstaclesTab.register(_ui, _menu)
+    DebugTab.register(_ui, _menu, _facade)
 
     -- Enable the window so it renders by default
     if _ui.menu and _ui.menu.enable then
@@ -272,6 +271,7 @@ end
 ---Called every render frame
 function Window.on_render()
     if not _initialized or not _ui then return end
+    DebugTab.update(_facade, _menu)
     sync_to_facade()
     _ui:on_render()
 end

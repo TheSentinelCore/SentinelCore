@@ -142,7 +142,7 @@ end
 ---@param new_state string
 function Movement:_set_state(new_state)
     if self._state == new_state then return end
-    core.log("[Movement] State: " .. self._state .. " -> " .. new_state)
+    self:_verbose("State: " .. self._state .. " -> " .. new_state)
     self._state = new_state
 end
 
@@ -182,6 +182,14 @@ function Movement:update_config(overrides)
     if not overrides then return end
     for k, v in pairs(overrides) do
         self._config[k] = v
+    end
+end
+
+---Log a message only when debug_verbose is enabled
+---@param msg string
+function Movement:_verbose(msg)
+    if self._config.debug_verbose then
+        core.log("[Movement] " .. msg)
     end
 end
 
@@ -467,7 +475,7 @@ function Movement:move_to(target, callback, opts)
 
     -- Defer if casting
     if player:is_casting_spell() or player:is_channelling_spell() then
-        core.log("[Movement] Player casting, deferring movement")
+        self:_verbose("Player casting, deferring movement")
         self:_set_state(S_REQUESTING)
         self._pending_move = { target = target, callback = callback, opts = opts }
         return
@@ -530,7 +538,7 @@ function Movement:move_to(target, callback, opts)
                 local indoor_tolerance = math.max(1.0, min_width * 0.4)
                 simple_movement:set_threshold(indoor_tolerance)
                 simple_movement:set_final_threshold(math.min(self._config.final_tolerance, indoor_tolerance))
-                core.log("[Movement] Corridor: min width " .. string.format("%.1f", min_width)
+                self:_verbose("Corridor: min width " .. string.format("%.1f", min_width)
                     .. " yd, tolerance -> " .. string.format("%.1f", indoor_tolerance))
             end
         else
@@ -538,7 +546,7 @@ function Movement:move_to(target, callback, opts)
         end
 
         local label = use_corridor and "Corridor path" or "Path"
-        core.log("[Movement] " .. label .. " received: " .. #data.waypoints .. " waypoints, "
+        self:_verbose(label .. " received: " .. #data.waypoints .. " waypoints, "
             .. string.format("%.1f", data.distance or 0) .. " yards")
 
         self:_start_movement(data.waypoints)
@@ -595,7 +603,7 @@ function Movement:_start_movement(waypoints)
 
     -- Re-defer if still casting
     if player:is_casting_spell() or player:is_channelling_spell() then
-        core.log("[Movement] Player still casting, re-deferring")
+        self:_verbose("Player still casting, re-deferring")
         self._pending_move = {
             target = self._destination,
             callback = self._callback,
@@ -609,7 +617,7 @@ function Movement:_start_movement(waypoints)
     self._current_path = waypoints
     self:_set_state(S_MOVING)
     simple_movement:navigate(waypoints)
-    core.log("[Movement] Navigating " .. #waypoints .. " waypoints")
+    self:_verbose("Navigating " .. #waypoints .. " waypoints")
 end
 
 ---Handle arrival at destination
@@ -709,7 +717,7 @@ function Movement:_check_stuck(player)
         self:_handle_stuck()
     else
         if self._stuck_count > 0 then
-            core.log("[Movement] Unstuck (3D=" .. string.format("%.2f", moved) .. " yards)")
+            self:_verbose("Unstuck (3D=" .. string.format("%.2f", moved) .. " yards)")
         end
         self._stuck_count = 0
     end
@@ -745,7 +753,7 @@ end
 
 ---Strategy 1: Jump
 function Movement:_unstuck_jump()
-    core.log("[Movement] Unstuck: jump")
+    self:_verbose("Unstuck: jump")
     core.input.jump()
 end
 
@@ -753,7 +761,7 @@ end
 function Movement:_unstuck_probe_and_repath()
     if not self._obstacle_module or not self._destination then
         -- No obstacle module wired — fall back to strafe
-        core.log("[Movement] Unstuck: no obstacle module, falling back to strafe")
+        self:_verbose("Unstuck: no obstacle module, falling back to strafe")
         self:_unstuck_strafe()
         return
     end
@@ -779,11 +787,11 @@ function Movement:_unstuck_probe_and_repath()
     if hit_pos then
         -- Found a collision — add avoidance zone and repath around it
         self._obstacle_module:add_zone(hit_pos)
-        core.log("[Movement] Unstuck: doodad detected, repathing with avoidance")
+        self:_verbose("Unstuck: doodad detected, repathing with avoidance")
         self:_unstuck_repath()
     else
         -- No collision detected — fall back to strafe
-        core.log("[Movement] Unstuck: no doodad collision, falling back to strafe")
+        self:_verbose("Unstuck: no doodad collision, falling back to strafe")
         self:_unstuck_strafe()
     end
 end
@@ -791,7 +799,7 @@ end
 ---Strategy 3 (fallback from probe): Random strafe + jump
 function Movement:_unstuck_strafe()
     local dir = math.random() > 0.5 and "left" or "right"
-    core.log("[Movement] Unstuck: strafe " .. dir)
+    self:_verbose("Unstuck: strafe " .. dir)
     self._unstuck_phase = "strafe"
     self._unstuck_timer = core.time()
     simple_movement:strafe(dir)
@@ -799,7 +807,7 @@ end
 
 ---Strategy 4: Backward + jump
 function Movement:_unstuck_backward()
-    core.log("[Movement] Unstuck: backward")
+    self:_verbose("Unstuck: backward")
     self._unstuck_phase = "backward"
     self._unstuck_timer = core.time()
     core.input.move_backward_start()
@@ -811,7 +819,7 @@ function Movement:_unstuck_repath()
         core.log_warning("[Movement] No destination for repath")
         return
     end
-    core.log("[Movement] Unstuck: repath")
+    self:_verbose("Unstuck: repath")
     simple_movement:stop()
 
     local player = core.object_manager.get_local_player()
@@ -827,7 +835,7 @@ function Movement:_unstuck_repath()
         if data.corridor_widths then
             self._corridor_widths = data.corridor_widths
         end
-        core.log("[Movement] Repath OK: " .. #data.waypoints .. " waypoints")
+        self:_verbose("Repath OK: " .. #data.waypoints .. " waypoints")
         self._stuck_count = 0
         self:_start_movement(data.waypoints)
     end
@@ -949,7 +957,7 @@ function Movement:_check_route_progress()
     if next_boundary and idx >= next_boundary then
         local prev_leg = rd.current_leg
         rd.current_leg = rd.current_leg + 1
-        core.log("[Movement] Route leg " .. prev_leg .. "/" .. rd.total_legs .. " completed")
+        self:_verbose("Route leg " .. prev_leg .. "/" .. rd.total_legs .. " completed")
 
         if self._callback then
             self._callback(true, {
