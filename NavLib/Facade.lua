@@ -172,7 +172,7 @@ end
 --------------------------------------------------------------------------------
 
 ---Distribute config updates to underlying modules.
----@param overrides table { movement?: table, obstacles?: table }
+---@param overrides table { movement?: table, obstacles?: table, navigation?: table }
 function Facade:update_config(overrides)
     if not overrides then return end
     if overrides.movement then
@@ -180,6 +180,9 @@ function Facade:update_config(overrides)
     end
     if overrides.obstacles then
         self.obstacle:update_config(overrides.obstacles)
+    end
+    if overrides.navigation then
+        self.nav_client:update_config(overrides.navigation)
     end
 end
 
