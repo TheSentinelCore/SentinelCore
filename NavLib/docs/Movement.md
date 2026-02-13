@@ -437,6 +437,7 @@ All config fields with their defaults:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `dynamic_speed` | boolean | `true` | Scale look-ahead, tolerance, turn speed based on player movement speed |
 | `waypoint_tolerance` | number | `3.0` | Yards to reach a waypoint before advancing |
 | `final_tolerance` | number | `1.5` | Yards to reach final destination |
 | `stuck_check_interval` | number | `2.0` | Seconds between stuck checks |
