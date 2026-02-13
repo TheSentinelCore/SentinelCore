@@ -260,6 +260,11 @@ function Window.init(facade)
     PathfindingTab.register(_ui, _menu)
     ObstaclesTab.register(_ui, _menu)
 
+    -- Enable the window so it renders by default
+    if _ui.menu and _ui.menu.enable then
+        _ui.menu.enable:set(true)
+    end
+
     _initialized = true
     core.log("[NavLib] Settings UI initialized")
 end
