@@ -185,6 +185,18 @@ function Navigation:new(config)
     return o
 end
 
+---Update config values at runtime (base_url, max_retries)
+---@param overrides table Key-value pairs to merge
+function Navigation:update_config(overrides)
+    if not overrides then return end
+    if overrides.base_url then
+        self._base_url = overrides.base_url
+    end
+    if overrides.max_retries then
+        self._max_retries = overrides.max_retries
+    end
+end
+
 -- Infrastructure ---------------------------------------------------------
 
 ---Build full URL from endpoint and parameter table
