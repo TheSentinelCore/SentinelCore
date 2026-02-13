@@ -13,8 +13,12 @@ local S_STUCK = "stuck"
 local S_ARRIVED = "arrived"
 local S_FAILED = "failed"
 
+-- Speed constants
+local BASE_RUN_SPEED = 7.0 -- yards/sec, standard run speed
+
 -- Default configuration
 local DEFAULT_CONFIG = {
+    dynamic_speed        = true,   -- Enable adaptive speed scaling
     waypoint_tolerance   = 3.0,
     final_tolerance      = 1.5,
     stuck_check_interval = 2.0,
@@ -118,6 +122,9 @@ function Movement:new(nav_client, config)
 
     -- Compatibility: consumers read _path_index directly
     o._path_index = 1
+
+    -- Speed scaling state
+    o._last_applied_speed = 0
 
     -- Configure simple_movement
     simple_movement:set_threshold(o._config.waypoint_tolerance)
@@ -302,11 +309,58 @@ function Movement:stop()
     self._corridor_widths = nil
     self._obstacle_lookahead_time = 0
     self._path_index = 1
+    self._last_applied_speed = 0
     simple_movement:set_threshold(self._config.waypoint_tolerance)
     simple_movement:set_final_threshold(self._config.final_tolerance)
 end
 
 -- Update loop ------------------------------------------------------------
+
+---Apply dynamic speed adaptation to movement parameters.
+---Scales look-ahead, waypoint tolerance, final tolerance, and turn speed
+---based on the player's current velocity relative to BASE_RUN_SPEED.
+---Respects indoor corridor tolerance when corridor data is present.
+---@param player game_object
+function Movement:_apply_dynamic_speed(player)
+    if not self._config.dynamic_speed then return end
+
+    local cur_speed = player:get_movement_speed()
+    if not cur_speed or cur_speed < 0.1 then return end
+
+    -- Throttle updates: only recalculate if speed changed by > 5%
+    if self._last_applied_speed > 0 and math.abs(cur_speed - self._last_applied_speed) < (self._last_applied_speed * 0.05) then
+        return
+    end
+    self._last_applied_speed = cur_speed
+
+    -- Ratio vs base run speed (e.g. 14.0 / 7.0 = 2.0 for epic mount)
+    local ratio = cur_speed / BASE_RUN_SPEED
+
+    -- Look-ahead: look further at high speeds (5–15 yards)
+    local look_dist = math.max(5.0, math.min(15.0, cur_speed * 0.5))
+
+    -- Tolerance: respect corridor-narrowed base when indoors
+    local base_tol = self._config.waypoint_tolerance
+    if self._corridor_widths then
+        local min_w = self:_compute_min_corridor_width()
+        if min_w and min_w < base_tol then
+            base_tol = math.max(1.0, min_w * 0.4)
+        end
+    end
+    local new_tolerance = math.max(1.5, math.min(5.0, base_tol * ratio))
+
+    -- Final tolerance: scale to avoid destination spiral at mount speed (1.0–3.0 yards)
+    local new_final = math.max(1.0, math.min(3.0, self._config.final_tolerance * ratio))
+
+    -- Turn speed: proportional to velocity (0.05–0.3)
+    local turn_speed = math.max(0.05, math.min(0.3, 0.05 * ratio))
+
+    -- Apply to simple_movement
+    simple_movement:set_look_distance(look_dist)
+    simple_movement:set_threshold(new_tolerance)
+    simple_movement:set_final_threshold(new_final)
+    simple_movement:set_turn_speed(turn_speed)
+end
 
 ---Call every frame to drive movement
 function Movement:update()
@@ -333,6 +387,9 @@ function Movement:update()
 
     -- Active movement
     if self._state == S_MOVING then
+        -- Adapt to speed changes (mount/dismount/sprint)
+        self:_apply_dynamic_speed(player)
+
         local reached = simple_movement:process()
         self._path_index = simple_movement:get_current_index() or 1
 
@@ -579,6 +636,7 @@ function Movement:_on_arrival()
     self._callback = nil
     self._route_data = nil
     self._corridor_widths = nil
+    self._last_applied_speed = 0
     simple_movement:set_threshold(self._config.waypoint_tolerance)
     simple_movement:set_final_threshold(self._config.final_tolerance)
     self:_set_state(S_IDLE)
@@ -632,7 +690,15 @@ function Movement:_check_stuck(player)
 
     local moved = pos:dist_to(self._last_stuck_pos)
 
-    if simple_movement:is_moving() and moved < self._config.stuck_distance_min then
+    -- Scale expected distance by speed ratio — at mount speed, expect proportionally more movement
+    local expected_dist = self._config.stuck_distance_min
+    if self._config.dynamic_speed then
+        local speed = player:get_movement_speed()
+        if speed and speed > 0.1 then
+            expected_dist = expected_dist * math.min(3.0, speed / BASE_RUN_SPEED)
+        end
+    end
+    if simple_movement:is_moving() and moved < expected_dist then
         self._stuck_count = self._stuck_count + 1
         local moved_2d = pos:dist_to_ignore_z(self._last_stuck_pos)
         local dz = math.abs(pos.z - self._last_stuck_pos.z)
