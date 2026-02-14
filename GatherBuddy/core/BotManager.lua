@@ -383,6 +383,7 @@ function BotManager:update()
     if now - self._last_tick_time < self._tick_interval then
         return
     end
+    local delta = now - self._last_tick_time
     self._last_tick_time = now
 
     -- Don't process if paused
@@ -398,7 +399,7 @@ function BotManager:update()
     -- Publish tick event
     self._event_bus:publish(EVENTS.TICK, {
         timestamp = now,
-        delta = now - self._last_tick_time
+        delta = delta
     })
 
     -- Update all modules
@@ -769,9 +770,12 @@ end
 function BotManager:destroy()
     self:stop()
 
-    -- Destroy modules
+    -- Destroy GatherBuddy-owned modules only.
+    -- NavLib modules (Navigation, Movement, Obstacle) are shared references
+    -- owned by NavLib's singleton — do not destroy them here.
+    local navlib_modules = { Navigation = true, Movement = true, Obstacle = true }
     for name, module in pairs(self._modules) do
-        if module.destroy then
+        if not navlib_modules[name] and module.destroy then
             pcall(module.destroy, module)
         end
     end
