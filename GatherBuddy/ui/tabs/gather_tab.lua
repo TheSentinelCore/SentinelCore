@@ -98,6 +98,7 @@ function GatherTab.register(ui, menu_elements)
             elements = {
                 { element = menu_elements.node_search_radius_slider, label = "Search Radius", suffix = " yd" },
                 { element = menu_elements.gather_timeout_slider, label = "Gather Timeout", suffix = "s" },
+                { element = menu_elements.mount_threshold_slider, label = "Mount Distance", suffix = " yd" },
             }
         })
     end)
