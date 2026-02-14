@@ -1035,6 +1035,7 @@ pub fn execute_pathfind_with_avoidance(
 
     for zone in zones {
         let half_extents = Vec3::new(zone.radius, zone.radius, 50.0);
+        let before_count = guard.originals.len();
 
         let poly_refs = match query.query_polygons(
             zone.center,
@@ -1050,26 +1051,34 @@ pub fn execute_pathfind_with_avoidance(
         };
 
         // Refine AABB to circle: check polygon's closest point distance
-        for poly_ref in poly_refs {
-            let (closest, _) = match query.closest_point_on_poly(poly_ref, zone.center) {
+        for poly_ref in &poly_refs {
+            let (closest, _) = match query.closest_point_on_poly(*poly_ref, zone.center) {
                 Ok(result) => result,
                 Err(_) => continue,
             };
 
             if closest.distance_2d(&zone.center) <= zone.radius {
                 // Only stamp if not already stamped (prevent double-stamp from overlapping zones)
-                let current_area = match mesh.get_poly_area(poly_ref) {
+                let current_area = match mesh.get_poly_area(*poly_ref) {
                     Ok(a) => a,
                     Err(_) => continue,
                 };
                 if current_area != NAV_AREA_AVOID {
-                    guard.stamp_polygon(poly_ref, NAV_AREA_AVOID)?;
+                    guard.stamp_polygon(*poly_ref, NAV_AREA_AVOID)?;
                 }
             }
         }
+
+        let zone_stamped = guard.originals.len() - before_count;
+        if zone_stamped == 0 {
+            tracing::warn!(
+                "Avoidance: zone at ({:.1}, {:.1}, {:.1}) r={:.1} stamped 0 polygons (query returned {}) — zone may be off-navmesh",
+                zone.center.x, zone.center.y, zone.center.z, zone.radius, poly_refs.len(),
+            );
+        }
     }
 
-    tracing::debug!(
+    tracing::info!(
         "Avoidance: stamped {} polygons across {} zones (cost={avoid_cost})",
         guard.originals.len(),
         zones.len(),

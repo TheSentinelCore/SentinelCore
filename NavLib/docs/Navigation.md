@@ -87,7 +87,7 @@ Request a navmesh path between two points.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `map_id` | number | auto | Continent ID (0=EK, 1=Kalimdor, 530=Outland, 571=Northrend) |
-| `smoothing` | string | — | Algorithm: `"none"`, `"straight"`, `"catmull_rom"`, `"chaikin"` |
+| `smoothing` | string | — | Algorithm: `"none"`, `"chaikin"`, `"catmull_rom"`, `"bezier"` |
 | `optimize` | boolean | — | Enable waypoint optimization |
 | `anti_detection` | boolean | — | Use randomized path endpoint |
 | `max_deviation` | number | — | Max yards waypoints can deviate during optimization |
@@ -149,6 +149,7 @@ Request a path with corridor width measurements at each waypoint. Useful for ind
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `opts.probe_distance` | number | — | Distance to probe for corridor width measurement |
+| `opts.avoid_zones` | table[] | — | Avoidance zones (see [find_path_avoid](#find_path_avoid)) |
 
 **Callback data (on success):**
 ```lua
@@ -208,7 +209,7 @@ Request a navmesh path that routes around avoidance zones. Used by [Movement](Mo
 }
 ```
 
-Zones are sent to NavBuddy as a pipe-separated `avoid` query parameter: `x,y,z,radius,cost|x,y,z,radius,cost|...`
+Zones are sent to NavBuddy as a semicolon-separated `avoid` query parameter: `x,y,z,radius,cost;x,y,z,radius,cost;...`
 
 **Callback data (on success):** Same as [find_path](#find_path).
 
@@ -259,6 +260,7 @@ Plan a TSP-optimized (Traveling Salesman Problem) route through multiple nodes. 
 | `start_pos` | vec3 | player pos | Starting position (auto-detected if omitted) |
 | `return_to_start` | boolean | — | Add a final leg returning to start |
 | `weights` | table | — | Custom importance weights per node |
+| `avoid_zones` | table[] | — | Avoidance zones (see [find_path_avoid](#find_path_avoid)) |
 
 **Callback data (on success):**
 ```lua
@@ -310,7 +312,7 @@ Plan an ordered multi-stop route. Unlike TSP, stops are visited in the exact ord
 |-------|------|----------|-------------|
 | `stops` | vec3[] | yes | At least 2 ordered stop positions |
 | `callback` | function | yes | `function(success, data, error)` |
-| `opts` | table | no | `{ map_id = number }` |
+| `opts` | table | no | Same options as [find_path](#find_path) plus `avoid_zones` |
 
 **Callback data (on success):**
 ```lua
@@ -507,14 +509,33 @@ Calculate an escape path away from one or more threats.
 | `player_pos` | vec3 | yes | Current position |
 | `threats` | vec3[] | yes | Array of threat positions (at least 1) |
 | `callback` | function | yes | `function(success, data, error)` |
-| `opts.flee_distance` | number | — | Target distance from threats |
+| `opts` | table | no | Flee options (see below) |
+
+**Options (opts):**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `map_id` | number | auto | Continent ID |
+| `flee_distance` | number | — | Target distance from threats |
+| `smoothing` | string | — | Algorithm: `"none"`, `"chaikin"`, `"catmull_rom"`, `"bezier"` |
+| `smooth_iterations` | number | — | Number of smoothing passes |
+| `smooth_samples` | number | — | Sample count per smooth pass |
+| `smooth_ratio` | number | — | Smoothing interpolation ratio (0.0-1.0) |
+| `min_corner_angle` | number | — | Min angle at corners in degrees |
+| `keep_originals` | boolean | — | Keep original waypoints alongside smoothed |
+| `filter_ground` | number | — | Ground polygon cost filter |
+| `filter_water` | number | — | Water polygon cost filter |
+| `filter_lava` | number | — | Lava polygon cost filter |
+| `z_extent` | number | — | Z-axis search extent for start/end snapping |
+| `wall_clearance` | number | — | Min distance from walls (must be > 0 to take effect) |
+| `avoid_zones` | table[] | — | Avoidance zones (see [find_path_avoid](#find_path_avoid)) |
 
 **Callback data (on success):**
 ```lua
 {
-    waypoints = vec3[],              -- Flee path
-    flee_direction = string,         -- Direction fled
-    distance_from_threats = number,  -- Distance achieved from closest threat
+    waypoints = vec3[],          -- Flee path
+    distance = number,           -- Total path distance in yards
+    min_threat_distance = number,-- Min distance from threats at flee endpoint
 }
 ```
 
@@ -528,11 +549,12 @@ local enemies = {
 nav:flee(player_pos, enemies, function(ok, data, err)
     if ok then
         -- Follow data.waypoints to escape
-        core.log(string.format("Fleeing %s, %.0f yards from threats",
-            data.flee_direction, data.distance_from_threats))
+        core.log(string.format("Flee path: %d waypoints, %.0f yards from threats",
+            #data.waypoints, data.min_threat_distance))
     end
 end, {
     flee_distance = 40,
+    smoothing = "chaikin",
 })
 ```
 
@@ -552,15 +574,28 @@ Calculate a circular path around a target for kiting.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `map_id` | number | auto | Continent ID |
 | `kite_radius` | number | — | Desired distance from target |
 | `arc_degrees` | number | — | Arc segment angle in degrees |
 | `direction` | string | — | `"cw"` (clockwise) or `"ccw"` (counter-clockwise) |
+| `smoothing` | string | — | Algorithm: `"none"`, `"chaikin"`, `"catmull_rom"`, `"bezier"` |
+| `smooth_iterations` | number | — | Number of smoothing passes |
+| `smooth_samples` | number | — | Sample count per smooth pass |
+| `smooth_ratio` | number | — | Smoothing interpolation ratio (0.0-1.0) |
+| `min_corner_angle` | number | — | Min angle at corners in degrees |
+| `keep_originals` | boolean | — | Keep original waypoints alongside smoothed |
+| `filter_ground` | number | — | Ground polygon cost filter |
+| `filter_water` | number | — | Water polygon cost filter |
+| `filter_lava` | number | — | Lava polygon cost filter |
+| `wall_clearance` | number | — | Min distance from walls (must be > 0 to take effect) |
+
+> **Note:** Kite does not support `z_extent` — arc waypoints are snapped to the navmesh directly, not via A* pathfinding.
 
 **Callback data (on success):**
 ```lua
 {
-    waypoints = vec3[],   -- Kite path positions
-    arc_length = number,  -- Total arc distance
+    waypoints = vec3[],      -- Kite path positions
+    waypoint_count = number, -- Number of arc waypoints
 }
 ```
 

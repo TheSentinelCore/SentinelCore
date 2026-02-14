@@ -11,6 +11,7 @@ High-level path-following module that wraps [Navigation](Navigation.md). Handles
   - [move_to](#move_to)
   - [move_direct](#move_direct)
   - [stop](#stop)
+  - [follow_path](#follow_path)
 - [Route Planning](#route-planning)
   - [plan_route](#plan_route)
   - [replan](#replan)
@@ -149,6 +150,34 @@ Stop all movement and reset to idle state.
 - Stuck detection counters
 - Route data and corridor widths
 - Resets waypoint tolerance to config defaults
+
+---
+
+### follow_path
+
+```lua
+movement:follow_path(waypoints, callback?)
+```
+
+Follow a pre-computed waypoint array without requesting a new path from NavBuddy. Sets state to `"moving"` and begins waypoint traversal with stuck detection. Useful when you already have waypoints from a manual `nav_client:find_path()` call or a cached path.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `waypoints` | vec3[] | yes | Array of positions to follow |
+| `callback` | function | no | `function(success, reason)` |
+
+**Example:**
+```lua
+movement:follow_path(cached_waypoints, function(ok, reason)
+    if ok then
+        core.log("Followed cached path to destination!")
+    else
+        core.log_error("Follow failed: " .. tostring(reason))
+    end
+end)
+```
 
 ---
 
@@ -444,7 +473,7 @@ All config fields with their defaults:
 | `stuck_distance_min` | number | `1.0` | Min yards moved to not be "stuck" |
 | `max_stuck_attempts` | number | `5` | Max recovery attempts before failing |
 | `path_check_interval` | number | `8.0` | Seconds between path validity checks |
-| `smoothing` | string | `"chaikin"` | Path smoothing algorithm (`"none"`, `"straight"`, `"catmull_rom"`, `"chaikin"`) |
+| `smoothing` | string | `"chaikin"` | Path smoothing algorithm (`"none"`, `"chaikin"`, `"catmull_rom"`, `"bezier"`) |
 | `optimize` | boolean | `true` | Enable waypoint optimization |
 | `anti_detection` | boolean | `false` | Use randomized path endpoint |
 | `max_deviation` | number | `3.0` | Max yards for anti-detection deviation |

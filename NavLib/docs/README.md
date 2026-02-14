@@ -15,9 +15,17 @@ NavLib/
 ├── main.lua                Entry point — registers _G.NavLib global
 ├── Facade.lua              Single entry-point facade (create + update + events)
 ├── core/
-│   ├── Navigation.lua      HTTP client for NavBuddy (14 endpoints)
+│   ├── Navigation.lua      HTTP client for NavBuddy (11 endpoints)
 │   ├── Movement.lua        Path following, stuck recovery, route planning
-│   └── Obstacle.lua        Doodad collision detection and avoidance zones
+│   ├── Obstacle.lua        Doodad collision detection and avoidance zones
+│   └── Visualizer.lua      3D path/waypoint overlay rendering
+├── ui/
+│   ├── window.lua          Settings UI orchestrator (AstroUI-based)
+│   └── tabs/
+│       ├── movement_tab.lua
+│       ├── pathfinding_tab.lua
+│       ├── obstacles_tab.lua
+│       └── debug_tab.lua
 ├── lib/
 │   ├── JSON.lua            JSON encoder/decoder
 │   └── Helpers.lua         Utility functions
@@ -192,9 +200,22 @@ Use **Movement** directly when you need full control over module lifecycle.
 
 Use **Navigation** directly when you need raw pathfinding data (e.g., checking if a path exists, raycasting for line-of-sight, getting navmesh height).
 
+## Settings UI
+
+NavLib includes a built-in settings window (powered by AstroUI) with four tabs:
+
+| Tab | Controls |
+|-----|----------|
+| **Movement** | Waypoint tolerance, stuck recovery, speed scaling |
+| **Pathfinding** | Smoothing algorithm, terrain filters, wall clearance |
+| **Obstacles** | Avoidance radius/cost, zone TTL, probe settings |
+| **Debug** | 13 pathfinding test modes, avoid zone management, waypoint tools |
+
+The window starts hidden and can be toggled via a Sylvannas menu button. Settings are synced to NavLib config each frame via `window.lua`.
+
 ## API Reference
 
 - [Facade API](Facade.md) - **Recommended entry point.** Create, move, events, config — all in one.
-- [Navigation API](Navigation.md) - 14 endpoints, config, options, callbacks
+- [Navigation API](Navigation.md) - 11 endpoints, config, options, callbacks
 - [Movement API](Movement.md) - Movement, routes, stuck recovery, state machine
 - [Obstacle API](Obstacle.md) - Doodad collision detection, avoidance zones, ray probing

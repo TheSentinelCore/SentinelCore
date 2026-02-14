@@ -16,6 +16,7 @@ Obstacle has two probing modes, both driven by [Movement](Movement.md):
   - [probe_path_ahead](#probe_path_ahead)
 - [Zone Management](#zone-management)
   - [add_zone](#add_zone)
+  - [remove_zone](#remove_zone)
   - [prune](#prune)
   - [clear](#clear)
   - [get_avoidance_zones](#get_avoidance_zones)
@@ -163,6 +164,31 @@ Add an avoidance zone at the given position. Zones are remembered and passed to 
 - **Deduplication:** Won't add a zone if one already exists within `avoidance_radius` of the position
 - **Cap enforcement:** If adding exceeds `max_zones`, evicts the oldest zone first (FIFO)
 - Stores the zone with: position, radius, cost multiplier (`avoidance_cost`), and creation timestamp
+
+---
+
+### remove_zone
+
+```lua
+obstacle:remove_zone(index)
+```
+
+Remove a specific avoidance zone by its 1-based index.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `index` | number | yes | 1-based index of the zone to remove |
+
+**Example:**
+```lua
+-- Remove the oldest zone
+obstacle:remove_zone(1)
+
+-- Remove the newest zone
+obstacle:remove_zone(obstacle:get_zone_count())
+```
 
 ---
 
