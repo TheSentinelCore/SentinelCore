@@ -13,7 +13,6 @@ local rotation_settings_ui = require("shared/rotation_settings_ui")
 -- Tab modules
 local ProfileTab = require("ui/tabs/profile_tab")
 local GatherTab = require("ui/tabs/gather_tab")
-local NavTab = require("ui/tabs/nav_tab")
 local SafetyTab = require("ui/tabs/safety_tab")
 local StatsTab = require("ui/tabs/stats_tab")
 
@@ -211,7 +210,6 @@ function Window.init(gatherbuddy, menu_elements, ui_state)
     -- Register all tabs in order
     ProfileTab.register(_ui, menu_elements, ui_state)
     GatherTab.register(_ui, menu_elements)
-    NavTab.register(_ui, menu_elements)
     SafetyTab.register(_ui, menu_elements)
     StatsTab.register(_ui)
 
