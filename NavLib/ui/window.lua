@@ -280,7 +280,6 @@ end
 function Window.on_render()
     if not _initialized or not _ui then return end
     sync_to_facade()
-    _facade:update()
     DebugTab.update(_facade, _menu)
     _ui:on_render()
 end
