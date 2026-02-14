@@ -39,15 +39,17 @@ local function on_load()
     core.log("[NavLib] Loaded — standalone plugin ready")
 end
 
+-- Initialize eagerly so the Facade exists before other plugins' on_update fires.
+-- header.lua already gates on a valid player, so this is safe.
+on_load()
+
 -- ---------------------------------------------------------------------------
 -- Callbacks
 -- ---------------------------------------------------------------------------
 
 -- Update: advance movement + obstacle detection each frame
 core.register_on_update_callback(function()
-    if not _is_loaded then
-        on_load()
-    end
+    if not _is_loaded then return end
 
     local facade = NavLibPlugin:get_facade()
     if facade then
