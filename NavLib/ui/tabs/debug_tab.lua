@@ -117,8 +117,11 @@ local function dispatch_go(mode_idx, facade, waypoints)
         _nav_index = 1
     end
 
+    -- Gather avoidance zones for modes that call nav_client directly
+    local zones = facade.obstacle and facade.obstacle:get_avoidance_zones() or {}
+
     -- Build opts once for modes that call nav_client directly
-    local path_opts = facade:get_path_opts()
+    local path_opts = facade:get_path_opts({ avoid_zones = zones })
 
     -- ===== Navigation modes =====
     if mode_idx == 1 then
@@ -148,11 +151,10 @@ local function dispatch_go(mode_idx, facade, waypoints)
 
     elseif mode_idx == 5 then
         -- Corridor Path
-        nav_client:find_path_corridor(player_pos, waypoints[1], raw_path_callback, facade:get_corridor_opts())
+        nav_client:find_path_corridor(player_pos, waypoints[1], raw_path_callback, facade:get_corridor_opts({ avoid_zones = zones }))
 
     elseif mode_idx == 6 then
         -- Path + Avoid (uses current obstacle zones)
-        local zones = facade.obstacle and facade.obstacle:get_avoidance_zones() or {}
         nav_client:find_path_avoid(player_pos, waypoints[1], zones, raw_path_callback, path_opts)
 
     elseif mode_idx == 7 then
@@ -161,7 +163,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
 
     elseif mode_idx == 8 then
         -- Kite (arc around waypoint 1)
-        nav_client:kite(player_pos, waypoints[1], raw_path_callback, facade:get_path_opts({ kite_radius = 8.0 }))
+        nav_client:kite(player_pos, waypoints[1], raw_path_callback, facade:get_path_opts({ kite_radius = 8.0, avoid_zones = zones }))
 
     elseif mode_idx == 9 then
         -- Random Point → navigate to it

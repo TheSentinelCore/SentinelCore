@@ -176,6 +176,15 @@ end, {
 })
 ```
 
+**With avoidance zones:**
+```lua
+local zones = obstacle:get_avoidance_zones()
+nav:find_path_corridor(start, dest, callback, {
+    avoid_zones = zones,
+    smoothing = "chaikin",
+})
+```
+
 ---
 
 ### find_path_avoid

@@ -137,7 +137,6 @@ pub async fn path_multi(
     } else {
         Vec::new()
     };
-    tracing::info!("path_multi: parsed {} avoidance zones", zones.len());
 
     let mut all_waypoints: Vec<Vec3> = Vec::new();
     let mut leg_distances = Vec::new();
@@ -900,7 +899,6 @@ pub async fn path_corridor(
     } else {
         Vec::new()
     };
-    tracing::info!("path_corridor: parsed {} avoidance zones", zones.len());
 
     let options = PathOptions {
         smoothing: params.smoothing,

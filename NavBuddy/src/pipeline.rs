@@ -1118,11 +1118,6 @@ pub fn pathfind_maybe_avoid(
     options: &PathOptions,
     zones: &[AvoidanceZone],
 ) -> Result<PathResult, AppError> {
-    tracing::info!(
-        "pathfind_maybe_avoid: {} zones, start=({:.1},{:.1},{:.1}), end=({:.1},{:.1},{:.1})",
-        zones.len(), start_pos.x, start_pos.y, start_pos.z,
-        end_pos.x, end_pos.y, end_pos.z,
-    );
     if zones.is_empty() {
         execute_pathfind(query, pool.mesh(), filter, start_pos, end_pos, options)
     } else {

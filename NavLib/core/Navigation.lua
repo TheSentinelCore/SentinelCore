@@ -555,9 +555,6 @@ function Navigation:find_path_corridor(start_pos, dest, callback, opts)
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
     apply_avoid_zones(params, opts.avoid_zones)
-    if params.avoid then
-        core.log("[NavLib] corridor: avoid=" .. string.sub(params.avoid, 1, 100))
-    end
 
     self:_request(self:_build_url("/api/v1/path/corridor", params), function(ok, data, err)
         if not ok then

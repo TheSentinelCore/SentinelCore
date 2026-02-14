@@ -508,6 +508,14 @@ Same as `get_path_opts` but also includes `probe_distance` from the corridor con
 |-------|------|----------|-------------|
 | `extra` | table | no | Additional key-value pairs to merge into the opts |
 
+> **Avoidance zones with direct `nav_client` calls:** When using the escape hatch to call `nav_client` methods directly (e.g., `find_path_corridor`, `find_route_multi`), you must pass `avoid_zones` explicitly in the opts table. `Facade:move_to()` handles this automatically, but direct calls do not.
+>
+> ```lua
+> local zones = nav.obstacle:get_avoidance_zones()
+> local opts = nav:get_path_opts({ avoid_zones = zones })
+> nav.nav_client:find_route_multi(stops, callback, opts)
+> ```
+
 ---
 
 ## Configuration
