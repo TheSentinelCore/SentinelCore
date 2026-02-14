@@ -92,6 +92,24 @@ function SafetyTab.register(ui, menu_elements)
             }
         })
 
+        -- Anti-detection pauses (GatherBuddy-specific)
+        t:checkbox_grid({
+            label = "Anti-Detection",
+            columns = 1,
+            elements = {
+                { element = menu_elements.random_pause_cb, label = "Random Pauses" },
+                { element = menu_elements.random_jump_cb, label = "Random Jumps" },
+            }
+        })
+
+        t:slider_list({
+            visible_when = function() return menu_elements.random_pause_cb:get_state() end,
+            elements = {
+                { element = menu_elements.pause_interval_min_slider, label = "Pause Min", suffix = "s" },
+                { element = menu_elements.pause_interval_max_slider, label = "Pause Max", suffix = "s" },
+            }
+        })
+
         -- Debug section
         t:custom_render({ render_fn = SafetyTab.render_debug })
     end)
