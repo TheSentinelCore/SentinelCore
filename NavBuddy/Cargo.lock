@@ -520,6 +520,7 @@ dependencies = [
  "dashmap",
  "detour",
  "http-body-util",
+ "parking_lot",
  "path-smoothing",
  "polygon-sampling",
  "rand",

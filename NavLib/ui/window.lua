@@ -16,6 +16,7 @@ local MovementTab    = require("ui/tabs/movement_tab")
 local PathfindingTab = require("ui/tabs/pathfinding_tab")
 local ObstaclesTab   = require("ui/tabs/obstacles_tab")
 local DebugTab       = require("ui/tabs/debug_tab")
+local Visualizer     = require("core/Visualizer")
 
 local LAYOUT = AstroUI.LAYOUT
 
@@ -26,6 +27,7 @@ local _ui = nil              -- RotationSettingsUI instance
 local _initialized = false
 local _facade = nil          -- NavLib Facade instance
 local _menu = nil            -- menu elements table
+local _visualizer = nil      -- Visualizer instance
 
 --------------------------------------------------------------------------------
 -- Menu element creation
@@ -106,7 +108,15 @@ local function create_menu_elements()
 
         -- Debug (Tab 4)
         debug_verbose = cb(false, "navlib_debug_verbose"),
-        debug_tsp     = cb(false, "navlib_debug_tsp"),
+        debug_mode    = si(0, 12, 0, "navlib_debug_mode"),
+
+        -- Visualization (Debug tab)
+        viz_master      = cb(true,  "navlib_viz_master"),
+        viz_path        = cb(true,  "navlib_viz_path"),
+        viz_destination = cb(true,  "navlib_viz_destination"),
+        viz_obstacles   = cb(true,  "navlib_viz_obstacles"),
+        viz_corridor    = cb(true,  "navlib_viz_corridor"),
+        viz_state       = cb(true,  "navlib_viz_state"),
     }
 end
 
@@ -259,6 +269,9 @@ function Window.init(facade)
     ObstaclesTab.register(_ui, _menu)
     DebugTab.register(_ui, _menu, _facade)
 
+    -- Create 3D Visualizer (self-registers its own render callback)
+    _visualizer = Visualizer:new(_facade, _menu)
+
     -- Enable the window so it renders by default
     if _ui.menu and _ui.menu.enable then
         _ui.menu.enable:set(true)
@@ -271,8 +284,9 @@ end
 ---Called every render frame
 function Window.on_render()
     if not _initialized or not _ui then return end
-    DebugTab.update(_facade, _menu)
     sync_to_facade()
+    _facade:update()
+    DebugTab.update(_facade, _menu)
     _ui:on_render()
 end
 

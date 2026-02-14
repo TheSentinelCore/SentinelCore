@@ -443,6 +443,52 @@ impl NavMeshQuery {
         Ok(height)
     }
 
+    /// Find all polygons within an axis-aligned bounding box.
+    ///
+    /// Returns polygon references for all navigable polygons whose bounding
+    /// boxes overlap the search box. Use `closest_point_on_poly` to refine
+    /// AABB matches to true circle overlap for circular avoidance zones.
+    ///
+    /// # Arguments
+    /// * `center` - Search box center (WoW coordinates)
+    /// * `half_extents` - Search box half-extents (WoW coordinates)
+    /// * `filter` - Query filter controlling which polygons to consider
+    /// * `max_polys` - Maximum polygon references to return
+    ///
+    /// # Returns
+    /// Vector of polygon references overlapping the search box.
+    pub fn query_polygons(
+        &self,
+        center: Vec3,
+        half_extents: Vec3,
+        filter: &QueryFilter,
+        max_polys: usize,
+    ) -> Result<Vec<PolyRef>, DetourError> {
+        let center_d = center.to_detour();
+        let extents_d = half_extents.to_detour();
+        let mut polys = vec![0u64; max_polys];
+        let mut poly_count: i32 = 0;
+
+        let status = unsafe {
+            detour_sys::wrapper_dtNavMeshQuery_queryPolygons(
+                self.ptr.as_ptr(),
+                center_d.as_ptr(),
+                extents_d.as_ptr(),
+                filter.as_ptr(),
+                polys.as_mut_ptr(),
+                &mut poly_count,
+                max_polys as i32,
+            )
+        };
+
+        if dt_status_failed(status) {
+            return Err(DetourError::StatusError(status));
+        }
+
+        polys.truncate(poly_count as usize);
+        Ok(polys)
+    }
+
     /// Find the closest point on a polygon.
     ///
     /// # Arguments

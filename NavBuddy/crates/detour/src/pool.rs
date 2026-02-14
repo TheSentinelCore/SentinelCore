@@ -44,6 +44,12 @@ pub struct QueryPool {
     filter: Arc<QueryFilter>,
     max_nodes: u32,
     max_size: usize,
+    /// Mutex serializing avoidance-zone pathfinding requests.
+    ///
+    /// Avoidance temporarily modifies polygon area types on the shared NavMesh
+    /// via `set_poly_area`. This mutex prevents concurrent avoidance requests
+    /// from interfering with each other's modifications.
+    avoidance_mutex: Mutex<()>,
 }
 
 impl QueryPool {
@@ -88,6 +94,7 @@ impl QueryPool {
             filter,
             max_nodes,
             max_size,
+            avoidance_mutex: Mutex::new(()),
         })
     }
 
@@ -149,6 +156,15 @@ impl QueryPool {
     /// Get the mesh reference.
     pub fn mesh(&self) -> &Arc<NavMesh> {
         &self.mesh
+    }
+
+    /// Acquire exclusive access for avoidance-zone pathfinding.
+    ///
+    /// Returns a mutex guard that must be held for the entire
+    /// modify-pathfind-restore cycle. Normal pathfinding does NOT
+    /// need this lock.
+    pub fn avoidance_lock(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.avoidance_mutex.lock()
     }
 }
 

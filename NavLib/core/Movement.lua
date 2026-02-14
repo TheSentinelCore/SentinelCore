@@ -43,6 +43,7 @@ local DEFAULT_CONFIG = {
     wall_clearance       = 1.0,
     proactive_obstacle_check    = true,
     proactive_obstacle_interval = 1.5,
+    debug_verbose               = false,
 }
 
 -- Class ------------------------------------------------------------------
@@ -182,6 +183,12 @@ function Movement:update_config(overrides)
     if not overrides then return end
     for k, v in pairs(overrides) do
         self._config[k] = v
+    end
+    -- Propagate tolerance changes to simple_movement when not using dynamic speed
+    -- (dynamic speed handles this itself in _apply_dynamic_speed)
+    if not self._config.dynamic_speed then
+        simple_movement:set_threshold(self._config.waypoint_tolerance)
+        simple_movement:set_final_threshold(self._config.final_tolerance)
     end
 end
 
@@ -578,6 +585,34 @@ function Movement:move_direct(target, callback)
     self:move_to(target, callback, { use_navmesh = false })
 end
 
+---Follow a pre-computed waypoint path without requesting pathfinding.
+---@param waypoints vec3[] Pre-computed path waypoints
+---@param callback? fun(success: boolean, reason: string|nil)
+function Movement:follow_path(waypoints, callback)
+    if not waypoints or #waypoints == 0 then
+        core.log_error("[Movement] follow_path: no waypoints")
+        if callback then callback(false, "No waypoints") end
+        return
+    end
+    local player = core.object_manager.get_local_player()
+    if not player or not player:is_valid() or player:is_dead() then
+        core.log_error("[Movement] follow_path: player not available")
+        if callback then callback(false, "Player not available") end
+        return
+    end
+    self._destination = waypoints[#waypoints]
+    self._callback = callback
+    self._route_data = nil
+    self._corridor_widths = nil
+    self._stuck_count = 0
+    self._last_stuck_time = core.time()
+    self._last_stuck_pos = player:get_position()
+    self._path_check_time = core.time()
+    self._obstacle_lookahead_time = 0
+    self._unstuck_phase = nil
+    self:_start_movement(waypoints)
+end
+
 ---Start movement with a given waypoint list
 ---@param waypoints vec3[]
 function Movement:_start_movement(waypoints)
@@ -647,7 +682,6 @@ function Movement:_on_arrival()
     self._last_applied_speed = 0
     simple_movement:set_threshold(self._config.waypoint_tolerance)
     simple_movement:set_final_threshold(self._config.final_tolerance)
-    self:_set_state(S_IDLE)
 end
 
 -- Stuck detection & recovery ---------------------------------------------
@@ -907,6 +941,11 @@ function Movement:plan_route(nodes, callback, opts)
 
     self:_set_state(S_REQUESTING)
 
+    local tsp_opts = self:_build_path_opts({
+        map_id = opts.map_id,
+        start_pos = player:get_position(),
+        return_to_start = opts.return_to_start,
+    })
     self._nav_client:find_route_tsp(nodes, function(ok, data, err)
         if self._state ~= S_REQUESTING then
             core.log_warning("[Movement] Route received but state is " .. self._state .. ", ignoring")
@@ -935,11 +974,7 @@ function Movement:plan_route(nodes, callback, opts)
         }
 
         self:_start_movement(data.waypoints)
-    end, {
-        map_id = opts.map_id,
-        start_pos = player:get_position(),
-        return_to_start = opts.return_to_start,
-    })
+    end, tsp_opts)
 end
 
 ---Check if we've crossed into a new route leg

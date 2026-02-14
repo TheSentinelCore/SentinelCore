@@ -279,8 +279,18 @@ function Navigation:_request(url, callback, attempt)
         if self._consecutive_failures >= 3 then
             self._is_connected = false
         end
-        core.log_error("[NavClient] Request failed: HTTP " .. tostring(code))
-        if callback then callback(false, nil, "HTTP " .. tostring(code)) end
+        local err_msg = "HTTP " .. tostring(code)
+        if response and response ~= "" then
+            local ok_parse, err_data = pcall(JSON.decode, response)
+            if ok_parse and err_data and err_data.error then
+                err_msg = err_msg .. ": " .. err_data.error
+            else
+                local body_preview = #response > 200 and response:sub(1, 200) .. "..." or response
+                err_msg = err_msg .. ": " .. body_preview
+            end
+        end
+        core.log_error("[NavClient] " .. err_msg)
+        if callback then callback(false, nil, err_msg) end
     end)
 end
 
@@ -328,6 +338,8 @@ function Navigation:find_path(start_pos, dest, callback, opts)
     if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
     if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
     if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
+    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
+    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
@@ -380,7 +392,28 @@ function Navigation:find_route_tsp(nodes, callback, opts)
         points = format_points(nodes),
     }
     if opts.return_to_start then params.return_to_start = true end
-    if opts.weights then params.weights = opts.weights end
+    if opts.weights then
+        if type(opts.weights) == "table" then
+            local parts = {}
+            for i = 1, #opts.weights do parts[i] = string.format("%g", opts.weights[i]) end
+            params.weights = table.concat(parts, ";")
+        else
+            params.weights = opts.weights
+        end
+    end
+    if opts.smoothing then params.smoothing = opts.smoothing end
+    if opts.optimize then params.optimize = true end
+    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
+    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
+    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
+    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
+    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
+    if opts.filter_ground then params.filter_ground = opts.filter_ground end
+    if opts.filter_water then params.filter_water = opts.filter_water end
+    if opts.filter_lava then params.filter_lava = opts.filter_lava end
+    if opts.allow_partial then params.allow_partial = true end
+    if opts.z_extent then params.z_extent = opts.z_extent end
+    if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
 
     self:_request(self:_build_url("/api/v1/path-tsp", params), function(ok, data, err)
         if not ok then
@@ -418,6 +451,19 @@ function Navigation:find_route_multi(stops, callback, opts)
         map_id = opts.map_id or get_continent_id(),
         stops = format_points(stops),
     }
+    if opts.smoothing then params.smoothing = opts.smoothing end
+    if opts.optimize then params.optimize = true end
+    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
+    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
+    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
+    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
+    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
+    if opts.filter_ground then params.filter_ground = opts.filter_ground end
+    if opts.filter_water then params.filter_water = opts.filter_water end
+    if opts.filter_lava then params.filter_lava = opts.filter_lava end
+    if opts.allow_partial then params.allow_partial = true end
+    if opts.z_extent then params.z_extent = opts.z_extent end
+    if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
     self:_request(self:_build_url("/api/v1/path-multi", params), function(ok, data, err)
         if not ok then
             if callback then callback(false, nil, err) end
@@ -545,6 +591,8 @@ function Navigation:find_path_avoid(start_pos, dest, avoid_zones, callback, opts
     if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
     if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
     if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
+    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
+    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
@@ -552,7 +600,7 @@ function Navigation:find_path_avoid(start_pos, dest, avoid_zones, callback, opts
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
 
-    -- Build avoid zones as table — _build_url emits repeated avoid= query params
+    -- Build avoid zones as semicolon-separated string
     local avoid_parts = {}
     for _, zone in ipairs(avoid_zones) do
         avoid_parts[#avoid_parts + 1] = string.format(
@@ -560,11 +608,9 @@ function Navigation:find_path_avoid(start_pos, dest, avoid_zones, callback, opts
             zone.x, zone.y, zone.z, zone.radius, zone.cost
         )
     end
-    params.avoid = avoid_parts
+    params.avoid = table.concat(avoid_parts, ";")
 
     local url = self:_build_url("/api/v1/path-avoid", params)
-
-    core.log("[NavClient] path-avoid with " .. #avoid_zones .. " zones")
 
     self:_request(url, function(ok, data, err)
         if not ok then
@@ -693,8 +739,8 @@ function Navigation:flee(player_pos, threats, callback, opts)
         end
         callback(true, {
             waypoints = extract_waypoints(data),
-            flee_direction = data.flee_direction,
-            distance_from_threats = data.distance_from_threats or 0,
+            distance = data.distance or 0,
+            min_threat_distance = data.min_threat_distance or 0,
         }, nil)
     end)
 end
@@ -715,7 +761,7 @@ function Navigation:kite(player_pos, target_pos, callback, opts)
         player_x = player_pos.x, player_y = player_pos.y, player_z = player_pos.z,
         target_x = target_pos.x, target_y = target_pos.y, target_z = target_pos.z,
     }
-    if opts.kite_radius then params.kite_radius = opts.kite_radius end
+    params.kite_radius = opts.kite_radius or 8.0
     if opts.arc_degrees then params.arc_degrees = opts.arc_degrees end
     if opts.direction then params.direction = opts.direction end
 
@@ -726,7 +772,7 @@ function Navigation:kite(player_pos, target_pos, callback, opts)
         end
         callback(true, {
             waypoints = extract_waypoints(data),
-            arc_length = data.arc_length or 0,
+            waypoint_count = data.waypoint_count or 0,
         }, nil)
     end)
 end

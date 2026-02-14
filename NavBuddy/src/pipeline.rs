@@ -4,8 +4,8 @@
 //! pipeline so it can be reused by path, path-random, path-multi, path-tsp, etc.
 
 use detour::filter::{
-    NAV_AREA_GROUND, NAV_AREA_GROUND_STEEP, NAV_AREA_MAGMA_SLIME, NAV_AREA_WATER, QueryFilter,
-    QueryFilterBuilder,
+    NAV_AREA_AVOID, NAV_AREA_GROUND, NAV_AREA_GROUND_STEEP, NAV_AREA_MAGMA_SLIME, NAV_AREA_WATER,
+    QueryFilter, QueryFilterBuilder,
 };
 use detour::mesh::NavMesh;
 use detour::query::NavMeshQuery;
@@ -828,12 +828,17 @@ pub fn parse_stops(stops_str: &str) -> Result<Vec<Vec3>, AppError> {
     Ok(stops)
 }
 
-/// Parse avoidance zones from repeated "x,y,z,radius,cost" strings.
-pub fn parse_avoidance_zones(zones: &[String]) -> Result<Vec<AvoidanceZone>, AppError> {
+/// Parse avoidance zones from semicolon-separated "x,y,z,radius,cost" strings.
+pub fn parse_avoidance_zones(zones_str: &str) -> Result<Vec<AvoidanceZone>, AppError> {
     use crate::validation::validate_coordinate;
 
-    let mut result = Vec::with_capacity(zones.len());
-    for (i, zone_str) in zones.iter().enumerate() {
+    if zones_str.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let zone_entries: Vec<&str> = zones_str.split(';').collect();
+    let mut result = Vec::with_capacity(zone_entries.len());
+    for (i, zone_str) in zone_entries.iter().enumerate() {
         let parts: Vec<&str> = zone_str.split(',').collect();
         if parts.len() != 5 {
             return Err(AppError::InvalidParams(format!(
@@ -949,87 +954,146 @@ pub fn resolve_filter<'a>(
     }
 }
 
-/// Apply avoidance zone post-processing to a path.
+/// Maximum polygons returned by queryPolygons per avoidance zone.
+const MAX_QUERY_POLYS_PER_ZONE: usize = 512;
+
+/// RAII guard that restores polygon area types on drop.
 ///
-/// For each waypoint inside an avoidance zone, projects it outward to the zone
-/// boundary and re-paths around the zone. Falls back to the original path segment
-/// if the re-path fails.
-pub fn apply_avoidance(
-    path: &[Vec3],
-    zones: &[AvoidanceZone],
-    query: &NavMeshQuery,
-    filter: &QueryFilter,
-) -> Vec<Vec3> {
-    if zones.is_empty() || path.len() < 2 {
-        return path.to_vec();
+/// Ensures the shared NavMesh is returned to its original state
+/// even if pathfinding panics or returns early via `?`.
+struct AreaRestoreGuard<'a> {
+    mesh: &'a NavMesh,
+    originals: Vec<(PolyRef, u8)>,
+}
+
+impl<'a> AreaRestoreGuard<'a> {
+    fn new(mesh: &'a NavMesh) -> Self {
+        Self {
+            mesh,
+            originals: Vec::new(),
+        }
     }
 
-    let mut result = Vec::with_capacity(path.len());
-    result.push(path[0]);
+    /// Record original area and set polygon to avoidance area type.
+    fn stamp_polygon(&mut self, poly_ref: PolyRef, new_area: u8) -> Result<(), AppError> {
+        let original = self
+            .mesh
+            .get_poly_area(poly_ref)
+            .map_err(|e| AppError::Internal(format!("get_poly_area failed: {e}")))?;
+        self.mesh
+            .set_poly_area(poly_ref, new_area)
+            .map_err(|e| AppError::Internal(format!("set_poly_area failed: {e}")))?;
+        self.originals.push((poly_ref, original));
+        Ok(())
+    }
+}
 
-    let mut i = 1;
-    while i < path.len() {
-        let wp = path[i];
+impl Drop for AreaRestoreGuard<'_> {
+    fn drop(&mut self) {
+        for &(poly_ref, original_area) in &self.originals {
+            if let Err(e) = self.mesh.set_poly_area(poly_ref, original_area) {
+                tracing::error!("Failed to restore poly area for ref {poly_ref}: {e}");
+            }
+        }
+    }
+}
 
-        // Check if this waypoint is inside any avoidance zone
-        let violated_zone = zones.iter().find(|z| {
-            wp.distance_2d(&z.center) < z.radius
-        });
+/// Execute pathfinding with avoidance zones integrated into the A* cost model.
+///
+/// Instead of post-processing waypoints, this function temporarily stamps
+/// navmesh polygons inside zones with `NAV_AREA_AVOID` (area 63) at high cost,
+/// causing Detour's A* to naturally route around them.
+///
+/// # Thread Safety
+///
+/// Caller MUST hold the `QueryPool::avoidance_lock()` for the entire duration.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_pathfind_with_avoidance(
+    query: &NavMeshQuery,
+    mesh: &NavMesh,
+    base_filter: &QueryFilter,
+    start_pos: Vec3,
+    end_pos: Vec3,
+    options: &PathOptions,
+    zones: &[AvoidanceZone],
+    _avoidance_proof: &parking_lot::MutexGuard<'_, ()>,
+) -> Result<PathResult, AppError> {
+    if zones.is_empty() {
+        return execute_pathfind(query, mesh, base_filter, start_pos, end_pos, options);
+    }
 
-        if let Some(zone) = violated_zone {
-            // Project waypoint outward from zone center to boundary + buffer
-            let buffer = 5.0;
-            let dx = wp.x - zone.center.x;
-            let dy = wp.y - zone.center.y;
-            let dist = (dx * dx + dy * dy).sqrt();
+    // --- Step 1: Find and stamp polygons inside avoidance zones ---
+    let mut guard = AreaRestoreGuard::new(mesh);
 
-            if dist > 0.001 {
-                let target_dist = zone.radius + buffer;
-                let projected = Vec3::new(
-                    zone.center.x + (dx / dist) * target_dist,
-                    zone.center.y + (dy / dist) * target_dist,
-                    wp.z,
-                );
+    let avoid_cost = zones
+        .iter()
+        .map(|z| z.cost_multiplier)
+        .fold(1.0f32, f32::max);
 
-                // Snap projected point to navmesh
-                let search = Vec3::new(buffer * 2.0, buffer * 2.0, 5.0);
-                if let Ok((_, snapped)) = query.find_nearest_poly(projected, search, filter) {
-                    // Try to re-path: prev_safe → snapped → next_safe
-                    let prev = *result.last().unwrap();
+    // Use default filter for polygon search (include all walkable areas)
+    let search_filter = QueryFilter::default();
 
-                    // Check if we can raycast from prev to snapped
-                    let can_reach = if let Ok((prev_ref, _)) =
-                        query.find_nearest_poly(prev, SEARCH_EXTENTS, filter)
-                    {
-                        query
-                            .raycast(prev_ref, prev, snapped, filter)
-                            .map(|(t, _)| t >= 1.0)
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    };
+    for zone in zones {
+        let half_extents = Vec3::new(zone.radius, zone.radius, 50.0);
 
-                    if can_reach {
-                        result.push(snapped);
-                        i += 1;
-                        continue;
-                    }
+        let poly_refs = match query.query_polygons(
+            zone.center,
+            half_extents,
+            &search_filter,
+            MAX_QUERY_POLYS_PER_ZONE,
+        ) {
+            Ok(refs) => refs,
+            Err(e) => {
+                tracing::warn!("queryPolygons failed for zone at {:?}: {e}", zone.center);
+                continue;
+            }
+        };
 
-                    // Raycast failed — try a short path around via execute_pathfind would
-                    // be expensive. Just push the projected point and hope the next
-                    // waypoint connects.
-                    result.push(snapped);
-                    i += 1;
-                    continue;
+        // Refine AABB to circle: check polygon's closest point distance
+        for poly_ref in poly_refs {
+            let (closest, _) = match query.closest_point_on_poly(poly_ref, zone.center) {
+                Ok(result) => result,
+                Err(_) => continue,
+            };
+
+            if closest.distance_2d(&zone.center) <= zone.radius {
+                // Only stamp if not already stamped (prevent double-stamp from overlapping zones)
+                let current_area = match mesh.get_poly_area(poly_ref) {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                };
+                if current_area != NAV_AREA_AVOID {
+                    guard.stamp_polygon(poly_ref, NAV_AREA_AVOID)?;
                 }
             }
         }
-
-        result.push(wp);
-        i += 1;
     }
 
-    result
+    tracing::debug!(
+        "Avoidance: stamped {} polygons across {} zones (cost={avoid_cost})",
+        guard.originals.len(),
+        zones.len(),
+    );
+
+    // --- Step 2: Build filter with high cost for avoidance area ---
+    let avoidance_filter = QueryFilterBuilder::new()
+        .area_cost(NAV_AREA_GROUND, base_filter.area_cost(NAV_AREA_GROUND))
+        .area_cost(
+            NAV_AREA_GROUND_STEEP,
+            base_filter.area_cost(NAV_AREA_GROUND_STEEP),
+        )
+        .area_cost(NAV_AREA_WATER, base_filter.area_cost(NAV_AREA_WATER))
+        .area_cost(
+            NAV_AREA_MAGMA_SLIME,
+            base_filter.area_cost(NAV_AREA_MAGMA_SLIME),
+        )
+        .area_cost(NAV_AREA_AVOID, avoid_cost)
+        .build()
+        .map_err(|e| AppError::Internal(format!("Failed to create avoidance filter: {e}")))?;
+
+    // --- Step 3: Pathfind with modified navmesh + avoidance filter ---
+    // guard drops after this, restoring all original polygon areas
+    execute_pathfind(query, mesh, &avoidance_filter, start_pos, end_pos, options)
 }
 
 /// Compute safe corridor widths at each waypoint by raycasting perpendicular to the path.

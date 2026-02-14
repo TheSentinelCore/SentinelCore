@@ -6,7 +6,7 @@ local PathfindingTab = {}
 
 -- Smoothing algorithm names (combo options) — order matches NavBuddy API
 local SMOOTHING_NAMES = { "None", "Chaikin", "Catmull-Rom", "Bezier" }
-local SMOOTHING_IDS   = { "none", "chaikin", "catmull_rom", "bezier" }
+local SMOOTHING_IDS   = { "none", "chaikin", "catmull", "bezier" }
 
 ---Register the pathfinding tab with the UI
 ---@param ui any RotationSettingsUI instance

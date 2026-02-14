@@ -572,6 +572,44 @@ dtStatus wrapper_dtNavMesh_getPolyArea(
     unsigned char* area
 );
 
+/**
+ * @brief Set the area type for a polygon.
+ * @param nav The NavMesh (non-const — mutates polygon area).
+ * @param ref Polygon reference.
+ * @param area New area type (0-63).
+ * @return Status code.
+ */
+dtStatus wrapper_dtNavMesh_setPolyArea(
+    dtNavMesh* nav,
+    dtPolyRef ref,
+    unsigned char area
+);
+
+// =============================================================================
+// NavMeshQuery - Polygon Search
+// =============================================================================
+
+/**
+ * @brief Find all polygons overlapping a search box.
+ * @param query The query object.
+ * @param center Search box center [x, y, z].
+ * @param halfExtents Search box half-extents [x, y, z].
+ * @param filter Query filter.
+ * @param polys Output: polygon references.
+ * @param polyCount Output: number of polygons found.
+ * @param maxPolys Maximum polygons in output array.
+ * @return Status code.
+ */
+dtStatus wrapper_dtNavMeshQuery_queryPolygons(
+    const dtNavMeshQuery* query,
+    const float* center,
+    const float* halfExtents,
+    const dtQueryFilter* filter,
+    dtPolyRef* polys,
+    int* polyCount,
+    int maxPolys
+);
+
 #ifdef __cplusplus
 }
 #endif
