@@ -34,6 +34,19 @@ local function format_points(points)
     return table.concat(parts, ";")
 end
 
+---Serialize avoidance zones into a params table as "x,y,z,radius,cost;..." string.
+---@param params table Request params table to mutate
+---@param zones table[]|nil Array of { x, y, z, radius, cost }
+local function apply_avoid_zones(params, zones)
+    if not zones or #zones == 0 then return end
+    local parts = {}
+    for _, zone in ipairs(zones) do
+        parts[#parts + 1] = string.format(
+            "%g,%g,%g,%g,%g", zone.x, zone.y, zone.z, zone.radius, zone.cost)
+    end
+    params.avoid = table.concat(parts, ";")
+end
+
 -- UiMapID → NavBuddy continent ID (Map.dbc MapID) -----------------------
 -- Source: WotLK 3.3.5 UiMapID data
 -- 0 = Eastern Kingdoms, 1 = Kalimdor, 530 = Outland, 571 = Northrend
@@ -414,6 +427,7 @@ function Navigation:find_route_tsp(nodes, callback, opts)
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    apply_avoid_zones(params, opts.avoid_zones)
 
     self:_request(self:_build_url("/api/v1/path-tsp", params), function(ok, data, err)
         if not ok then
@@ -464,6 +478,7 @@ function Navigation:find_route_multi(stops, callback, opts)
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    apply_avoid_zones(params, opts.avoid_zones)
     self:_request(self:_build_url("/api/v1/path-multi", params), function(ok, data, err)
         if not ok then
             if callback then callback(false, nil, err) end
@@ -539,6 +554,7 @@ function Navigation:find_path_corridor(start_pos, dest, callback, opts)
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    apply_avoid_zones(params, opts.avoid_zones)
 
     self:_request(self:_build_url("/api/v1/path/corridor", params), function(ok, data, err)
         if not ok then
@@ -600,15 +616,7 @@ function Navigation:find_path_avoid(start_pos, dest, avoid_zones, callback, opts
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
 
-    -- Build avoid zones as semicolon-separated string
-    local avoid_parts = {}
-    for _, zone in ipairs(avoid_zones) do
-        avoid_parts[#avoid_parts + 1] = string.format(
-            "%g,%g,%g,%g,%g",
-            zone.x, zone.y, zone.z, zone.radius, zone.cost
-        )
-    end
-    params.avoid = table.concat(avoid_parts, ";")
+    apply_avoid_zones(params, avoid_zones)
 
     local url = self:_build_url("/api/v1/path-avoid", params)
 
@@ -718,7 +726,7 @@ end
 ---@param player_pos vec3
 ---@param threats vec3[] Threat positions
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
----@param opts? table { map_id?, flee_distance?: number }
+---@param opts? table { map_id?, flee_distance?, smoothing?, smooth_iterations?, smooth_samples?, smooth_ratio?, min_corner_angle?, keep_originals?, filter_ground?, filter_water?, filter_lava?, z_extent?, wall_clearance? }
 function Navigation:flee(player_pos, threats, callback, opts)
     if not player_pos or not threats or #threats == 0 then
         if callback then callback(false, nil, "Missing player_pos or threats") end
@@ -731,6 +739,18 @@ function Navigation:flee(player_pos, threats, callback, opts)
         threats = format_points(threats),
     }
     if opts.flee_distance then params.flee_distance = opts.flee_distance end
+    if opts.smoothing then params.smoothing = opts.smoothing end
+    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
+    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
+    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
+    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
+    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
+    if opts.filter_ground then params.filter_ground = opts.filter_ground end
+    if opts.filter_water then params.filter_water = opts.filter_water end
+    if opts.filter_lava then params.filter_lava = opts.filter_lava end
+    if opts.z_extent then params.z_extent = opts.z_extent end
+    if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    apply_avoid_zones(params, opts.avoid_zones)
 
     self:_request(self:_build_url("/api/v1/tactical/flee", params), function(ok, data, err)
         if not ok then
@@ -749,7 +769,7 @@ end
 ---@param player_pos vec3
 ---@param target_pos vec3
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
----@param opts? table { map_id?, kite_radius?, arc_degrees?, direction?: string }
+---@param opts? table { map_id?, kite_radius?, arc_degrees?, direction?, smoothing?, smooth_iterations?, smooth_samples?, smooth_ratio?, min_corner_angle?, keep_originals?, filter_ground?, filter_water?, filter_lava?, wall_clearance? }
 function Navigation:kite(player_pos, target_pos, callback, opts)
     if not player_pos or not target_pos then
         if callback then callback(false, nil, "Missing player_pos or target_pos") end
@@ -764,6 +784,16 @@ function Navigation:kite(player_pos, target_pos, callback, opts)
     params.kite_radius = opts.kite_radius or 8.0
     if opts.arc_degrees then params.arc_degrees = opts.arc_degrees end
     if opts.direction then params.direction = opts.direction end
+    if opts.smoothing then params.smoothing = opts.smoothing end
+    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
+    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
+    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
+    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
+    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
+    if opts.filter_ground then params.filter_ground = opts.filter_ground end
+    if opts.filter_water then params.filter_water = opts.filter_water end
+    if opts.filter_lava then params.filter_lava = opts.filter_lava end
+    if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
 
     self:_request(self:_build_url("/api/v1/tactical/kite", params), function(ok, data, err)
         if not ok then
