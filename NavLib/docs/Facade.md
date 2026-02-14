@@ -11,6 +11,7 @@ Single entry-point facade for NavLib. Creates, wires, and drives all modules wit
 - [Movement](#movement)
   - [move_to](#move_to)
   - [move_direct](#move_direct)
+  - [follow_path](#follow_path)
   - [plan_route](#plan_route)
   - [replan](#replan)
   - [validate_destination](#validate_destination)
@@ -29,6 +30,9 @@ Single entry-point facade for NavLib. Creates, wires, and drives all modules wit
   - [health_check](#health_check)
   - [get_height](#get_height)
   - [get_player_height](#get_player_height)
+- [Opts Builders](#opts-builders)
+  - [get_path_opts](#get_path_opts)
+  - [get_corridor_opts](#get_corridor_opts)
 - [Configuration](#configuration)
   - [Constructor Config](#constructor-config)
   - [update_config](#update_config)
@@ -157,6 +161,35 @@ nav:move_direct(target, callback?)
 ```
 
 Move directly without pathfinding. Equivalent to `move_to(target, callback, { use_navmesh = false })`.
+
+---
+
+### follow_path
+
+```lua
+nav:follow_path(waypoints, callback?)
+```
+
+Follow a pre-computed waypoint array without requesting a new path from NavBuddy. Useful when you already have waypoints (e.g., from a direct `nav_client:find_path()` call or cached path).
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `waypoints` | vec3[] | yes | Array of positions to follow |
+| `callback` | function | no | `function(success, reason)` |
+
+**Example:**
+```lua
+-- Get a path manually, then follow it
+nav.nav_client:find_path(start, dest, function(ok, data)
+    if ok then
+        nav:follow_path(data.waypoints, function(success, reason)
+            if success then core.log("Arrived!") end
+        end)
+    end
+end, nav:get_path_opts())
+```
 
 ---
 
@@ -436,6 +469,47 @@ end)
 
 ---
 
+## Opts Builders
+
+### get_path_opts
+
+```lua
+nav:get_path_opts(extra?) -> table
+```
+
+Build a path options table from the current Movement config. Merges all configured smoothing, filter, and wall clearance values into a table suitable for passing to Navigation methods. Optionally merge extra key-value overrides on top.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `extra` | table | no | Additional key-value pairs to merge into the opts |
+
+**Example:**
+```lua
+-- Use current config as opts for a manual find_path call
+local opts = nav:get_path_opts({ allow_partial = true })
+nav.nav_client:find_path(start, dest, callback, opts)
+```
+
+---
+
+### get_corridor_opts
+
+```lua
+nav:get_corridor_opts(extra?) -> table
+```
+
+Same as `get_path_opts` but also includes `probe_distance` from the corridor config. Use with `find_path_corridor`.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `extra` | table | no | Additional key-value pairs to merge into the opts |
+
+---
+
 ## Configuration
 
 ### Constructor Config
@@ -552,7 +626,7 @@ For advanced use cases, the underlying module instances are exposed as public fi
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `nav.nav_client` | Navigation | Raw HTTP client — direct access to all 14 endpoints |
+| `nav.nav_client` | Navigation | Raw HTTP client — direct access to all 11 endpoints |
 | `nav.movement` | Movement | Path follower — full state machine, stuck recovery |
 | `nav.obstacle` | Obstacle | Obstacle detector — zone memory, ray probing |
 
