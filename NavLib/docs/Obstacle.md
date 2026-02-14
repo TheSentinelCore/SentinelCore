@@ -263,7 +263,7 @@ All config fields with their defaults:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `avoidance_cost` | number | `5.0` | Cost multiplier for avoidance zones (higher = more strongly avoided) |
-| `avoidance_radius` | number | `3.0` | Radius in yards around each detected obstacle |
+| `avoidance_radius` | number | `5.0` | Radius in yards around each detected obstacle |
 | `zone_ttl` | number | `120.0` | Seconds before zones auto-expire |
 | `zone_prune_dist` | number | `100.0` | Yards — remove zones farther than this from player |
 | `max_zones` | number | `5` | Maximum remembered zones (NavBuddy supports up to 20) |
