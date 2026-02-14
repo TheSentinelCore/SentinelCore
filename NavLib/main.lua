@@ -119,4 +119,25 @@ setmetatable(_G.NavLib, {
     end
 })
 
+-- ---------------------------------------------------------------------------
+-- Unload
+-- ---------------------------------------------------------------------------
+
+local function on_unload()
+    NavLibPlugin:destroy()
+    _G.NavLib = nil
+    _is_loaded = false
+    core.log("[NavLib] Unloaded")
+end
+
 core.log("[NavLib] Module loaded — _G.NavLib available")
+
+-- ---------------------------------------------------------------------------
+-- Module export (matches GatherBuddy pattern)
+-- ---------------------------------------------------------------------------
+
+return {
+    name    = "NavLib",
+    version = NavLibPlugin.VERSION,
+    unload  = on_unload,
+}

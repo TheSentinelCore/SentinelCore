@@ -1,6 +1,6 @@
 local plugin = {}
 plugin["name"] = "NavLib"
-plugin["version"] = "1.0.0"
+plugin["version"] = "2.0.0"
 plugin["author"] = "Claude"
 plugin["load"] = true
 
