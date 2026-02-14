@@ -29,8 +29,9 @@ local _ui_state = {
 -- =============================================================================
 
 local menu_elements = {
-    -- Window toggle
+    -- Window toggles
     open_btn = core.menu.button("gb_open"),
+    navlib_btn = core.menu.button("navlib_open"),
 
     -- Overlay toggle
     overlay_enabled_cb = core.menu.checkbox(true, "gb_overlay_enabled"),
@@ -168,12 +169,6 @@ local function on_load()
     -- Initialize the UI window
     UIWindow.init(GatherBuddy, menu_elements, _ui_state)
 
-    -- Enable the UI by default
-    local ui = UIWindow.get_ui()
-    if ui and ui.menu and ui.menu.enable then
-        ui.menu.enable:set(true)
-    end
-
     -- Initialize NavLib settings UI (NavLib facade created by BotManager)
     local bot_mgr = GatherBuddy:get_bot_manager()
     if bot_mgr and bot_mgr._navlib and _G.NavLib and _G.NavLib.create_ui then
@@ -226,11 +221,20 @@ core.register_on_render_menu_callback(function()
         _G.NavLib.ui:on_menu_render()
     end
 
-    -- Toggle button in Sylvannas main menu
+    -- Toggle buttons in Sylvannas main menu
     if menu_elements.open_btn:render("GatherBuddy") then
         local ui = UIWindow.get_ui()
         if ui and ui.menu and ui.menu.enable then
-            ui.menu.enable:set(true)
+            ui.menu.enable:set(not ui.menu.enable:get_state())
+        end
+    end
+
+    if _G.NavLib and _G.NavLib.ui then
+        local navlib_ui = _G.NavLib.ui.get_ui and _G.NavLib.ui.get_ui()
+        if menu_elements.navlib_btn:render("NavLib") then
+            if navlib_ui and navlib_ui.menu and navlib_ui.menu.enable then
+                navlib_ui.menu.enable:set(not navlib_ui.menu.enable:get_state())
+            end
         end
     end
 end)

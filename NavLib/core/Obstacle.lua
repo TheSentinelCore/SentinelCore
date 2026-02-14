@@ -256,6 +256,14 @@ function Obstacle:add_zone(pos, radius)
     end
 end
 
+---Remove a single zone by index
+---@param index number 1-based index into zones array
+function Obstacle:remove_zone(index)
+    if index >= 1 and index <= #self._zones then
+        table.remove(self._zones, index)
+    end
+end
+
 ---Prune expired or distant zones. Call periodically (e.g. on repath).
 ---@param player_pos? vec3 Current player position for distance pruning
 function Obstacle:prune(player_pos)

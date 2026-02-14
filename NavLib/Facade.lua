@@ -192,6 +192,20 @@ function Facade:get_player_height(callback)
     self.nav_client:get_height(me:get_position(), callback)
 end
 
+---Get current pathfinding options from config (for callers that bypass Movement).
+---@param extra? table Additional opts to merge
+---@return table
+function Facade:get_path_opts(extra)
+    return self.movement:_build_path_opts(extra)
+end
+
+---Get current corridor pathfinding options from config.
+---@param extra? table Additional opts to merge
+---@return table
+function Facade:get_corridor_opts(extra)
+    return self.movement:_build_corridor_opts(extra)
+end
+
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------

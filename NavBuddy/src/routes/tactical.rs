@@ -9,8 +9,12 @@ use serde::{Deserialize, Serialize};
 use tc_mmap::error::MmapError;
 
 use crate::error::AppError;
+use path_smoothing::SmoothingAlgorithm;
+
 use crate::pipeline::{
     execute_pathfind, has_custom_filter, create_custom_filter, parse_threats,
+    create_smoothing_config, project_waypoints_to_surface,
+    validate_smoothed_path, apply_wall_clearance,
     PathOptions, SEARCH_EXTENTS, HEIGHT_EXTENTS,
 };
 use crate::routes::path::{
@@ -18,7 +22,7 @@ use crate::routes::path::{
     vec3_to_waypoints, Waypoint,
 };
 use crate::state::AppState;
-use crate::validation::{validate_coordinate, validate_map_id, validate_radius};
+use crate::validation::{validate_coordinate, validate_map_id, validate_radius, validate_z_extent, validate_wall_clearance};
 
 // =============================================================================
 // FLEE
@@ -56,6 +60,10 @@ pub struct FleeRequest {
     pub min_corner_angle: Option<f32>,
     #[serde(default)]
     pub keep_originals: Option<bool>,
+    #[serde(default)]
+    pub z_extent: Option<f32>,
+    #[serde(default)]
+    pub wall_clearance: Option<f32>,
 }
 
 fn default_flee_distance() -> f32 {
@@ -87,6 +95,12 @@ pub async fn flee(
         params.smooth_ratio,
         params.min_corner_angle,
     )?;
+    if let Some(z) = params.z_extent {
+        validate_z_extent(z)?;
+    }
+    if let Some(wc) = params.wall_clearance {
+        validate_wall_clearance(wc)?;
+    }
 
     if !params.flee_distance.is_finite() || params.flee_distance <= 0.0 || params.flee_distance > 500.0 {
         return Err(AppError::InvalidParams(
@@ -134,8 +148,8 @@ pub async fn flee(
         smooth_ratio: params.smooth_ratio,
         min_corner_angle: params.min_corner_angle,
         keep_originals: params.keep_originals,
-        z_extent: None,
-        wall_clearance: None,
+        z_extent: params.z_extent,
+        wall_clearance: params.wall_clearance,
     };
 
     // Compute threat centroid
@@ -373,6 +387,26 @@ pub struct KiteRequest {
     /// "cw" or "ccw" (default "ccw").
     #[serde(default = "default_direction")]
     pub direction: String,
+    #[serde(default)]
+    pub smoothing: Option<String>,
+    #[serde(default)]
+    pub filter_ground: Option<f32>,
+    #[serde(default)]
+    pub filter_water: Option<f32>,
+    #[serde(default)]
+    pub filter_lava: Option<f32>,
+    #[serde(default)]
+    pub smooth_iterations: Option<u32>,
+    #[serde(default)]
+    pub smooth_samples: Option<u32>,
+    #[serde(default)]
+    pub smooth_ratio: Option<f32>,
+    #[serde(default)]
+    pub min_corner_angle: Option<f32>,
+    #[serde(default)]
+    pub keep_originals: Option<bool>,
+    #[serde(default)]
+    pub wall_clearance: Option<f32>,
 }
 
 fn default_arc_degrees() -> f32 {
@@ -401,6 +435,16 @@ pub async fn kite(
     validate_coordinate(params.player_x, params.player_y, params.player_z)?;
     validate_coordinate(params.target_x, params.target_y, params.target_z)?;
     validate_radius(params.kite_radius)?;
+    validate_filter_params(params.filter_ground, params.filter_water, params.filter_lava)?;
+    validate_smoothing_params(
+        params.smooth_iterations,
+        params.smooth_samples,
+        params.smooth_ratio,
+        params.min_corner_angle,
+    )?;
+    if let Some(wc) = params.wall_clearance {
+        validate_wall_clearance(wc)?;
+    }
 
     if !params.arc_degrees.is_finite() || params.arc_degrees <= 0.0 || params.arc_degrees > 360.0 {
         return Err(AppError::InvalidParams(
@@ -421,7 +465,18 @@ pub async fn kite(
         .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
 
     acquire_query!(state, params.map_id, pool, query);
-    let filter = pool.filter();
+
+    let custom_filter;
+    let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava) {
+        custom_filter = create_custom_filter(
+            params.filter_ground,
+            params.filter_water,
+            params.filter_lava,
+        )?;
+        &custom_filter
+    } else {
+        pool.filter()
+    };
 
     // Compute current angle from target to player
     let dx = player_pos.x - target_pos.x;
@@ -453,6 +508,28 @@ pub async fn kite(
         let search = Vec3::new(params.kite_radius * 0.3, params.kite_radius * 0.3, 50.0);
         if let Ok((_, snapped)) = query.find_nearest_poly(point, search, filter) {
             waypoints.push(snapped);
+        }
+    }
+
+    // Apply smoothing pipeline to arc waypoints
+    let smoothing =
+        SmoothingAlgorithm::from_str(params.smoothing.as_deref().unwrap_or("none"));
+    let smoothing_config = create_smoothing_config(
+        params.smooth_iterations,
+        params.smooth_samples,
+        params.smooth_ratio,
+        params.min_corner_angle,
+        params.keep_originals,
+    );
+
+    let original_waypoints = waypoints.clone();
+    let mut waypoints = smoothing.smooth_with_config(&waypoints, &smoothing_config);
+    project_waypoints_to_surface(&mut waypoints, &query, filter);
+    let mut waypoints = validate_smoothed_path(&waypoints, &original_waypoints, &query, filter);
+
+    if let Some(clearance) = params.wall_clearance {
+        if clearance > 0.0 {
+            waypoints = apply_wall_clearance(&waypoints, &query, filter, clearance);
         }
     }
 
