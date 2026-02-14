@@ -1096,6 +1096,36 @@ pub fn execute_pathfind_with_avoidance(
     execute_pathfind(query, mesh, &avoidance_filter, start_pos, end_pos, options)
 }
 
+/// Pathfind with optional avoidance zones.
+///
+/// If `zones` is empty, delegates to `execute_pathfind`.
+/// Otherwise, acquires the avoidance lock and calls `execute_pathfind_with_avoidance`.
+pub fn pathfind_maybe_avoid(
+    query: &NavMeshQuery,
+    pool: &detour::pool::QueryPool,
+    filter: &QueryFilter,
+    start_pos: Vec3,
+    end_pos: Vec3,
+    options: &PathOptions,
+    zones: &[AvoidanceZone],
+) -> Result<PathResult, AppError> {
+    if zones.is_empty() {
+        execute_pathfind(query, pool.mesh(), filter, start_pos, end_pos, options)
+    } else {
+        let guard = pool.avoidance_lock();
+        execute_pathfind_with_avoidance(
+            query,
+            pool.mesh(),
+            filter,
+            start_pos,
+            end_pos,
+            options,
+            zones,
+            &guard,
+        )
+    }
+}
+
 /// Compute safe corridor widths at each waypoint by raycasting perpendicular to the path.
 pub fn compute_corridor_widths(
     waypoints: &[Vec3],

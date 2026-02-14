@@ -11,8 +11,8 @@ use tc_mmap::error::MmapError;
 use crate::error::AppError;
 use crate::pipeline::{
     compute_corridor_widths, execute_pathfind, execute_pathfind_with_avoidance, has_custom_filter,
-    create_custom_filter, parse_avoidance_zones, parse_stops, parse_waypoints, PathOptions,
-    SEARCH_EXTENTS, HEIGHT_EXTENTS,
+    create_custom_filter, parse_avoidance_zones, parse_stops, parse_waypoints,
+    pathfind_maybe_avoid, PathOptions, SEARCH_EXTENTS, HEIGHT_EXTENTS,
 };
 use crate::routes::path::{
     acquire_query, validate_filter_params, validate_smoothing_params,
@@ -31,6 +31,9 @@ pub struct MultiPathRequest {
     pub map_id: u32,
     /// Semicolon-separated "x,y,z" stops (minimum 2).
     pub stops: String,
+    /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
+    #[serde(default)]
+    pub avoid: Option<String>,
     #[serde(default)]
     pub smoothing: Option<String>,
     #[serde(default)]
@@ -129,6 +132,12 @@ pub async fn path_multi(
         wall_clearance: params.wall_clearance,
     };
 
+    let zones = if let Some(ref avoid_str) = params.avoid {
+        parse_avoidance_zones(avoid_str)?
+    } else {
+        Vec::new()
+    };
+
     let mut all_waypoints: Vec<Vec3> = Vec::new();
     let mut leg_distances = Vec::new();
     let mut leg_boundaries = vec![0usize];
@@ -136,7 +145,7 @@ pub async fn path_multi(
     let mut total_distance = 0.0f32;
 
     for i in 0..stops.len() - 1 {
-        let result = execute_pathfind(&query, pool.mesh(), filter, stops[i], stops[i + 1], &options)?;
+        let result = pathfind_maybe_avoid(&query, &pool, filter, stops[i], stops[i + 1], &options, &zones)?;
 
         if result.partial {
             partial_legs.push(i);
@@ -177,6 +186,9 @@ pub struct TspPathRequest {
     pub map_id: u32,
     /// Semicolon-separated "x,y,z" points to visit (minimum 2).
     pub points: String,
+    /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
+    #[serde(default)]
+    pub avoid: Option<String>,
     /// Optional start position.
     #[serde(default)]
     pub start_x: Option<f32>,
@@ -376,6 +388,12 @@ pub async fn path_tsp(
         pool.filter()
     };
 
+    let zones = if let Some(ref avoid_str) = params.avoid {
+        parse_avoidance_zones(avoid_str)?
+    } else {
+        Vec::new()
+    };
+
     // Determine start index
     let start_idx = if let (Some(sx), Some(sy), Some(sz)) =
         (params.start_x, params.start_y, params.start_z)
@@ -411,13 +429,14 @@ pub async fn path_tsp(
 
         for i in 0..n {
             for j in (i + 1)..n {
-                let dist = match execute_pathfind(
+                let dist = match pathfind_maybe_avoid(
                     &query,
-                    pool.mesh(),
+                    &pool,
                     filter,
                     points[i],
                     points[j],
                     &no_smooth_options,
+                    &zones,
                 ) {
                     Ok(result) => result.distance,
                     Err(_) => points[i].distance(&points[j]) * 1.5, // Fallback with penalty
@@ -470,13 +489,14 @@ pub async fn path_tsp(
     let mut total_distance = 0.0f32;
 
     for i in 0..ordered_stops.len() - 1 {
-        let result = execute_pathfind(
+        let result = pathfind_maybe_avoid(
             &query,
-            pool.mesh(),
+            &pool,
             filter,
             ordered_stops[i],
             ordered_stops[i + 1],
             &options,
+            &zones,
         )?;
 
         if result.partial {
@@ -771,6 +791,9 @@ pub struct CorridorPathRequest {
     pub end_x: f32,
     pub end_y: f32,
     pub end_z: f32,
+    /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
+    #[serde(default)]
+    pub avoid: Option<String>,
     #[serde(default)]
     pub smoothing: Option<String>,
     #[serde(default)]
@@ -871,6 +894,12 @@ pub async fn path_corridor(
         pool.filter()
     };
 
+    let zones = if let Some(ref avoid_str) = params.avoid {
+        parse_avoidance_zones(avoid_str)?
+    } else {
+        Vec::new()
+    };
+
     let options = PathOptions {
         smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(false),
@@ -886,7 +915,7 @@ pub async fn path_corridor(
         wall_clearance: params.wall_clearance,
     };
 
-    let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
+    let result = pathfind_maybe_avoid(&query, &pool, filter, start_pos, end_pos, &options, &zones)?;
     let corridor_widths = compute_corridor_widths(&result.waypoints, &query, filter, params.probe_distance);
 
     Ok(Json(CorridorPathResponse {

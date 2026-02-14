@@ -12,7 +12,8 @@ use crate::error::AppError;
 use path_smoothing::SmoothingAlgorithm;
 
 use crate::pipeline::{
-    execute_pathfind, has_custom_filter, create_custom_filter, parse_threats,
+    has_custom_filter, create_custom_filter, parse_threats,
+    parse_avoidance_zones, pathfind_maybe_avoid,
     create_smoothing_config, project_waypoints_to_surface,
     validate_smoothed_path, apply_wall_clearance,
     PathOptions, SEARCH_EXTENTS, HEIGHT_EXTENTS,
@@ -64,6 +65,9 @@ pub struct FleeRequest {
     pub z_extent: Option<f32>,
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
+    #[serde(default)]
+    pub avoid: Option<String>,
 }
 
 fn default_flee_distance() -> f32 {
@@ -137,6 +141,12 @@ pub async fn flee(
         pool.filter()
     };
 
+    let zones = if let Some(ref avoid_str) = params.avoid {
+        parse_avoidance_zones(avoid_str)?
+    } else {
+        Vec::new()
+    };
+
     let options = PathOptions {
         smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(true),
@@ -196,7 +206,7 @@ pub async fn flee(
 
         // Snap target to navmesh
         if let Ok((_, snapped)) = query.find_nearest_poly(target, SEARCH_EXTENTS, filter) {
-            if let Ok(result) = execute_pathfind(&query, pool.mesh(), filter, player_pos, snapped, &options) {
+            if let Ok(result) = pathfind_maybe_avoid(&query, &pool, filter, player_pos, snapped, &options, &zones) {
                 // Score: minimum distance from any waypoint to any threat
                 let min_dist = result
                     .waypoints

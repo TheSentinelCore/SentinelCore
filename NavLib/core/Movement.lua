@@ -559,15 +559,15 @@ function Movement:move_to(target, callback, opts)
         self:_start_movement(data.waypoints)
     end
 
+    -- Gather avoidance zones (used by both corridor and regular paths)
+    local zones = self._obstacle_module
+        and self._obstacle_module:get_avoidance_zones()
+        or {}
+
     if use_corridor then
         self._nav_client:find_path_corridor(start_pos, target, on_path,
-            self:_build_corridor_opts({ map_id = opts.map_id }))
+            self:_build_corridor_opts({ map_id = opts.map_id, avoid_zones = zones }))
     else
-        -- Use avoidance routing if obstacles are detected
-        local zones = self._obstacle_module
-            and self._obstacle_module:get_avoidance_zones()
-            or {}
-
         if #zones > 0 then
             self._nav_client:find_path_avoid(start_pos, target, zones, on_path,
                 self:_build_path_opts({ map_id = opts.map_id }))
@@ -874,14 +874,14 @@ function Movement:_unstuck_repath()
         self:_start_movement(data.waypoints)
     end
 
+    local zones = self._obstacle_module
+        and self._obstacle_module:get_avoidance_zones()
+        or {}
+
     if self:_should_use_corridor() then
         self._nav_client:find_path_corridor(pos, self._destination, on_repath,
-            self:_build_corridor_opts())
+            self:_build_corridor_opts({ avoid_zones = zones }))
     else
-        local zones = self._obstacle_module
-            and self._obstacle_module:get_avoidance_zones()
-            or {}
-
         if #zones > 0 then
             self._nav_client:find_path_avoid(pos, self._destination, zones, on_repath,
                 self:_build_path_opts())
@@ -941,10 +941,14 @@ function Movement:plan_route(nodes, callback, opts)
 
     self:_set_state(S_REQUESTING)
 
+    local zones = self._obstacle_module
+        and self._obstacle_module:get_avoidance_zones()
+        or {}
     local tsp_opts = self:_build_path_opts({
         map_id = opts.map_id,
         start_pos = player:get_position(),
         return_to_start = opts.return_to_start,
+        avoid_zones = zones,
     })
     self._nav_client:find_route_tsp(nodes, function(ok, data, err)
         if self._state ~= S_REQUESTING then
