@@ -11,6 +11,11 @@ pub const NAV_AREA_GROUND_STEEP: u8 = 10;
 pub const NAV_AREA_WATER: u8 = 9;
 pub const NAV_AREA_MAGMA_SLIME: u8 = 8;
 
+/// Area type used for temporary avoidance zones during path-avoid requests.
+/// Area 63 is unused by CMaNGOS mmtile data (areas 8-11 are used).
+/// Default cost is 1.0 so concurrent non-avoidance pathfinding is unaffected.
+pub const NAV_AREA_AVOID: u8 = 63;
+
 /// Query filter for controlling pathfinding behavior.
 ///
 /// QueryFilter controls which polygons are considered during pathfinding

@@ -89,6 +89,13 @@ function Facade:plan_route(nodes, callback, opts)
     self.movement:plan_route(nodes, callback, opts)
 end
 
+---Follow a pre-computed waypoint path (no pathfinding request).
+---@param waypoints vec3[]
+---@param callback? fun(success: boolean, reason: string|nil)
+function Facade:follow_path(waypoints, callback)
+    self.movement:follow_path(waypoints, callback)
+end
+
 ---Re-request path from current position to current destination.
 ---@param reason? string
 function Facade:replan(reason)
@@ -165,6 +172,24 @@ end
 ---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
 function Facade:health_check(callback)
     self.nav_client:health_check(callback)
+end
+
+---Get navmesh height at a specific position.
+---@param pos vec3
+---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
+function Facade:get_height(pos, callback)
+    self.nav_client:get_height(pos, callback)
+end
+
+---Get navmesh height at the local player's current position.
+---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
+function Facade:get_player_height(callback)
+    local me = core.object_manager.get_local_player()
+    if not me then
+        if callback then callback(false, nil, "No local player") end
+        return
+    end
+    self.nav_client:get_height(me:get_position(), callback)
 end
 
 --------------------------------------------------------------------------------

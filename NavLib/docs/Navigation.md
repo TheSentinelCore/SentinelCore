@@ -416,15 +416,45 @@ end)
 nav:get_height(pos, callback, opts?)
 ```
 
-Get the navmesh Z-coordinate at a position. Useful for ground-level verification.
+Get the navmesh Z-coordinate at a position. Useful for ground-level verification, terrain probing, or checking if a position is on valid navmesh.
 
 **Endpoint:** `GET /api/v1/height`
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `pos` | vec3 | yes | World position `{x, y, z}` to query |
+| `callback` | function | yes | `function(ok, data, err)` |
+| `opts` | table | no | `{ map_id = auto }` |
 
 **Callback data (on success):**
 ```lua
 {
     height = number,  -- Z-coordinate on navmesh
 }
+```
+
+**Example:**
+```lua
+-- Query height at arbitrary coordinates
+local pos = { x = -8900, y = 560, z = 100 }
+nav:get_height(pos, function(ok, data, err)
+    if ok then
+        core.log(string.format("Navmesh height: %.2f", data.height))
+    else
+        core.log_error("Height query failed: " .. tostring(err))
+    end
+end)
+
+-- Query height at player's position
+local me = core.object_manager.get_local_player()
+nav:get_height(me:get_position(), function(ok, data, err)
+    if ok then
+        core.log(string.format("Navmesh: %.2f | Player Z: %.2f",
+            data.height, me:get_position().z))
+    end
+end)
 ```
 
 ---

@@ -10,7 +10,7 @@ use tc_mmap::error::MmapError;
 
 use crate::error::AppError;
 use crate::pipeline::{
-    self, apply_avoidance, compute_corridor_widths, execute_pathfind, has_custom_filter,
+    compute_corridor_widths, execute_pathfind, execute_pathfind_with_avoidance, has_custom_filter,
     create_custom_filter, parse_avoidance_zones, parse_stops, parse_waypoints, PathOptions,
     SEARCH_EXTENTS, HEIGHT_EXTENTS,
 };
@@ -521,9 +521,9 @@ pub struct AvoidPathRequest {
     pub end_x: f32,
     pub end_y: f32,
     pub end_z: f32,
-    /// Repeated param: "x,y,z,radius,cost" per zone.
+    /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
     #[serde(default)]
-    pub avoid: Vec<String>,
+    pub avoid: Option<String>,
     #[serde(default)]
     pub smoothing: Option<String>,
     #[serde(default)]
@@ -573,7 +573,11 @@ pub async fn path_avoid(
         validate_wall_clearance(wc)?;
     }
 
-    let zones = parse_avoidance_zones(&params.avoid)?;
+    let zones = if let Some(ref avoid_str) = params.avoid {
+        parse_avoidance_zones(avoid_str)?
+    } else {
+        Vec::new()
+    };
 
     let start_time = std::time::Instant::now();
     let start_pos = Vec3::new(params.start_x, params.start_y, params.start_z);
@@ -615,16 +619,26 @@ pub async fn path_avoid(
         wall_clearance: params.wall_clearance,
     };
 
-    let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
-
-    // Apply avoidance post-processing
-    let waypoints = apply_avoidance(&result.waypoints, &zones, &query, filter);
-    let distance = pipeline::calculate_path_distance(&waypoints);
+    let result = if zones.is_empty() {
+        execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?
+    } else {
+        let _avoidance_guard = pool.avoidance_lock();
+        execute_pathfind_with_avoidance(
+            &query,
+            pool.mesh(),
+            filter,
+            start_pos,
+            end_pos,
+            &options,
+            &zones,
+            &_avoidance_guard,
+        )?
+    };
 
     Ok(Json(crate::routes::path::PathResponse {
         success: true,
-        path: vec3_to_waypoints(&waypoints),
-        distance,
+        path: vec3_to_waypoints(&result.waypoints),
+        distance: result.distance,
         partial: result.partial,
         computation_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
         partial_endpoint: None,

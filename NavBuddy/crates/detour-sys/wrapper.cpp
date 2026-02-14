@@ -395,4 +395,34 @@ dtStatus wrapper_dtNavMesh_getPolyArea(
     return nav->getPolyArea(ref, area);
 }
 
+dtStatus wrapper_dtNavMesh_setPolyArea(
+    dtNavMesh* nav,
+    dtPolyRef ref,
+    unsigned char area
+) {
+    if (!nav) {
+        return DT_FAILURE | DT_INVALID_PARAM;
+    }
+    return nav->setPolyArea(ref, area);
+}
+
+// =============================================================================
+// NavMeshQuery - Polygon Search
+// =============================================================================
+
+dtStatus wrapper_dtNavMeshQuery_queryPolygons(
+    const dtNavMeshQuery* query,
+    const float* center,
+    const float* halfExtents,
+    const dtQueryFilter* filter,
+    dtPolyRef* polys,
+    int* polyCount,
+    int maxPolys
+) {
+    if (!query || !center || !halfExtents || !filter || !polys || !polyCount) {
+        return DT_FAILURE | DT_INVALID_PARAM;
+    }
+    return query->queryPolygons(center, halfExtents, filter, polys, polyCount, maxPolys);
+}
+
 } // extern "C"

@@ -27,6 +27,8 @@ Single entry-point facade for NavLib. Creates, wires, and drives all modules wit
 - [Server Queries](#server-queries)
   - [is_server_available](#is_server_available)
   - [health_check](#health_check)
+  - [get_height](#get_height)
+  - [get_player_height](#get_player_height)
 - [Configuration](#configuration)
   - [Constructor Config](#constructor-config)
   - [update_config](#update_config)
@@ -359,6 +361,77 @@ Check NavBuddy server health.
 function(ok, data, err)
     -- data.status, data.version, data.uptime_secs, data.loaded_maps
 end
+```
+
+---
+
+### get_height
+
+```lua
+nav:get_height(pos, callback)
+```
+
+Get the navmesh Z-coordinate at arbitrary world coordinates. Useful for ground-level verification, terrain probing, or checking if a position is on valid navmesh.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `pos` | vec3 | yes | World position `{x, y, z}` to query |
+| `callback` | function | yes | `function(ok, data, err)` |
+
+**Callback data (on success):**
+```lua
+{
+    height = number,  -- Z-coordinate on navmesh at pos
+}
+```
+
+**Example:**
+```lua
+local pos = { x = -8900, y = 560, z = 100 }
+nav:get_height(pos, function(ok, data, err)
+    if ok then
+        core.log(string.format("Navmesh height at pos: %.2f", data.height))
+    else
+        core.log_error("Height query failed: " .. tostring(err))
+    end
+end)
+```
+
+---
+
+### get_player_height
+
+```lua
+nav:get_player_height(callback)
+```
+
+Convenience wrapper — gets the navmesh Z-coordinate at the local player's current position. Equivalent to calling `get_height()` with the player's position.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `callback` | function | yes | `function(ok, data, err)` |
+
+**Callback data (on success):**
+```lua
+{
+    height = number,  -- Z-coordinate on navmesh at player
+}
+```
+
+**Example:**
+```lua
+nav:get_player_height(function(ok, data, err)
+    if ok then
+        local me = core.object_manager.get_local_player()
+        local player_z = me:get_position().z
+        core.log(string.format("Navmesh: %.2f | Player Z: %.2f | Diff: %.2f",
+            data.height, player_z, math.abs(data.height - player_z)))
+    end
+end)
 ```
 
 ---

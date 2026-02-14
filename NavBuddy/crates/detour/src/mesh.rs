@@ -165,6 +165,37 @@ impl NavMesh {
         Ok(area)
     }
 
+    /// Set the area type for a polygon.
+    ///
+    /// # Safety Contract
+    ///
+    /// This performs **interior mutation** on the shared NavMesh through its
+    /// raw pointer. This is safe ONLY when the caller holds the
+    /// `QueryPool::avoidance_lock()` mutex and restores original area types
+    /// before releasing the lock.
+    ///
+    /// # Arguments
+    /// * `poly_ref` - Polygon reference to modify
+    /// * `area` - New area type (0-63)
+    pub fn set_poly_area(&self, poly_ref: PolyRef, area: u8) -> Result<(), DetourError> {
+        if area >= 64 {
+            return Err(DetourError::StatusError(
+                detour_sys::DT_FAILURE | detour_sys::DT_INVALID_PARAM,
+            ));
+        }
+        let status = unsafe {
+            detour_sys::wrapper_dtNavMesh_setPolyArea(
+                self.ptr.as_ptr() as *mut _,
+                poly_ref,
+                area,
+            )
+        };
+        if dt_status_failed(status) {
+            return Err(DetourError::StatusError(status));
+        }
+        Ok(())
+    }
+
     /// Get raw pointer for NavMeshQuery initialization.
     pub(crate) fn as_ptr(&self) -> *const detour_sys::dtNavMesh {
         self.ptr.as_ptr()
