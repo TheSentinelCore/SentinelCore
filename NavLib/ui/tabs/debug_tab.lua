@@ -117,6 +117,9 @@ local function dispatch_go(mode_idx, facade, waypoints)
         _nav_index = 1
     end
 
+    -- Build opts once for modes that call nav_client directly
+    local path_opts = facade:get_path_opts()
+
     -- ===== Navigation modes =====
     if mode_idx == 1 then
         -- Move To (sequential)
@@ -141,24 +144,24 @@ local function dispatch_go(mode_idx, facade, waypoints)
         for _, wp in ipairs(waypoints) do
             stops[#stops + 1] = wp
         end
-        nav_client:find_route_multi(stops, raw_path_callback)
+        nav_client:find_route_multi(stops, raw_path_callback, path_opts)
 
     elseif mode_idx == 5 then
         -- Corridor Path
-        nav_client:find_path_corridor(player_pos, waypoints[1], raw_path_callback)
+        nav_client:find_path_corridor(player_pos, waypoints[1], raw_path_callback, facade:get_corridor_opts())
 
     elseif mode_idx == 6 then
         -- Path + Avoid (uses current obstacle zones)
         local zones = facade.obstacle and facade.obstacle:get_avoidance_zones() or {}
-        nav_client:find_path_avoid(player_pos, waypoints[1], zones, raw_path_callback)
+        nav_client:find_path_avoid(player_pos, waypoints[1], zones, raw_path_callback, path_opts)
 
     elseif mode_idx == 7 then
         -- Flee (waypoints are threat positions)
-        nav_client:flee(player_pos, waypoints, raw_path_callback)
+        nav_client:flee(player_pos, waypoints, raw_path_callback, path_opts)
 
     elseif mode_idx == 8 then
         -- Kite (arc around waypoint 1)
-        nav_client:kite(player_pos, waypoints[1], raw_path_callback, { kite_radius = 8.0 })
+        nav_client:kite(player_pos, waypoints[1], raw_path_callback, facade:get_path_opts({ kite_radius = 8.0 }))
 
     elseif mode_idx == 9 then
         -- Random Point → navigate to it
@@ -313,6 +316,82 @@ function DebugTab.register(ui, menu, facade)
                 { element = menu.viz_state,        label = "State Indicators",
                   tooltip = "Show stuck/requesting/arrived/failed indicators" },
             }
+        })
+
+        -- Avoid Zones (custom rendered)
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                if not facade then return y_offset end
+                local obstacle = facade.obstacle
+                if not obstacle then return y_offset end
+
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local window_size = window:get_size()
+                local content_width = window_size.x - (2 * LAYOUT.padding_side)
+                local btn_w = (content_width - 4) / 2
+                local btn_h = 20
+
+                -- Section label with count
+                local zones = obstacle:get_avoidance_zones()
+                local header = "Avoid Zones (" .. #zones .. ")"
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x, y_offset), colors.primary_accent, header)
+                y_offset = y_offset + window:get_text_size(header).y + 4
+
+                -- Zone list with inline remove buttons
+                for i, zone in ipairs(zones) do
+                    local zone_text = string.format("#%d: %.0f, %.0f, %.0f (r=%.1f)",
+                        i, zone.x, zone.y, zone.z, zone.radius)
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.text_secondary, zone_text)
+
+                    -- Per-zone remove button
+                    local rm_w = 16
+                    local rm_x = x + content_width - rm_w
+                    local rm_start = vec2.new(rm_x, y_offset)
+                    local rm_end = vec2.new(rm_x + rm_w, y_offset + 14)
+                    window:is_mouse_hovering_rect_block_movement(rm_start, rm_end)
+                    if window:is_rect_clicked(rm_start, rm_end) then
+                        obstacle:remove_zone(i)
+                    end
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(rm_x + 3, y_offset), colors.text_secondary, "X")
+
+                    y_offset = y_offset + 16
+                end
+
+                if #zones == 0 then
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.text_secondary, "(no zones)")
+                    y_offset = y_offset + 16
+                end
+
+                y_offset = y_offset + 4
+
+                -- Button row: Add Zone Here / Clear Zones
+                local clicked_add_zone = render_button(window, colors, x, y_offset,
+                    btn_w, btn_h, "Add Zone Here")
+                if clicked_add_zone then
+                    local player = core.object_manager.get_local_player()
+                    if player then
+                        obstacle:add_zone(player:get_position())
+                        core.log("[NavLib Debug] Added avoid zone at player position")
+                    end
+                end
+
+                local clicked_clear_zones = render_button(window, colors, x + btn_w + 4, y_offset,
+                    btn_w, btn_h, "Clear Zones", #zones > 0)
+                if clicked_clear_zones then
+                    obstacle:clear()
+                    core.log("[NavLib Debug] Cleared all avoid zones")
+                end
+
+                y_offset = y_offset + btn_h + 4
+
+                return y_offset + 4
+            end
         })
 
         -- Waypoint Management + Mode Selector (custom rendered)
