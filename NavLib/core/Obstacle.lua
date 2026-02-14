@@ -4,8 +4,8 @@
 -- Reactive fallback: stuck handler probes from player position.
 
 local DEFAULT_CONFIG = {
-    avoidance_cost       = 5.0,   -- cost multiplier for path-avoid endpoint
-    avoidance_radius     = 3.0,    -- yards: radius of avoidance zone around hit point
+    avoidance_cost       = 200.0,  -- cost multiplier for path-avoid endpoint
+    avoidance_radius     = 5.0,    -- yards: radius of avoidance zone around hit point
     zone_ttl             = 120.0,  -- seconds: auto-expire zones after this
     zone_prune_dist      = 100.0,  -- yards: remove zones farther than this
     max_zones            = 5,      -- cap remembered zones (well under NavBuddy's 20 limit)
