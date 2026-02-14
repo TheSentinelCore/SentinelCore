@@ -29,9 +29,8 @@ local _ui_state = {
 -- =============================================================================
 
 local menu_elements = {
-    -- Window toggles
+    -- Window toggle
     open_btn = core.menu.button("gb_open"),
-    navlib_btn = core.menu.button("navlib_open"),
 
     -- Overlay toggle
     overlay_enabled_cb = core.menu.checkbox(true, "gb_overlay_enabled"),
@@ -46,40 +45,18 @@ local menu_elements = {
     check_skills_cb = core.menu.checkbox(true, "gb_check_skills"),
     node_search_radius_slider = core.menu.slider_int(20, 150, 80, "gb_node_search_radius"),
     gather_timeout_slider = core.menu.slider_float(5.0, 30.0, 10.0, "gb_gather_timeout"),
-
-    -- Navigation tab
-    smoothing_combo = core.menu.combobox(1, "gb_smoothing_algorithm"),
-    smooth_iterations_slider = core.menu.slider_int(1, 5, 2, "gb_smooth_iterations"),
-    smooth_samples_slider = core.menu.slider_int(5, 50, 10, "gb_smooth_samples"),
-    smooth_ratio_slider = core.menu.slider_float(0.5, 0.95, 0.75, "gb_smooth_ratio"),
-    min_corner_angle_slider = core.menu.slider_float(0.0, 120.0, 30.0, "gb_min_corner_angle"),
-    keep_originals_cb = core.menu.checkbox(false, "gb_keep_originals"),
-    path_optimize_cb = core.menu.checkbox(false, "gb_path_optimize"),
-    anti_detection_cb = core.menu.checkbox(false, "gb_anti_detection"),
-    max_deviation_slider = core.menu.slider_float(1.0, 20.0, 5.0, "gb_max_deviation"),
-    filter_ground_slider = core.menu.slider_float(0.1, 10.0, 1.0, "gb_filter_ground"),
-    filter_water_slider = core.menu.slider_float(0.1, 100.0, 10.0, "gb_filter_water"),
-    filter_lava_slider = core.menu.slider_float(0.1, 1000.0, 100.0, "gb_filter_lava"),
-    waypoint_tolerance_slider = core.menu.slider_float(0.1, 10.0, 3.0, "gb_waypoint_tolerance"),
     mount_threshold_slider = core.menu.slider_int(10, 100, 40, "gb_mount_threshold"),
-
-    -- Indoor navigation
-    use_corridor_indoor_cb = core.menu.checkbox(true, "gb_use_corridor_indoor"),
-
-    -- Wall clearance
-    wall_clearance_cb = core.menu.checkbox(false, "gb_wall_clearance_enabled"),
-    wall_clearance_slider = core.menu.slider_float(0.5, 5.0, 1.5, "gb_wall_clearance"),
-
-    -- Anti-detection sub-settings
-    random_pause_cb = core.menu.checkbox(false, "gb_random_pause"),
-    pause_interval_min_slider = core.menu.slider_float(15.0, 120.0, 30.0, "gb_pause_interval_min"),
-    pause_interval_max_slider = core.menu.slider_float(30.0, 180.0, 90.0, "gb_pause_interval_max"),
-    random_jump_cb = core.menu.checkbox(false, "gb_random_jump"),
 
     -- Safety tab
     enemy_scan_radius_slider = core.menu.slider_int(10, 60, 30, "gb_enemy_scan_radius"),
     skip_if_enemies_cb = core.menu.checkbox(true, "gb_skip_if_enemies"),
     flee_health_slider = core.menu.slider_int(10, 50, 30, "gb_flee_health"),
+
+    -- Anti-detection (rendered in safety tab)
+    random_pause_cb = core.menu.checkbox(false, "gb_random_pause"),
+    pause_interval_min_slider = core.menu.slider_float(15.0, 120.0, 30.0, "gb_pause_interval_min"),
+    pause_interval_max_slider = core.menu.slider_float(30.0, 180.0, 90.0, "gb_pause_interval_max"),
+    random_jump_cb = core.menu.checkbox(false, "gb_random_jump"),
 }
 
 -- =============================================================================
@@ -169,12 +146,6 @@ local function on_load()
     -- Initialize the UI window
     UIWindow.init(GatherBuddy, menu_elements, _ui_state)
 
-    -- Initialize NavLib settings UI (NavLib facade created by BotManager)
-    local bot_mgr = GatherBuddy:get_bot_manager()
-    if bot_mgr and bot_mgr._navlib and _G.NavLib and _G.NavLib.create_ui then
-        _G.NavLib.create_ui(bot_mgr._navlib)
-    end
-
     _is_loaded = true
     core.log("[GatherBuddy] Loaded successfully")
 end
@@ -207,9 +178,6 @@ end)
 core.register_on_render_callback(function()
     if not _is_loaded then return end
     UIWindow.on_render()
-    if _G.NavLib and _G.NavLib.ui then
-        _G.NavLib.ui:on_render()
-    end
     render_path_overlay()
 end)
 
@@ -217,24 +185,12 @@ core.register_on_render_menu_callback(function()
     if not _is_loaded then return end
 
     UIWindow.on_menu_render()
-    if _G.NavLib and _G.NavLib.ui then
-        _G.NavLib.ui:on_menu_render()
-    end
 
-    -- Toggle buttons in Sylvannas main menu
+    -- Toggle button in Sylvannas main menu
     if menu_elements.open_btn:render("GatherBuddy") then
         local ui = UIWindow.get_ui()
         if ui and ui.menu and ui.menu.enable then
             ui.menu.enable:set(not ui.menu.enable:get_state())
-        end
-    end
-
-    if _G.NavLib and _G.NavLib.ui then
-        local navlib_ui = _G.NavLib.ui.get_ui and _G.NavLib.ui.get_ui()
-        if menu_elements.navlib_btn:render("NavLib") then
-            if navlib_ui and navlib_ui.menu and navlib_ui.menu.enable then
-                navlib_ui.menu.enable:set(not navlib_ui.menu.enable:get_state())
-            end
         end
     end
 end)
