@@ -20,19 +20,19 @@ Defaults.movement = {
     max_deviation           = { type = "float", min = 1.0,  max = 20.0,  default = 3.0,   id = "navlib_max_deviation" },
 
     -- Stuck Recovery
-    stuck_check_interval    = { type = "float", min = 0.25, max = 5.0,   default = 0.5,   id = "navlib_stuck_interval" },
-    stuck_distance_min      = { type = "float", min = 0.1,  max = 2.0,   default = 0.25,  id = "navlib_stuck_distance_v2" },
+    stuck_check_interval    = { type = "float", min = 0.25, max = 5.0,   default = 0.25,   id = "navlib_stuck_interval" },
+    stuck_distance_min      = { type = "float", min = 0.1,  max = 2.0,   default = 0.1,  id = "navlib_stuck_distance_v2" },
     max_stuck_attempts      = { type = "int",   min = 1,    max = 10,    default = 6,     id = "navlib_max_stuck" },
 
     -- Path Validation
-    path_check_interval     = { type = "float", min = 1.0,  max = 30.0,  default = 8.0,   id = "navlib_path_check" },
+    path_check_interval     = { type = "float", min = 1.0,  max = 30.0,  default = 5.0,   id = "navlib_path_check" },
 
     -- Deviation Detection
     deviation_check_interval     = { type = "float", min = 0.1,  max = 5.0,   default = 1.0,   id = "navlib_deviation_check_interval" },
-    deviation_threshold          = { type = "float", min = 1.0,  max = 20.0,  default = 5.0,   id = "navlib_deviation_threshold" },
-    deviation_vertical_threshold = { type = "float", min = 0.5,  max = 10.0,  default = 3.0,   id = "navlib_deviation_vertical_threshold" },
+    deviation_threshold          = { type = "float", min = 1.0,  max = 20.0,  default = 2.0,   id = "navlib_deviation_threshold" },
+    deviation_vertical_threshold = { type = "float", min = 0.5,  max = 10.0,  default = 2.0,   id = "navlib_deviation_vertical_threshold" },
     deviation_corridor_factor    = { type = "float", min = 0.1,  max = 2.0,   default = 0.75,  id = "navlib_deviation_corridor_factor" },
-    repath_cooldown              = { type = "float", min = 0.1,  max = 5.0,   default = 1.0,   id = "navlib_repath_cooldown" },
+    repath_cooldown              = { type = "float", min = 0.1,  max = 5.0,   default = 0.1,   id = "navlib_repath_cooldown" },
     max_deviation_repaths        = { type = "int",   min = 1,    max = 10,    default = 5,     id = "navlib_max_deviation_repaths" },
 
     -- Smoothing
