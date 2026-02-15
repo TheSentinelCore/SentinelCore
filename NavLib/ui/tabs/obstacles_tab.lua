@@ -54,6 +54,16 @@ function ObstaclesTab.register(ui, menu)
             }
         })
 
+        -- Scanner Solidity Check (advanced)
+        t:checkbox_grid({
+            label = "Scanner Filtering",
+            columns = 1,
+            visible_when = function() return show_advanced() and menu.scanner_enabled:get_state() end,
+            elements = {
+                { element = menu.scanner_verify_solid, label = "Verify Solidity (trace_line)", tooltip = "Use trace_line to confirm objects are solid. More accurate but misses many valid objects." },
+            }
+        })
+
         -- Basic Obstacle Avoidance
         t:checkbox_grid({
             label = "Obstacle Avoidance",
@@ -144,6 +154,7 @@ function ObstaclesTab.register(ui, menu)
                         { menu.scanner_buffer,     Do.scanner_buffer },
                         { menu.scanner_min_radius, Do.scanner_min_radius },
                         { menu.scanner_cost,       Do.scanner_cost },
+                        { menu.scanner_verify_solid, Do.scanner_verify_solid },
                         { menu.proactive_obstacle, Dm.proactive_obstacle_check },
                         { menu.obstacle_interval,  Dm.proactive_obstacle_interval },
                         { menu.avoidance_radius,   Do.avoidance_radius },

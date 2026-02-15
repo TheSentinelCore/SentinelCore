@@ -372,24 +372,37 @@ function Obstacle:_scan_objects()
             if dist_sq <= range * range then
                 in_range_count = in_range_count + 1
 
-                -- Try to get bounding radius; fall back to default if unavailable
+                -- Try to get bounding radius; fall back to height-based estimate
                 local bounding_r = DEFAULT_RADIUS
                 local ok_br, raw_r = pcall(obj.get_bounding_radius, obj)
                 if ok_br and type(raw_r) == "number" and raw_r > 0 then
                     local ok_sc, raw_s = pcall(obj.get_scale, obj)
                     local scale = (ok_sc and type(raw_s) == "number") and raw_s or 1.0
                     bounding_r = raw_r * scale
+                else
+                    -- Fallback: use height as a proxy (most objects are roughly as wide as tall)
+                    local ok_h, raw_h = pcall(obj.get_height, obj)
+                    if ok_h and type(raw_h) == "number" and raw_h > 0 then
+                        local ok_sc, raw_s = pcall(obj.get_scale, obj)
+                        local scale = (ok_sc and type(raw_s) == "number") and raw_s or 1.0
+                        bounding_r = (raw_h * scale) * 0.5  -- half-height as radius estimate
+                    end
                 end
 
                 if bounding_r >= min_radius then
-                    -- Validate solidity: vertical trace from above down through center.
-                    -- DoodadCollision (0x1) + EntityCollision (0x100000)
-                    local trace_flags = 0x100001
-                    local p_above = { x = pos.x, y = pos.y, z = pos.z + 5.0 }
-                    local p_below = { x = pos.x, y = pos.y, z = pos.z - 1.0 }
-                    local ok_trace, is_clear = pcall(core.graphics.trace_line, p_above, p_below, trace_flags)
+                    local is_solid = true
 
-                    if ok_trace and is_clear == false then
+                    if cfg.scanner_verify_solid then
+                        -- Validate solidity: vertical trace from above down through center.
+                        -- DoodadCollision (0x1) + EntityCollision (0x100000)
+                        local trace_flags = 0x100001
+                        local p_above = { x = pos.x, y = pos.y, z = pos.z + 5.0 }
+                        local p_below = { x = pos.x, y = pos.y, z = pos.z - 1.0 }
+                        local ok_trace, is_clear = pcall(core.graphics.trace_line, p_above, p_below, trace_flags)
+                        is_solid = ok_trace and is_clear == false
+                    end
+
+                    if is_solid then
                         solid_count = solid_count + 1
                         new_zones[#new_zones + 1] = {
                             x = pos.x,
@@ -406,9 +419,11 @@ function Obstacle:_scan_objects()
 
     self._scanned_zones = new_zones
 
-    core.log(string.format(
-        "[Obstacle] Scanner: %d basic objs, %d in range, %d solid → %d zones",
-        basic_count, in_range_count, solid_count, #new_zones))
+    if self._config.debug_verbose then
+        core.log(string.format(
+            "[Obstacle] Scanner: %d basic objs, %d in range, %d solid → %d zones",
+            basic_count, in_range_count, solid_count, #new_zones))
+    end
 
     -- Register with NavBuddy if connected
     if self._nav_client and self._nav_client:is_available() and #new_zones > 0 then

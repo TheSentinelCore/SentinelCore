@@ -135,6 +135,7 @@ local function create_menu_elements()
         scanner_buffer         = e(D.obstacles.scanner_buffer),
         scanner_min_radius     = e(D.obstacles.scanner_min_radius),
         scanner_cost           = e(D.obstacles.scanner_cost),
+        scanner_verify_solid   = e(D.obstacles.scanner_verify_solid),
 
         -- Debug (Tab 4)
         debug_verbose          = e(D.movement.debug_verbose),
@@ -275,6 +276,8 @@ local function sync_to_facade()
             scanner_buffer          = _menu.scanner_buffer:get(),
             scanner_min_radius      = _menu.scanner_min_radius:get(),
             scanner_cost            = _menu.scanner_cost:get(),
+            scanner_verify_solid    = _menu.scanner_verify_solid:get_state(),
+            debug_verbose           = _menu.debug_verbose:get_state(),
         },
     })
 end

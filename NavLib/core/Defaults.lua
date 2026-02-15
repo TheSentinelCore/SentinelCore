@@ -100,6 +100,7 @@ Defaults.obstacles = {
     scanner_buffer          = { type = "float", min = 0.5,  max = 5.0,   default = 1.5,   id = "navlib_scanner_buffer" },
     scanner_min_radius      = { type = "float", min = 0.1,  max = 3.0,   default = 0.3,   id = "navlib_scanner_min_radius" },
     scanner_cost            = { type = "float", min = 1.0,  max = 200.0, default = 100.0, id = "navlib_scanner_cost" },
+    scanner_verify_solid    = { type = "bool",  default = false,  id = "navlib_scanner_verify_solid" },
 }
 
 --------------------------------------------------------------------------------
