@@ -82,6 +82,7 @@ function MovementTab.register(ui, menu)
                 { element = menu.deviation_vertical_threshold, label = "Vertical Threshold", suffix = " yd", tooltip = "Vertical offset before repath (wrong floor/level)" },
                 { element = menu.deviation_corridor_factor, label = "Corridor Factor", suffix = "x", tooltip = "Repath when drift exceeds this fraction of corridor width (indoor)" },
                 { element = menu.repath_cooldown, label = "Repath Cooldown", suffix = " s", tooltip = "Minimum seconds between deviation repaths" },
+                { element = menu.max_deviation_repaths, label = "Max Repaths", tooltip = "Max consecutive deviation repaths before giving up (resets on new path)" },
             }
         })
     end)

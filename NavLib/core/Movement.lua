@@ -53,6 +53,7 @@ local DEFAULT_CONFIG = {
     deviation_vertical_threshold = 3.0,   -- yards vertical offset before repath (wrong floor/level)
     deviation_corridor_factor    = 0.75,  -- repath when drift > 75% of corridor width (adaptive, indoor)
     repath_cooldown              = 1.0,   -- minimum seconds between deviation repaths
+    max_deviation_repaths        = 3,     -- max consecutive deviation repaths before giving up
     debug_verbose               = false,
 }
 
@@ -136,6 +137,7 @@ function Movement:new(nav_client, config)
     -- Deviation monitoring
     o._last_deviation_check = 0
     o._last_repath_time = 0
+    o._deviation_repath_count = 0
 
     -- Compatibility: consumers read _path_index directly
     o._path_index = 1
@@ -361,6 +363,7 @@ function Movement:stop()
     self._obstacle_lookahead_time = 0
     self._last_deviation_check = 0
     self._last_repath_time = 0
+    self._deviation_repath_count = 0
     self._path_index = 1
     self._last_applied_speed = 0
     simple_movement:set_threshold(self._config.waypoint_tolerance)
@@ -544,6 +547,7 @@ function Movement:move_to(target, callback, opts)
     self._obstacle_lookahead_time = 0
     self._last_deviation_check = 0
     self._last_repath_time = 0
+    self._deviation_repath_count = 0
     self._unstuck_phase = nil
 
     -- Defer if casting
@@ -677,6 +681,7 @@ function Movement:follow_path(waypoints, callback)
     self._obstacle_lookahead_time = 0
     self._last_deviation_check = 0
     self._last_repath_time = 0
+    self._deviation_repath_count = 0
     self._unstuck_phase = nil
     self:_start_movement(waypoints)
 end
@@ -940,6 +945,8 @@ function Movement:_unstuck_repath()
         end
         self:_verbose("Repath OK: " .. #data.waypoints .. " waypoints")
         self._stuck_count = 0
+        self._last_deviation_check = core.time()
+        self._last_repath_time = core.time()
         self:_start_movement(data.waypoints)
     end
 
@@ -1154,6 +1161,9 @@ function Movement:_check_deviation(player)
     -- Respect repath cooldown
     if now - self._last_repath_time < self._config.repath_cooldown then return end
 
+    -- Guard against infinite repath loops
+    if self._deviation_repath_count >= self._config.max_deviation_repaths then return end
+
     local Helpers = require("lib/Helpers")
     local pos = player:get_position()
 
@@ -1202,6 +1212,7 @@ function Movement:_check_deviation(player)
             vertical_drift, self._config.deviation_vertical_threshold
         ))
         self._last_repath_time = now
+        self._deviation_repath_count = self._deviation_repath_count + 1
         self:_unstuck_repath()
         return
     end
@@ -1225,6 +1236,7 @@ function Movement:_check_deviation(player)
             self._corridor_widths and " (adaptive)" or " (fixed)"
         ))
         self._last_repath_time = now
+        self._deviation_repath_count = self._deviation_repath_count + 1
         self:_unstuck_repath()
     end
 end
