@@ -26,10 +26,15 @@ local COLORS = {
     destination_ring = color.green(220),
     destination_text = color.white(255),
 
-    -- Obstacle layer
+    -- Obstacle layer (ray-detected)
     obstacle_fill = color.new(220, 40, 40, 50),
     obstacle_ring = color.new(220, 40, 40, 150),
     obstacle_text = color.new(220, 80, 80, 200),
+
+    -- Scanned object layer
+    scanned_fill = color.new(220, 180, 40, 40),
+    scanned_ring = color.new(220, 180, 40, 150),
+    scanned_text = color.new(220, 180, 80, 200),
 
     -- Corridor layer
     corridor_line = color.new(160, 140, 220, 120),
@@ -251,26 +256,38 @@ function Visualizer:_render_obstacles(facade, player_pos)
     local obstacle = facade.obstacle
     if not obstacle then return end
 
-    local zones = obstacle:get_avoidance_zones()
-    if not zones or #zones == 0 then return end
+    -- Ray-detected zones (red)
+    local zones = obstacle._zones
+    if zones then
+        for _, zone in ipairs(zones) do
+            local dist = Helpers.distance_3d(player_pos, zone)
+            if dist < CULL_OBSTACLES then
+                core.graphics.circle_3d_filled(zone, zone.radius,
+                    COLORS.obstacle_fill)
+                core.graphics.circle_3d(zone, zone.radius,
+                    COLORS.obstacle_ring, 2, Z_OFFSET)
+                if dist < CULL_TEXT then
+                    core.graphics.text_3d(string.format("r=%.1f", zone.radius),
+                        zone, 9, COLORS.obstacle_text, true)
+                end
+            end
+        end
+    end
 
-    for _, zone in ipairs(zones) do
-        local dist = Helpers.distance_3d(player_pos, zone)
-
-        if dist < CULL_OBSTACLES then
-            -- Semi-transparent filled circle for zone area
-            core.graphics.circle_3d_filled(zone, zone.radius,
-                COLORS.obstacle_fill)
-
-            -- Red ring outline
-            core.graphics.circle_3d(zone, zone.radius,
-                COLORS.obstacle_ring, 2, Z_OFFSET)
-
-            -- Radius text (close range)
-            if dist < CULL_TEXT then
-                local label = string.format("r=%.1f", zone.radius)
-                core.graphics.text_3d(label, zone, 9,
-                    COLORS.obstacle_text, true)
+    -- Scanned object zones (yellow)
+    local scanned = obstacle:get_scanned_zones()
+    if scanned then
+        for _, zone in ipairs(scanned) do
+            local dist = Helpers.distance_3d(player_pos, zone)
+            if dist < CULL_OBSTACLES then
+                core.graphics.circle_3d_filled(zone, zone.radius,
+                    COLORS.scanned_fill)
+                core.graphics.circle_3d(zone, zone.radius,
+                    COLORS.scanned_ring, 2, Z_OFFSET)
+                if dist < CULL_TEXT then
+                    core.graphics.text_3d(string.format("r=%.1f", zone.radius),
+                        zone, 9, COLORS.scanned_text, true)
+                end
             end
         end
     end
