@@ -26,9 +26,9 @@ local DEFAULT_CONFIG = {
     dynamic_speed_ramp_look_distance = 6.0,
     waypoint_tolerance   = 3.0,
     final_tolerance      = 1.5,
-    stuck_check_interval = 2.0,
-    stuck_distance_min   = 1.0,
-    max_stuck_attempts   = 5,
+    stuck_check_interval = 0.5,
+    stuck_distance_min   = 0.25,
+    max_stuck_attempts   = 6,
     path_check_interval  = 8.0,
     smoothing            = "chaikin",
     optimize             = true,
@@ -854,7 +854,7 @@ function Movement:_handle_stuck()
     elseif self._stuck_count == 4 then
         self:_unstuck_backward()
     else
-        self:_unstuck_repath()
+        self:_unstuck_zone_and_repath()
     end
 end
 
@@ -966,6 +966,19 @@ function Movement:_unstuck_repath()
                 self:_build_path_opts())
         end
     end
+end
+
+---Strategy 5: Add avoidance zone at stuck position + repath around it
+function Movement:_unstuck_zone_and_repath()
+    if self._obstacle_module then
+        local player = core.object_manager.get_local_player()
+        if player and player:is_valid() then
+            local pos = player:get_position()
+            self._obstacle_module:add_zone(pos)
+            self:_verbose("Unstuck: added avoidance zone at stuck position, repathing")
+        end
+    end
+    self:_unstuck_repath()
 end
 
 ---Process timed unstuck actions (called in update)
