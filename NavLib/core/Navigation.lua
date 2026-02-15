@@ -361,6 +361,13 @@ function Navigation:find_path(start_pos, dest, callback, opts)
 
     self:_request(self:_build_url(endpoint, params), function(ok, data, err)
         if not ok then
+            core.log_warning(string.format(
+                "[NavClient] find_path failed: %s | start=(%.1f, %.1f, %.1f) dest=(%.1f, %.1f, %.1f) map=%s",
+                err or "?",
+                start_pos.x, start_pos.y, start_pos.z,
+                dest.x, dest.y, dest.z,
+                tostring(params.map_id)
+            ))
             if callback then callback(false, nil, err) end
             return
         end
