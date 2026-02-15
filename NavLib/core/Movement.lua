@@ -932,6 +932,7 @@ function Movement:_unstuck_repath()
     end
     self:_verbose("Unstuck: repath")
     simple_movement:stop()
+    self._unstuck_phase = nil
     self:_set_state(S_REQUESTING)
 
     local player = core.object_manager.get_local_player()
@@ -949,6 +950,8 @@ function Movement:_unstuck_repath()
         end
         self:_verbose("Repath OK: " .. #data.waypoints .. " waypoints")
         self._stuck_count = 0
+        self._last_stuck_time = core.time()
+        self._last_stuck_pos = nil
         self._last_deviation_check = core.time()
         self._last_repath_time = core.time()
         self:_start_movement(data.waypoints)
