@@ -1082,6 +1082,76 @@ function Movement:_check_path_validity(player)
     end)
 end
 
+-- Deviation monitoring --------------------------------------------------------
+
+---Periodically check if player has deviated from path; repath if outside corridor.
+---Uses adaptive corridor-width threshold when available, fixed threshold otherwise.
+---Also checks vertical deviation separately (wrong floor/level detection).
+---@param player game_object
+function Movement:_check_deviation(player)
+    local now = core.time()
+    if now - self._last_deviation_check < self._config.deviation_check_interval then
+        return
+    end
+    self._last_deviation_check = now
+
+    -- Need at least 2 remaining waypoints to form a segment
+    local remaining = simple_movement:get_remaining_waypoints()
+    if not remaining or #remaining < 2 then return end
+
+    -- Respect repath cooldown
+    if now - self._last_repath_time < self._config.repath_cooldown then return end
+
+    local Helpers = require("lib/Helpers")
+    local pos = player:get_position()
+    local a, b = remaining[1], remaining[2]
+
+    local drift, t = Helpers.point_to_segment_distance(
+        pos.x, pos.y, pos.z,
+        a.x, a.y, a.z,
+        b.x, b.y, b.z
+    )
+
+    -- Check 1: Vertical deviation (wrong floor/level)
+    -- Interpolate expected Z at projected point on segment
+    local expected_z = a.z + t * (b.z - a.z)
+    local vertical_drift = math.abs(pos.z - expected_z)
+    if vertical_drift > self._config.deviation_vertical_threshold then
+        self:_verbose(string.format(
+            "Vertical deviation: %.1f yd (threshold %.1f), repathing",
+            vertical_drift, self._config.deviation_vertical_threshold
+        ))
+        self._last_repath_time = now
+        self:_unstuck_repath()
+        return
+    end
+
+    -- Check 2: Lateral deviation (off-path drift)
+    -- Determine threshold: adaptive (corridor) or fixed (fallback)
+    local threshold = self._config.deviation_threshold
+    if self._corridor_widths then
+        local idx = simple_movement:get_current_index() or 1
+        local w1 = self._corridor_widths[idx]
+        local w2 = self._corridor_widths[idx + 1]
+        if w1 and w2 then
+            local corridor_width = w1 + t * (w2 - w1)
+            threshold = corridor_width * self._config.deviation_corridor_factor
+            -- Floor: never go below 2 yards (navmesh precision limit)
+            threshold = math.max(2.0, threshold)
+        end
+    end
+
+    if drift > threshold then
+        self:_verbose(string.format(
+            "Deviation: %.1f yd > threshold %.1f yd%s, repathing",
+            drift, threshold,
+            self._corridor_widths and " (adaptive)" or " (fixed)"
+        ))
+        self._last_repath_time = now
+        self:_unstuck_repath()
+    end
+end
+
 -- Destination validation ---------------------------------------------------
 
 ---Pre-validate that a target is reachable via navmesh without starting movement
