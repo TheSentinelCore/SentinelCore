@@ -1099,16 +1099,19 @@ function Movement:_check_deviation(player)
     end
     self._last_deviation_check = now
 
-    -- Need at least 2 remaining waypoints to form a segment
-    local remaining = simple_movement:get_remaining_waypoints()
-    if not remaining or #remaining < 2 then return end
+    -- Need a valid current path with at least 2 waypoints traversed
+    local idx = self._path_index or 1
+    if idx < 2 or not self._current_path or idx > #self._current_path then return end
 
     -- Respect repath cooldown
     if now - self._last_repath_time < self._config.repath_cooldown then return end
 
     local Helpers = require("lib/Helpers")
     local pos = player:get_position()
-    local a, b = remaining[1], remaining[2]
+    -- Measure against the CURRENT segment: previous waypoint -> current target
+    local a = self._current_path[idx - 1]
+    local b = self._current_path[idx]
+    if not a or not b then return end
 
     local drift, t = Helpers.point_to_segment_distance(
         pos.x, pos.y, pos.z,
@@ -1134,9 +1137,8 @@ function Movement:_check_deviation(player)
     -- Determine threshold: adaptive (corridor) or fixed (fallback)
     local threshold = self._config.deviation_threshold
     if self._corridor_widths then
-        local idx = simple_movement:get_current_index() or 1
-        local w1 = self._corridor_widths[idx]
-        local w2 = self._corridor_widths[idx + 1]
+        local w1 = self._corridor_widths[idx - 1]
+        local w2 = self._corridor_widths[idx]
         if w1 and w2 then
             local corridor_width = w1 + t * (w2 - w1)
             threshold = corridor_width * self._config.deviation_corridor_factor
