@@ -885,9 +885,9 @@ pub fn parse_avoidance_zones(zones_str: &str) -> Result<Vec<AvoidanceZone>, AppE
         });
     }
 
-    if result.len() > 20 {
+    if result.len() > 200 {
         return Err(AppError::InvalidParams(
-            "Maximum 20 avoidance zones allowed".into(),
+            "Maximum 200 avoidance zones allowed".into(),
         ));
     }
 
