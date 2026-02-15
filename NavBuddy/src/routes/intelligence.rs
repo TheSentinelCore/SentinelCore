@@ -11,8 +11,8 @@ use tc_mmap::error::MmapError;
 use crate::error::AppError;
 use crate::pipeline::{
     compute_corridor_widths, execute_pathfind, execute_pathfind_with_avoidance, has_custom_filter,
-    create_custom_filter, parse_avoidance_zones, parse_stops, parse_waypoints,
-    pathfind_maybe_avoid, PathOptions, SEARCH_EXTENTS, HEIGHT_EXTENTS,
+    create_custom_filter, merge_with_registry, parse_avoidance_zones, parse_stops,
+    parse_waypoints, pathfind_maybe_avoid, PathOptions, SEARCH_EXTENTS, HEIGHT_EXTENTS,
 };
 use crate::routes::path::{
     acquire_query, validate_filter_params, validate_smoothing_params,
@@ -132,11 +132,12 @@ pub async fn path_multi(
         wall_clearance: params.wall_clearance,
     };
 
-    let zones = if let Some(ref avoid_str) = params.avoid {
+    let user_zones = if let Some(ref avoid_str) = params.avoid {
         parse_avoidance_zones(avoid_str)?
     } else {
         Vec::new()
     };
+    let zones = merge_with_registry(&user_zones, &state.obstacle_registry, params.map_id);
 
     let mut all_waypoints: Vec<Vec3> = Vec::new();
     let mut leg_distances = Vec::new();
@@ -388,11 +389,12 @@ pub async fn path_tsp(
         pool.filter()
     };
 
-    let zones = if let Some(ref avoid_str) = params.avoid {
+    let user_zones = if let Some(ref avoid_str) = params.avoid {
         parse_avoidance_zones(avoid_str)?
     } else {
         Vec::new()
     };
+    let zones = merge_with_registry(&user_zones, &state.obstacle_registry, params.map_id);
 
     // Determine start index
     let start_idx = if let (Some(sx), Some(sy), Some(sz)) =
@@ -593,11 +595,12 @@ pub async fn path_avoid(
         validate_wall_clearance(wc)?;
     }
 
-    let zones = if let Some(ref avoid_str) = params.avoid {
+    let user_zones = if let Some(ref avoid_str) = params.avoid {
         parse_avoidance_zones(avoid_str)?
     } else {
         Vec::new()
     };
+    let zones = merge_with_registry(&user_zones, &state.obstacle_registry, params.map_id);
 
     let start_time = std::time::Instant::now();
     let start_pos = Vec3::new(params.start_x, params.start_y, params.start_z);
@@ -894,11 +897,12 @@ pub async fn path_corridor(
         pool.filter()
     };
 
-    let zones = if let Some(ref avoid_str) = params.avoid {
+    let user_zones = if let Some(ref avoid_str) = params.avoid {
         parse_avoidance_zones(avoid_str)?
     } else {
         Vec::new()
     };
+    let zones = merge_with_registry(&user_zones, &state.obstacle_registry, params.map_id);
 
     let options = PathOptions {
         smoothing: params.smoothing,

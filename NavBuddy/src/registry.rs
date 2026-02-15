@@ -35,7 +35,7 @@ impl RegisteredObstacle {
 }
 
 /// Per-map obstacle store.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ObstacleRegistry {
     obstacles: DashMap<u32, Vec<RegisteredObstacle>>,
 }

@@ -12,7 +12,7 @@ use crate::error::AppError;
 use path_smoothing::SmoothingAlgorithm;
 
 use crate::pipeline::{
-    has_custom_filter, create_custom_filter, parse_threats,
+    has_custom_filter, create_custom_filter, merge_with_registry, parse_threats,
     parse_avoidance_zones, pathfind_maybe_avoid,
     create_smoothing_config, project_waypoints_to_surface,
     validate_smoothed_path, apply_wall_clearance,
@@ -141,11 +141,12 @@ pub async fn flee(
         pool.filter()
     };
 
-    let zones = if let Some(ref avoid_str) = params.avoid {
+    let user_zones = if let Some(ref avoid_str) = params.avoid {
         parse_avoidance_zones(avoid_str)?
     } else {
         Vec::new()
     };
+    let zones = merge_with_registry(&user_zones, &state.obstacle_registry, params.map_id);
 
     let options = PathOptions {
         smoothing: params.smoothing,

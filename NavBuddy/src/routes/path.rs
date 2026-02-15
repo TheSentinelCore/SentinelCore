@@ -13,7 +13,7 @@ use crate::cache::CachedPath;
 use crate::error::AppError;
 use crate::pipeline::{
     self, execute_pathfind, has_custom_filter, create_custom_filter,
-    PathOptions, SEARCH_EXTENTS,
+    merge_with_registry, pathfind_maybe_avoid, PathOptions, SEARCH_EXTENTS,
 };
 use crate::state::AppState;
 use crate::validation::{
@@ -300,7 +300,9 @@ pub async fn find_path(
         wall_clearance: params.wall_clearance,
     };
 
-    let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
+    // Merge any registered obstacles so basic path queries also avoid them
+    let registry_zones = merge_with_registry(&[], &state.obstacle_registry, params.map_id);
+    let result = pathfind_maybe_avoid(&query, &pool, filter, start_pos, end_pos, &options, &registry_zones)?;
 
     // Handle partial paths with recovery suggestions
     let (partial_endpoint, recovery_suggestions) = if result.partial

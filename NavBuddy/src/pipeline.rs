@@ -1135,6 +1135,25 @@ pub fn pathfind_maybe_avoid(
     }
 }
 
+/// Merge per-request avoidance zones with registry obstacles.
+pub fn merge_with_registry(
+    zones: &[AvoidanceZone],
+    registry: &crate::registry::ObstacleRegistry,
+    map_id: u32,
+) -> Vec<AvoidanceZone> {
+    let registry_zones = registry.get_avoidance_zones(map_id);
+    if registry_zones.is_empty() {
+        return zones.to_vec();
+    }
+    if zones.is_empty() {
+        return registry_zones;
+    }
+    let mut merged = Vec::with_capacity(zones.len() + registry_zones.len());
+    merged.extend_from_slice(zones);
+    merged.extend(registry_zones);
+    merged
+}
+
 /// Compute safe corridor widths at each waypoint by raycasting perpendicular to the path.
 pub fn compute_corridor_widths(
     waypoints: &[Vec3],
