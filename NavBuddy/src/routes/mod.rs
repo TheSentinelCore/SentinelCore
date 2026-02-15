@@ -2,6 +2,7 @@
 
 pub mod health;
 pub mod intelligence;
+pub mod obstacles;
 pub mod path;
 pub mod spatial;
 pub mod tactical;
@@ -38,6 +39,19 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/tactical/flee", get(tactical::flee))
         .route("/api/v1/tactical/los", get(tactical::los_cover))
         .route("/api/v1/tactical/kite", get(tactical::kite))
+        // Obstacle registry endpoints
+        .route(
+            "/api/v1/obstacles/update",
+            get(obstacles::update_obstacles),
+        )
+        .route(
+            "/api/v1/obstacles/clear",
+            get(obstacles::clear_obstacles),
+        )
+        .route(
+            "/api/v1/obstacles/list",
+            get(obstacles::list_obstacles),
+        )
         // Spatial query endpoints
         .route("/api/v1/move", get(spatial::move_along_surface))
         .route("/api/v1/raycast", get(spatial::raycast))
