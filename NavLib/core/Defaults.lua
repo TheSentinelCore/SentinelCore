@@ -99,7 +99,7 @@ Defaults.obstacles = {
 --------------------------------------------------------------------------------
 Defaults.debug = {
     debug_mode       = { type = "int",  min = 0, max = 12, default = 0,    id = "navlib_debug_mode" },
-    viz_master       = { type = "bool", default = true,  id = "navlib_viz_master" },
+    viz_master       = { type = "bool", default = false,  id = "navlib_viz_master" },
     viz_path         = { type = "bool", default = true,  id = "navlib_viz_path" },
     viz_destination  = { type = "bool", default = true,  id = "navlib_viz_destination" },
     viz_obstacles    = { type = "bool", default = true,  id = "navlib_viz_obstacles" },
