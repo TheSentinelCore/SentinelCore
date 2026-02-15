@@ -7,6 +7,7 @@ pub mod cache;
 pub mod config;
 pub mod error;
 pub mod pipeline;
+pub mod registry;
 pub mod routes;
 pub mod state;
 pub mod validation;

@@ -12,6 +12,7 @@ mod cache;
 mod config;
 mod error;
 mod pipeline;
+mod registry;
 mod routes;
 mod state;
 mod validation;
