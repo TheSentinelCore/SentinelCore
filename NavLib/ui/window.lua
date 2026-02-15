@@ -10,6 +10,7 @@ local color = require("common/color")
 local vec2 = require("common/geometry/vector_2")
 local enums = require("common/enums")
 local AstroUI = require("shared/AstroUI")
+local Defaults = require("core/Defaults")
 
 -- Tab modules
 local MovementTab    = require("ui/tabs/movement_tab")
@@ -33,98 +34,111 @@ local _visualizer = nil      -- Visualizer instance
 -- Menu element creation
 --------------------------------------------------------------------------------
 
+---Create a menu element from a Defaults entry
+---@param def table Defaults entry { type, min?, max?, default, id }
+---@return any Menu element
+local function make_element(def)
+    if def.type == "bool" then
+        return core.menu.checkbox(def.default, def.id)
+    elseif def.type == "float" then
+        return core.menu.slider_float(def.min, def.max, def.default, def.id)
+    elseif def.type == "int" then
+        return core.menu.slider_int(def.min, def.max, def.default, def.id)
+    elseif def.type == "combo" then
+        return core.menu.combobox(def.default, def.id)
+    end
+end
+
 local function create_menu_elements()
-    local cb    = core.menu.checkbox
-    local si    = core.menu.slider_int
-    local sf    = core.menu.slider_float
-    local combo = core.menu.combobox
+    local D = Defaults
+    local e = make_element
 
     return {
         -- Window-level
-        show_advanced = cb(false, "navlib_show_advanced"),
+        show_advanced          = e(D.window.show_advanced),
 
         -- Movement basics (Tab 1)
-        dynamic_speed      = cb(true, "navlib_dynamic_speed"),
-        waypoint_tolerance = sf(0.5, 10.0, 3.0, "navlib_waypoint_tolerance"),
-        final_tolerance    = sf(0.5, 5.0, 1.5, "navlib_final_tolerance"),
+        dynamic_speed          = e(D.movement.dynamic_speed),
+        waypoint_tolerance     = e(D.movement.waypoint_tolerance),
+        final_tolerance        = e(D.movement.final_tolerance),
 
         -- Anti-Detection (Tab 1)
-        anti_detection = cb(false, "navlib_anti_detection"),
-        max_deviation  = sf(1.0, 20.0, 3.0, "navlib_max_deviation"),
+        anti_detection         = e(D.movement.anti_detection),
+        max_deviation          = e(D.movement.max_deviation),
 
         -- Stuck Recovery (Tab 1 advanced)
-        stuck_interval = sf(0.25, 5.0, 0.5, "navlib_stuck_interval"),
-        stuck_distance = sf(0.1, 2.0, 0.25, "navlib_stuck_distance_v2"),
-        max_stuck      = si(1, 10, 6, "navlib_max_stuck"),
+        stuck_interval         = e(D.movement.stuck_check_interval),
+        stuck_distance         = e(D.movement.stuck_distance_min),
+        max_stuck              = e(D.movement.max_stuck_attempts),
 
         -- Path Validation (Tab 1 advanced)
-        path_check = sf(1.0, 30.0, 8.0, "navlib_path_check"),
+        path_check             = e(D.movement.path_check_interval),
 
         -- Deviation Detection (Tab 1 advanced)
-        deviation_check_interval     = sf(0.1, 5.0, 1.0, "navlib_deviation_check_interval"),
-        deviation_threshold          = sf(1.0, 20.0, 5.0, "navlib_deviation_threshold"),
-        deviation_vertical_threshold = sf(0.5, 10.0, 3.0, "navlib_deviation_vertical_threshold"),
-        deviation_corridor_factor    = sf(0.1, 2.0, 0.75, "navlib_deviation_corridor_factor"),
-        repath_cooldown              = sf(0.1, 5.0, 1.0, "navlib_repath_cooldown"),
-        max_deviation_repaths        = si(1, 10, 3, "navlib_max_deviation_repaths"),
+        deviation_check_interval     = e(D.movement.deviation_check_interval),
+        deviation_threshold          = e(D.movement.deviation_threshold),
+        deviation_vertical_threshold = e(D.movement.deviation_vertical_threshold),
+        deviation_corridor_factor    = e(D.movement.deviation_corridor_factor),
+        repath_cooldown              = e(D.movement.repath_cooldown),
+        max_deviation_repaths        = e(D.movement.max_deviation_repaths),
 
         -- Smoothing (Tab 2)
-        smoothing         = combo(2, "navlib_smoothing"),  -- default: Chaikin (index 2)
-        smooth_iterations = si(1, 5, 3, "navlib_smooth_iterations"),
-        smooth_samples    = si(5, 50, 10, "navlib_smooth_samples"),
-        smooth_ratio      = si(50, 95, 50, "navlib_smooth_ratio_pct"),
-        corner_angle      = sf(0.0, 120.0, 90.0, "navlib_corner_angle"),
-        keep_originals    = cb(false, "navlib_keep_originals"),
+        smoothing              = e(D.movement.smoothing),
+        smooth_iterations      = e(D.movement.smooth_iterations),
+        smooth_samples         = e(D.movement.smooth_samples),
+        smooth_ratio           = e(D.movement.smooth_ratio),
+        corner_angle           = e(D.movement.min_corner_angle),
+        keep_originals         = e(D.movement.keep_originals),
 
         -- Optimization (Tab 2)
-        optimize      = cb(true, "navlib_optimize"),
-        allow_partial = cb(true, "navlib_allow_partial"),
+        optimize               = e(D.movement.optimize),
+        allow_partial          = e(D.movement.allow_partial),
 
         -- Terrain Costs (Tab 2)
-        filter_ground = sf(0.1, 10.0, 1.0, "navlib_filter_ground"),
-        filter_water  = sf(0.1, 100.0, 10.0, "navlib_filter_water"),
-        filter_lava   = sf(0.1, 1000.0, 100.0, "navlib_filter_lava"),
+        filter_ground          = e(D.movement.filter_ground),
+        filter_water           = e(D.movement.filter_water),
+        filter_lava            = e(D.movement.filter_lava),
 
         -- Indoor (Tab 2)
-        corridor       = cb(true, "navlib_corridor"),
-        corridor_probe = sf(5.0, 30.0, 15.0, "navlib_corridor_probe"),
+        corridor               = e(D.movement.use_corridor_indoor),
+        corridor_probe         = e(D.movement.corridor_probe_dist),
 
         -- Wall Clearance (Tab 2)
-        wall_clearance_en = cb(true, "navlib_wall_clearance_en"),
-        wall_clearance    = sf(0.5, 5.0, 1.0, "navlib_wall_clearance"),
+        wall_clearance_en      = e(D.movement.wall_clearance_enabled),
+        wall_clearance         = e(D.movement.wall_clearance),
 
         -- Obstacle Avoidance (Tab 3)
-        proactive_obstacle = cb(true, "navlib_proactive_obstacle"),
-        obstacle_interval  = sf(0.5, 5.0, 1.5, "navlib_obstacle_interval"),
-        avoidance_radius   = sf(1.0, 10.0, 3.0, "navlib_avoidance_radius"),
-        max_zones          = si(1, 20, 5, "navlib_max_zones"),
-        zone_ttl           = sf(30.0, 300.0, 120.0, "navlib_zone_ttl"),
+        proactive_obstacle     = e(D.movement.proactive_obstacle_check),
+        obstacle_interval      = e(D.movement.proactive_obstacle_interval),
+        avoidance_radius       = e(D.obstacles.avoidance_radius),
+        max_zones              = e(D.obstacles.max_zones),
+        zone_ttl               = e(D.obstacles.zone_ttl),
 
         -- Obstacle Costs (Tab 3 advanced)
-        avoidance_cost = sf(1.0, 20.0, 5.0, "navlib_avoidance_cost"),
-        zone_prune     = sf(50.0, 500.0, 100.0, "navlib_zone_prune"),
+        avoidance_cost         = e(D.obstacles.avoidance_cost),
+        zone_prune             = e(D.obstacles.zone_prune_dist),
 
         -- Reactive Probing (Tab 3 advanced)
-        probe_distance = sf(2.0, 20.0, 8.0, "navlib_probe_distance"),
-        probe_spread   = sf(5.0, 45.0, 20.0, "navlib_probe_spread"),
-        probe_height   = sf(0.5, 5.0, 1.0, "navlib_probe_height"),
+        probe_distance         = e(D.obstacles.probe_distance),
+        probe_spread           = e(D.obstacles.probe_spread_deg),
+        probe_height           = e(D.obstacles.probe_height_offset),
 
         -- Proactive Lookahead (Tab 3 advanced)
-        look_height   = sf(0.5, 5.0, 1.5, "navlib_look_height"),
-        look_spread   = sf(5.0, 45.0, 15.0, "navlib_look_spread"),
-        look_segments = si(1, 10, 3, "navlib_look_segments"),
+        look_height            = e(D.obstacles.lookahead_height_offset),
+        look_spread            = e(D.obstacles.lookahead_spread_deg),
+        look_segments          = e(D.obstacles.lookahead_segments),
 
         -- Debug (Tab 4)
-        debug_verbose = cb(false, "navlib_debug_verbose"),
-        debug_mode    = si(0, 12, 0, "navlib_debug_mode"),
+        debug_verbose          = e(D.movement.debug_verbose),
+        debug_mode             = e(D.debug.debug_mode),
 
         -- Visualization (Debug tab)
-        viz_master      = cb(true,  "navlib_viz_master"),
-        viz_path        = cb(true,  "navlib_viz_path"),
-        viz_destination = cb(true,  "navlib_viz_destination"),
-        viz_obstacles   = cb(true,  "navlib_viz_obstacles"),
-        viz_corridor    = cb(true,  "navlib_viz_corridor"),
-        viz_state       = cb(true,  "navlib_viz_state"),
+        viz_master             = e(D.debug.viz_master),
+        viz_path               = e(D.debug.viz_path),
+        viz_destination        = e(D.debug.viz_destination),
+        viz_obstacles          = e(D.debug.viz_obstacles),
+        viz_corridor           = e(D.debug.viz_corridor),
+        viz_state              = e(D.debug.viz_state),
     }
 end
 

@@ -3,24 +3,11 @@
 -- Proactive: MovementModule scans upcoming waypoint segments every 1.5s.
 -- Reactive fallback: stuck handler probes from player position.
 
-local DEFAULT_CONFIG = {
-    avoidance_cost       = 5.0,    -- cost multiplier for path-avoid endpoint
-    avoidance_radius     = 5.0,    -- yards: radius of avoidance zone around hit point
-    zone_ttl             = 120.0,  -- seconds: auto-expire zones after this
-    zone_prune_dist      = 100.0,  -- yards: remove zones farther than this
-    max_zones            = 5,      -- cap remembered zones (well under NavBuddy's 20 limit)
-    collision_flags      = 0x00000001, -- DoodadCollision
+local Defaults = require("core/Defaults")
 
-    -- Reactive probe (from player position, triggered by stuck handler)
-    probe_distance       = 8.0,    -- yards: how far ahead to probe
-    probe_spread_deg     = 20,     -- degrees: spread angle for side rays
-    probe_height_offset  = 1.0,    -- yards: raise probe origin above ground
-
-    -- Proactive look-ahead (along waypoint segments, periodic)
-    lookahead_height_offset = 1.5, -- yards: raise ray above waypoint Z
-    lookahead_spread_deg    = 15,  -- degrees: narrower spread for segment tracing
-    lookahead_segments      = 3,   -- how many upcoming segments to check
-}
+-- Build DEFAULT_CONFIG from single source of truth
+local DEFAULT_CONFIG = Defaults.flat(Defaults.obstacles)
+DEFAULT_CONFIG.collision_flags = 0x00000001 -- DoodadCollision (internal only, no UI)
 
 ---@class Obstacle
 ---@field private _config table
