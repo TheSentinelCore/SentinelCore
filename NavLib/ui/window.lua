@@ -53,9 +53,9 @@ local function create_menu_elements()
         max_deviation  = sf(1.0, 20.0, 3.0, "navlib_max_deviation"),
 
         -- Stuck Recovery (Tab 1 advanced)
-        stuck_interval = sf(0.5, 5.0, 2.0, "navlib_stuck_interval"),
-        stuck_distance = sf(0.5, 5.0, 1.0, "navlib_stuck_distance"),
-        max_stuck      = si(1, 10, 5, "navlib_max_stuck"),
+        stuck_interval = sf(0.25, 5.0, 0.5, "navlib_stuck_interval"),
+        stuck_distance = sf(0.1, 5.0, 0.25, "navlib_stuck_distance"),
+        max_stuck      = si(1, 10, 6, "navlib_max_stuck"),
 
         -- Path Validation (Tab 1 advanced)
         path_check = sf(1.0, 30.0, 8.0, "navlib_path_check"),
