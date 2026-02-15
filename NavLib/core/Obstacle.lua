@@ -351,41 +351,52 @@ function Obstacle:_scan_objects()
     local buffer = cfg.scanner_buffer
     local cost = cfg.scanner_cost
     local flags = cfg.collision_flags
+    local DEFAULT_RADIUS = 1.0 -- fallback when get_bounding_radius unavailable
 
     local ok_all, all_objects = pcall(core.object_manager.get_all_objects)
     if not ok_all or not all_objects then return end
 
     local new_zones = {}
+    local basic_count = 0
+    local in_range_count = 0
+    local solid_count = 0
+
     for i = 1, #all_objects do
         local obj = all_objects[i]
         if obj:is_basic_object() and obj:is_valid() then
+            basic_count = basic_count + 1
             local pos = obj:get_position()
             local dx = pos.x - player_pos.x
             local dy = pos.y - player_pos.y
             local dist_sq = dx * dx + dy * dy
 
             if dist_sq <= range * range then
+                in_range_count = in_range_count + 1
+
+                -- Try to get bounding radius; fall back to default if unavailable
+                local bounding_r = DEFAULT_RADIUS
                 local ok_br, raw_r = pcall(obj.get_bounding_radius, obj)
-                local ok_sc, raw_s = pcall(obj.get_scale, obj)
+                if ok_br and type(raw_r) == "number" and raw_r > 0 then
+                    local ok_sc, raw_s = pcall(obj.get_scale, obj)
+                    local scale = (ok_sc and type(raw_s) == "number") and raw_s or 1.0
+                    bounding_r = raw_r * scale
+                end
 
-                if ok_br and ok_sc then
-                    local bounding_r = raw_r * raw_s
+                if bounding_r >= min_radius then
+                    -- Validate solidity: trace a line through the object center
+                    local p1 = { x = pos.x - bounding_r, y = pos.y, z = pos.z + 1.0 }
+                    local p2 = { x = pos.x + bounding_r, y = pos.y, z = pos.z + 1.0 }
+                    local ok_trace, is_clear = pcall(core.graphics.trace_line, p1, p2, flags)
 
-                    if bounding_r >= min_radius then
-                        -- Validate solidity: trace a line through the object center
-                        local p1 = { x = pos.x - bounding_r, y = pos.y, z = pos.z + 1.0 }
-                        local p2 = { x = pos.x + bounding_r, y = pos.y, z = pos.z + 1.0 }
-                        local ok_trace, is_clear = pcall(core.graphics.trace_line, p1, p2, flags)
-
-                        if ok_trace and is_clear == false then
-                            new_zones[#new_zones + 1] = {
-                                x = pos.x,
-                                y = pos.y,
-                                z = pos.z,
-                                radius = bounding_r + buffer,
-                                cost = cost,
-                            }
-                        end
+                    if ok_trace and is_clear == false then
+                        solid_count = solid_count + 1
+                        new_zones[#new_zones + 1] = {
+                            x = pos.x,
+                            y = pos.y,
+                            z = pos.z,
+                            radius = bounding_r + buffer,
+                            cost = cost,
+                        }
                     end
                 end
             end
@@ -393,6 +404,10 @@ function Obstacle:_scan_objects()
     end
 
     self._scanned_zones = new_zones
+
+    core.log(string.format(
+        "[Obstacle] Scanner: %d basic objs, %d in range, %d solid → %d zones",
+        basic_count, in_range_count, solid_count, #new_zones))
 
     -- Register with NavBuddy if connected
     if self._nav_client and self._nav_client:is_available() and #new_zones > 0 then
