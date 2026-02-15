@@ -189,7 +189,8 @@ Navigation.__index = Navigation
 function Navigation:new(config)
     config = config or {}
     local o = setmetatable({}, Navigation)
-    o._base_url = config.base_url or "http://78.31.71.163:47110"
+    -- o._base_url = config.base_url or "http://78.31.71.163:47110"
+    o._base_url = config.base_url or "http://127.0.0.1:47110"
     o._max_retries = config.max_retries or 3
     o._is_connected = false
     o._consecutive_failures = 0
@@ -725,6 +726,12 @@ function Navigation:get_all_heights(pos, callback, opts)
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.max_polys then params.max_polys = opts.max_polys end
     if opts.cluster_tolerance then params.cluster_tolerance = opts.cluster_tolerance end
+    if opts.filter_unreachable then params.filter_unreachable = true end
+    if opts.from_pos then
+        params.from_x = opts.from_pos.x
+        params.from_y = opts.from_pos.y
+        params.from_z = opts.from_pos.z
+    end
 
     self:_request(self:_build_url("/api/v1/heights", params), function(ok, data, err)
         if not ok then

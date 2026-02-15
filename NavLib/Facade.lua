@@ -195,19 +195,27 @@ end
 ---Get all navmesh heights at a specific XY position (multi-level structures).
 ---@param pos vec3
 ---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
-function Facade:get_all_heights(pos, callback)
-    self.nav_client:get_all_heights(pos, callback)
+---@param opts? table { filter_unreachable?, from_pos?, xy_extent?, z_extent?, max_polys?, cluster_tolerance? }
+function Facade:get_all_heights(pos, callback, opts)
+    self.nav_client:get_all_heights(pos, callback, opts)
 end
 
 ---Get all navmesh heights at the local player's current position.
+---When opts.filter_unreachable is true, automatically sets from_pos to player position.
 ---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
-function Facade:get_player_all_heights(callback)
+---@param opts? table { filter_unreachable?, xy_extent?, z_extent?, max_polys?, cluster_tolerance? }
+function Facade:get_player_all_heights(callback, opts)
     local me = core.object_manager.get_local_player()
     if not me then
         if callback then callback(false, nil, "No local player") end
         return
     end
-    self.nav_client:get_all_heights(me:get_position(), callback)
+    local player_pos = me:get_position()
+    opts = opts or {}
+    if opts.filter_unreachable and not opts.from_pos then
+        opts.from_pos = player_pos
+    end
+    self.nav_client:get_all_heights(player_pos, callback, opts)
 end
 
 ---Get current pathfinding options from config (for callers that bypass Movement).
