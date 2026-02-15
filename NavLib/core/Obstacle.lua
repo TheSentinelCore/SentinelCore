@@ -350,7 +350,6 @@ function Obstacle:_scan_objects()
     local min_radius = cfg.scanner_min_radius
     local buffer = cfg.scanner_buffer
     local cost = cfg.scanner_cost
-    local flags = cfg.collision_flags
     local DEFAULT_RADIUS = 1.0 -- fallback when get_bounding_radius unavailable
 
     local ok_all, all_objects = pcall(core.object_manager.get_all_objects)
@@ -383,10 +382,12 @@ function Obstacle:_scan_objects()
                 end
 
                 if bounding_r >= min_radius then
-                    -- Validate solidity: trace a line through the object center
-                    local p1 = { x = pos.x - bounding_r, y = pos.y, z = pos.z + 1.0 }
-                    local p2 = { x = pos.x + bounding_r, y = pos.y, z = pos.z + 1.0 }
-                    local ok_trace, is_clear = pcall(core.graphics.trace_line, p1, p2, flags)
+                    -- Validate solidity: vertical trace from above down through center.
+                    -- DoodadCollision (0x1) + EntityCollision (0x100000)
+                    local trace_flags = 0x100001
+                    local p_above = { x = pos.x, y = pos.y, z = pos.z + 5.0 }
+                    local p_below = { x = pos.x, y = pos.y, z = pos.z - 1.0 }
+                    local ok_trace, is_clear = pcall(core.graphics.trace_line, p_above, p_below, trace_flags)
 
                     if ok_trace and is_clear == false then
                         solid_count = solid_count + 1
