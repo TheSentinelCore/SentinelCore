@@ -143,8 +143,12 @@ local function on_load()
         return
     end
 
-    -- Initialize the UI window
+    -- Initialize the UI window (starts hidden; user opens via menu button)
     UIWindow.init(GatherBuddy, menu_elements, _ui_state)
+    local ui = UIWindow.get_ui()
+    if ui and ui.menu and ui.menu.enable then
+        ui.menu.enable:set(false)
+    end
 
     _is_loaded = true
     core.log("[GatherBuddy] Loaded successfully")
