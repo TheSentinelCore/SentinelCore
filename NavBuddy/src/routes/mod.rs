@@ -43,6 +43,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/raycast", get(spatial::raycast))
         .route("/api/v1/random", get(spatial::random_point))
         .route("/api/v1/height", get(spatial::get_height))
+        .route("/api/v1/heights", get(spatial::get_heights))
         .route("/api/v1/explore", get(spatial::explore_polygon))
         .route("/api/v1/explore-route", get(intelligence::explore_route))
         // Middleware

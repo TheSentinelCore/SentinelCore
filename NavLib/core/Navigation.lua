@@ -698,6 +698,39 @@ function Navigation:get_height(pos, callback, opts)
     end)
 end
 
+---Get all navmesh heights at an XY position (multi-level structures).
+---Returns sorted array of { height, flags } for every walkable surface.
+---@param pos vec3 XY required; Z optional (used as search center, defaults to 0 server-side)
+---@param callback fun(success: boolean, data: table|nil, error: string|nil)
+---@param opts? table { map_id?, xy_extent?, z_extent?, max_polys?, cluster_tolerance? }
+function Navigation:get_all_heights(pos, callback, opts)
+    if not pos then
+        if callback then callback(false, nil, "Missing position") end
+        return
+    end
+    opts = opts or {}
+    local params = {
+        map_id = opts.map_id or get_continent_id(),
+        x = pos.x, y = pos.y,
+    }
+    if pos.z then params.z = pos.z end
+    if opts.xy_extent then params.xy_extent = opts.xy_extent end
+    if opts.z_extent then params.z_extent = opts.z_extent end
+    if opts.max_polys then params.max_polys = opts.max_polys end
+    if opts.cluster_tolerance then params.cluster_tolerance = opts.cluster_tolerance end
+
+    self:_request(self:_build_url("/api/v1/heights", params), function(ok, data, err)
+        if not ok then
+            if callback then callback(false, nil, err) end
+            return
+        end
+        callback(true, {
+            heights = data.heights or {},
+            count = data.count or 0,
+        }, nil)
+    end)
+end
+
 ---Get random point on navmesh
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 ---@param opts? table { map_id?, center?: vec3, radius?: number }
