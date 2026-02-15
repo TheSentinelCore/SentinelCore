@@ -19,6 +19,11 @@ local BASE_RUN_SPEED = 7.0 -- yards/sec, standard run speed
 -- Default configuration
 local DEFAULT_CONFIG = {
     dynamic_speed        = true,   -- Enable adaptive speed scaling
+    dynamic_speed_max_tolerance_scale = 1.20,
+    dynamic_speed_max_tolerance_bonus = 0.75,
+    dynamic_speed_ramp_z_delta = 1.2,
+    dynamic_speed_ramp_tolerance = 1.8,
+    dynamic_speed_ramp_look_distance = 6.0,
     waypoint_tolerance   = 3.0,
     final_tolerance      = 1.5,
     stuck_check_interval = 2.0,
@@ -287,6 +292,26 @@ function Movement:get_corridor_widths()
     return self._corridor_widths
 end
 
+---Best-effort accessor for the current target waypoint.
+---@return vec3|table|nil
+function Movement:_get_active_waypoint()
+    if simple_movement.get_target then
+        local ok, target = pcall(function()
+            return simple_movement:get_target()
+        end)
+        if ok and target then
+            return target
+        end
+    end
+
+    if self._current_path and #self._current_path > 0 then
+        local idx = self._path_index or 1
+        return self._current_path[idx] or self._current_path[#self._current_path]
+    end
+
+    return nil
+end
+
 ---Get progress information
 ---@return table { state, destination?, distance_remaining?, path_index?, path_count?, current_leg?, total_legs?, route_mode? }
 function Movement:get_progress()
@@ -351,10 +376,10 @@ function Movement:_apply_dynamic_speed(player)
     -- Ratio vs base run speed (e.g. 14.0 / 7.0 = 2.0 for epic mount)
     local ratio = cur_speed / BASE_RUN_SPEED
 
-    -- Look-ahead: look further at high speeds (5–15 yards)
-    local look_dist = math.max(5.0, math.min(15.0, cur_speed * 0.5))
+    -- Look-ahead: increase with speed but keep conservative to avoid waypoint cutting.
+    local look_dist = math.max(5.0, math.min(12.0, cur_speed * 0.45))
 
-    -- Tolerance: respect corridor-narrowed base when indoors
+    -- Tolerance: start from corridor-aware base tolerance.
     local base_tol = self._config.waypoint_tolerance
     if self._corridor_widths then
         local min_w = self:_compute_min_corridor_width()
@@ -362,15 +387,38 @@ function Movement:_apply_dynamic_speed(player)
             base_tol = math.max(1.0, min_w * 0.4)
         end
     end
-    local new_tolerance = math.max(1.5, math.min(5.0, base_tol * ratio))
 
-    -- Final tolerance: scale to avoid destination spiral at mount speed (1.0–3.0 yards)
-    local new_final = math.max(1.0, math.min(3.0, self._config.final_tolerance * ratio))
+    local max_scale = self._config.dynamic_speed_max_tolerance_scale or 1.20
+    local max_bonus = self._config.dynamic_speed_max_tolerance_bonus or 0.75
+    local tol_scale = math.max(0.90, math.min(max_scale, 0.85 + (ratio * 0.20)))
+    local max_tol = math.min(base_tol * max_scale, base_tol + max_bonus)
+    local min_tol = math.max(1.0, math.min(1.5, base_tol))
+    local new_tolerance = math.max(min_tol, math.min(max_tol, base_tol * tol_scale))
 
-    -- Turn speed: proportional to velocity (0.05–0.3)
-    local turn_speed = math.max(0.05, math.min(0.3, 0.05 * ratio))
+    -- Final tolerance: modest scaling only; avoid over-inflating arrival radius.
+    local final_ratio = math.max(0.95, math.min(1.25, ratio))
+    local new_final = math.max(1.0, math.min(2.4, self._config.final_tolerance * final_ratio))
 
-    -- Apply to simple_movement
+    -- Ramp-aware guard: tighten tolerance/look-ahead when climbing.
+    local active_wp = self:_get_active_waypoint()
+    if active_wp then
+        local player_pos = player:get_position()
+        if player_pos then
+            local dz = math.abs((active_wp.z or player_pos.z or 0) - (player_pos.z or 0))
+            if dz >= (self._config.dynamic_speed_ramp_z_delta or 1.2) then
+                local ramp_tol = self._config.dynamic_speed_ramp_tolerance or 1.8
+                local ramp_look = self._config.dynamic_speed_ramp_look_distance or 6.0
+                new_tolerance = math.min(new_tolerance, ramp_tol)
+                new_final = math.min(new_final, math.max(1.0, ramp_tol * 0.75))
+                look_dist = math.min(look_dist, ramp_look)
+            end
+        end
+    end
+
+    -- Turn speed: proportional to velocity (0.05-0.25).
+    local turn_speed = math.max(0.05, math.min(0.25, 0.05 * ratio))
+
+    -- Apply to simple_movement.
     simple_movement:set_look_distance(look_dist)
     simple_movement:set_threshold(new_tolerance)
     simple_movement:set_final_threshold(new_final)
@@ -1100,3 +1148,4 @@ function Movement:validate_destination_reachable(target, callback)
 end
 
 return Movement
+
