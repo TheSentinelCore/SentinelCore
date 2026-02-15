@@ -2,6 +2,14 @@
     Movement Tab - Speed, tolerances, anti-detection, stuck recovery
 ]]
 
+local vec2      = require("common/geometry/vector_2")
+local enums     = require("common/enums")
+local AstroUI   = require("shared/AstroUI")
+local Defaults  = require("core/Defaults")
+
+local LAYOUT = AstroUI.LAYOUT
+local D = Defaults.movement
+
 local MovementTab = {}
 
 ---Register the movement tab with the UI
@@ -84,6 +92,54 @@ function MovementTab.register(ui, menu)
                 { element = menu.repath_cooldown, label = "Repath Cooldown", suffix = " s", tooltip = "Minimum seconds between deviation repaths" },
                 { element = menu.max_deviation_repaths, label = "Max Repaths", tooltip = "Max consecutive deviation repaths before giving up (resets on new path)" },
             }
+        })
+
+        -- Reset Defaults
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local w = window:get_size().x - (2 * LAYOUT.padding_side)
+                local h = 22
+
+                local label = "Reset Defaults"
+                local btn_start = vec2.new(x, y_offset)
+                local btn_end = vec2.new(x + w, y_offset + h)
+                local hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
+                window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
+
+                local bg = hovered and colors.primary_accent or colors.slider_fill
+                window:render_rect_filled(btn_start, btn_end, bg, 2)
+                window:render_rect(btn_start, btn_end, colors.primary_accent, 2, 1.0)
+
+                local text_size = window:get_text_size(label)
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x + (w - text_size.x) / 2, y_offset + (h - text_size.y) / 2),
+                    colors.text_primary, label)
+
+                if window:is_rect_clicked(btn_start, btn_end) then
+                    Defaults.reset({
+                        { menu.dynamic_speed,               D.dynamic_speed },
+                        { menu.waypoint_tolerance,          D.waypoint_tolerance },
+                        { menu.final_tolerance,             D.final_tolerance },
+                        { menu.anti_detection,              D.anti_detection },
+                        { menu.max_deviation,               D.max_deviation },
+                        { menu.stuck_interval,              D.stuck_check_interval },
+                        { menu.stuck_distance,              D.stuck_distance_min },
+                        { menu.max_stuck,                   D.max_stuck_attempts },
+                        { menu.path_check,                  D.path_check_interval },
+                        { menu.deviation_check_interval,    D.deviation_check_interval },
+                        { menu.deviation_threshold,         D.deviation_threshold },
+                        { menu.deviation_vertical_threshold,D.deviation_vertical_threshold },
+                        { menu.deviation_corridor_factor,   D.deviation_corridor_factor },
+                        { menu.repath_cooldown,             D.repath_cooldown },
+                        { menu.max_deviation_repaths,       D.max_deviation_repaths },
+                    })
+                end
+
+                return y_offset + h + 4
+            end
         })
     end)
 end
