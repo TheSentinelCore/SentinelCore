@@ -420,6 +420,152 @@ pub async fn get_height(
 }
 
 // ============================================================================
+// Multi-Height Query
+// ============================================================================
+
+/// Request for multi-height query endpoint.
+#[derive(Debug, Deserialize)]
+pub struct HeightsRequest {
+    pub map_id: u32,
+    pub x: f32,
+    pub y: f32,
+    /// Approximate Z for polygon search center (defaults to 0).
+    pub z: Option<f32>,
+    /// Horizontal search radius in yards (defaults to 2.0).
+    pub xy_extent: Option<f32>,
+    /// Vertical search radius in yards (defaults to 1000.0).
+    pub z_extent: Option<f32>,
+    /// Maximum polygons to query (defaults to 50).
+    pub max_polys: Option<usize>,
+    /// Deduplication tolerance in yards (defaults to 1.0).
+    pub cluster_tolerance: Option<f32>,
+}
+
+/// Single height entry with polygon metadata.
+#[derive(Debug, Serialize)]
+pub struct HeightEntry {
+    pub height: f32,
+    /// Polygon flags: 0x01=ground, 0x02=steep, 0x04=water, 0x08=magma/slime.
+    pub flags: u16,
+}
+
+/// Response for multi-height query endpoint.
+#[derive(Debug, Serialize)]
+pub struct HeightsResponse {
+    pub success: bool,
+    /// All heights at the XY position, sorted ascending and deduplicated.
+    pub heights: Vec<HeightEntry>,
+    /// Number of heights found.
+    pub count: usize,
+}
+
+/// GET /api/v1/heights - Get all navmesh heights at an XY position.
+///
+/// Returns every navigable height at the given X/Y coordinate, enabling
+/// detection of multi-level structures (bridges, towers, caves, etc.).
+/// Heights are sorted ascending and deduplicated within `cluster_tolerance`.
+pub async fn get_heights(
+    State(state): State<AppState>,
+    Query(params): Query<HeightsRequest>,
+) -> Result<Json<HeightsResponse>, AppError> {
+    // Validate inputs
+    validate_map_id(params.map_id)?;
+    let z = params.z.unwrap_or(0.0);
+    validate_coordinate(params.x, params.y, z)?;
+
+    let xy_extent = params.xy_extent.unwrap_or(2.0);
+    let z_extent = params.z_extent.unwrap_or(1000.0);
+    let max_polys = params.max_polys.unwrap_or(50);
+    let cluster_tolerance = params.cluster_tolerance.unwrap_or(1.0);
+
+    if xy_extent <= 0.0 || xy_extent > 50.0 {
+        return Err(AppError::InvalidParams(
+            "xy_extent must be between 0 and 50".into(),
+        ));
+    }
+    if z_extent <= 0.0 || z_extent > 2000.0 {
+        return Err(AppError::InvalidParams(
+            "z_extent must be between 0 and 2000".into(),
+        ));
+    }
+    if max_polys == 0 || max_polys > 200 {
+        return Err(AppError::InvalidParams(
+            "max_polys must be between 1 and 200".into(),
+        ));
+    }
+    if cluster_tolerance < 0.0 || cluster_tolerance > 10.0 {
+        return Err(AppError::InvalidParams(
+            "cluster_tolerance must be between 0 and 10".into(),
+        ));
+    }
+
+    // Acquire concurrency permit
+    let _permit = state
+        .request_semaphore
+        .acquire()
+        .await
+        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+
+    // Load map
+    let _mesh = state
+        .mmap_manager
+        .get_or_load_mesh(params.map_id)
+        .map_err(|e| match &e {
+            MmapError::MapNotFound(_) => AppError::MapNotFound(params.map_id),
+            _ => AppError::Internal(e.to_string()),
+        })?;
+
+    // Get query pool
+    let pool = state
+        .mmap_manager
+        .get_query_pool(params.map_id)
+        .ok_or_else(|| AppError::MapNotFound(params.map_id))?;
+
+    let query = pool
+        .acquire()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let filter = pool.filter();
+
+    let pos = Vec3::new(params.x, params.y, z);
+    let half_extents = Vec3::new(xy_extent, xy_extent, z_extent);
+
+    // Query all polygons in the vertical column
+    let poly_refs = query
+        .query_polygons(pos, half_extents, filter, max_polys)
+        .map_err(|e| AppError::PathfindingFailed(e.to_string()))?;
+
+    // For each polygon, get height and flags
+    let mut entries: Vec<HeightEntry> = Vec::with_capacity(poly_refs.len());
+    for poly_ref in poly_refs {
+        if let Ok(height) = query.get_poly_height(poly_ref, pos) {
+            let flags = pool.mesh().get_poly_flags(poly_ref).unwrap_or(0);
+            entries.push(HeightEntry { height, flags });
+        }
+    }
+
+    // Sort by height ascending
+    entries.sort_by(|a, b| a.height.partial_cmp(&b.height).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Deduplicate heights within cluster_tolerance
+    let mut deduplicated: Vec<HeightEntry> = Vec::new();
+    for entry in entries {
+        let is_duplicate = deduplicated
+            .iter()
+            .any(|prev| (entry.height - prev.height).abs() < cluster_tolerance);
+        if !is_duplicate {
+            deduplicated.push(entry);
+        }
+    }
+
+    let count = deduplicated.len();
+    Ok(Json(HeightsResponse {
+        success: true,
+        heights: deduplicated,
+        count,
+    }))
+}
+
+// ============================================================================
 // Polygon Exploration
 // ============================================================================
 

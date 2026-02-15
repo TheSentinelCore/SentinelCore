@@ -192,6 +192,24 @@ function Facade:get_player_height(callback)
     self.nav_client:get_height(me:get_position(), callback)
 end
 
+---Get all navmesh heights at a specific XY position (multi-level structures).
+---@param pos vec3
+---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
+function Facade:get_all_heights(pos, callback)
+    self.nav_client:get_all_heights(pos, callback)
+end
+
+---Get all navmesh heights at the local player's current position.
+---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
+function Facade:get_player_all_heights(callback)
+    local me = core.object_manager.get_local_player()
+    if not me then
+        if callback then callback(false, nil, "No local player") end
+        return
+    end
+    self.nav_client:get_all_heights(me:get_position(), callback)
+end
+
 ---Get current pathfinding options from config (for callers that bypass Movement).
 ---@param extra? table Additional opts to merge
 ---@return table
