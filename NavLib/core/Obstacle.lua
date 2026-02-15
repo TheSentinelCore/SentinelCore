@@ -362,7 +362,13 @@ function Obstacle:_scan_objects()
 
     for i = 1, #all_objects do
         local obj = all_objects[i]
-        if obj:is_basic_object() and obj:is_valid() then
+        if obj:is_valid()
+            and not obj:is_player()
+            and not obj:is_unit()
+            and not obj:is_pet()
+            and not obj:is_minion()
+            and not obj:is_item()
+        then
             basic_count = basic_count + 1
             local pos = obj:get_position()
             local dx = pos.x - player_pos.x
