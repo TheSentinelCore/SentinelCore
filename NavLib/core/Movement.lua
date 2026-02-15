@@ -48,6 +48,11 @@ local DEFAULT_CONFIG = {
     wall_clearance       = 1.0,
     proactive_obstacle_check    = true,
     proactive_obstacle_interval = 1.5,
+    deviation_check_interval     = 1.0,   -- seconds between deviation checks
+    deviation_threshold          = 5.0,   -- yards off-path before repath (fixed fallback for outdoor)
+    deviation_vertical_threshold = 3.0,   -- yards vertical offset before repath (wrong floor/level)
+    deviation_corridor_factor    = 0.75,  -- repath when drift > 75% of corridor width (adaptive, indoor)
+    repath_cooldown              = 1.0,   -- minimum seconds between deviation repaths
     debug_verbose               = false,
 }
 
