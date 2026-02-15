@@ -6,6 +6,7 @@ use tokio::sync::Semaphore;
 
 use crate::cache::PathCache;
 use crate::config::Config;
+use crate::registry::ObstacleRegistry;
 use tc_mmap::MmapManager;
 
 /// Shared application state.
@@ -19,6 +20,8 @@ pub struct AppState {
     pub request_semaphore: Arc<Semaphore>,
     /// Path cache for fast repeated lookups.
     pub path_cache: Arc<PathCache>,
+    /// Obstacle registry for runtime obstacle avoidance.
+    pub obstacle_registry: Arc<ObstacleRegistry>,
     /// Server start time for uptime tracking.
     pub start_time: Instant,
 }
@@ -51,6 +54,7 @@ impl AppState {
                 config.server.max_concurrent_requests,
             )),
             path_cache: Arc::new(PathCache::new()),
+            obstacle_registry: Arc::new(ObstacleRegistry::new()),
             start_time: Instant::now(),
         })
     }
