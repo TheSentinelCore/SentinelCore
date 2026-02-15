@@ -437,8 +437,18 @@ pub struct HeightsRequest {
     pub z_extent: Option<f32>,
     /// Maximum polygons to query (defaults to 50).
     pub max_polys: Option<usize>,
-    /// Deduplication tolerance in yards (defaults to 1.0).
+    /// Deduplication tolerance in yards (defaults to 1.5).
     pub cluster_tolerance: Option<f32>,
+    /// When true, filter out heights unreachable from (from_x, from_y, from_z).
+    /// Requires from_x, from_y, from_z to be set.
+    #[serde(default)]
+    pub filter_unreachable: Option<bool>,
+    /// Origin X for reachability check (typically player position).
+    pub from_x: Option<f32>,
+    /// Origin Y for reachability check.
+    pub from_y: Option<f32>,
+    /// Origin Z for reachability check.
+    pub from_z: Option<f32>,
 }
 
 /// Single height entry with polygon metadata.
@@ -447,6 +457,9 @@ pub struct HeightEntry {
     pub height: f32,
     /// Polygon flags: 0x01=ground, 0x02=steep, 0x04=water, 0x08=magma/slime.
     pub flags: u16,
+    /// Present only when filter_unreachable is used. True if pathfinding succeeds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reachable: Option<bool>,
 }
 
 /// Response for multi-height query endpoint.
@@ -476,7 +489,7 @@ pub async fn get_heights(
     let xy_extent = params.xy_extent.unwrap_or(2.0);
     let z_extent = params.z_extent.unwrap_or(1000.0);
     let max_polys = params.max_polys.unwrap_or(50);
-    let cluster_tolerance = params.cluster_tolerance.unwrap_or(1.0);
+    let cluster_tolerance = params.cluster_tolerance.unwrap_or(1.5);
 
     if xy_extent <= 0.0 || xy_extent > 50.0 {
         return Err(AppError::InvalidParams(
@@ -539,7 +552,7 @@ pub async fn get_heights(
     for poly_ref in poly_refs {
         if let Ok(height) = query.get_poly_height(poly_ref, pos) {
             let flags = pool.mesh().get_poly_flags(poly_ref).unwrap_or(0);
-            entries.push(HeightEntry { height, flags });
+            entries.push(HeightEntry { height, flags, reachable: None });
         }
     }
 
@@ -555,6 +568,76 @@ pub async fn get_heights(
         if !is_duplicate {
             deduplicated.push(entry);
         }
+    }
+
+    // Reachability filtering: use lightweight pathfinding to remove disconnected floors
+    if params.filter_unreachable.unwrap_or(false) {
+        let (from_x, from_y, from_z) = match (params.from_x, params.from_y, params.from_z) {
+            (Some(x), Some(y), Some(z)) => (x, y, z),
+            _ => {
+                return Err(AppError::InvalidParams(
+                    "filter_unreachable requires from_x, from_y, from_z".into(),
+                ));
+            }
+        };
+
+        validate_coordinate(from_x, from_y, from_z)?;
+
+        let from_pos = Vec3::new(from_x, from_y, from_z);
+
+        // Find origin polygon (player position) once
+        let (from_ref, _) = query
+            .find_nearest_poly(from_pos, SEARCH_EXTENTS, filter)
+            .map_err(|_| {
+                AppError::PathfindingFailed(
+                    "Origin position for reachability not on navmesh".into(),
+                )
+            })?;
+
+        const MAX_REACHABILITY_POLYS: usize = 256;
+        const PARTIAL_Z_TOLERANCE: f32 = 5.0;
+
+        for entry in &mut deduplicated {
+            let target_pos = Vec3::new(params.x, params.y, entry.height);
+            let target_extents = Vec3::new(xy_extent.max(5.0), xy_extent.max(5.0), 2.0);
+
+            let reachable =
+                match query.find_nearest_poly(target_pos, target_extents, filter) {
+                    Ok((target_ref, _)) => {
+                        match query.find_path(
+                            from_ref,
+                            target_ref,
+                            from_pos,
+                            target_pos,
+                            filter,
+                            MAX_REACHABILITY_POLYS,
+                        ) {
+                            Ok((_path, false)) => true, // full path found
+                            Ok((path, true)) => {
+                                // Partial path: check if endpoint Z is close to target
+                                if let Ok(straight) =
+                                    query.find_straight_path(from_pos, target_pos, &path, 4)
+                                {
+                                    straight
+                                        .last()
+                                        .map_or(false, |last| {
+                                            (last.z - entry.height).abs() < PARTIAL_Z_TOLERANCE
+                                        })
+                                } else {
+                                    false
+                                }
+                            }
+                            Err(_) => false, // no path at all
+                        }
+                    }
+                    Err(_) => false, // target height not on a navmesh polygon
+                };
+
+            entry.reachable = Some(reachable);
+        }
+
+        // Remove unreachable entries
+        deduplicated.retain(|e| e.reachable.unwrap_or(true));
     }
 
     let count = deduplicated.len();

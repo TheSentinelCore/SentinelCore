@@ -9,11 +9,13 @@ local Obstacle     = require("core/Obstacle")
 local JSON         = require("lib/JSON")
 local Helpers      = require("lib/Helpers")
 local UIWindow     = require("ui/window")
+local color        = require("common/color")
 
 -- Module state
 local _is_loaded = false
 
 -- Menu elements
+local _menu_tree  = core.menu.tree_node()
 local _toggle_btn = core.menu.button("navlib_open")
 
 -- ---------------------------------------------------------------------------
@@ -63,17 +65,20 @@ core.register_on_render_callback(function()
     UIWindow.on_render()
 end)
 
--- Menu: toggle button + AstroUI menu hooks
+-- Menu: tree node + AstroUI menu hooks
 core.register_on_render_menu_callback(function()
     if not _is_loaded then return end
     UIWindow.on_menu_render()
 
-    if _toggle_btn:render("NavLib") then
-        local ui = UIWindow.get_ui()
-        if ui and ui.menu and ui.menu.enable then
-            ui.menu.enable:set(not ui.menu.enable:get_state())
+    _menu_tree:render("Sentinel Navigation", function()
+        core.menu.header():render("Version: " .. NavLibPlugin.VERSION, color.white(200))
+        if _toggle_btn:render("Open Settings") then
+            local ui = UIWindow.get_ui()
+            if ui and ui.menu and ui.menu.enable then
+                ui.menu.enable:set(not ui.menu.enable:get_state())
+            end
         end
-    end
+    end)
 end)
 
 -- ---------------------------------------------------------------------------

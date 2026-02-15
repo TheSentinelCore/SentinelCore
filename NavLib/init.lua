@@ -20,8 +20,8 @@ local Facade = require("Facade")
 local NavLibPlugin = {}
 NavLibPlugin.__index = NavLibPlugin
 
-NavLibPlugin.VERSION = "2.0.0"
-NavLibPlugin.NAME = "NavLib"
+NavLibPlugin.VERSION = "0.0.01"
+NavLibPlugin.NAME = "Sentinel Navigation"
 
 local _instance = nil
 
