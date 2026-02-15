@@ -33,7 +33,7 @@ Defaults.movement = {
     deviation_vertical_threshold = { type = "float", min = 0.5,  max = 10.0,  default = 3.0,   id = "navlib_deviation_vertical_threshold" },
     deviation_corridor_factor    = { type = "float", min = 0.1,  max = 2.0,   default = 0.75,  id = "navlib_deviation_corridor_factor" },
     repath_cooldown              = { type = "float", min = 0.1,  max = 5.0,   default = 1.0,   id = "navlib_repath_cooldown" },
-    max_deviation_repaths        = { type = "int",   min = 1,    max = 10,    default = 3,     id = "navlib_max_deviation_repaths" },
+    max_deviation_repaths        = { type = "int",   min = 1,    max = 10,    default = 5,     id = "navlib_max_deviation_repaths" },
 
     -- Smoothing
     smoothing               = { type = "combo", default = 2, options = { "none", "chaikin", "catmull", "bezier" }, id = "navlib_smoothing" },
@@ -45,7 +45,7 @@ Defaults.movement = {
 
     -- Optimization
     optimize                = { type = "bool",  default = true,   id = "navlib_optimize" },
-    allow_partial           = { type = "bool",  default = true,   id = "navlib_allow_partial" },
+    allow_partial           = { type = "bool",  default = false,   id = "navlib_allow_partial" },
 
     -- Terrain Costs
     filter_ground           = { type = "float", min = 0.1,  max = 10.0,   default = 1.0,   id = "navlib_filter_ground" },
@@ -75,7 +75,7 @@ Defaults.obstacles = {
     avoidance_radius        = { type = "float", min = 1.0,  max = 10.0,  default = 3.0,   id = "navlib_avoidance_radius" },
     max_zones               = { type = "int",   min = 1,    max = 20,    default = 5,     id = "navlib_max_zones" },
     zone_ttl                = { type = "float", min = 30.0, max = 300.0, default = 120.0, id = "navlib_zone_ttl" },
-    avoidance_cost          = { type = "float", min = 1.0,  max = 20.0,  default = 5.0,   id = "navlib_avoidance_cost" },
+    avoidance_cost          = { type = "float", min = 1.0,  max = 100.0,  default = 100.0,   id = "navlib_avoidance_cost" },
     zone_prune_dist         = { type = "float", min = 50.0, max = 500.0, default = 100.0, id = "navlib_zone_prune" },
 
     -- Reactive Probing
