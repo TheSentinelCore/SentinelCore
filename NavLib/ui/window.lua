@@ -128,6 +128,14 @@ local function create_menu_elements()
         look_spread            = e(D.obstacles.lookahead_spread_deg),
         look_segments          = e(D.obstacles.lookahead_segments),
 
+        -- Object Scanner (Tab 3)
+        scanner_enabled        = e(D.obstacles.scanner_enabled),
+        scanner_interval       = e(D.obstacles.scanner_interval),
+        scanner_range          = e(D.obstacles.scanner_range),
+        scanner_buffer         = e(D.obstacles.scanner_buffer),
+        scanner_min_radius     = e(D.obstacles.scanner_min_radius),
+        scanner_cost           = e(D.obstacles.scanner_cost),
+
         -- Debug (Tab 4)
         debug_verbose          = e(D.movement.debug_verbose),
         debug_mode             = e(D.debug.debug_mode),
@@ -261,6 +269,12 @@ local function sync_to_facade()
             lookahead_height_offset = _menu.look_height:get(),
             lookahead_spread_deg    = _menu.look_spread:get(),
             lookahead_segments      = _menu.look_segments:get(),
+            scanner_enabled         = _menu.scanner_enabled:get_state(),
+            scanner_interval        = _menu.scanner_interval:get(),
+            scanner_range           = _menu.scanner_range:get(),
+            scanner_buffer          = _menu.scanner_buffer:get(),
+            scanner_min_radius      = _menu.scanner_min_radius:get(),
+            scanner_cost            = _menu.scanner_cost:get(),
         },
     })
 end

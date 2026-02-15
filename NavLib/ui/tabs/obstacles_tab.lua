@@ -26,6 +26,34 @@ function ObstaclesTab.register(ui, menu)
     end
 
     ui:add_tab({ id = "obstacles", label = "Obstacles" }, function(t)
+        -- Object Scanner
+        t:checkbox_grid({
+            label = "Object Scanner",
+            columns = 1,
+            elements = {
+                { element = menu.scanner_enabled, label = "Scan Nearby Objects", tooltip = "Periodically scans for solid GameObjects and creates avoidance zones" },
+            }
+        })
+
+        t:slider_list({
+            visible_when = function() return menu.scanner_enabled:get_state() end,
+            elements = {
+                { element = menu.scanner_range,  label = "Scan Range",  suffix = " yd", tooltip = "How far to scan for objects" },
+                { element = menu.scanner_buffer, label = "Buffer Size", suffix = " yd", tooltip = "Extra clearance around detected objects" },
+            }
+        })
+
+        -- Object Scanner Advanced
+        t:slider_list({
+            label = "Scanner Tuning",
+            visible_when = function() return show_advanced() and menu.scanner_enabled:get_state() end,
+            elements = {
+                { element = menu.scanner_interval,   label = "Scan Interval",   suffix = " s", tooltip = "Time between object scans" },
+                { element = menu.scanner_min_radius,  label = "Min Object Size", suffix = " yd", tooltip = "Skip objects smaller than this bounding radius" },
+                { element = menu.scanner_cost,        label = "Avoidance Cost",  tooltip = "Pathfinding cost penalty for scanned object areas" },
+            }
+        })
+
         -- Basic Obstacle Avoidance
         t:checkbox_grid({
             label = "Obstacle Avoidance",
@@ -110,6 +138,12 @@ function ObstaclesTab.register(ui, menu)
 
                 if window:is_rect_clicked(btn_start, btn_end) then
                     Defaults.reset({
+                        { menu.scanner_enabled,    Do.scanner_enabled },
+                        { menu.scanner_interval,   Do.scanner_interval },
+                        { menu.scanner_range,      Do.scanner_range },
+                        { menu.scanner_buffer,     Do.scanner_buffer },
+                        { menu.scanner_min_radius, Do.scanner_min_radius },
+                        { menu.scanner_cost,       Do.scanner_cost },
                         { menu.proactive_obstacle, Dm.proactive_obstacle_check },
                         { menu.obstacle_interval,  Dm.proactive_obstacle_interval },
                         { menu.avoidance_radius,   Do.avoidance_radius },
