@@ -594,8 +594,10 @@ pub async fn get_heights(
                 )
             })?;
 
-        const MAX_REACHABILITY_POLYS: usize = 256;
-        const PARTIAL_Z_TOLERANCE: f32 = 5.0;
+        const MAX_REACHABILITY_POLYS: usize = 2048;
+        // Disconnected islands have very few polys; if the partial path
+        // used fewer than this, the search exhausted a small island.
+        const MIN_PARTIAL_POLYS: usize = 5;
 
         for entry in &mut deduplicated {
             let target_pos = Vec3::new(params.x, params.y, entry.height);
@@ -614,18 +616,10 @@ pub async fn get_heights(
                         ) {
                             Ok((_path, false)) => true, // full path found
                             Ok((path, true)) => {
-                                // Partial path: check if endpoint Z is close to target
-                                if let Ok(straight) =
-                                    query.find_straight_path(from_pos, target_pos, &path, 4)
-                                {
-                                    straight
-                                        .last()
-                                        .map_or(false, |last| {
-                                            (last.z - entry.height).abs() < PARTIAL_Z_TOLERANCE
-                                        })
-                                } else {
-                                    false
-                                }
+                                // Partial path: if the search explored many polys,
+                                // the areas are connected (search just ran out of
+                                // budget). Very short partial = tiny disconnected island.
+                                path.len() >= MIN_PARTIAL_POLYS
                             }
                             Err(_) => false, // no path at all
                         }
