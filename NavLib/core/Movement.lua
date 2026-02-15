@@ -5,6 +5,7 @@
 local vec3 = require("common/geometry/vector_3")
 local simple_movement = require("common/utility/simple_movement")
 local Navigation = require("core/Navigation")
+local Defaults = require("core/Defaults")
 local Helpers = require("lib/Helpers")
 
 -- State constants
@@ -18,46 +19,9 @@ local S_FAILED = "failed"
 -- Speed constants
 local BASE_RUN_SPEED = 7.0 -- yards/sec, standard run speed
 
--- Default configuration
-local DEFAULT_CONFIG = {
-    dynamic_speed        = true,   -- Enable adaptive speed scaling
-    dynamic_speed_max_tolerance_scale = 1.20,
-    dynamic_speed_max_tolerance_bonus = 0.75,
-    dynamic_speed_ramp_z_delta = 1.2,
-    dynamic_speed_ramp_tolerance = 1.8,
-    dynamic_speed_ramp_look_distance = 6.0,
-    waypoint_tolerance   = 3.0,
-    final_tolerance      = 1.5,
-    stuck_check_interval = 0.5,
-    stuck_distance_min   = 0.25,
-    max_stuck_attempts   = 6,
-    path_check_interval  = 8.0,
-    smoothing            = "chaikin",
-    optimize             = true,
-    anti_detection       = false,
-    max_deviation        = 3.0,
-    allow_partial        = true,
-    smooth_iterations    = 3,
-    smooth_samples       = 10,
-    smooth_ratio         = 0.50,
-    min_corner_angle     = 90,
-    keep_originals       = false,
-    filter_ground        = 1.0,
-    filter_water         = 10.0,
-    filter_lava          = 100.0,
-    use_corridor_indoor  = true,
-    corridor_probe_dist  = 15.0,
-    wall_clearance       = 1.0,
-    proactive_obstacle_check    = true,
-    proactive_obstacle_interval = 1.5,
-    deviation_check_interval     = 1.0,   -- seconds between deviation checks
-    deviation_threshold          = 5.0,   -- yards off-path before repath (fixed fallback for outdoor)
-    deviation_vertical_threshold = 3.0,   -- yards vertical offset before repath (wrong floor/level)
-    deviation_corridor_factor    = 0.75,  -- repath when drift > 75% of corridor width (adaptive, indoor)
-    repath_cooldown              = 1.0,   -- minimum seconds between deviation repaths
-    max_deviation_repaths        = 3,     -- max consecutive deviation repaths before giving up
-    debug_verbose               = false,
-}
+-- Build DEFAULT_CONFIG from single source of truth
+local DEFAULT_CONFIG = Defaults.flat(Defaults.movement)
+DEFAULT_CONFIG.smooth_ratio = DEFAULT_CONFIG.smooth_ratio / 100 -- slider is %, engine is decimal
 
 -- Class ------------------------------------------------------------------
 
