@@ -60,6 +60,13 @@ local function create_menu_elements()
         -- Path Validation (Tab 1 advanced)
         path_check = sf(1.0, 30.0, 8.0, "navlib_path_check"),
 
+        -- Deviation Detection (Tab 1 advanced)
+        deviation_check_interval     = sf(0.1, 5.0, 1.0, "navlib_deviation_check_interval"),
+        deviation_threshold          = sf(1.0, 20.0, 5.0, "navlib_deviation_threshold"),
+        deviation_vertical_threshold = sf(0.5, 10.0, 3.0, "navlib_deviation_vertical_threshold"),
+        deviation_corridor_factor    = sf(0.1, 2.0, 0.75, "navlib_deviation_corridor_factor"),
+        repath_cooldown              = sf(0.1, 5.0, 1.0, "navlib_repath_cooldown"),
+
         -- Smoothing (Tab 2)
         smoothing         = combo(2, "navlib_smoothing"),  -- default: Chaikin (index 2)
         smooth_iterations = si(1, 5, 3, "navlib_smooth_iterations"),
@@ -219,6 +226,11 @@ local function sync_to_facade()
             wall_clearance              = wall_cl,
             proactive_obstacle_check    = _menu.proactive_obstacle:get_state(),
             proactive_obstacle_interval = _menu.obstacle_interval:get(),
+            deviation_check_interval     = _menu.deviation_check_interval:get(),
+            deviation_threshold          = _menu.deviation_threshold:get(),
+            deviation_vertical_threshold = _menu.deviation_vertical_threshold:get(),
+            deviation_corridor_factor    = _menu.deviation_corridor_factor:get(),
+            repath_cooldown              = _menu.repath_cooldown:get(),
             debug_verbose               = _menu.debug_verbose:get_state(),
         },
         obstacles = {
