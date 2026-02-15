@@ -1119,6 +1119,17 @@ function Movement:_check_deviation(player)
         b.x, b.y, b.z
     )
 
+    -- Diagnostic: log measurement details to identify systematic drift
+    self:_verbose(string.format(
+        "DevCheck: idx=%d/#%d, sm_count=%d, a=(%.1f,%.1f,%.1f), b=(%.1f,%.1f,%.1f), pos=(%.1f,%.1f,%.1f), drift=%.1f, t=%.2f",
+        idx, #self._current_path,
+        simple_movement:get_waypoint_count() or 0,
+        a.x, a.y, a.z,
+        b.x, b.y, b.z,
+        pos.x, pos.y, pos.z,
+        drift, t
+    ))
+
     -- Check 1: Vertical deviation (wrong floor/level)
     -- Interpolate expected Z at projected point on segment
     local expected_z = a.z + t * (b.z - a.z)
