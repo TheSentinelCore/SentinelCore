@@ -1108,30 +1108,44 @@ function Movement:_check_deviation(player)
 
     local Helpers = require("lib/Helpers")
     local pos = player:get_position()
-    -- Measure against the CURRENT segment: previous waypoint -> current target
-    local a = self._current_path[idx - 1]
-    local b = self._current_path[idx]
+
+    -- Search backwards from _path_index to find the closest segment
+    -- (_path_index runs ahead due to waypoint_tolerance > waypoint spacing
+    --  with dense Chaikin-smoothed paths)
+    local best_dist = math.huge
+    local best_t = 0
+    local best_seg = idx
+    local search_start = math.max(2, idx - 60)
+    for i = search_start, idx do
+        local seg_a = self._current_path[i - 1]
+        local seg_b = self._current_path[i]
+        if seg_a and seg_b then
+            local d, seg_t = Helpers.point_to_segment_distance(
+                pos.x, pos.y, pos.z,
+                seg_a.x, seg_a.y, seg_a.z,
+                seg_b.x, seg_b.y, seg_b.z
+            )
+            if d < best_dist then
+                best_dist = d
+                best_t = seg_t
+                best_seg = i
+            end
+            if d < 1.0 then break end  -- Close enough, stop searching
+        end
+    end
+
+    local drift = best_dist
+    local t = best_t
+    local a = self._current_path[best_seg - 1]
+    local b = self._current_path[best_seg]
     if not a or not b then return end
 
-    local drift, t = Helpers.point_to_segment_distance(
-        pos.x, pos.y, pos.z,
-        a.x, a.y, a.z,
-        b.x, b.y, b.z
-    )
-
-    -- Diagnostic: log measurement details to identify systematic drift
     self:_verbose(string.format(
-        "DevCheck: idx=%d/#%d, sm_count=%d, a=(%.1f,%.1f,%.1f), b=(%.1f,%.1f,%.1f), pos=(%.1f,%.1f,%.1f), drift=%.1f, t=%.2f",
-        idx, #self._current_path,
-        simple_movement:get_waypoint_count() or 0,
-        a.x, a.y, a.z,
-        b.x, b.y, b.z,
-        pos.x, pos.y, pos.z,
-        drift, t
+        "DevCheck: seg=%d (idx=%d), drift=%.1f, t=%.2f",
+        best_seg, idx, drift, t
     ))
 
     -- Check 1: Vertical deviation (wrong floor/level)
-    -- Interpolate expected Z at projected point on segment
     local expected_z = a.z + t * (b.z - a.z)
     local vertical_drift = math.abs(pos.z - expected_z)
     if vertical_drift > self._config.deviation_vertical_threshold then
@@ -1145,15 +1159,13 @@ function Movement:_check_deviation(player)
     end
 
     -- Check 2: Lateral deviation (off-path drift)
-    -- Determine threshold: adaptive (corridor) or fixed (fallback)
     local threshold = self._config.deviation_threshold
     if self._corridor_widths then
-        local w1 = self._corridor_widths[idx - 1]
-        local w2 = self._corridor_widths[idx]
+        local w1 = self._corridor_widths[best_seg - 1]
+        local w2 = self._corridor_widths[best_seg]
         if w1 and w2 then
             local corridor_width = w1 + t * (w2 - w1)
             threshold = corridor_width * self._config.deviation_corridor_factor
-            -- Floor: never go below 2 yards (navmesh precision limit)
             threshold = math.max(2.0, threshold)
         end
     end
