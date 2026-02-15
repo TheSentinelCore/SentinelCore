@@ -189,8 +189,7 @@ Navigation.__index = Navigation
 function Navigation:new(config)
     config = config or {}
     local o = setmetatable({}, Navigation)
-    -- o._base_url = config.base_url or "http://78.31.71.163:47110"
-    o._base_url = config.base_url or "http://127.0.0.1:47110"
+    o._base_url = config.base_url or "http://78.31.71.163:47110"
     o._max_retries = config.max_retries or 3
     o._is_connected = false
     o._consecutive_failures = 0
