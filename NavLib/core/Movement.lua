@@ -76,6 +76,8 @@ local DEFAULT_CONFIG = {
 ---@field private _corridor_widths number[]|nil
 ---@field private _obstacle_module table|nil
 ---@field private _obstacle_lookahead_time number
+---@field private _last_deviation_check number
+---@field private _last_repath_time number
 ---@field _path_index number
 local Movement = {}
 Movement.__index = Movement
@@ -130,6 +132,10 @@ function Movement:new(nav_client, config)
     -- Obstacle avoidance
     o._obstacle_module = nil
     o._obstacle_lookahead_time = 0
+
+    -- Deviation monitoring
+    o._last_deviation_check = 0
+    o._last_repath_time = 0
 
     -- Compatibility: consumers read _path_index directly
     o._path_index = 1
@@ -353,6 +359,8 @@ function Movement:stop()
     self._route_data = nil
     self._corridor_widths = nil
     self._obstacle_lookahead_time = 0
+    self._last_deviation_check = 0
+    self._last_repath_time = 0
     self._path_index = 1
     self._last_applied_speed = 0
     simple_movement:set_threshold(self._config.waypoint_tolerance)
@@ -531,6 +539,8 @@ function Movement:move_to(target, callback, opts)
     self._last_stuck_pos = player:get_position()
     self._path_check_time = core.time()
     self._obstacle_lookahead_time = 0
+    self._last_deviation_check = 0
+    self._last_repath_time = 0
     self._unstuck_phase = nil
 
     -- Defer if casting
@@ -662,6 +672,8 @@ function Movement:follow_path(waypoints, callback)
     self._last_stuck_pos = player:get_position()
     self._path_check_time = core.time()
     self._obstacle_lookahead_time = 0
+    self._last_deviation_check = 0
+    self._last_repath_time = 0
     self._unstuck_phase = nil
     self:_start_movement(waypoints)
 end
