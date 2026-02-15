@@ -496,6 +496,9 @@ function Movement:update()
         -- Periodic path validation
         self:_check_path_validity(player)
 
+        -- Deviation-aware adaptive repath
+        self:_check_deviation(player)
+
         -- Proactive obstacle look-ahead
         self:_check_proactive_obstacles()
     end
