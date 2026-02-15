@@ -12,6 +12,10 @@ DEFAULT_CONFIG.collision_flags = 0x00000001 -- DoodadCollision (internal only, n
 ---@class Obstacle
 ---@field private _config table
 ---@field private _zones table[]  -- remembered avoidance zones
+---@field private _scanned_zones table[]  -- object scanner zones
+---@field private _last_scan_time number
+---@field private _nav_client table|nil
+---@field private _last_register_time number
 local Obstacle = {}
 Obstacle.__index = Obstacle
 
@@ -33,6 +37,14 @@ function Obstacle:new(config)
 
     o._zones = {}
 
+    -- Object scanner state
+    o._scanned_zones = {}
+    o._last_scan_time = 0
+
+    -- Nav client for server-side registration (set via set_nav_client)
+    o._nav_client = nil
+    o._last_register_time = 0
+
     return o
 end
 
@@ -48,6 +60,7 @@ end
 ---Reset all remembered zones
 function Obstacle:clear()
     self._zones = {}
+    self._scanned_zones = {}
 end
 
 -- Probing ----------------------------------------------------------------
@@ -284,10 +297,30 @@ end
 
 -- Query API (consumed by MovementModule) ---------------------------------
 
----Get avoidance zones for NavBuddy /path-avoid endpoint
+---Get all avoidance zones (ray-detected + scanned) for NavBuddy path-avoid.
 ---@return table[] Array of { x, y, z, radius, cost }
 function Obstacle:get_avoidance_zones()
-    return self._zones
+    if #self._scanned_zones == 0 then
+        return self._zones
+    end
+    if #self._zones == 0 then
+        return self._scanned_zones
+    end
+    -- Merge both lists
+    local combined = {}
+    for i = 1, #self._zones do
+        combined[#combined + 1] = self._zones[i]
+    end
+    for i = 1, #self._scanned_zones do
+        combined[#combined + 1] = self._scanned_zones[i]
+    end
+    return combined
+end
+
+---Get only scanned object zones (for distinct visualization).
+---@return table[] Array of { x, y, z, radius, cost }
+function Obstacle:get_scanned_zones()
+    return self._scanned_zones
 end
 
 ---Get count of active zones
@@ -296,10 +329,88 @@ function Obstacle:get_zone_count()
     return #self._zones
 end
 
----No-op update for compatibility with BotManager's module update loop.
+-- Object Scanner -------------------------------------------------------
+
+---Attach a Navigation client for server-side obstacle registration.
+---@param nav_client table
+function Obstacle:set_nav_client(nav_client)
+    self._nav_client = nav_client
+end
+
+---Scan nearby basic objects and create avoidance zones for solid ones.
+---Rebuilds _scanned_zones from scratch each cycle (no TTL needed).
+---@private
+function Obstacle:_scan_objects()
+    local cfg = self._config
+    local player = core.object_manager.get_local_player()
+    if not player or not player:is_valid() then return end
+
+    local player_pos = player:get_position()
+    local range = cfg.scanner_range
+    local min_radius = cfg.scanner_min_radius
+    local buffer = cfg.scanner_buffer
+    local cost = cfg.scanner_cost
+    local flags = cfg.collision_flags
+
+    local ok_all, all_objects = pcall(core.object_manager.get_all_objects)
+    if not ok_all or not all_objects then return end
+
+    local new_zones = {}
+    for i = 1, #all_objects do
+        local obj = all_objects[i]
+        if obj:is_basic_object() and obj:is_valid() then
+            local pos = obj:get_position()
+            local dx = pos.x - player_pos.x
+            local dy = pos.y - player_pos.y
+            local dist_sq = dx * dx + dy * dy
+
+            if dist_sq <= range * range then
+                local bounding_r = obj:get_bounding_radius() * obj:get_scale()
+
+                if bounding_r >= min_radius then
+                    -- Validate solidity: trace a line through the object center
+                    local p1 = { x = pos.x - bounding_r, y = pos.y, z = pos.z + 1.0 }
+                    local p2 = { x = pos.x + bounding_r, y = pos.y, z = pos.z + 1.0 }
+                    local ok_trace, is_clear = pcall(core.graphics.trace_line, p1, p2, flags)
+
+                    if ok_trace and is_clear == false then
+                        new_zones[#new_zones + 1] = {
+                            x = pos.x,
+                            y = pos.y,
+                            z = pos.z,
+                            radius = bounding_r + buffer,
+                            cost = cost,
+                        }
+                    end
+                end
+            end
+        end
+    end
+
+    self._scanned_zones = new_zones
+
+    -- Register with NavBuddy if connected
+    if self._nav_client and self._nav_client:is_available() and #new_zones > 0 then
+        local now = core.time()
+        if now - self._last_register_time >= cfg.scanner_interval then
+            self._last_register_time = now
+            local map_id = core.get_map_id and core.get_map_id() or 0
+            self._nav_client:register_obstacles(map_id, new_zones)
+        end
+    end
+end
+
+---Tick the object scanner on interval.
 ---Proactive probing is driven by MovementModule._check_proactive_obstacles().
 ---Reactive probing is driven by MovementModule._unstuck_probe_and_repath().
 function Obstacle:update()
+    if not self._config.scanner_enabled then return end
+
+    local now = core.time()
+    if now - self._last_scan_time < self._config.scanner_interval then return end
+    self._last_scan_time = now
+
+    self:_scan_objects()
 end
 
 return Obstacle
