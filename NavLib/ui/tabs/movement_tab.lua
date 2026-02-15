@@ -52,6 +52,22 @@ function MovementTab.register(ui, menu)
             }
         })
 
+        -- Periodic Repath
+        t:checkbox_grid({
+            label = "Periodic Repath",
+            columns = 1,
+            elements = {
+                { element = menu.periodic_repath_en, label = "Enable", tooltip = "Automatically request a fresh path on a fixed interval" },
+            }
+        })
+
+        t:slider_list({
+            visible_when = function() return menu.periodic_repath_en:get_state() end,
+            elements = {
+                { element = menu.periodic_repath, label = "Interval", suffix = " s", tooltip = "Seconds between automatic repaths" },
+            }
+        })
+
         -- Stuck Recovery (advanced)
         t:slider_list({
             label = "Stuck Recovery",

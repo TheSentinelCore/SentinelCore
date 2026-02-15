@@ -60,6 +60,10 @@ local function create_menu_elements()
         -- Path Validation (Tab 1 advanced)
         path_check = sf(1.0, 30.0, 8.0, "navlib_path_check"),
 
+        -- Periodic Repath (Tab 1)
+        periodic_repath = sf(0.5, 10.0, 0.5, "navlib_periodic_repath"),
+        periodic_repath_en = cb(false, "navlib_periodic_repath_en"),
+
         -- Smoothing (Tab 2)
         smoothing         = combo(2, "navlib_smoothing"),  -- default: Chaikin (index 2)
         smooth_iterations = si(1, 5, 3, "navlib_smooth_iterations"),
@@ -219,6 +223,7 @@ local function sync_to_facade()
             wall_clearance              = wall_cl,
             proactive_obstacle_check    = _menu.proactive_obstacle:get_state(),
             proactive_obstacle_interval = _menu.obstacle_interval:get(),
+            periodic_repath_interval    = _menu.periodic_repath_en:get_state() and _menu.periodic_repath:get() or 0,
             debug_verbose               = _menu.debug_verbose:get_state(),
         },
         obstacles = {

@@ -43,6 +43,7 @@ local DEFAULT_CONFIG = {
     wall_clearance       = 1.0,
     proactive_obstacle_check    = true,
     proactive_obstacle_interval = 1.5,
+    periodic_repath_interval    = 0,  -- 0 = disabled; seconds between automatic repaths
     debug_verbose               = false,
 }
 
@@ -66,6 +67,7 @@ local DEFAULT_CONFIG = {
 ---@field private _corridor_widths number[]|nil
 ---@field private _obstacle_module table|nil
 ---@field private _obstacle_lookahead_time number
+---@field private _last_periodic_repath number
 ---@field _path_index number
 local Movement = {}
 Movement.__index = Movement
@@ -120,6 +122,9 @@ function Movement:new(nav_client, config)
     -- Obstacle avoidance
     o._obstacle_module = nil
     o._obstacle_lookahead_time = 0
+
+    -- Periodic repath
+    o._last_periodic_repath = 0
 
     -- Compatibility: consumers read _path_index directly
     o._path_index = 1
@@ -323,6 +328,7 @@ function Movement:stop()
     self._route_data = nil
     self._corridor_widths = nil
     self._obstacle_lookahead_time = 0
+    self._last_periodic_repath = 0
     self._path_index = 1
     self._last_applied_speed = 0
     simple_movement:set_threshold(self._config.waypoint_tolerance)
@@ -435,6 +441,9 @@ function Movement:update()
         -- Periodic path validation
         self:_check_path_validity(player)
 
+        -- Periodic repath (fixed interval refresh)
+        self:_check_periodic_repath()
+
         -- Proactive obstacle look-ahead
         self:_check_proactive_obstacles()
     end
@@ -478,6 +487,7 @@ function Movement:move_to(target, callback, opts)
     self._last_stuck_pos = player:get_position()
     self._path_check_time = core.time()
     self._obstacle_lookahead_time = 0
+    self._last_periodic_repath = core.time()
     self._unstuck_phase = nil
 
     -- Defer if casting
@@ -609,6 +619,7 @@ function Movement:follow_path(waypoints, callback)
     self._last_stuck_pos = player:get_position()
     self._path_check_time = core.time()
     self._obstacle_lookahead_time = 0
+    self._last_periodic_repath = core.time()
     self._unstuck_phase = nil
     self:_start_movement(waypoints)
 end
@@ -1040,6 +1051,23 @@ function Movement:replan(reason)
         core.log_warning("[Movement] Too few remaining nodes to replan")
         if cb then cb(false, { error = "Too few nodes to replan" }) end
     end
+end
+
+-- Periodic repath --------------------------------------------------------
+
+---Automatically repath on a fixed interval while moving.
+---Keeps the path fresh (e.g. when the destination or environment changes).
+function Movement:_check_periodic_repath()
+    local interval = self._config.periodic_repath_interval
+    if not interval or interval <= 0 then return end
+    if not self._destination then return end
+
+    local now = core.time()
+    if now - self._last_periodic_repath < interval then return end
+    self._last_periodic_repath = now
+
+    self:_verbose("Periodic repath")
+    self:_unstuck_repath()
 end
 
 -- Path validation --------------------------------------------------------
