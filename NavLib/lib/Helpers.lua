@@ -61,6 +61,39 @@ function Helpers.distance_2d(pos1, pos2)
     return math.sqrt(dx * dx + dy * dy)
 end
 
+---Compute shortest 3D distance from point P to line segment AB
+---Returns both the distance and the projection parameter t (0=at A, 1=at B)
+---@param px number Point X
+---@param py number Point Y
+---@param pz number Point Z
+---@param ax number Segment start X
+---@param ay number Segment start Y
+---@param az number Segment start Z
+---@param bx number Segment end X
+---@param by number Segment end Y
+---@param bz number Segment end Z
+---@return number distance Distance from P to nearest point on segment AB
+---@return number t Projection parameter [0,1] (where on segment the closest point is)
+function Helpers.point_to_segment_distance(px, py, pz, ax, ay, az, bx, by, bz)
+    local abx, aby, abz = bx - ax, by - ay, bz - az
+    local apx, apy, apz = px - ax, py - ay, pz - az
+    local ab_sq = abx * abx + aby * aby + abz * abz
+
+    -- Degenerate segment (A == B): return distance to A
+    if ab_sq < 1e-8 then
+        return math.sqrt(apx * apx + apy * apy + apz * apz), 0
+    end
+
+    -- Project P onto AB, clamp to [0, 1]
+    local t = (apx * abx + apy * aby + apz * abz) / ab_sq
+    t = math.max(0, math.min(1, t))
+
+    -- Closest point on segment
+    local cx, cy, cz = ax + t * abx, ay + t * aby, az + t * abz
+    local dx, dy, dz = px - cx, py - cy, pz - cz
+    return math.sqrt(dx * dx + dy * dy + dz * dz), t
+end
+
 ---Linear interpolation between two values
 ---@param a number Start value
 ---@param b number End value
@@ -398,6 +431,19 @@ function Helpers._test()
 
     -- Test format_time
     results.format_time = (Helpers.format_time(3661) == "1h 1m 1s")
+
+    -- Test point_to_segment_distance: perpendicular projection
+    local seg_dist, seg_t = Helpers.point_to_segment_distance(0, 5, 0, 0, 0, 0, 10, 0, 0)
+    results.point_to_seg_perp = (math.abs(seg_dist - 5) < 0.001)
+    results.point_to_seg_t = (math.abs(seg_t - 0) < 0.001)
+
+    -- Test point_to_segment_distance: beyond segment end (clamps to t=1)
+    local seg_dist2 = Helpers.point_to_segment_distance(15, 0, 0, 0, 0, 0, 10, 0, 0)
+    results.point_to_seg_end = (math.abs(seg_dist2 - 5) < 0.001)
+
+    -- Test point_to_segment_distance: degenerate zero-length segment
+    local seg_dist3 = Helpers.point_to_segment_distance(3, 4, 0, 0, 0, 0, 0, 0, 0)
+    results.point_to_seg_degenerate = (math.abs(seg_dist3 - 5) < 0.001)
 
     return results
 end
