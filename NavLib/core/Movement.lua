@@ -754,6 +754,7 @@ function Movement:_check_stuck(player)
             expected_dist = expected_dist * math.min(3.0, speed / BASE_RUN_SPEED)
         end
     end
+    expected_dist = math.min(expected_dist, 3.0)
     if simple_movement:is_moving() and moved < expected_dist then
         self._stuck_count = self._stuck_count + 1
         local moved_2d = pos:dist_to_ignore_z(self._last_stuck_pos)
@@ -1092,6 +1093,8 @@ function Movement:_check_periodic_repath()
         self._current_path = data.waypoints
         simple_movement:navigate(data.waypoints)
         self._stuck_count = 0
+        self._last_stuck_time = core.time()
+        self._last_stuck_pos = nil
     end
 
     local zones = self._obstacle_module
