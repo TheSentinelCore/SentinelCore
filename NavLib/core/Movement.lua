@@ -68,6 +68,7 @@ local DEFAULT_CONFIG = {
 ---@field private _obstacle_module table|nil
 ---@field private _obstacle_lookahead_time number
 ---@field private _last_periodic_repath number
+---@field private _periodic_repath_pending boolean
 ---@field _path_index number
 local Movement = {}
 Movement.__index = Movement
@@ -125,6 +126,7 @@ function Movement:new(nav_client, config)
 
     -- Periodic repath
     o._last_periodic_repath = 0
+    o._periodic_repath_pending = false
 
     -- Compatibility: consumers read _path_index directly
     o._path_index = 1
@@ -329,6 +331,7 @@ function Movement:stop()
     self._corridor_widths = nil
     self._obstacle_lookahead_time = 0
     self._last_periodic_repath = 0
+    self._periodic_repath_pending = false
     self._path_index = 1
     self._last_applied_speed = 0
     simple_movement:set_threshold(self._config.waypoint_tolerance)
@@ -1056,18 +1059,57 @@ end
 -- Periodic repath --------------------------------------------------------
 
 ---Automatically repath on a fixed interval while moving.
----Keeps the path fresh (e.g. when the destination or environment changes).
+---Requests a fresh path in the background without stopping movement;
+---when the new path arrives the waypoints are hot-swapped in.
 function Movement:_check_periodic_repath()
     local interval = self._config.periodic_repath_interval
     if not interval or interval <= 0 then return end
     if not self._destination then return end
+    if self._periodic_repath_pending then return end
 
     local now = core.time()
     if now - self._last_periodic_repath < interval then return end
     self._last_periodic_repath = now
 
-    self:_verbose("Periodic repath")
-    self:_unstuck_repath()
+    local player = core.object_manager.get_local_player()
+    if not player or not player:is_valid() then return end
+
+    local pos = player:get_position()
+    self._periodic_repath_pending = true
+    self:_verbose("Periodic repath (background)")
+
+    local function on_path(ok, data, err)
+        self._periodic_repath_pending = false
+        if self._state ~= S_MOVING then return end
+        if not ok or not data or not data.waypoints or #data.waypoints == 0 then
+            self:_verbose("Periodic repath failed: " .. (err or "empty"))
+            return
+        end
+        if data.corridor_widths then
+            self._corridor_widths = data.corridor_widths
+        end
+        self:_verbose("Periodic repath OK: " .. #data.waypoints .. " waypoints")
+        self._current_path = data.waypoints
+        simple_movement:navigate(data.waypoints)
+        self._stuck_count = 0
+    end
+
+    local zones = self._obstacle_module
+        and self._obstacle_module:get_avoidance_zones()
+        or {}
+
+    if self:_should_use_corridor() then
+        self._nav_client:find_path_corridor(pos, self._destination, on_path,
+            self:_build_corridor_opts({ avoid_zones = zones }))
+    else
+        if #zones > 0 then
+            self._nav_client:find_path_avoid(pos, self._destination, zones, on_path,
+                self:_build_path_opts())
+        else
+            self._nav_client:find_path(pos, self._destination, on_path,
+                self:_build_path_opts())
+        end
+    end
 end
 
 -- Path validation --------------------------------------------------------
