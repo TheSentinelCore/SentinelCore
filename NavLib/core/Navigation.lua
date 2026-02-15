@@ -189,7 +189,8 @@ Navigation.__index = Navigation
 function Navigation:new(config)
     config = config or {}
     local o = setmetatable({}, Navigation)
-    o._base_url = config.base_url or "http://78.31.71.163:47110"
+    -- o._base_url = config.base_url or "http://78.31.71.163:47110"
+    o._base_url = config.base_url or "http://127.0.0.1:47110"
     o._max_retries = config.max_retries or 3
     o._is_connected = false
     o._consecutive_failures = 0
@@ -868,6 +869,32 @@ function Navigation:health_check(callback)
             uptime_secs = data.uptime_secs,
             loaded_maps = data.loaded_maps,
         }, nil)
+    end)
+end
+
+---Register obstacles with NavBuddy for server-side avoidance.
+---@param map_id number Continent/map ID
+---@param obstacles table[] Array of { x, y, z, radius, cost }
+---@param callback? fun(success: boolean, data: table|nil, error: string|nil)
+function Navigation:register_obstacles(map_id, obstacles, callback)
+    if not obstacles or #obstacles == 0 then
+        if callback then callback(true, { count = 0 }, nil) end
+        return
+    end
+
+    local parts = {}
+    for _, o in ipairs(obstacles) do
+        parts[#parts + 1] = string.format(
+            "%g,%g,%g,%g,%g", o.x, o.y, o.z, o.radius, o.cost)
+    end
+
+    local params = {
+        map_id = map_id,
+        obstacles = table.concat(parts, ";"),
+    }
+
+    self:_request(self:_build_url("/api/v1/obstacles/update", params), function(ok, data, err)
+        if callback then callback(ok, data, err) end
     end)
 end
 

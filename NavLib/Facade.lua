@@ -31,7 +31,10 @@ function Facade:new(config)
     -- 2. Wire obstacle into movement (the step consumers always forget)
     o.movement:set_obstacle_module(o.obstacle)
 
-    -- 3. Event system
+    -- 3. Wire nav client into obstacle for server-side registration
+    o.obstacle:set_nav_client(o.nav_client)
+
+    -- 4. Event system
     o._listeners  = {}
     o._last_state = "idle"
 
