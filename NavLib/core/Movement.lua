@@ -4,6 +4,8 @@
 
 local vec3 = require("common/geometry/vector_3")
 local simple_movement = require("common/utility/simple_movement")
+local Navigation = require("core/Navigation")
+local Helpers = require("lib/Helpers")
 
 -- State constants
 local S_IDLE = "idle"
@@ -275,8 +277,7 @@ end
 ---@return boolean
 function Movement:_should_use_corridor()
     if not self._config.use_corridor_indoor then return false end
-    local NavClient = require("core/Navigation")
-    return NavClient.is_indoor()
+    return Navigation.is_indoor()
 end
 
 ---Compute the minimum corridor width from stored corridor data
@@ -744,6 +745,9 @@ end
 ---Check if player is stuck (called on interval while moving)
 ---@param player game_object
 function Movement:_check_stuck(player)
+    -- Don't check while a timed recovery action (strafe/backward) is running
+    if self._unstuck_phase then return end
+
     local now = core.time()
     if now - self._last_stuck_time < self._config.stuck_check_interval then return end
     self._last_stuck_time = now
@@ -1113,6 +1117,9 @@ end
 ---Also checks vertical deviation separately (wrong floor/level detection).
 ---@param player game_object
 function Movement:_check_deviation(player)
+    -- Don't check while a timed recovery action is running
+    if self._unstuck_phase then return end
+
     local now = core.time()
     if now - self._last_deviation_check < self._config.deviation_check_interval then
         return
@@ -1129,7 +1136,6 @@ function Movement:_check_deviation(player)
     -- Guard against infinite repath loops
     if self._deviation_repath_count >= self._config.max_deviation_repaths then return end
 
-    local Helpers = require("lib/Helpers")
     local pos = player:get_position()
 
     -- Search backwards from _path_index to find the closest segment
