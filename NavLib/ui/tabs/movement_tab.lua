@@ -71,6 +71,19 @@ function MovementTab.register(ui, menu)
                 { element = menu.path_check, label = "Check Interval", suffix = " s", tooltip = "How often to revalidate the current path" },
             }
         })
+
+        -- Deviation Detection (advanced)
+        t:slider_list({
+            label = "Deviation Detection",
+            visible_when = show_advanced,
+            elements = {
+                { element = menu.deviation_check_interval, label = "Check Interval", suffix = " s", tooltip = "Seconds between deviation checks" },
+                { element = menu.deviation_threshold, label = "Lateral Threshold", suffix = " yd", tooltip = "Yards off-path before repath (outdoor fallback)" },
+                { element = menu.deviation_vertical_threshold, label = "Vertical Threshold", suffix = " yd", tooltip = "Vertical offset before repath (wrong floor/level)" },
+                { element = menu.deviation_corridor_factor, label = "Corridor Factor", suffix = "x", tooltip = "Repath when drift exceeds this fraction of corridor width (indoor)" },
+                { element = menu.repath_cooldown, label = "Repath Cooldown", suffix = " s", tooltip = "Minimum seconds between deviation repaths" },
+            }
+        })
     end)
 end
 
