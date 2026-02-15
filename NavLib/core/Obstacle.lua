@@ -365,22 +365,27 @@ function Obstacle:_scan_objects()
             local dist_sq = dx * dx + dy * dy
 
             if dist_sq <= range * range then
-                local bounding_r = obj:get_bounding_radius() * obj:get_scale()
+                local ok_br, raw_r = pcall(obj.get_bounding_radius, obj)
+                local ok_sc, raw_s = pcall(obj.get_scale, obj)
 
-                if bounding_r >= min_radius then
-                    -- Validate solidity: trace a line through the object center
-                    local p1 = { x = pos.x - bounding_r, y = pos.y, z = pos.z + 1.0 }
-                    local p2 = { x = pos.x + bounding_r, y = pos.y, z = pos.z + 1.0 }
-                    local ok_trace, is_clear = pcall(core.graphics.trace_line, p1, p2, flags)
+                if ok_br and ok_sc then
+                    local bounding_r = raw_r * raw_s
 
-                    if ok_trace and is_clear == false then
-                        new_zones[#new_zones + 1] = {
-                            x = pos.x,
-                            y = pos.y,
-                            z = pos.z,
-                            radius = bounding_r + buffer,
-                            cost = cost,
-                        }
+                    if bounding_r >= min_radius then
+                        -- Validate solidity: trace a line through the object center
+                        local p1 = { x = pos.x - bounding_r, y = pos.y, z = pos.z + 1.0 }
+                        local p2 = { x = pos.x + bounding_r, y = pos.y, z = pos.z + 1.0 }
+                        local ok_trace, is_clear = pcall(core.graphics.trace_line, p1, p2, flags)
+
+                        if ok_trace and is_clear == false then
+                            new_zones[#new_zones + 1] = {
+                                x = pos.x,
+                                y = pos.y,
+                                z = pos.z,
+                                radius = bounding_r + buffer,
+                                cost = cost,
+                            }
+                        end
                     end
                 end
             end
