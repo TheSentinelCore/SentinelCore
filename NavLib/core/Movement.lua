@@ -875,6 +875,7 @@ function Movement:_unstuck_repath()
     end
     self:_verbose("Unstuck: repath")
     simple_movement:stop()
+    self:_set_state(S_REQUESTING)
 
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then return end
