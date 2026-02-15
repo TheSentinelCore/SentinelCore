@@ -66,6 +66,7 @@ local function create_menu_elements()
         deviation_vertical_threshold = sf(0.5, 10.0, 3.0, "navlib_deviation_vertical_threshold"),
         deviation_corridor_factor    = sf(0.1, 2.0, 0.75, "navlib_deviation_corridor_factor"),
         repath_cooldown              = sf(0.1, 5.0, 1.0, "navlib_repath_cooldown"),
+        max_deviation_repaths        = si(1, 10, 3, "navlib_max_deviation_repaths"),
 
         -- Smoothing (Tab 2)
         smoothing         = combo(2, "navlib_smoothing"),  -- default: Chaikin (index 2)
@@ -231,6 +232,7 @@ local function sync_to_facade()
             deviation_vertical_threshold = _menu.deviation_vertical_threshold:get(),
             deviation_corridor_factor    = _menu.deviation_corridor_factor:get(),
             repath_cooldown              = _menu.repath_cooldown:get(),
+            max_deviation_repaths        = _menu.max_deviation_repaths:get(),
             debug_verbose               = _menu.debug_verbose:get_state(),
         },
         obstacles = {
