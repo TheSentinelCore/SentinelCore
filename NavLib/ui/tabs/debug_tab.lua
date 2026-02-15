@@ -2,9 +2,10 @@
     Debug Tab - Live status, logging, waypoint testing, all pathfinding modes
 ]]
 
-local vec2    = require("common/geometry/vector_2")
-local enums   = require("common/enums")
-local AstroUI = require("shared/AstroUI")
+local vec2     = require("common/geometry/vector_2")
+local enums    = require("common/enums")
+local AstroUI  = require("shared/AstroUI")
+local Defaults = require("core/Defaults")
 
 local LAYOUT = AstroUI.LAYOUT
 
@@ -530,6 +531,35 @@ function DebugTab.register(ui, menu, facade)
                 end
 
                 return y_offset
+            end
+        })
+
+        -- Reset Defaults
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local w = window:get_size().x - (2 * LAYOUT.padding_side)
+                local h = 22
+
+                local clicked = render_button(window, colors, x, y_offset, w, h, "Reset Defaults")
+                if clicked then
+                    local Dd = Defaults.debug
+                    local Dm = Defaults.movement
+                    Defaults.reset({
+                        { menu.debug_verbose,   Dm.debug_verbose },
+                        { menu.debug_mode,      Dd.debug_mode },
+                        { menu.viz_master,      Dd.viz_master },
+                        { menu.viz_path,        Dd.viz_path },
+                        { menu.viz_destination, Dd.viz_destination },
+                        { menu.viz_obstacles,   Dd.viz_obstacles },
+                        { menu.viz_corridor,    Dd.viz_corridor },
+                        { menu.viz_state,       Dd.viz_state },
+                    })
+                end
+
+                return y_offset + h + 4
             end
         })
     end)

@@ -115,6 +115,15 @@ Defaults.window = {
 }
 
 --------------------------------------------------------------------------------
+-- Helper: reset menu elements to their defaults
+--------------------------------------------------------------------------------
+function Defaults.reset(pairs_list)
+    for _, pair in ipairs(pairs_list) do
+        pair[1]:set(pair[2].default)
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Helper: extract flat default values from a section
 --------------------------------------------------------------------------------
 function Defaults.flat(section)
