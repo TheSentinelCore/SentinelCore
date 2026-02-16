@@ -286,6 +286,7 @@ function Window.init(facade)
         default_w = 450,
         default_h = 550,
         theme = "neutral",
+        render_layer = 1,
     })
 
     -- "Show Advanced" toggle above tab bar
@@ -299,6 +300,9 @@ function Window.init(facade)
 
     -- Create 3D Visualizer (self-registers its own render callback)
     _visualizer = Visualizer:new(_facade, _menu)
+
+    -- Always start with window closed; user opens via menu button
+    _ui.menu.enable:set(false)
 
     _initialized = true
     core.log("[NavLib] Settings UI initialized")

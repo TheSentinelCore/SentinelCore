@@ -336,6 +336,7 @@ function RotationSettingsUI.new(config)
     self.theme_name = config.theme or "astro"
     self.colors = THEMES[self.theme_name] or THEMES.astro
     self.sections = {}
+    self._render_layer = config.render_layer
     self._window_epoch = 0
 
     -- Tab state
@@ -1650,6 +1651,10 @@ function RotationSettingsUI:on_render()
     -- Register window render callback
     local function render_window_content()
         self:_render_sections()
+    end
+
+    if self._render_layer then
+        self.window:set_render_layer(self._render_layer)
     end
 
     self.window:begin(

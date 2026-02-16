@@ -1,7 +1,7 @@
 local plugin = {}
 plugin["name"] = "NavLib"
-plugin["version"] = "2.0.0"
-plugin["author"] = "Claude"
+plugin["version"] = "0.0.3"
+plugin["author"] = "Nasrine"
 plugin["load"] = true
 
 local local_player = core.object_manager.get_local_player()
