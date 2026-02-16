@@ -63,7 +63,7 @@ Defaults.movement = {
 
     -- Wall Clearance
     wall_clearance_enabled  = { type = "bool",  default = true,   id = "navlib_wall_clearance_en" },
-    wall_clearance          = { type = "float", min = 0.5,  max = 5.0,   default = 1.0,   id = "navlib_wall_clearance" },
+    wall_clearance          = { type = "float", min = 0.5,  max = 5.0,   default = 3.0,   id = "navlib_wall_clearance" },
 
     -- Obstacle Scanning
     proactive_obstacle_check    = { type = "bool",  default = true,  id = "navlib_proactive_obstacle" },
