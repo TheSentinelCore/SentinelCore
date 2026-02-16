@@ -46,7 +46,7 @@ pub const MAX_STRAIGHT_PATH: usize = 2048;
 /// Tight first for correct floor selection, broader as fallback.
 /// Reference: CMaNGOS uses 5/10, AmeisenNavigation uses 6, BloogBot uses 3.
 /// Previous NavBuddy XY=50 was 10x larger than all references, causing water/edge issues.
-const SEARCH_TIERS: [(f32, f32, f32); 3] = [
+pub(crate) const SEARCH_TIERS: [(f32, f32, f32); 3] = [
     (6.0, 6.0, 6.0),    // Tight — matches AmeisenNavigation
     (10.0, 10.0, 10.0),  // Medium — matches CMaNGOS far search
     (50.0, 50.0, 50.0),  // Fallback — imprecise coordinates
@@ -264,6 +264,7 @@ pub fn execute_pathfind(
     // If partial, start may be on a disconnected navmesh island (caused by GO injection
     // fragmenting the mesh). Try nearby positions to find a polygon on the main connected mesh.
     let mut effective_start = start_nearest;
+    let mut effective_start_ref = start_ref;
     if is_partial {
         for &(dx, dy) in &ISLAND_RETRY_OFFSETS {
             let alt_pos = Vec3::new(start_pos.x + dx, start_pos.y + dy, start_pos.z);
@@ -290,8 +291,44 @@ pub fn execute_pathfind(
                 poly_path = alt_path;
                 is_partial = alt_partial;
                 effective_start = alt_nearest;
+                effective_start_ref = alt_ref;
                 if !alt_partial {
                     break; // Found full path, stop searching
+                }
+            }
+        }
+    }
+
+    // If still partial, the destination may be on a disconnected island or slope-severed region.
+    // Try offset end positions.
+    let mut effective_end = end_nearest;
+    if is_partial {
+        for &(dx, dy) in &ISLAND_RETRY_OFFSETS {
+            let alt_pos = Vec3::new(end_pos.x + dx, end_pos.y + dy, end_pos.z);
+            let Ok((alt_ref, alt_nearest)) =
+                find_poly_tiered(query, mesh, alt_pos, filter, options.z_extent)
+            else {
+                continue;
+            };
+            if alt_ref == end_ref {
+                continue; // Same polygon, skip
+            }
+            let Ok((alt_path, alt_partial)) = query.find_path(
+                effective_start_ref,
+                alt_ref,
+                effective_start,
+                alt_nearest,
+                filter,
+                MAX_PATH_POLYS,
+            ) else {
+                continue;
+            };
+            if !alt_partial || alt_path.len() > poly_path.len() {
+                poly_path = alt_path;
+                is_partial = alt_partial;
+                effective_end = alt_nearest;
+                if !alt_partial {
+                    break;
                 }
             }
         }
@@ -303,7 +340,7 @@ pub fn execute_pathfind(
 
     // Convert polygon corridor to straight path (waypoints)
     let mut waypoints = query
-        .find_straight_path(effective_start, end_nearest, &poly_path, MAX_STRAIGHT_PATH)
+        .find_straight_path(effective_start, effective_end, &poly_path, MAX_STRAIGHT_PATH)
         .map_err(|e| AppError::PathfindingFailed(e.to_string()))?;
 
     // Apply string-pulling optimization if requested
