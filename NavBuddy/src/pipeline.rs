@@ -52,6 +52,19 @@ const SEARCH_TIERS: [(f32, f32, f32); 3] = [
     (50.0, 50.0, 50.0),  // Fallback — imprecise coordinates
 ];
 
+/// XY offsets (yards) to try when the start poly appears to be on a disconnected island.
+/// Cardinal + diagonal directions at ~3 yards — enough to step off most GO-induced islands.
+const ISLAND_RETRY_OFFSETS: [(f32, f32); 8] = [
+    (3.0, 0.0),
+    (-3.0, 0.0),
+    (0.0, 3.0),
+    (0.0, -3.0),
+    (2.0, 2.0),
+    (-2.0, 2.0),
+    (2.0, -2.0),
+    (-2.0, -2.0),
+];
+
 /// NAV_GROUND flag (1 << (11-11) = 0x01).
 const NAV_FLAG_GROUND: u16 = 0x01;
 /// NAV_WATER flag (1 << (11-9) = 0x04).
@@ -237,7 +250,7 @@ pub fn execute_pathfind(
     let (end_ref, end_nearest) = find_poly_tiered(query, mesh, end_pos, filter, options.z_extent)?;
 
     // Find polygon corridor from start to end
-    let (poly_path, is_partial) = query
+    let (mut poly_path, mut is_partial) = query
         .find_path(
             start_ref,
             end_ref,
@@ -248,13 +261,49 @@ pub fn execute_pathfind(
         )
         .map_err(|_| AppError::PathfindingFailed("No path found".into()))?;
 
+    // If partial, start may be on a disconnected navmesh island (caused by GO injection
+    // fragmenting the mesh). Try nearby positions to find a polygon on the main connected mesh.
+    let mut effective_start = start_nearest;
+    if is_partial {
+        for &(dx, dy) in &ISLAND_RETRY_OFFSETS {
+            let alt_pos = Vec3::new(start_pos.x + dx, start_pos.y + dy, start_pos.z);
+            let Ok((alt_ref, alt_nearest)) =
+                find_poly_tiered(query, mesh, alt_pos, filter, options.z_extent)
+            else {
+                continue;
+            };
+            if alt_ref == start_ref {
+                continue; // Same polygon, skip
+            }
+            let Ok((alt_path, alt_partial)) = query.find_path(
+                alt_ref,
+                end_ref,
+                alt_nearest,
+                end_nearest,
+                filter,
+                MAX_PATH_POLYS,
+            ) else {
+                continue;
+            };
+            // Use this result if it's better (full path, or longer partial)
+            if !alt_partial || alt_path.len() > poly_path.len() {
+                poly_path = alt_path;
+                is_partial = alt_partial;
+                effective_start = alt_nearest;
+                if !alt_partial {
+                    break; // Found full path, stop searching
+                }
+            }
+        }
+    }
+
     if poly_path.is_empty() {
         return Err(AppError::PathfindingFailed("Empty polygon path".into()));
     }
 
     // Convert polygon corridor to straight path (waypoints)
     let mut waypoints = query
-        .find_straight_path(start_nearest, end_nearest, &poly_path, MAX_STRAIGHT_PATH)
+        .find_straight_path(effective_start, end_nearest, &poly_path, MAX_STRAIGHT_PATH)
         .map_err(|e| AppError::PathfindingFailed(e.to_string()))?;
 
     // Apply string-pulling optimization if requested

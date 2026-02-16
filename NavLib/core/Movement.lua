@@ -503,6 +503,7 @@ function Movement:move_to(target, callback, opts)
     self._destination = target
     self._callback = callback
     self._route_data = nil
+    self._partial_path = false
 
     -- Reset stuck detection and obstacle look-ahead
     self._stuck_count = 0
@@ -572,6 +573,14 @@ function Movement:move_to(target, callback, opts)
             return
         end
 
+        -- Track whether this path is partial (destination not fully reachable)
+        self._partial_path = data.partial or false
+        if self._partial_path then
+            core.log_warning("[Movement] Partial path accepted — destination not fully reachable ("
+                .. #data.waypoints .. " waypoints, "
+                .. string.format("%.1f", data.distance or 0) .. " yd)")
+        end
+
         -- Store corridor data and adjust tolerance for indoor paths
         if use_corridor and data.corridor_widths then
             self._corridor_widths = data.corridor_widths
@@ -638,6 +647,7 @@ function Movement:follow_path(waypoints, callback)
     self._destination = waypoints[#waypoints]
     self._callback = callback
     self._route_data = nil
+    self._partial_path = false
     self._corridor_widths = nil
     self._stuck_count = 0
     self._last_stuck_time = core.time()
@@ -706,6 +716,21 @@ function Movement:_on_arrival()
             self._callback(true, { type = "route_complete" })
         end
     else
+        if self._partial_path then
+            core.log_warning("[Movement] Partial path endpoint reached — destination unreachable")
+            self:_set_state(S_FAILED)
+            if self._callback then
+                self._callback(false, "Destination unreachable (partial)")
+                self._callback = nil
+            end
+            self._route_data = nil
+            self._corridor_widths = nil
+            self._last_applied_speed = 0
+            simple_movement:set_threshold(self._config.waypoint_tolerance)
+            simple_movement:set_final_threshold(self._config.final_tolerance)
+            return
+        end
+
         core.log("[Movement] Arrived at destination")
         self:_set_state(S_ARRIVED)
         if self._callback then
@@ -895,6 +920,21 @@ function Movement:_unstuck_repath()
         core.log_warning("[Movement] No destination for repath")
         return
     end
+
+    -- If already on a partial path and stuck, don't re-request the same
+    -- unreachable destination — it will just produce another partial path
+    if self._partial_path then
+        core.log_warning("[Movement] Stuck on partial path — failing (destination unreachable)")
+        simple_movement:stop()
+        self._unstuck_phase = nil
+        self:_set_state(S_FAILED)
+        if self._callback then
+            self._callback(false, "Stuck on partial path")
+            self._callback = nil
+        end
+        return
+    end
+
     self:_verbose("Unstuck: repath")
     simple_movement:stop()
     self._unstuck_phase = nil
@@ -913,7 +953,9 @@ function Movement:_unstuck_repath()
         if data.corridor_widths then
             self._corridor_widths = data.corridor_widths
         end
-        self:_verbose("Repath OK: " .. #data.waypoints .. " waypoints")
+        self._partial_path = data.partial or false
+        self:_verbose("Repath OK: " .. #data.waypoints .. " waypoints"
+            .. (self._partial_path and " (partial)" or ""))
         self._stuck_count = 0
         self._last_stuck_time = core.time()
         self._last_stuck_pos = nil

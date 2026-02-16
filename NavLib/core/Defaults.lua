@@ -50,7 +50,7 @@ Defaults.movement = {
 
     -- Optimization
     optimize                = { type = "bool",  default = true,   id = "navlib_optimize" },
-    allow_partial           = { type = "bool",  default = false,   id = "navlib_allow_partial" },
+    allow_partial           = { type = "bool",  default = true,    id = "navlib_allow_partial" },
 
     -- Terrain Costs
     filter_ground           = { type = "float", min = 0.1,  max = 10.0,   default = 1.0,   id = "navlib_filter_ground" },
