@@ -89,6 +89,7 @@ function Movement:new(nav_client, config)
 
     -- Path validation
     o._path_check_time = 0
+    o._validity_repath_pending = false
 
     -- Route mode
     o._route_data = nil
@@ -331,6 +332,7 @@ function Movement:stop()
     self._deviation_repath_count = 0
     self._path_index = 1
     self._last_applied_speed = 0
+    self._validity_repath_pending = false
     simple_movement:set_threshold(self._config.waypoint_tolerance)
     simple_movement:set_final_threshold(self._config.final_tolerance)
 end
@@ -936,6 +938,7 @@ function Movement:_unstuck_repath()
     end
 
     self:_verbose("Unstuck: repath")
+    self._validity_repath_pending = false
     simple_movement:stop()
     self._unstuck_phase = nil
     self:_set_state(S_REQUESTING)
@@ -1154,6 +1157,8 @@ function Movement:_check_path_validity(player)
     if now - self._path_check_time < self._config.path_check_interval then return end
     self._path_check_time = now
 
+    if self._validity_repath_pending then return end
+
     local remaining = simple_movement:get_remaining_waypoints()
     if not remaining or #remaining < 3 then return end
 
@@ -1163,9 +1168,76 @@ function Movement:_check_path_validity(player)
         if data and not data.valid and self._destination then
             core.log_warning("[Movement] Path invalid at segment "
                 .. tostring(data.first_invalid_segment) .. ", repathing")
-            self:_unstuck_repath()
+            self:_soft_repath()
         end
     end)
+end
+
+---Request a fresh path without stopping movement (used by path validity check).
+---The character keeps walking the current path while the new one is fetched.
+function Movement:_soft_repath()
+    if not self._destination then return end
+    if self._route_data then
+        self:_unstuck_repath()
+        return
+    end
+    if self._partial_path then
+        self:_unstuck_repath()
+        return
+    end
+
+    self:_verbose("Soft repath (no stop)")
+    self._validity_repath_pending = true
+
+    local player = core.object_manager.get_local_player()
+    if not player or not player:is_valid() then
+        self._validity_repath_pending = false
+        return
+    end
+
+    local pos = player:get_position()
+
+    local function on_repath(ok, data, err)
+        self._validity_repath_pending = false
+        if self._state ~= S_MOVING then return end
+
+        if not ok or not data or not data.waypoints or #data.waypoints == 0 then
+            core.log_error("[Movement] Soft repath failed: " .. (err or "empty path"))
+            return
+        end
+        if data.corridor_widths then
+            self._corridor_widths = data.corridor_widths
+        end
+        self._partial_path = data.partial or false
+        self:_verbose("Soft repath OK: " .. #data.waypoints .. " waypoints"
+            .. (self._partial_path and " (partial)" or ""))
+        self._stuck_count = 0
+        self._last_stuck_time = core.time()
+        self._last_stuck_pos = nil
+        self._last_deviation_check = core.time()
+        self._last_repath_time = core.time()
+        self._current_path = data.waypoints
+        self._path_index = 1
+        simple_movement:navigate(data.waypoints, false, true)
+        self:_verbose("Navigating " .. #data.waypoints .. " waypoints")
+    end
+
+    local zones = self._obstacle_module
+        and self._obstacle_module:get_avoidance_zones()
+        or {}
+
+    if self:_should_use_corridor() then
+        self._nav_client:find_path_corridor(pos, self._destination, on_repath,
+            self:_build_corridor_opts({ avoid_zones = zones }))
+    else
+        if #zones > 0 then
+            self._nav_client:find_path_avoid(pos, self._destination, zones, on_repath,
+                self:_build_path_opts())
+        else
+            self._nav_client:find_path(pos, self._destination, on_repath,
+                self:_build_path_opts())
+        end
+    end
 end
 
 -- Deviation monitoring --------------------------------------------------------

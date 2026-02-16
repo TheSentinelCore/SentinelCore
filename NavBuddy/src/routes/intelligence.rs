@@ -12,7 +12,7 @@ use crate::error::AppError;
 use crate::pipeline::{
     compute_corridor_widths, execute_pathfind, execute_pathfind_with_avoidance, has_custom_filter,
     create_custom_filter, parse_avoidance_zones, parse_stops, parse_waypoints,
-    pathfind_maybe_avoid, PathOptions, SEARCH_EXTENTS, HEIGHT_EXTENTS,
+    pathfind_maybe_avoid, PathOptions, SEARCH_EXTENTS, SEARCH_TIERS,
 };
 use crate::routes::path::{
     acquire_query, validate_filter_params, validate_smoothing_params,
@@ -746,12 +746,17 @@ pub async fn path_check(
         .chain(waypoints.iter().take(max_check))
         .collect::<Vec<_>>();
 
+    // Use the same first-tier extents as pathfinding (6,6,6) instead of
+    // HEIGHT_EXTENTS (5,5,5) to avoid false positives from polygon snapping
+    // differences between path generation and path validation.
+    let check_extents = Vec3::new(SEARCH_TIERS[0].0, SEARCH_TIERS[0].1, SEARCH_TIERS[0].2);
+
     for i in 0..check_points.len() - 1 {
         let from = *check_points[i];
         let to = *check_points[i + 1];
 
         let reachable = if let Ok((from_ref, _)) =
-            query.find_nearest_poly(from, HEIGHT_EXTENTS, filter)
+            query.find_nearest_poly(from, check_extents, filter)
         {
             query
                 .raycast(from_ref, from, to, filter)
