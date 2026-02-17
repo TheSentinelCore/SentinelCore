@@ -1,8 +1,8 @@
--- NavLib/main.lua
+-- SentinelNavClient/main.lua
 -- Standalone navigation plugin for Sylvannas
--- Registers engine callbacks, manages UI, exports _G.NavLib
+-- Registers engine callbacks, manages UI, exports _G.SentinelNavClient
 
-local NavLibPlugin = require("init")
+local SentinelNavClient = require("init")
 local Navigation   = require("core/Navigation")
 local Movement     = require("core/Movement")
 local Obstacle     = require("core/Obstacle")
@@ -25,20 +25,20 @@ local _toggle_btn = core.menu.button("navlib_open")
 local function on_load()
     if _is_loaded then return end
 
-    local success = NavLibPlugin:initialize()
+    local success = SentinelNavClient:initialize()
     if not success then
-        core.log_error("[NavLib] Failed to initialize")
+        core.log_error("[SentinelNavClient] Failed to initialize")
         return
     end
 
     -- Initialize UI with the shared Facade
-    local facade = NavLibPlugin:get_facade()
+    local facade = SentinelNavClient:get_facade()
     if facade then
         UIWindow.init(facade)
     end
 
     _is_loaded = true
-    core.log("[NavLib] Loaded — standalone plugin ready")
+    core.log("[SentinelNavClient] Loaded — standalone plugin ready")
 end
 
 -- Initialize eagerly so the Facade exists before other plugins' on_update fires.
@@ -53,7 +53,7 @@ on_load()
 core.register_on_update_callback(function()
     if not _is_loaded then return end
 
-    local facade = NavLibPlugin:get_facade()
+    local facade = SentinelNavClient:get_facade()
     if facade then
         facade:update()
     end
@@ -70,8 +70,8 @@ core.register_on_render_menu_callback(function()
     if not _is_loaded then return end
     UIWindow.on_menu_render()
 
-    _menu_tree:render("Sentinel Navigation", function()
-        core.menu.header():render("Version: " .. NavLibPlugin.VERSION, color.white(200))
+    _menu_tree:render("Sentinel Navigation Client", function()
+        core.menu.header():render("Version: " .. SentinelNavClient.VERSION, color.white(200))
         if _toggle_btn:render("Open Settings") then
             local ui = UIWindow.get_ui()
             if ui and ui.menu and ui.menu.enable then
@@ -85,15 +85,15 @@ end)
 -- Global API
 -- ---------------------------------------------------------------------------
 
-_G.NavLib = {
-    --- Returns the shared Facade. Config param is ignored (settings owned by NavLib UI).
+_G.SentinelNavClient = {
+    --- Returns the shared Facade. Config param is ignored (settings owned by SentinelNavClient UI).
     ---@param config? table Ignored — kept for backward compatibility
     ---@return Facade|nil
     create = function(config)
-        return NavLibPlugin:get_facade()
+        return SentinelNavClient:get_facade()
     end,
 
-    --- No-op. UI is created automatically by NavLib.
+    --- No-op. UI is created automatically by SentinelNavClient.
     create_ui = function(facade_arg)
         return UIWindow
     end,
@@ -111,15 +111,15 @@ _G.NavLib = {
     Helpers = Helpers,
 
     --- Plugin metadata
-    VERSION = NavLibPlugin.VERSION,
+    VERSION = SentinelNavClient.VERSION,
 }
 
 -- Make .facade a live getter so it returns the current Facade even when
 -- accessed before on_load (returns nil gracefully) or after (returns Facade).
-setmetatable(_G.NavLib, {
+setmetatable(_G.SentinelNavClient, {
     __index = function(t, k)
         if k == "facade" then
-            return NavLibPlugin:get_facade()
+            return SentinelNavClient:get_facade()
         end
     end
 })
@@ -129,20 +129,20 @@ setmetatable(_G.NavLib, {
 -- ---------------------------------------------------------------------------
 
 local function on_unload()
-    NavLibPlugin:destroy()
-    _G.NavLib = nil
+    SentinelNavClient:destroy()
+    _G.SentinelNavClient = nil
     _is_loaded = false
-    core.log("[NavLib] Unloaded")
+    core.log("[SentinelNavClient] Unloaded")
 end
 
-core.log("[NavLib] Module loaded — _G.NavLib available")
+core.log("[SentinelNavClient] Module loaded — _G.SentinelNavClient available")
 
 -- ---------------------------------------------------------------------------
 -- Module export (matches GatherBuddy pattern)
 -- ---------------------------------------------------------------------------
 
 return {
-    name    = "NavLib",
-    version = NavLibPlugin.VERSION,
+    name    = "SentinelNavClient",
+    version = SentinelNavClient.VERSION,
     unload  = on_unload,
 }
