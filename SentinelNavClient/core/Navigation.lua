@@ -6,6 +6,9 @@ local vec3 = require("common/geometry/vector_3")
 local izi = require("common/izi_sdk")
 local JSON = require("lib/JSON")
 
+local ok_cfg, ServerConfig = pcall(require, "config/server")
+if not ok_cfg then ServerConfig = { base_url = "http://127.0.0.1:47110", max_retries = 3 } end
+
 -- Helpers ----------------------------------------------------------------
 
 ---Convert response path array to vec3[]
@@ -189,9 +192,8 @@ Navigation.__index = Navigation
 function Navigation:new(config)
     config = config or {}
     local o = setmetatable({}, Navigation)
-    o._base_url = config.base_url or "http://78.31.71.163:47110"
-    -- o._base_url = config.base_url or "http://127.0.0.1:47110"
-    o._max_retries = config.max_retries or 3
+    o._base_url = config.base_url or ServerConfig.base_url
+    o._max_retries = config.max_retries or ServerConfig.max_retries
     o._is_connected = false
     o._consecutive_failures = 0
     o._last_success_time = 0
