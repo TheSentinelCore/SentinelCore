@@ -3,6 +3,7 @@ local unit_helper = require("common/utility/unit_helper")
 local vec3 = require("common/geometry/vector_3")
 local BlackspotManager = require("modules/BlackspotManager")
 local RotationManager = require("modules/RotationManager")
+local GrindProfileManager = require("modules/GrindProfileManager")
 
 local GrindBuddy = {}
 GrindBuddy.__index = GrindBuddy
@@ -11,6 +12,8 @@ GrindBuddy.NAME = "GrindBuddy"
 GrindBuddy.VERSION = Version.to_string()
 
 local _instance = nil
+local ROUTE_MODE_CIRCLE = 1
+local ROUTE_MODE_PROFILE = 2
 
 local function copy_vec3(v)
     return vec3.new(v.x, v.y, v.z)
@@ -70,6 +73,7 @@ function GrindBuddy:get_instance()
             _move_timeout = 20.0,
             _waypoints = {},
             _waypoint_index = 1,
+            _waypoint_direction = 1,
             _route_radius = 35.0,
             _route_radius_min = 35.0,
             _route_radius_max = 140.0,
@@ -77,6 +81,11 @@ function GrindBuddy:get_instance()
             _route_expand_interval = 12.0,
             _last_target_seen_at = 0,
             _last_route_expand_at = 0,
+            _route_mode = ROUTE_MODE_CIRCLE,
+            _route_profiles = nil,
+            _last_route_profile_refresh = 0,
+            _route_profile_refresh_interval = 2.0,
+            _last_route_profile_id = nil,
             _anchor = nil,
 
             -- Targeting and combat flow
@@ -170,6 +179,108 @@ function GrindBuddy:_ensure_nav_movement()
     return false
 end
 
+function GrindBuddy:_select_closest_waypoint_index(local_player, points)
+    if not local_player or not points or #points == 0 then
+        return 1
+    end
+
+    local my_pos = local_player:get_position()
+    local best_index = 1
+    local best_dist = math.huge
+
+    for i, p in ipairs(points) do
+        local d = self:_distance_to(my_pos, p)
+        if d < best_dist then
+            best_dist = d
+            best_index = i
+        end
+    end
+
+    return best_index
+end
+
+function GrindBuddy:_set_waypoints(points, start_at_closest, there_and_back, local_player)
+    local instance = self:get_instance()
+    instance._waypoints = points or {}
+    instance._waypoint_direction = 1
+
+    if #instance._waypoints == 0 then
+        instance._waypoint_index = 1
+        return
+    end
+
+    if start_at_closest and local_player and local_player:is_valid() then
+        instance._waypoint_index = self:_select_closest_waypoint_index(local_player, instance._waypoints)
+        if there_and_back and instance._waypoint_index >= #instance._waypoints then
+            instance._waypoint_direction = -1
+        end
+    else
+        instance._waypoint_index = 1
+    end
+end
+
+function GrindBuddy:_maybe_refresh_route_profile(local_player, now, force)
+    local instance = self:get_instance()
+    local manager = instance._route_profiles
+    if not manager then
+        return false
+    end
+
+    local t = now or now_time()
+    if not force and (t - instance._last_route_profile_refresh) < instance._route_profile_refresh_interval then
+        return false
+    end
+    instance._last_route_profile_refresh = t
+
+    if manager:is_auto_select_enabled() then
+        manager:detect_default_profile(local_player, current_map_id())
+    end
+
+    local active_id = manager:get_active_profile_id()
+    if active_id ~= instance._last_route_profile_id then
+        instance._last_route_profile_id = active_id
+        core.log("[GrindBuddy] Route profile: " .. tostring(manager:get_active_profile_label()))
+
+        if instance._running and instance._route_mode == ROUTE_MODE_PROFILE and not instance._target then
+            instance._waypoints = {}
+            instance._waypoint_index = 1
+            instance._waypoint_direction = 1
+        end
+        return true
+    end
+
+    return false
+end
+
+function GrindBuddy:_build_profile_route(local_player, start_at_closest)
+    local instance = self:get_instance()
+    local manager = instance._route_profiles
+    if not manager then
+        return false
+    end
+
+    self:_maybe_refresh_route_profile(local_player, now_time(), true)
+
+    local profile = manager:get_active_profile()
+    if not profile then
+        return false
+    end
+
+    local map_id = current_map_id()
+    if profile.map_id and profile.map_id > 0 and map_id and map_id > 0 and profile.map_id ~= map_id then
+        return false
+    end
+
+    local points = manager:get_active_points()
+    if #points < 2 then
+        return false
+    end
+
+    instance._anchor = copy_vec3(local_player:get_position())
+    self:_set_waypoints(points, start_at_closest ~= false, profile.there_and_back == true, local_player)
+    return true
+end
+
 function GrindBuddy:_build_default_route(local_player)
     local instance = self:get_instance()
     local pos = local_player:get_position()
@@ -186,13 +297,27 @@ function GrindBuddy:_build_default_route(local_player)
         )
     end
 
-    instance._waypoints = points
-    instance._waypoint_index = 1
+    self:_set_waypoints(points, false, false, nil)
+end
+
+function GrindBuddy:_build_patrol_route(local_player, start_at_closest)
+    local instance = self:get_instance()
+    if instance._route_mode == ROUTE_MODE_PROFILE then
+        if self:_build_profile_route(local_player, start_at_closest) then
+            return true
+        end
+    end
+
+    self:_build_default_route(local_player)
+    return true
 end
 
 function GrindBuddy:_maybe_expand_search(local_player, now)
     local instance = self:get_instance()
     if instance._target then
+        return
+    end
+    if instance._route_mode ~= ROUTE_MODE_CIRCLE then
         return
     end
 
@@ -223,11 +348,35 @@ end
 
 function GrindBuddy:_advance_waypoint()
     local instance = self:get_instance()
-    if #instance._waypoints == 0 then
+    local count = #instance._waypoints
+    if count == 0 then
         return
     end
+
+    if instance._route_mode == ROUTE_MODE_PROFILE and instance._route_profiles then
+        local profile = instance._route_profiles:get_active_profile()
+        if profile and profile.there_and_back then
+            if count <= 1 then
+                instance._waypoint_index = 1
+                return
+            end
+
+            local next_idx = instance._waypoint_index + instance._waypoint_direction
+            if next_idx > count then
+                instance._waypoint_direction = -1
+                next_idx = count - 1
+            elseif next_idx < 1 then
+                instance._waypoint_direction = 1
+                next_idx = 2
+            end
+
+            instance._waypoint_index = math.max(1, math.min(count, next_idx))
+            return
+        end
+    end
+
     instance._waypoint_index = instance._waypoint_index + 1
-    if instance._waypoint_index > #instance._waypoints then
+    if instance._waypoint_index > count then
         instance._waypoint_index = 1
     end
 end
@@ -783,7 +932,11 @@ function GrindBuddy:_tick_patrol(local_player)
 
     local target = self:_current_waypoint()
     if not target then
-        return
+        self:_build_patrol_route(local_player, true)
+        target = self:_current_waypoint()
+        if not target then
+            return
+        end
     end
 
     if self:_is_pos_blacklisted(target) then
@@ -956,6 +1109,13 @@ function GrindBuddy:initialize()
         })
     end
 
+    if not instance._route_profiles then
+        instance._route_profiles = GrindProfileManager:new({
+            default_radius = instance._route_radius_min,
+            default_point_count = 8,
+        })
+    end
+
     instance._initialized = true
     core.log(string.format("[GrindBuddy] Initialized v%s", GrindBuddy.VERSION))
     local local_player = core.object_manager.get_local_player()
@@ -963,6 +1123,20 @@ function GrindBuddy:initialize()
         instance._rotation:detect_default_profile(local_player)
         core.log("[GrindBuddy] Rotation profile: " .. tostring(instance._rotation:get_active_profile_label()))
     end
+
+    if instance._route_profiles then
+        local anchor = nil
+        if local_player and local_player:is_valid() then
+            anchor = local_player:get_position()
+        end
+        instance._route_profiles:load(anchor)
+        if local_player and local_player:is_valid() then
+            instance._route_profiles:detect_default_profile(local_player, current_map_id())
+        end
+        instance._last_route_profile_id = instance._route_profiles:get_active_profile_id()
+        core.log("[GrindBuddy] Route profile: " .. tostring(instance._route_profiles:get_active_profile_label()))
+    end
+
     return true
 end
 
@@ -987,10 +1161,12 @@ function GrindBuddy:start()
         return false
     end
 
-    if #instance._waypoints == 0 then
-        instance._route_radius = instance._route_radius_min
-        self:_build_default_route(local_player)
+    if instance._route_profiles then
+        self:_maybe_refresh_route_profile(local_player, now_time(), true)
     end
+
+    instance._route_radius = instance._route_radius_min
+    self:_build_patrol_route(local_player, true)
 
     self:_clear_target()
     instance._running = true
@@ -998,6 +1174,7 @@ function GrindBuddy:start()
     instance._move_started_at = 0
     instance._last_target_seen_at = now_time()
     instance._last_route_expand_at = 0
+    instance._last_route_profile_refresh = 0
     instance._last_mount_attempt = 0
     instance._last_dismount_attempt = 0
     self:_set_state("patrol")
@@ -1051,6 +1228,8 @@ function GrindBuddy:update()
         self:_set_status("Player dead")
         return
     end
+
+    self:_maybe_refresh_route_profile(local_player, now, false)
 
     if not instance._movement then
         self:_ensure_nav_movement()
@@ -1111,6 +1290,9 @@ end
 
 function GrindBuddy:get_grind_settings()
     local instance = self:get_instance()
+    local route_profiles = instance._route_profiles
+    local active_route_id = route_profiles and route_profiles:get_active_profile_id() or nil
+    local active_route_index = route_profiles and route_profiles:get_profile_index_by_id(active_route_id) or 1
     return {
         scan_radius = instance._scan_radius,
         pull_range = instance._pull_range,
@@ -1121,6 +1303,9 @@ function GrindBuddy:get_grind_settings()
         max_target_level_delta = instance._max_target_level_delta,
         ignore_players = instance._ignore_players,
         only_hostile_targets = instance._only_hostile_targets,
+        route_mode = instance._route_mode,
+        route_auto_profile = route_profiles and route_profiles:is_auto_select_enabled() or true,
+        route_profile_index = active_route_index,
     }
 end
 
@@ -1168,6 +1353,153 @@ function GrindBuddy:set_grind_settings(settings)
     end
     if instance._chase_stop_range < instance._pull_range then
         instance._chase_stop_range = instance._pull_range
+    end
+
+    if settings.route_mode ~= nil then
+        self:set_route_mode(settings.route_mode)
+    end
+
+    local route_auto_requested = nil
+    if settings.route_auto_profile ~= nil then
+        route_auto_requested = settings.route_auto_profile == true
+        self:set_route_auto_select(route_auto_requested)
+    end
+
+    local auto_enabled = route_auto_requested
+    if auto_enabled == nil then
+        auto_enabled = self:is_route_auto_select()
+    end
+    if settings.route_profile_index and not auto_enabled then
+        self:set_route_profile_index(settings.route_profile_index)
+    end
+end
+
+function GrindBuddy:get_route_profiles()
+    local instance = self:get_instance()
+    if not instance._route_profiles then
+        return {}
+    end
+    return instance._route_profiles:get_all_profile_descriptors()
+end
+
+function GrindBuddy:set_route_profile_index(index)
+    local instance = self:get_instance()
+    local manager = instance._route_profiles
+    if not manager then
+        return false
+    end
+
+    local wanted_index = math.floor(tonumber(index) or -1)
+    if wanted_index < 1 then
+        return false
+    end
+
+    local current_index = manager:get_profile_index_by_id(manager:get_active_profile_id())
+    if current_index == wanted_index then
+        return true
+    end
+
+    local ok = manager:set_profile_by_index(wanted_index)
+    if not ok then
+        return false
+    end
+
+    instance._last_route_profile_id = manager:get_active_profile_id()
+
+    if instance._running and instance._route_mode == ROUTE_MODE_PROFILE then
+        local local_player = core.object_manager.get_local_player()
+        if local_player and local_player:is_valid() then
+            if instance._movement and instance._movement.stop then
+                instance._movement:stop()
+            end
+            instance._move_inflight = false
+            self:_build_patrol_route(local_player, true)
+        end
+    end
+
+    return true
+end
+
+function GrindBuddy:get_route_profile_index()
+    local instance = self:get_instance()
+    local manager = instance._route_profiles
+    if not manager then
+        return nil
+    end
+    local active_id = manager:get_active_profile_id()
+    return manager:get_profile_index_by_id(active_id)
+end
+
+function GrindBuddy:set_route_auto_select(enabled)
+    local instance = self:get_instance()
+    local manager = instance._route_profiles
+    if not manager then
+        return
+    end
+
+    local next_enabled = enabled == true
+    if manager:is_auto_select_enabled() == next_enabled then
+        return
+    end
+
+    manager:set_auto_select(next_enabled)
+    local local_player = core.object_manager.get_local_player()
+    if manager:is_auto_select_enabled() and local_player and local_player:is_valid() then
+        manager:detect_default_profile(local_player, current_map_id())
+        instance._last_route_profile_id = manager:get_active_profile_id()
+    end
+
+    if instance._running and instance._route_mode == ROUTE_MODE_PROFILE and local_player and local_player:is_valid() then
+        if instance._movement and instance._movement.stop then
+            instance._movement:stop()
+        end
+        instance._move_inflight = false
+        self:_build_patrol_route(local_player, true)
+    end
+end
+
+function GrindBuddy:is_route_auto_select()
+    local instance = self:get_instance()
+    local manager = instance._route_profiles
+    if not manager then
+        return true
+    end
+    return manager:is_auto_select_enabled()
+end
+
+function GrindBuddy:get_route_profile_label()
+    local instance = self:get_instance()
+    local manager = instance._route_profiles
+    if not manager then
+        return "none"
+    end
+    return manager:get_active_profile_label()
+end
+
+function GrindBuddy:get_route_mode()
+    local instance = self:get_instance()
+    return instance._route_mode
+end
+
+function GrindBuddy:set_route_mode(mode)
+    local instance = self:get_instance()
+    local parsed = tonumber(mode) or ROUTE_MODE_CIRCLE
+    local next_mode = parsed == ROUTE_MODE_PROFILE and ROUTE_MODE_PROFILE or ROUTE_MODE_CIRCLE
+    if instance._route_mode == next_mode then
+        return
+    end
+
+    instance._route_mode = next_mode
+
+    if instance._running then
+        local local_player = core.object_manager.get_local_player()
+        if local_player and local_player:is_valid() then
+            if instance._movement and instance._movement.stop then
+                instance._movement:stop()
+            end
+            instance._move_inflight = false
+            self:_build_patrol_route(local_player, true)
+        end
     end
 end
 
