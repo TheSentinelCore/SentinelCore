@@ -10,7 +10,7 @@ use crate::state::AppState;
 pub struct HealthResponse {
     /// Server status ("ok" or "error").
     pub status: String,
-    /// NavBuddy version.
+    /// Sentinel Navigation Server version.
     pub version: String,
     /// Server uptime in seconds.
     pub uptime_secs: f64,

@@ -1,4 +1,4 @@
-//! Integration tests for NavBuddy HTTP endpoints.
+//! Integration tests for Sentinel Navigation Server HTTP endpoints.
 //!
 //! These tests require mmap files to be present at the configured path.
 
@@ -8,9 +8,9 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
-use navbuddy::config::{Config, NavmeshConfig, PathfindingConfig, ServerConfig};
-use navbuddy::routes::build_router;
-use navbuddy::state::AppState;
+use sentinel_nav_server::config::{Config, NavmeshConfig, PathfindingConfig, ServerConfig};
+use sentinel_nav_server::routes::build_router;
+use sentinel_nav_server::state::AppState;
 
 /// Path to mmap files for testing.
 const TEST_MMAP_PATH: &str = "./mmaps";

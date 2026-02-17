@@ -45,7 +45,7 @@ pub const MAX_STRAIGHT_PATH: usize = 2048;
 /// Tiered 3D search extents (x, y, z) for polygon search.
 /// Tight first for correct floor selection, broader as fallback.
 /// Reference: CMaNGOS uses 5/10, AmeisenNavigation uses 6, BloogBot uses 3.
-/// Previous NavBuddy XY=50 was 10x larger than all references, causing water/edge issues.
+/// Previous Sentinel Navigation Server XY=50 was 10x larger than all references, causing water/edge issues.
 pub(crate) const SEARCH_TIERS: [(f32, f32, f32); 3] = [
     (6.0, 6.0, 6.0),    // Tight — matches AmeisenNavigation
     (10.0, 10.0, 10.0),  // Medium — matches CMaNGOS far search

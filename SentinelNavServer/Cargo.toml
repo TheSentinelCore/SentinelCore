@@ -11,9 +11,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["NavBuddy Contributors"]
+authors = ["Sentinel Contributors"]
 license = "MIT"
-repository = "https://github.com/navbuddy/navbuddy"
+repository = "https://github.com/sentinel/sentinel-nav-server"
 
 [workspace.dependencies]
 # Async runtime
@@ -53,7 +53,7 @@ byteorder = "1.5"
 rand = "0.8"
 
 [package]
-name = "navbuddy"
+name = "sentinel-nav-server"
 version.workspace = true
 edition.workspace = true
 
@@ -77,11 +77,11 @@ tower-http.workspace = true
 rand.workspace = true
 
 [lib]
-name = "navbuddy"
+name = "sentinel_nav_server"
 path = "src/lib.rs"
 
 [[bin]]
-name = "navbuddy"
+name = "sentinel-nav-server"
 path = "src/main.rs"
 
 [dev-dependencies]
