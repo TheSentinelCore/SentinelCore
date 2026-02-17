@@ -1,22 +1,22 @@
 # SentinelNavClient API Reference
 
-Complete API reference for SentinelNavClient — covers the consumer-facing Facade, the Navigation HTTP client, the Movement path follower, and the Obstacle detection system.
+Complete API reference for SentinelNavClient — covers the consumer-facing Client, the Navigation HTTP client, the Movement path follower, and the Obstacle detection system.
 
-**For consumers:** Start with [Facade](#facade) — it wraps everything and is the recommended API.
+**For consumers:** Start with [Client](#client) — it wraps everything and is the recommended API.
 **For internals/advanced use:** See [Navigation](#navigation), [Movement](#movement), and [Obstacle](#obstacle) for the underlying module APIs.
 
 ---
 
 ## Table of Contents
 
-- [Facade](#facade)
-  - [Accessing the Facade](#accessing-the-facade)
+- [Client](#client)
+  - [Accessing the Client](#accessing-the-client)
   - [Update Loop](#update-loop)
   - [Movement Commands](#movement-commands)
   - [State Queries](#state-queries)
   - [Server Queries](#server-queries)
   - [Opts Builders](#opts-builders)
-  - [Configuration](#facade-configuration)
+  - [Configuration](#client-configuration)
   - [Events](#events)
   - [Escape Hatch](#escape-hatch)
   - [Complete Consumer Example](#complete-consumer-example)
@@ -54,49 +54,49 @@ Complete API reference for SentinelNavClient — covers the consumer-facing Faca
 
 ---
 
-# Facade
+# Client
 
-Single entry-point facade for SentinelNavClient. Wires and drives all modules, with a built-in event system for state-change notifications.
+Single entry-point client for SentinelNavClient. Wires and drives all modules, with a built-in event system for state-change notifications.
 
-**This is the recommended way to use SentinelNavClient.** SentinelNavClient creates and owns a single shared Facade instance. Consumers access it via `_G.SentinelNavClient.facade`. For advanced use cases requiring direct module access, see the [escape hatch](#escape-hatch) section or the individual module sections below.
+**This is the recommended way to use SentinelNavClient.** SentinelNavClient creates and owns a single shared Client instance. Consumers access it via `_G.SentinelNavClient.client`. For advanced use cases requiring direct module access, see the [escape hatch](#escape-hatch) section or the individual module sections below.
 
 ---
 
-## Accessing the Facade
+## Accessing the Client
 
-SentinelNavClient creates a single shared Facade at initialization. All consumers share this instance. There are three ways to access it:
+SentinelNavClient creates a single shared Client at initialization. All consumers share this instance. There are three ways to access it:
 
-### `_G.SentinelNavClient.facade` (Recommended)
+### `_G.SentinelNavClient.client` (Recommended)
 
-Live getter via metatable `__index`. Returns the shared Facade, or `nil` if SentinelNavClient hasn't initialized yet.
+Live getter via metatable `__index`. Returns the shared Client, or `nil` if SentinelNavClient hasn't initialized yet.
 
 ```lua
-local facade = _G.SentinelNavClient.facade
-if facade then
-    facade:move_to(target, callback)
+local client = _G.SentinelNavClient.client
+if client then
+    client:move_to(target, callback)
 end
 ```
 
 ### `_G.SentinelNavClient.create(config?)` (Backward Compatible)
 
-Returns the same shared Facade. The `config` parameter is accepted but **ignored** — SentinelNavClient's UI owns all settings.
+Returns the same shared Client. The `config` parameter is accepted but **ignored** — SentinelNavClient's UI owns all settings.
 
 ```lua
-local facade = _G.SentinelNavClient.create()
+local client = _G.SentinelNavClient.create()
 ```
 
-### `Facade:new(config)` (Internal Only)
+### `Client:new(config)` (Internal Only)
 
-Called by `SentinelNavClient/init.lua` during plugin initialization. **Consumers should NOT call this directly** — it would create an isolated Facade disconnected from SentinelNavClient's update loop and settings sync.
+Called by `SentinelNavClient/init.lua` during plugin initialization. **Consumers should NOT call this directly** — it would create an isolated Client disconnected from SentinelNavClient's update loop and settings sync.
 
 ### Consumer Example
 
 ```lua
 -- In your plugin's initialize():
-if _G.SentinelNavClient and _G.SentinelNavClient.facade then
-    local facade = _G.SentinelNavClient.facade
+if _G.SentinelNavClient and _G.SentinelNavClient.client then
+    local client = _G.SentinelNavClient.client
 
-    facade:move_to(destination, function(ok, reason)
+    client:move_to(destination, function(ok, reason)
         if ok then core.log("Arrived!") end
     end)
 end
@@ -109,7 +109,7 @@ end
 ### update
 
 ```lua
-facade:update()
+client:update()
 ```
 
 Drives all internal modules in the correct order:
@@ -118,7 +118,7 @@ Drives all internal modules in the correct order:
 2. `movement:update()` — advances waypoints, stuck detection, obstacle scanning, path validation
 3. Detects state transitions and fires [events](#events)
 
-> **Note:** SentinelNavClient calls `facade:update()` from its own `on_update` callback every frame. **Consumers do NOT need to call this.** If a consumer calls it anyway, it is harmless — Movement rate-limits internally via `_tick_interval`.
+> **Note:** SentinelNavClient calls `client:update()` from its own `on_update` callback every frame. **Consumers do NOT need to call this.** If a consumer calls it anyway, it is harmless — Movement rate-limits internally via `_tick_interval`.
 
 ---
 
@@ -129,7 +129,7 @@ All movement methods delegate to the internal [Movement](#movement) module. See 
 ### move_to
 
 ```lua
-facade:move_to(target, callback?, opts?)
+client:move_to(target, callback?, opts?)
 ```
 
 Move to a target position using navmesh pathfinding.
@@ -141,7 +141,7 @@ Move to a target position using navmesh pathfinding.
 | `opts` | table | no | `{ use_navmesh = true, map_id = auto }` |
 
 ```lua
-facade:move_to(destination, function(ok, reason)
+client:move_to(destination, function(ok, reason)
     if ok then
         core.log("Arrived!")
     else
@@ -155,7 +155,7 @@ end)
 ### move_direct
 
 ```lua
-facade:move_direct(target, callback?)
+client:move_direct(target, callback?)
 ```
 
 Move directly without pathfinding. Equivalent to `move_to(target, callback, { use_navmesh = false })`.
@@ -165,7 +165,7 @@ Move directly without pathfinding. Equivalent to `move_to(target, callback, { us
 ### follow_path
 
 ```lua
-facade:follow_path(waypoints, callback?)
+client:follow_path(waypoints, callback?)
 ```
 
 Follow a pre-computed waypoint array without requesting a new path from SentinelNavServer. Useful when you already have waypoints (e.g., from a direct `nav_client:find_path()` call or cached path).
@@ -177,13 +177,13 @@ Follow a pre-computed waypoint array without requesting a new path from Sentinel
 
 ```lua
 -- Get a path manually, then follow it
-facade.nav_client:find_path(start, dest, function(ok, data)
+client.nav_client:find_path(start, dest, function(ok, data)
     if ok then
-        facade:follow_path(data.waypoints, function(success, reason)
+        client:follow_path(data.waypoints, function(success, reason)
             if success then core.log("Arrived!") end
         end)
     end
-end, facade:get_path_opts())
+end, client:get_path_opts())
 ```
 
 ---
@@ -191,7 +191,7 @@ end, facade:get_path_opts())
 ### plan_route
 
 ```lua
-facade:plan_route(nodes, callback?, opts?)
+client:plan_route(nodes, callback?, opts?)
 ```
 
 Plan and execute a TSP-optimized route through multiple nodes.
@@ -222,7 +222,7 @@ end
 ### replan
 
 ```lua
-facade:replan(reason?)
+client:replan(reason?)
 ```
 
 Replan the active route from the current leg. Requires an active route from `plan_route()`.
@@ -232,7 +232,7 @@ Replan the active route from the current leg. Requires an active route from `pla
 ### validate_destination
 
 ```lua
-facade:validate_destination(target, callback)
+client:validate_destination(target, callback)
 ```
 
 Check if a destination is reachable **without starting movement**.
@@ -247,7 +247,7 @@ Check if a destination is reachable **without starting movement**.
 ### stop
 
 ```lua
-facade:stop()
+client:stop()
 ```
 
 Stop all movement and reset to idle. Clears active path, destination, callbacks, stuck counters, and route data.
@@ -257,7 +257,7 @@ Stop all movement and reset to idle. Clears active path, destination, callbacks,
 ### destroy
 
 ```lua
-facade:destroy()
+client:destroy()
 ```
 
 Stop movement, clear all obstacle zones, and remove event listeners. Call when permanently done with the SentinelNavClient instance.
@@ -269,7 +269,7 @@ Stop movement, clear all obstacle zones, and remove event listeners. Call when p
 ### get_state
 
 ```lua
-facade:get_state() -> string
+client:get_state() -> string
 ```
 
 Returns the current movement state:
@@ -288,7 +288,7 @@ Returns the current movement state:
 ### is_moving
 
 ```lua
-facade:is_moving() -> boolean
+client:is_moving() -> boolean
 ```
 
 Returns `true` if state is `"moving"` or `"requesting_path"`.
@@ -298,7 +298,7 @@ Returns `true` if state is `"moving"` or `"requesting_path"`.
 ### get_destination
 
 ```lua
-facade:get_destination() -> vec3|nil
+client:get_destination() -> vec3|nil
 ```
 
 Returns the current destination, or `nil` if not moving.
@@ -308,7 +308,7 @@ Returns the current destination, or `nil` if not moving.
 ### get_current_path
 
 ```lua
-facade:get_current_path() -> vec3[]|nil
+client:get_current_path() -> vec3[]|nil
 ```
 
 Returns the current waypoint array, or `nil` if no active path.
@@ -318,7 +318,7 @@ Returns the current waypoint array, or `nil` if no active path.
 ### get_path_index
 
 ```lua
-facade:get_path_index() -> number
+client:get_path_index() -> number
 ```
 
 Returns the current waypoint index in the active path. Returns `1` if no path is active.
@@ -328,7 +328,7 @@ Returns the current waypoint index in the active path. Returns `1` if no path is
 ### get_progress
 
 ```lua
-facade:get_progress() -> table
+client:get_progress() -> table
 ```
 
 Detailed progress snapshot:
@@ -351,7 +351,7 @@ Detailed progress snapshot:
 ### get_corridor_widths
 
 ```lua
-facade:get_corridor_widths() -> number[]|nil
+client:get_corridor_widths() -> number[]|nil
 ```
 
 Returns corridor width data for the current indoor path, or `nil` if outdoors or no data.
@@ -363,7 +363,7 @@ Returns corridor width data for the current indoor path, or `nil` if outdoors or
 ### is_server_available
 
 ```lua
-facade:is_server_available() -> boolean
+client:is_server_available() -> boolean
 ```
 
 Returns `true` if SentinelNavServer server appears connected (has had a recent successful request, fewer than 3 consecutive failures).
@@ -373,7 +373,7 @@ Returns `true` if SentinelNavServer server appears connected (has had a recent s
 ### health_check
 
 ```lua
-facade:health_check(callback)
+client:health_check(callback)
 ```
 
 Check SentinelNavServer server health.
@@ -389,7 +389,7 @@ end
 ### get_height
 
 ```lua
-facade:get_height(pos, callback)
+client:get_height(pos, callback)
 ```
 
 Get the navmesh Z-coordinate at arbitrary world coordinates.
@@ -404,7 +404,7 @@ Get the navmesh Z-coordinate at arbitrary world coordinates.
 ### get_player_height
 
 ```lua
-facade:get_player_height(callback)
+client:get_player_height(callback)
 ```
 
 Convenience wrapper — gets the navmesh Z-coordinate at the local player's current position.
@@ -416,14 +416,14 @@ Convenience wrapper — gets the navmesh Z-coordinate at the local player's curr
 ### get_path_opts
 
 ```lua
-facade:get_path_opts(extra?) -> table
+client:get_path_opts(extra?) -> table
 ```
 
 Build a path options table from the current Movement config. Merges all configured smoothing, filter, and wall clearance values into a table suitable for passing to Navigation methods. Optionally merge extra key-value overrides on top.
 
 ```lua
-local opts = facade:get_path_opts({ allow_partial = true })
-facade.nav_client:find_path(start, dest, callback, opts)
+local opts = client:get_path_opts({ allow_partial = true })
+client.nav_client:find_path(start, dest, callback, opts)
 ```
 
 ---
@@ -431,30 +431,30 @@ facade.nav_client:find_path(start, dest, callback, opts)
 ### get_corridor_opts
 
 ```lua
-facade:get_corridor_opts(extra?) -> table
+client:get_corridor_opts(extra?) -> table
 ```
 
 Same as `get_path_opts` but also includes `probe_distance` from the corridor config. Use with `find_path_corridor`.
 
-> **Avoidance zones with direct `nav_client` calls:** When using the escape hatch to call `nav_client` methods directly (e.g., `find_path_corridor`, `find_route_multi`), you must pass `avoid_zones` explicitly in the opts table. `facade:move_to()` handles this automatically, but direct calls do not.
+> **Avoidance zones with direct `nav_client` calls:** When using the escape hatch to call `nav_client` methods directly (e.g., `find_path_corridor`, `find_route_multi`), you must pass `avoid_zones` explicitly in the opts table. `client:move_to()` handles this automatically, but direct calls do not.
 >
 > ```lua
-> local zones = facade.obstacle:get_avoidance_zones()
-> local opts = facade:get_path_opts({ avoid_zones = zones })
-> facade.nav_client:find_route_multi(stops, callback, opts)
+> local zones = client.obstacle:get_avoidance_zones()
+> local opts = client:get_path_opts({ avoid_zones = zones })
+> client.nav_client:find_route_multi(stops, callback, opts)
 > ```
 
 ---
 
-## Facade Configuration
+## Client Configuration
 
 ### How Settings Work
 
 SentinelNavClient owns all navigation settings via its built-in UI. The settings flow is:
 
 1. ~40 menu elements in `SentinelNavClient/ui/window.lua` (persisted across sessions via `core.menu.*`)
-2. `sync_to_facade()` reads all elements every render frame
-3. Calls `facade:update_config()` with the resolved values
+2. `sync_to_client()` reads all elements every render frame
+3. Calls `client:update_config()` with the resolved values
 4. Movement and Obstacle modules update their internal config
 
 **Consumers should NOT call `update_config()` directly** — their changes will be overwritten on the next render frame by SentinelNavClient's sync.
@@ -463,7 +463,7 @@ To change navigation settings, use the SentinelNavClient Settings UI (toggled vi
 
 ### Constructor Config (Internal)
 
-The Facade constructor accepts sectioned config, but this is only used internally by `SentinelNavClient/init.lua`:
+The Client constructor accepts sectioned config, but this is only used internally by `SentinelNavClient/init.lua`:
 
 | Section | Module | Description |
 |---------|--------|-------------|
@@ -476,12 +476,12 @@ The Facade constructor accepts sectioned config, but this is only used internall
 ### update_config (Internal)
 
 ```lua
-facade:update_config(overrides)
+client:update_config(overrides)
 ```
 
 Distribute config updates to underlying modules at runtime. Only provided keys are changed.
 
-> **Internal:** This is called by SentinelNavClient's `sync_to_facade()` every render frame. Consumer calls will be overwritten. Use SentinelNavClient's Settings UI instead.
+> **Internal:** This is called by SentinelNavClient's `sync_to_client()` every render frame. Consumer calls will be overwritten. Use SentinelNavClient's Settings UI instead.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -493,12 +493,12 @@ Distribute config updates to underlying modules at runtime. Only provided keys a
 
 ## Events
 
-The facade fires events when the movement state changes. Use `on()` to subscribe and `off()` to unsubscribe.
+The client fires events when the movement state changes. Use `on()` to subscribe and `off()` to unsubscribe.
 
 ### on
 
 ```lua
-facade:on(event, callback)
+client:on(event, callback)
 ```
 
 Register a listener for an event. Multiple listeners can be registered for the same event. Listeners are called in registration order.
@@ -506,7 +506,7 @@ Register a listener for an event. Multiple listeners can be registered for the s
 ### off
 
 ```lua
-facade:off(event, callback)
+client:off(event, callback)
 ```
 
 Remove a previously registered listener. Pass the **same function reference** used in `on()`.
@@ -521,15 +521,15 @@ Remove a previously registered listener. Pass the **same function reference** us
 | `"failed"` | Movement failed | `nil` |
 
 ```lua
-facade:on("state_change", function(data)
+client:on("state_change", function(data)
     core.log(string.format("SentinelNavClient: %s -> %s", data.from, data.to))
 end)
 
-facade:on("arrived", function()
+client:on("arrived", function()
     core.log("Destination reached!")
 end)
 
-facade:on("failed", function()
+client:on("failed", function()
     core.log_error("Movement failed — check path or obstacles")
 end)
 ```
@@ -544,31 +544,31 @@ For advanced use cases, the underlying module instances are exposed as public fi
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `facade.nav_client` | Navigation | Raw HTTP client — direct access to all 11 endpoints |
-| `facade.movement` | Movement | Path follower — full state machine, stuck recovery |
-| `facade.obstacle` | Obstacle | Obstacle detector — zone memory, ray probing |
+| `client.nav_client` | Navigation | Raw HTTP client — direct access to all 11 endpoints |
+| `client.movement` | Movement | Path follower — full state machine, stuck recovery |
+| `client.obstacle` | Obstacle | Obstacle detector — zone memory, ray probing |
 
 ```lua
-local facade = _G.SentinelNavClient.facade
+local client = _G.SentinelNavClient.client
 
--- Use the facade for common operations
-facade:move_to(target, callback)
+-- Use the client for common operations
+client:move_to(target, callback)
 
 -- Drop to raw client for specialized queries
-facade.nav_client:raycast(start, dest, function(ok, data)
+client.nav_client:raycast(start, dest, function(ok, data)
     if ok and not data.hit then
         core.log("Clear line of sight!")
     end
 end)
 
 -- Access obstacle zones directly
-local zones = facade.obstacle:get_avoidance_zones()
+local zones = client.obstacle:get_avoidance_zones()
 
 -- Read movement internals
-local widths = facade.movement:get_corridor_widths()
+local widths = client.movement:get_corridor_widths()
 ```
 
-> **Note:** The facade and its modules share the same instances. Calling `movement:stop()` on the escape hatch has the same effect as `facade:stop()`.
+> **Note:** The client and its modules share the same instances. Calling `movement:stop()` on the escape hatch has the same effect as `client:stop()`.
 
 ---
 
@@ -577,29 +577,29 @@ local widths = facade.movement:get_corridor_widths()
 ```lua
 -- Example: Using SentinelNavClient from a consumer plugin (e.g., a gathering bot)
 
--- 1. Get the shared Facade (in your plugin's initialize)
-if not (_G.SentinelNavClient and _G.SentinelNavClient.facade) then
+-- 1. Get the shared Client (in your plugin's initialize)
+if not (_G.SentinelNavClient and _G.SentinelNavClient.client) then
     core.log_error("SentinelNavClient not loaded — navigation unavailable")
     return
 end
 
-local facade = _G.SentinelNavClient.facade
+local client = _G.SentinelNavClient.client
 
 -- 2. Register event listeners (optional)
-facade:on("arrived", function()
+client:on("arrived", function()
     core.log("Arrived at destination!")
 end)
 
-facade:on("failed", function()
+client:on("failed", function()
     core.log_error("Movement failed")
 end)
 
-facade:on("state_change", function(data)
+client:on("state_change", function(data)
     core.log("[Nav] " .. data.from .. " -> " .. data.to)
 end)
 
 -- 3. Check server health
-facade:health_check(function(ok, data)
+client:health_check(function(ok, data)
     if ok then
         core.log("SentinelNavServer v" .. data.version .. " (" .. data.uptime_secs .. "s uptime)")
     else
@@ -610,10 +610,10 @@ end)
 -- 4. Validate and move to a destination
 local dest = { x = -8900, y = 560, z = 94 }
 
-facade:validate_destination(dest, function(reachable, reason, distance)
+client:validate_destination(dest, function(reachable, reason, distance)
     if reachable then
         core.log(string.format("Target reachable, %.0f yards", distance))
-        facade:move_to(dest)
+        client:move_to(dest)
     else
         core.log_error("Unreachable: " .. tostring(reason))
     end
@@ -626,25 +626,25 @@ local herb_spots = {
     { x = -8900, y = 600, z = 95 },
 }
 
-facade:plan_route(herb_spots, function(ok, data)
+client:plan_route(herb_spots, function(ok, data)
     if ok and data.type == "route_complete" then
         core.log("Route finished!")
     end
 end, { return_to_start = true })
 
 -- 6. Use raw modules when needed (escape hatch)
-facade.nav_client:raycast(start, dest, function(ok, data)
+client.nav_client:raycast(start, dest, function(ok, data)
     if ok and not data.hit then
         core.log("Clear line of sight!")
     end
 end)
 
 -- 7. Stop when needed
--- facade:stop()
+-- client:stop()
 
 -- Note: No update() call needed (SentinelNavClient drives it)
 -- Note: No update_config() needed (SentinelNavClient UI syncs settings)
--- Note: No destroy() needed (SentinelNavClient manages Facade lifecycle)
+-- Note: No destroy() needed (SentinelNavClient manages Client lifecycle)
 ```
 
 ---
@@ -656,7 +656,7 @@ HTTP client for the SentinelNavServer pathfinding server. Provides async pathfin
 
 All pathfinding methods are **asynchronous** — they issue an HTTP GET to SentinelNavServer and invoke a callback with the result. Failed requests retry with exponential backoff.
 
-> **Note:** Consumers should access the shared Navigation client via `_G.SentinelNavClient.facade.nav_client` rather than creating a new instance. The shared client is already configured by SentinelNavClient.
+> **Note:** Consumers should access the shared Navigation client via `_G.SentinelNavClient.client.nav_client` rather than creating a new instance. The shared client is already configured by SentinelNavClient.
 
 ---
 
@@ -1205,7 +1205,7 @@ All callbacks are wrapped in `pcall`. If your callback throws an error, it is ca
 
 High-level path-following module that wraps [Navigation](#navigation). Handles waypoint traversal, stuck detection and recovery, route planning, indoor corridor adaptation, obstacle avoidance, and casting deferral.
 
-> **Note:** Consumers should access the shared Movement module via `_G.SentinelNavClient.facade.movement`. The shared instance is created and configured by SentinelNavClient. `movement:update()` is called by SentinelNavClient's `on_update` callback every frame — consumers do not need to call it. `update_config()` is called by SentinelNavClient's UI sync system every render frame — consumer calls would be overwritten.
+> **Note:** Consumers should access the shared Movement module via `_G.SentinelNavClient.client.movement`. The shared instance is created and configured by SentinelNavClient. `movement:update()` is called by SentinelNavClient's `on_update` callback every frame — consumers do not need to call it. `update_config()` is called by SentinelNavClient's UI sync system every render frame — consumer calls would be overwritten.
 
 ---
 
@@ -1443,7 +1443,7 @@ Attach an Obstacle instance for avoidance-aware pathfinding. When set:
 - Detected obstacle zones are passed to `find_path_avoid()` for rerouting
 - Reactive probing triggers on the 2nd stuck recovery attempt
 
-> **Note:** When using the Facade, this is called automatically during construction. You only need to call this if you're wiring modules manually.
+> **Note:** When using the Client, this is called automatically during construction. You only need to call this if you're wiring modules manually.
 
 ---
 
@@ -1584,7 +1584,7 @@ When an Obstacle is attached via `set_obstacle_module()` and `proactive_obstacle
 3. If an obstacle is detected: adds an avoidance zone to the Obstacle, then triggers a repath via `find_path_avoid()` to route around it
 4. **Reactive fallback:** On the 2nd stuck recovery attempt, probes forward from the player's position. If an obstacle is found, adds a zone and repaths immediately
 
-This is fully automatic when using the Facade — the Facade wires the Obstacle into Movement during construction.
+This is fully automatic when using the Client — the Client wires the Obstacle into Movement during construction.
 
 ---
 
@@ -1618,7 +1618,7 @@ During movement, paths are periodically validated:
 
 Doodad collision detection via `core.graphics.trace_line` ray probing, with avoidance zone memory. Detected obstacles are stored as zones and fed to [Navigation:find_path_avoid()](#find_path_avoid) for rerouting.
 
-> **Note:** Consumers should access the shared Obstacle module via `_G.SentinelNavClient.facade.obstacle`. The shared instance is created and configured by SentinelNavClient. `update_config()` is called by SentinelNavClient's UI sync system every render frame — consumer calls would be overwritten.
+> **Note:** Consumers should access the shared Obstacle module via `_G.SentinelNavClient.client.obstacle`. The shared instance is created and configured by SentinelNavClient. `update_config()` is called by SentinelNavClient's UI sync system every render frame — consumer calls would be overwritten.
 
 Obstacle has two probing modes, both driven by [Movement](#movement):
 
@@ -1845,7 +1845,7 @@ No-op method for compatibility with module update loops. Probing is not driven b
 - **Proactive probing** is called by `Movement:_check_proactive_obstacles()` on a timer
 - **Reactive probing** is called by `Movement:_unstuck_probe_and_repath()` during stuck recovery
 
-When using the Facade, `obstacle:update()` is called automatically by `facade:update()`.
+When using the Client, `obstacle:update()` is called automatically by `client:update()`.
 
 ---
 
@@ -1858,8 +1858,8 @@ Obstacle is designed to work with Movement. The wiring is:
 local obstacle = Obstacle:new()
 movement:set_obstacle_module(obstacle)
 
--- Or automatic via Facade
-local facade = _G.SentinelNavClient.facade  -- wires everything internally
+-- Or automatic via Client
+local client = _G.SentinelNavClient.client  -- wires everything internally
 ```
 
 Once wired:
