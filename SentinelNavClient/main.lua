@@ -16,7 +16,7 @@ local _is_loaded = false
 
 -- Menu elements
 local _menu_tree  = core.menu.tree_node()
-local _toggle_btn = core.menu.button("navlib_open")
+local _toggle_btn = core.menu.button("snc_open")
 
 -- ---------------------------------------------------------------------------
 -- Initialization
@@ -138,7 +138,7 @@ end
 core.log("[SentinelNavClient] Module loaded — _G.SentinelNavClient available")
 
 -- ---------------------------------------------------------------------------
--- Module export (matches GatherBuddy pattern)
+-- Module export (matches SentinelGather pattern)
 -- ---------------------------------------------------------------------------
 
 return {

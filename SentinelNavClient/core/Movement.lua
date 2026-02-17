@@ -1,5 +1,5 @@
 -- Movement.lua
--- Path following and stuck recovery for GatherBuddy
+-- Path following and stuck recovery for SentinelNavClient consumers
 -- Uses Navigation for pathfinding, simple_movement for locomotion
 
 local vec3 = require("common/geometry/vector_3")

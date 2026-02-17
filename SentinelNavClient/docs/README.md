@@ -2,7 +2,7 @@
 
 Standalone Sylvannas plugin providing navmesh pathfinding and path-following movement via the [SentinelNavServer](../../SentinelNavServer/) server.
 
-SentinelNavClient runs as its own plugin with a built-in settings UI, drives its own update loop, and exposes a shared Facade that any consumer plugin (GatherBuddy, BgBuddy, etc.) can use for navigation — no setup required.
+SentinelNavClient runs as its own plugin with a built-in settings UI, drives its own update loop, and exposes a shared Facade that any consumer plugin (SentinelGather, BgBuddy, etc.) can use for navigation — no setup required.
 
 ## Requirements
 
@@ -154,7 +154,7 @@ All consumers see updated settings immediately
 | **SentinelNavClient** | Proactive/reactive probing (distance, spread, height, segments) | Obstacles tab |
 | **Consumer** | Domain-specific settings only | Consumer's own UI |
 
-**Example consumer-owned settings (GatherBuddy):** gather types (herbs/ores), mount distance threshold, random pause/jump intervals, enemy scan radius, flee health.
+**Example consumer-owned settings (SentinelGather):** gather types (herbs/ores), mount distance threshold, random pause/jump intervals, enemy scan radius, flee health.
 
 ### One-Frame Delay
 
@@ -205,24 +205,24 @@ facade:update()  -- Harmless but unnecessary.
 facade:update_config({ movement = { ... } })  -- Overwritten next frame.
 ```
 
-### GatherBuddy Example
+### SentinelGather Example
 
-GatherBuddy's `BotManager:initialize()` accesses the shared Facade:
+SentinelGather's `BotManager:initialize()` accesses the shared Facade:
 
 ```lua
 if _G.SentinelNavClient and _G.SentinelNavClient.facade then
-    self._navlib = _G.SentinelNavClient.facade
-    self._modules.Navigation = self._navlib.nav_client
-    self._modules.Movement   = self._navlib.movement
-    self._modules.Obstacle   = self._navlib.obstacle
-    self._navlib_available = true
+    self._nav_facade = _G.SentinelNavClient.facade
+    self._modules.Navigation = self._nav_facade.nav_client
+    self._modules.Movement   = self._nav_facade.movement
+    self._modules.Obstacle   = self._nav_facade.obstacle
+    self._nav_facade_available = true
 else
-    self._navlib_available = false
-    self._navlib_error = "SentinelNavClient plugin not loaded."
+    self._nav_facade_available = false
+    self._nav_facade_error = "SentinelNavClient plugin not loaded."
 end
 ```
 
-GatherBuddy's `_update_modules()` only updates its own modules (Safety, NodeScanner, Gather, Mount, etc.). SentinelNavClient modules update themselves via SentinelNavClient's own `on_update` callback.
+SentinelGather's `_update_modules()` only updates its own modules (Safety, NodeScanner, Gather, Mount, etc.). SentinelNavClient modules update themselves via SentinelNavClient's own `on_update` callback.
 
 ### BgBuddy Example
 
