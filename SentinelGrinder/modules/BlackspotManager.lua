@@ -165,6 +165,12 @@ function BlackspotManager:add(pos, map_id, radius, reason, ttl)
     return true
 end
 
+local function dist_xy(a, b)
+    local dx = (a.x or 0) - (b.x or 0)
+    local dy = (a.y or 0) - (b.y or 0)
+    return math.sqrt(dx * dx + dy * dy)
+end
+
 function BlackspotManager:is_blackspotted(pos, map_id)
     if not pos or not map_id then
         return false
@@ -174,7 +180,8 @@ function BlackspotManager:is_blackspotted(pos, map_id)
     self:prune_expired(now)
 
     for _, spot in ipairs(self._spots) do
-        if spot.map_id == map_id and spot.pos and pos:dist_to(spot.pos) <= spot.radius then
+        -- Use 2D (XY) distance to avoid false positives on multi-floor areas
+        if spot.map_id == map_id and spot.pos and dist_xy(pos, spot.pos) <= spot.radius then
             return true
         end
     end

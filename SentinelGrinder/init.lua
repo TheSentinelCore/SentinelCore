@@ -184,6 +184,13 @@ local function now_time()
     return core.time()
 end
 
+--- Return a value with random jitter applied: value * (1 +/- jitter_pct).
+--- E.g. jitter(1.0, 0.2) returns a random value between 0.8 and 1.2.
+local function jitter(value, jitter_pct)
+    local pct = jitter_pct or 0.15
+    return value * (1.0 + (math.random() * 2.0 - 1.0) * pct)
+end
+
 local function current_map_id()
     if core.get_map_id then
         return core.get_map_id()
@@ -309,7 +316,7 @@ function GrindBuddy:get_instance()
             _move_status_text = nil,
             _move_started_at = 0,
             _move_timeout = 20.0,
-            _move_stall_timeout = 2.6,
+            _move_stall_timeout = 4.0,
             _move_progress_min = 0.9,
             _move_last_progress_at = 0,
             _move_last_progress_pos = nil,
@@ -318,6 +325,7 @@ function GrindBuddy:get_instance()
             _unstuck_max_attempts = 5,
             _unstuck_action = nil,
             _unstuck_last_reason = nil,
+            _unstuck_cooldown_until = 0,
             _waypoints = {},
             _waypoint_index = 1,
             _waypoint_direction = 1,
@@ -366,6 +374,8 @@ function GrindBuddy:get_instance()
             _loot_enabled = true,
             _loot_range = 7.0,
             _loot_attempt_interval = 0.8,
+            _loot_max_attempts = 8,
+            _loot_current_attempts = 0,
             _last_loot_attempt = 0,
 
             -- Replenish / vendor flow
@@ -877,6 +887,7 @@ function GrindBuddy:_set_target(target, now, label)
     instance._target_dead_counted = false
     instance._target_acquired_at = now
     instance._last_target_seen_at = now
+    instance._loot_current_attempts = 0
 
     self:_set_state("targeting")
     self:_set_status(string.format("%s (dist=%.1f)", label or "Target acquired", dist))
@@ -964,10 +975,18 @@ function GrindBuddy:_try_loot_target(local_player, target, now)
         return true
     end
 
-    if (now - instance._last_loot_attempt) < instance._loot_attempt_interval then
+    if (now - instance._last_loot_attempt) < jitter(instance._loot_attempt_interval, 0.25) then
         return true
     end
     instance._last_loot_attempt = now
+    instance._loot_current_attempts = (instance._loot_current_attempts or 0) + 1
+
+    -- Loot timeout: give up after max attempts to prevent infinite loot loops
+    if instance._loot_current_attempts > instance._loot_max_attempts then
+        core.log_warning("[GrindBuddy] Loot timeout: giving up after " .. tostring(instance._loot_max_attempts) .. " attempts")
+        instance._loot_current_attempts = 0
+        return false
+    end
 
     if tgt_pos and core.input and core.input.look_at then
         core.input.look_at(tgt_pos)
@@ -984,7 +1003,7 @@ function GrindBuddy:_try_loot_target(local_player, target, now)
     instance._session_loot_attempts = (instance._session_loot_attempts or 0) + 1
 
     self:_set_state("looting")
-    self:_set_status("Looting")
+    self:_set_status(string.format("Looting (%d/%d)", instance._loot_current_attempts, instance._loot_max_attempts))
     return true
 end
 
@@ -1314,10 +1333,13 @@ function GrindBuddy:_tick_replenish(local_player, now)
 
     if (now - instance._replenish_started_at) > instance._replenish_timeout then
         instance._replenish_active = false
-        instance._replenish_cooldown_until = now + instance._replenish_cooldown
+        instance._replenish_fail_count = (instance._replenish_fail_count or 0) + 1
+        -- Exponential backoff: double the cooldown each consecutive failure (max 5 min)
+        local backoff = math.min(300.0, instance._replenish_cooldown * math.pow(2, instance._replenish_fail_count - 1))
+        instance._replenish_cooldown_until = now + backoff
         self:_set_state("patrol")
-        self:_set_status("Replenish timeout")
-        core.log_warning("[GrindBuddy] Replenish timeout, resuming patrol")
+        self:_set_status(string.format("Replenish timeout (%d fails, next in %.0fs)", instance._replenish_fail_count, backoff))
+        core.log_warning(string.format("[GrindBuddy] Replenish timeout (fail #%d), cooldown %.0fs", instance._replenish_fail_count, backoff))
         return false
     end
 
@@ -1363,6 +1385,7 @@ function GrindBuddy:_tick_replenish(local_player, now)
     local completed, sold_count, repaired = self:_run_vendor_actions(now)
     if completed then
         instance._replenish_active = false
+        instance._replenish_fail_count = 0
         instance._session_vendor_completions = (instance._session_vendor_completions or 0) + 1
         if sold_count == 0 and repaired ~= true then
             instance._replenish_cooldown_until = now + instance._replenish_cooldown
@@ -1475,7 +1498,7 @@ function GrindBuddy:_acquire_target(local_player)
     local instance = self:get_instance()
     local now = now_time()
 
-    if now - instance._last_scan < instance._scan_interval then
+    if now - instance._last_scan < jitter(instance._scan_interval, 0.25) then
         return nil
     end
     instance._last_scan = now
@@ -1541,7 +1564,7 @@ end
 function GrindBuddy:_attempt_pull(target)
     local instance = self:get_instance()
     local now = now_time()
-    if now - instance._last_pull_attempt < instance._pull_cooldown then
+    if now - instance._last_pull_attempt < jitter(instance._pull_cooldown, 0.20) then
         return
     end
     instance._last_pull_attempt = now
@@ -1575,6 +1598,7 @@ function GrindBuddy:_reset_unstuck_runtime(reset_attempts)
     local instance = self:get_instance()
     instance._unstuck_action = nil
     instance._unstuck_last_reason = nil
+    instance._unstuck_cooldown_until = 0
     if reset_attempts then
         instance._unstuck_attempt_count = 0
     end
@@ -1641,6 +1665,9 @@ function GrindBuddy:_retry_move_after_unstuck(reason)
         return false
     end
 
+    -- Set a cooldown so the stall detector doesn't immediately re-trigger
+    instance._unstuck_cooldown_until = now_time() + 3.0
+
     local attempt = instance._unstuck_attempt_count or 0
     local status = string.format("Recovering (%d/%d)", attempt, instance._unstuck_max_attempts)
     if reason and reason ~= "" then
@@ -1689,6 +1716,11 @@ function GrindBuddy:_attempt_unstuck(local_player, now, stall_reason)
     end
 
     if instance._unstuck_action then
+        return true
+    end
+
+    -- Cooldown guard: prevent rapid re-entry after a retry move
+    if now < (instance._unstuck_cooldown_until or 0) then
         return true
     end
 
@@ -1866,6 +1898,23 @@ function GrindBuddy:_tick_patrol(local_player)
     local movement = instance._movement
 
     local moving = movement.is_moving and movement:is_moving() or false
+
+    -- Waypoint lookahead: if we're close to the current waypoint while still
+    -- moving, advance to the next one early so there's no pause between them.
+    if moving and local_player and local_player:is_valid() then
+        local wp = self:_current_waypoint()
+        if wp then
+            local my_pos = local_player:get_position()
+            local dist_to_wp = self:_distance_to(my_pos, wp)
+            if dist_to_wp and dist_to_wp < 5.0 then
+                self:_advance_waypoint()
+            end
+        end
+        self:_set_state("patrol")
+        self:_set_status("Patrolling")
+        return
+    end
+
     if moving then
         self:_set_state("patrol")
         self:_set_status("Patrolling")
@@ -2199,7 +2248,7 @@ function GrindBuddy:update()
     end
 
     local now = now_time()
-    if now - instance._last_tick < instance._tick_interval then
+    if now - instance._last_tick < jitter(instance._tick_interval, 0.20) then
         return
     end
     instance._last_tick = now

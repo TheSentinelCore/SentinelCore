@@ -47,7 +47,10 @@ core.register_on_update_callback(function()
     end
 
     if _is_loaded then
-        GrindBuddy:update()
+        local ok, err = pcall(GrindBuddy.update, GrindBuddy)
+        if not ok then
+            core.log_error("[GrindBuddy] Update error: " .. tostring(err))
+        end
     end
 end)
 
