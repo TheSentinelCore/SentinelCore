@@ -29,9 +29,9 @@ core.log_error(message)     -- red, error level
 core.http_get(url, callback)
 -- callback signature: function(http_code, content_type, response_body, response_headers)
 -- http_code: 200 = success, 0 = connection failed, 4xx/5xx = server error
--- response_body: string (JSON for NavBuddy)
+-- response_body: string (JSON for SentinelNavServer)
 
--- With custom headers (not needed for NavBuddy):
+-- With custom headers (not needed for SentinelNavServer):
 core.http_get(url, headers_table, callback)
 ```
 

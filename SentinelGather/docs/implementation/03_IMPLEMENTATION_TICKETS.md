@@ -12,7 +12,7 @@ All tickets reference the PRD (02_PRD.md) and Claude Code Prompt (01_CLAUDE_CODE
 **File:** NavigationClient.lua (top of file)
 
 ### Description
-Implement a minimal JSON decoder function that handles NavBuddy's response format. No external dependency allowed.
+Implement a minimal JSON decoder function that handles SentinelNavServer's response format. No external dependency allowed.
 
 ### Acceptance Criteria
 - [ ] `json_decode(str)` → table, parses objects, arrays, strings, numbers, booleans, null
@@ -25,7 +25,7 @@ Implement a minimal JSON decoder function that handles NavBuddy's response forma
 - [ ] Local scope (not exported)
 
 ### Technical Notes
-- NavBuddy responses are simple: flat objects with arrays of `{x,y,z}` point objects
+- SentinelNavServer responses are simple: flat objects with arrays of `{x,y,z}` point objects
 - No need to handle: unicode escapes, deeply nested structures, streaming
 - Test with: `json_decode('{"success":true,"path":[{"x":1.5,"y":-2.3,"z":100.0}],"distance":42.7}')
 
@@ -267,7 +267,7 @@ Implement TSP route planning and multi-leg following.
   ```
 
 ### Implementation Notes
-- `leg_boundaries` from NavBuddy are indices into the full path array marking where each leg starts
+- `leg_boundaries` from SentinelNavServer are indices into the full path array marking where each leg starts
 - `visit_order` is 0-indexed from the Rust server; convert to 1-indexed for Lua
 
 ---
@@ -330,7 +330,7 @@ local mm = MovementModule:new(nc)
 
 -- Health check
 nc:health_check(function(success, data, err)
-    core.log("[Test] NavBuddy health: " .. tostring(success))
+    core.log("[Test] SentinelNavServer health: " .. tostring(success))
 end)
 
 -- Single move

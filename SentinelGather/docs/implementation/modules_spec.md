@@ -1,10 +1,10 @@
-# CLAUDE.md — GatherBuddy Movement & Navigation Client Rewrite
+# CLAUDE.md — SentinelGather Movement & Navigation Client Rewrite
 
 ## What You're Building
 
 Two Lua modules for a WoW gathering bot running on the Sylvannas scripting platform:
 
-1. **NavigationClient.lua** (~300 lines) — HTTP client for the NavBuddy pathfinding server
+1. **NavigationClient.lua** (~300 lines) — HTTP client for the SentinelNavServer pathfinding server
 2. **MovementModule.lua** (~500-600 lines) — Movement orchestrator using NavigationClient + simple_movement
 
 ## Required Reading (in order)

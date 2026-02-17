@@ -1,4 +1,4 @@
-# GatherBuddy - Architecture Design Document (ADD)
+# SentinelGather - Architecture Design Document (ADD)
 
 **Version:** 1.0  
 **Date:** January 31, 2025  
@@ -11,7 +11,7 @@
 
 ### 1.1 Purpose
 
-This document describes the high-level architecture of GatherBuddy, a gathering automation bot for World of Warcraft built on the Sylvannas API framework.
+This document describes the high-level architecture of SentinelGather, a gathering automation bot for World of Warcraft built on the Sylvannas API framework.
 
 ### 1.2 Scope
 
@@ -57,7 +57,7 @@ This document covers:
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                            GatherBuddy                                   │
+│                            SentinelGather                                   │
 │                                                                          │
 │  ┌────────────────────────────────────────────────────────────────┐    │
 │  │                         BotManager                              │    │
@@ -441,7 +441,7 @@ This document covers:
 
 ```
 ┌─────────────────┐                    ┌─────────────────┐
-│  GatherBuddy    │                    │ Navigation Svc  │
+│  SentinelGather    │                    │ Navigation Svc  │
 │                 │                    │                 │
 │ NavigationClient│───HTTP GET────────▶│ /find_path     │
 │                 │◀──JSON Response────│                 │
@@ -590,7 +590,7 @@ scripts_data/
 ### 9.2 Startup Sequence
 
 ```
-1. Sylvannas loads GatherBuddy/init.lua
+1. Sylvannas loads SentinelGather/init.lua
 2. init.lua requires main.lua
 3. main.lua initializes:
    a. Logger

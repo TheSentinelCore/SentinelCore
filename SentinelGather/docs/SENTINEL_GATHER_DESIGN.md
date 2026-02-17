@@ -1,8 +1,8 @@
-# GatherBuddy - Gathering Bot Design Document
+# SentinelGather - Gathering Bot Design Document
 
 ## Overview
 
-GatherBuddy is a herbalism/mining gathering bot built on the Sylvannas API with an event-driven architecture. It navigates predefined routes, detects gathering nodes, and collects resources while avoiding threats.
+SentinelGather is a herbalism/mining gathering bot built on the Sylvannas API with an event-driven architecture. It navigates predefined routes, detects gathering nodes, and collects resources while avoiding threats.
 
 **Key Principles:**
 - Event-driven architecture for loose coupling
@@ -19,7 +19,7 @@ GatherBuddy is a herbalism/mining gathering bot built on the Sylvannas API with 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         GatherBuddy                                  │
+│                         SentinelGather                                  │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────────────┐ │
 │  │ Profile  │──▶│  State   │──▶│  Event   │──▶│    Modules       │ │
@@ -794,7 +794,7 @@ local ORE_PATTERNS = {
 ## File Structure
 
 ```
-GatherBuddy/
+SentinelGather/
 ├── init.lua                    -- Entry point
 ├── main.lua                    -- Main registration
 ├── CLAUDE.md                   -- AI guidance

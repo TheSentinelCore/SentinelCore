@@ -1,4 +1,4 @@
-# GatherBuddy - Product Requirements Document (PRD)
+# SentinelGather - Product Requirements Document (PRD)
 
 **Version:** 1.0  
 **Date:** January 31, 2025  
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-GatherBuddy is an automated gathering bot for World of Warcraft that collects herbs and mining nodes along predefined routes. It operates using the Sylvannas API framework and integrates with an existing Rust-based navigation service for pathfinding.
+SentinelGather is an automated gathering bot for World of Warcraft that collects herbs and mining nodes along predefined routes. It operates using the Sylvannas API framework and integrates with an existing Rust-based navigation service for pathfinding.
 
 ### 1.1 Problem Statement
 

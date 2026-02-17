@@ -1,4 +1,4 @@
-# GatherBuddy - Testing Strategy
+# SentinelGather - Testing Strategy
 
 **Version:** 1.0  
 **Date:** January 31, 2025  
@@ -7,7 +7,7 @@
 
 ## 1. Overview
 
-This document outlines the testing approach for GatherBuddy. Due to the nature of game automation, traditional unit testing is limited. We employ a combination of:
+This document outlines the testing approach for SentinelGather. Due to the nature of game automation, traditional unit testing is limited. We employ a combination of:
 
 1. **Manual Unit Tests** - Inline test functions that verify module behavior
 2. **Integration Tests** - Test modules working together
@@ -350,7 +350,7 @@ end
 ```lua
 -- In game console or init.lua for testing
 local function run_all_tests()
-    core.log("=== GatherBuddy Test Suite ===")
+    core.log("=== SentinelGather Test Suite ===")
     
     local modules = {
         { name = "JSON", instance = require("utils/JSON") },
