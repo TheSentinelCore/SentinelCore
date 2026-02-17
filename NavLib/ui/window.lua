@@ -29,6 +29,7 @@ local _initialized = false
 local _facade = nil          -- NavLib Facade instance
 local _menu = nil            -- menu elements table
 local _visualizer = nil      -- Visualizer instance
+local _reset_mappings = {}   -- per-tab reset mappings keyed by tab ID
 
 --------------------------------------------------------------------------------
 -- Menu element creation
@@ -59,6 +60,11 @@ local function create_menu_elements()
 
         -- Movement basics (Tab 1)
         dynamic_speed          = e(D.movement.dynamic_speed),
+        dyn_tol_scale          = e(D.movement.dynamic_speed_max_tolerance_scale),
+        dyn_tol_bonus          = e(D.movement.dynamic_speed_max_tolerance_bonus),
+        dyn_ramp_z             = e(D.movement.dynamic_speed_ramp_z_delta),
+        dyn_ramp_tol           = e(D.movement.dynamic_speed_ramp_tolerance),
+        dyn_ramp_look          = e(D.movement.dynamic_speed_ramp_look_distance),
         waypoint_tolerance     = e(D.movement.waypoint_tolerance),
         final_tolerance        = e(D.movement.final_tolerance),
 
@@ -150,8 +156,10 @@ local function render_advanced_toggle(ui, y_offset)
     local window = ui.window
     local colors = ui.colors
     local x_start = LAYOUT.padding_side
+    local window_size = window:get_size()
+    local content_width = window_size.x - (2 * LAYOUT.padding_side)
 
-    local cb_size = 14
+    local cb_size = LAYOUT.checkbox_size
     local cb_start = vec2.new(x_start, y_offset)
     local cb_end   = vec2.new(x_start + cb_size, y_offset + cb_size)
 
@@ -159,16 +167,16 @@ local function render_advanced_toggle(ui, y_offset)
 
     -- Checkbox box
     local cb_bg = is_on and colors.checkbox_active or colors.checkbox_inactive
-    window:render_rect_filled(cb_start, cb_end, cb_bg, 1.0)
-    window:render_rect(cb_start, cb_end, colors.checkbox_border, 1.0, 1.0)
+    window:render_rect_filled(cb_start, cb_end, cb_bg, 4.0)
+    window:render_rect(cb_start, cb_end, colors.checkbox_border, 4.0, 1.0)
 
     -- Checkmark
     if is_on then
-        local pad = 3
+        local pad = 4
         window:render_rect_filled(
             vec2.new(x_start + pad, y_offset + pad),
             vec2.new(x_start + cb_size - pad, y_offset + cb_size - pad),
-            color.white(255), 0.5)
+            color.white(255), 2.0)
     end
 
     -- Click area (checkbox + label)
@@ -191,10 +199,8 @@ local function render_advanced_toggle(ui, y_offset)
     y_offset = y_offset + cb_size + 6
 
     -- Separator
-    local window_size = window:get_size()
-    local content_width = window_size.x - (2 * LAYOUT.padding_side)
     local sep_start = vec2.new(x_start, y_offset)
-    local sep_end   = vec2.new(x_start + content_width, y_offset + 2)
+    local sep_end   = vec2.new(x_start + content_width, y_offset + LAYOUT.separator_height)
     window:render_rect_filled(sep_start, sep_end, colors.separator, 0)
     y_offset = y_offset + 6
 
@@ -217,6 +223,11 @@ local function sync_to_facade()
     _facade:update_config({
         movement = {
             dynamic_speed               = _menu.dynamic_speed:get_state(),
+            dynamic_speed_max_tolerance_scale = _menu.dyn_tol_scale:get(),
+            dynamic_speed_max_tolerance_bonus = _menu.dyn_tol_bonus:get(),
+            dynamic_speed_ramp_z_delta  = _menu.dyn_ramp_z:get(),
+            dynamic_speed_ramp_tolerance = _menu.dyn_ramp_tol:get(),
+            dynamic_speed_ramp_look_distance = _menu.dyn_ramp_look:get(),
             waypoint_tolerance          = _menu.waypoint_tolerance:get(),
             final_tolerance             = _menu.final_tolerance:get(),
             anti_detection              = _menu.anti_detection:get_state(),
@@ -280,14 +291,83 @@ function Window.init(facade)
     -- Create the AstroUI window
     _ui = AstroUI.new({
         id = "navlib",
-        title = "NavLib Settings",
+        title = "NavLib",
         default_x = 550,
-        default_y = 200,
-        default_w = 450,
-        default_h = 550,
-        theme = "neutral",
+        default_y = 180,
+        default_w = 480,
+        default_h = 600,
+        theme = "apple",
         render_layer = 1,
     })
+
+    -- Build per-tab reset mappings
+    local D = Defaults
+    _reset_mappings = {
+        movement = {
+            { _menu.dynamic_speed,               D.movement.dynamic_speed },
+            { _menu.dyn_tol_scale,               D.movement.dynamic_speed_max_tolerance_scale },
+            { _menu.dyn_tol_bonus,               D.movement.dynamic_speed_max_tolerance_bonus },
+            { _menu.dyn_ramp_z,                  D.movement.dynamic_speed_ramp_z_delta },
+            { _menu.dyn_ramp_tol,                D.movement.dynamic_speed_ramp_tolerance },
+            { _menu.dyn_ramp_look,               D.movement.dynamic_speed_ramp_look_distance },
+            { _menu.waypoint_tolerance,          D.movement.waypoint_tolerance },
+            { _menu.final_tolerance,             D.movement.final_tolerance },
+            { _menu.anti_detection,              D.movement.anti_detection },
+            { _menu.max_deviation,               D.movement.max_deviation },
+            { _menu.stuck_interval,              D.movement.stuck_check_interval },
+            { _menu.stuck_distance,              D.movement.stuck_distance_min },
+            { _menu.max_stuck,                   D.movement.max_stuck_attempts },
+            { _menu.path_check,                  D.movement.path_check_interval },
+            { _menu.deviation_check_interval,    D.movement.deviation_check_interval },
+            { _menu.deviation_threshold,         D.movement.deviation_threshold },
+            { _menu.deviation_vertical_threshold,D.movement.deviation_vertical_threshold },
+            { _menu.deviation_corridor_factor,   D.movement.deviation_corridor_factor },
+            { _menu.repath_cooldown,             D.movement.repath_cooldown },
+            { _menu.max_deviation_repaths,       D.movement.max_deviation_repaths },
+        },
+        pathfinding = {
+            { _menu.smoothing,         D.movement.smoothing },
+            { _menu.smooth_iterations, D.movement.smooth_iterations },
+            { _menu.smooth_samples,    D.movement.smooth_samples },
+            { _menu.smooth_ratio,      D.movement.smooth_ratio },
+            { _menu.corner_angle,      D.movement.min_corner_angle },
+            { _menu.keep_originals,    D.movement.keep_originals },
+            { _menu.optimize,          D.movement.optimize },
+            { _menu.allow_partial,     D.movement.allow_partial },
+            { _menu.filter_ground,     D.movement.filter_ground },
+            { _menu.filter_water,      D.movement.filter_water },
+            { _menu.filter_lava,       D.movement.filter_lava },
+            { _menu.corridor,          D.movement.use_corridor_indoor },
+            { _menu.corridor_probe,    D.movement.corridor_probe_dist },
+            { _menu.wall_clearance_en, D.movement.wall_clearance_enabled },
+            { _menu.wall_clearance,    D.movement.wall_clearance },
+        },
+        obstacles = {
+            { _menu.proactive_obstacle, D.movement.proactive_obstacle_check },
+            { _menu.obstacle_interval,  D.movement.proactive_obstacle_interval },
+            { _menu.avoidance_radius,   D.obstacles.avoidance_radius },
+            { _menu.max_zones,          D.obstacles.max_zones },
+            { _menu.zone_ttl,           D.obstacles.zone_ttl },
+            { _menu.avoidance_cost,     D.obstacles.avoidance_cost },
+            { _menu.zone_prune,         D.obstacles.zone_prune_dist },
+            { _menu.probe_distance,     D.obstacles.probe_distance },
+            { _menu.probe_spread,       D.obstacles.probe_spread_deg },
+            { _menu.probe_height,       D.obstacles.probe_height_offset },
+            { _menu.look_height,        D.obstacles.lookahead_height_offset },
+            { _menu.look_spread,        D.obstacles.lookahead_spread_deg },
+            { _menu.look_segments,      D.obstacles.lookahead_segments },
+        },
+        debug = {
+            { _menu.debug_verbose,   D.movement.debug_verbose },
+            { _menu.debug_mode,      D.debug.debug_mode },
+            { _menu.viz_master,      D.debug.viz_master },
+            { _menu.viz_path,        D.debug.viz_path },
+            { _menu.viz_destination, D.debug.viz_destination },
+            { _menu.viz_obstacles,   D.debug.viz_obstacles },
+            { _menu.viz_corridor,    D.debug.viz_corridor },
+            { _menu.viz_state,       D.debug.viz_state },
+        },
+    }
 
     -- "Show Advanced" toggle above tab bar
     _ui._before_tabs_fn = render_advanced_toggle
@@ -296,7 +376,7 @@ function Window.init(facade)
     MovementTab.register(_ui, _menu)
     PathfindingTab.register(_ui, _menu)
     ObstaclesTab.register(_ui, _menu)
-    DebugTab.register(_ui, _menu, _facade)
+    DebugTab.register(_ui, _menu, _facade, _reset_mappings)
 
     -- Create 3D Visualizer (self-registers its own render callback)
     _visualizer = Visualizer:new(_facade, _menu)

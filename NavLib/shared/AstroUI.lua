@@ -47,33 +47,33 @@ end
 -- ============================================================================
 
 local LAYOUT = {
-    padding_top = 10,
-    padding_side = 15,
-    padding_bottom = 15,
+    padding_top = 14,
+    padding_side = 20,
+    padding_bottom = 18,
 
     -- Tab system
-    tab_bar_height = 35,
-    tab_button_height = 30,
-    tab_button_min_width = 80,
-    tab_button_max_width = 150,
-    tab_button_spacing = 2,
-    tab_bar_padding_top = 5,
-    tab_content_padding_top = 15,
+    tab_bar_height = 38,
+    tab_button_height = 32,
+    tab_button_min_width = 90,
+    tab_button_max_width = 160,
+    tab_button_spacing = 4,
+    tab_bar_padding_top = 6,
+    tab_content_padding_top = 18,
 
     -- Section settings
-    section_spacing = 18,
+    section_spacing = 22,
     section_header_height = 0,
-    section_padding_top = 8,
-    section_padding_bottom = 10,
-    element_height = 26,
-    element_spacing = 6,
-    column_spacing = 25,
-    slider_bar_height = 16,
-    checkbox_size = 16,
-    keybind_badge_width = 60,
-    keybind_status_width = 45,
-    keybind_clear_width = 60,
-    separator_height = 2
+    section_padding_top = 12,
+    section_padding_bottom = 14,
+    element_height = 30,
+    element_spacing = 10,
+    column_spacing = 28,
+    slider_bar_height = 8,
+    checkbox_size = 18,
+    keybind_badge_width = 64,
+    keybind_status_width = 48,
+    keybind_clear_width = 64,
+    separator_height = 1
 }
 
 -- ============================================================================
@@ -82,9 +82,13 @@ local LAYOUT = {
 
 -- Helper to lighten color for hover states
 local function lighten_color(base_color, amount)
-    -- Return a brightened version of the color for hover effects
-    -- This is a simplified version that returns a lighter shade
-    return color.new(60, 60, 70, 200)
+    local r, g, b, a = base_color:get()
+    return color.new(
+        math.min(255, r + amount),
+        math.min(255, g + amount),
+        math.min(255, b + amount),
+        a
+    )
 end
 
 -- ============================================================================
@@ -175,6 +179,27 @@ local THEMES = {
         keybind_active = color.new(200, 120, 255, 255),
         keybind_inactive = color.new(40, 50, 70, 200),
         separator = color.new(80, 120, 200, 200)
+    },
+    apple = {
+        background       = color.new(22, 22, 24, 235),
+        border           = color.new(58, 58, 62, 200),
+        section_bg       = color.new(32, 32, 35, 220),
+        section_border   = color.new(48, 48, 52, 160),
+        primary_accent   = color.new(10, 132, 255, 255),
+        secondary_accent = color.new(48, 209, 88, 255),
+        text_primary     = color.new(255, 255, 255, 245),
+        text_secondary   = color.new(255, 255, 255, 150),
+        text_disabled    = color.new(255, 255, 255, 75),
+        slider_fill      = color.new(10, 132, 255, 230),
+        slider_bg        = color.new(50, 50, 54, 200),
+        checkbox_active  = color.new(10, 132, 255, 255),
+        checkbox_inactive = color.new(50, 50, 54, 200),
+        checkbox_border  = color.new(80, 80, 86, 180),
+        keybind_bg       = color.new(38, 38, 42, 220),
+        keybind_border   = color.new(58, 58, 62, 180),
+        keybind_active   = color.new(48, 209, 88, 255),
+        keybind_inactive = color.new(58, 58, 62, 200),
+        separator        = color.new(255, 255, 255, 40),
     }
 }
 
@@ -440,6 +465,18 @@ function TabBuilder:combo_list(opts)
     })
 end
 
+---@param opts table {label?, element, options, tooltip?, visible_when?}
+function TabBuilder:segmented_control(opts)
+    return self:_add_group({
+        type = "segmented_control",
+        label = opts and opts.label or nil,
+        element = opts and opts.element or nil,
+        options = opts and opts.options or {},
+        tooltip = opts and opts.tooltip or nil,
+        visible_when = opts and opts.visible_when or nil,
+    })
+end
+
 ---@param opts table {elements, labels?, visible_when?}
 function TabBuilder:keybind_grid(opts)
     return self:_add_group({
@@ -650,7 +687,7 @@ function RotationSettingsUI:_render_tab_bar(y_start_override)
             if is_active then
                 bg_color = self.colors.primary_accent
                 text_color = color.white(255)
-                border_color = self.colors.primary_accent
+                border_color = nil
             elseif is_hovered then
                 bg_color = lighten_color(self.colors.section_bg, 20)
                 text_color = self.colors.text_primary
@@ -662,10 +699,12 @@ function RotationSettingsUI:_render_tab_bar(y_start_override)
             end
 
             -- Render tab button background
-            self.window:render_rect_filled(tab_start, tab_end, bg_color, 2.0)
+            self.window:render_rect_filled(tab_start, tab_end, bg_color, 6.0)
 
-            -- Render borders (all sides for now, active tab will be merged later)
-            self.window:render_rect(tab_start, tab_end, border_color, 2.0, 1.0)
+            -- Render border (skip for active tab — solid accent fill is sufficient)
+            if border_color then
+                self.window:render_rect(tab_start, tab_end, border_color, 6.0, 1.0)
+            end
 
             -- Render tab label (centered, truncated if needed)
             local label = section.label or ("Tab " .. i)
@@ -753,8 +792,8 @@ function RotationSettingsUI:_render_section_header(section, y_offset)
     -- Section background
     local section_bg_start = vec2.new(x_start, y_offset)
     local section_bg_end = vec2.new(x_end, y_offset + LAYOUT.section_header_height)
-    self.window:render_rect_filled(section_bg_start, section_bg_end, self.colors.section_bg, 2.0)
-    self.window:render_rect(section_bg_start, section_bg_end, self.colors.section_border, 2.0, 1.0)
+    self.window:render_rect_filled(section_bg_start, section_bg_end, self.colors.section_bg, 8.0)
+    self.window:render_rect(section_bg_start, section_bg_end, self.colors.section_border, 8.0, 1.0)
 
     -- Section label (centered)
     local text_size = self.window:get_text_size(section.label)
@@ -832,8 +871,8 @@ function RotationSettingsUI:_render_keybind_grid(section, y_offset)
             if is_capturing_keybind then
                 key_bg_color = self.colors.keybind_active
             end
-            self.window:render_rect_filled(key_box_start, key_box_end, key_bg_color, 2.0)
-            self.window:render_rect(key_box_start, key_box_end, self.colors.keybind_border, 2.0, 1.0)
+            self.window:render_rect_filled(key_box_start, key_box_end, key_bg_color, 4.0)
+            self.window:render_rect(key_box_start, key_box_end, self.colors.keybind_border, 4.0, 1.0)
 
             local key_text_size = self.window:get_text_size(key_name)
             local key_text_x = x_start + (LAYOUT.keybind_badge_width - key_text_size.x) / 2
@@ -855,7 +894,7 @@ function RotationSettingsUI:_render_keybind_grid(section, y_offset)
             local status_text = is_enabled and "ON" or "OFF"
             local status_color = is_enabled and self.colors.keybind_active or self.colors.keybind_inactive
             local status_hover_color = is_status_hovered and lighten_color(status_color, 30) or status_color
-            self.window:render_rect_filled(status_box_start, status_box_end, status_hover_color, 2.0)
+            self.window:render_rect_filled(status_box_start, status_box_end, status_hover_color, 4.0)
 
             local status_text_size = self.window:get_text_size(status_text)
             local status_text_x = status_box_start.x + (LAYOUT.keybind_status_width - status_text_size.x) / 2
@@ -865,8 +904,8 @@ function RotationSettingsUI:_render_keybind_grid(section, y_offset)
 
             -- Clear badge
             local clear_bg = is_clear_hovered and lighten_color(self.colors.slider_bg, 20) or self.colors.slider_bg
-            self.window:render_rect_filled(clear_box_start, clear_box_end, clear_bg, 1.5)
-            self.window:render_rect(clear_box_start, clear_box_end, self.colors.section_border, 1.5, 1.0)
+            self.window:render_rect_filled(clear_box_start, clear_box_end, clear_bg, 4.0)
+            self.window:render_rect(clear_box_start, clear_box_end, self.colors.section_border, 4.0, 1.0)
             local clear_text = "Clear"
             local clear_text_size = self.window:get_text_size(clear_text)
             local clear_text_x = clear_box_start.x + (LAYOUT.keybind_clear_width - clear_text_size.x) / 2
@@ -948,15 +987,16 @@ function RotationSettingsUI:_render_checkbox_grid(section, y_offset)
                 checkbox_color = lighten_color(checkbox_color, 30)
             end
 
-            self.window:render_rect_filled(checkbox_start, checkbox_end, checkbox_color, 1.0)
-            self.window:render_rect(checkbox_start, checkbox_end, self.colors.checkbox_border, 1.0, 1.0)
+            self.window:render_rect_filled(checkbox_start, checkbox_end, checkbox_color, 4.0)
+            local cb_border = is_hovered and lighten_color(self.colors.checkbox_border, 30) or self.colors.checkbox_border
+            self.window:render_rect(checkbox_start, checkbox_end, cb_border, 4.0, 1.0)
 
             -- Checkmark if enabled
             if is_checked then
-                local check_padding = 3
+                local check_padding = 4
                 local check_start = vec2.new(x_pos + check_padding, y_offset + check_padding)
                 local check_end = vec2.new(x_pos + LAYOUT.checkbox_size - check_padding, y_offset + LAYOUT.checkbox_size - check_padding)
-                self.window:render_rect_filled(check_start, check_end, color.white(255), 0.5)
+                self.window:render_rect_filled(check_start, check_end, color.white(255), 2.0)
             end
 
             -- Label
@@ -1281,20 +1321,20 @@ function RotationSettingsUI:_render_slider_list(section, y_offset)
                 self.colors.text_primary, label)
 
             -- Progress bar background
-            local bg_color = is_hovered and lighten_color(self.colors.slider_bg, 20) or self.colors.slider_bg
-            self.window:render_rect_filled(bar_start, bar_end, bg_color, 1.5)
+            local bg_color = is_hovered and lighten_color(self.colors.slider_bg, 15) or self.colors.slider_bg
+            self.window:render_rect_filled(bar_start, bar_end, bg_color, 4.0)
 
             -- Progress bar fill
             local fill_progress = max_value > min_value and ((value - min_value) / (max_value - min_value)) or 0
             local clamped_progress = math.max(0, math.min(1, fill_progress))
             local fill_width = bar_width * clamped_progress
             local fill_end = vec2.new(bar_x_start + fill_width, y_offset + LAYOUT.slider_bar_height)
-            self.window:render_rect_filled(bar_start, fill_end, self.colors.slider_fill, 1.5)
+            self.window:render_rect_filled(bar_start, fill_end, self.colors.slider_fill, 4.0)
 
             -- Progress bar border
             local is_active_slider = self._active_slider and self._active_slider.element == element
-            local border_color = is_active_slider and self.colors.secondary_accent or self.colors.primary_accent
-            self.window:render_rect(bar_start, bar_end, border_color, 1.5, 1.0)
+            local border_color = is_active_slider and self.colors.primary_accent or self.colors.section_border
+            self.window:render_rect(bar_start, bar_end, border_color, 4.0, 1.0)
 
             -- Value text
             local value_text = string.format("%d%s", value, suffix)
@@ -1417,10 +1457,10 @@ function RotationSettingsUI:_render_combo_list(section, y_offset)
             self.window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x_start, label_y),
                 self.colors.text_primary, label)
 
-            local bg_color = is_hovered and lighten_color(self.colors.slider_bg, 20) or self.colors.slider_bg
-            self.window:render_rect_filled(box_start, box_end, bg_color, 1.5)
-            local border_color = is_hovered and self.colors.secondary_accent or self.colors.primary_accent
-            self.window:render_rect(box_start, box_end, border_color, 1.5, 1.0)
+            local bg_color = is_hovered and lighten_color(self.colors.slider_bg, 15) or self.colors.slider_bg
+            self.window:render_rect_filled(box_start, box_end, bg_color, 4.0)
+            local border_color = is_hovered and self.colors.primary_accent or self.colors.section_border
+            self.window:render_rect(box_start, box_end, border_color, 4.0, 1.0)
 
             local value_text_size = self.window:get_text_size(option_text)
             local value_x = box_start.x + (value_box_width - value_text_size.x) / 2
@@ -1446,6 +1486,85 @@ function RotationSettingsUI:_render_combo_list(section, y_offset)
     return y_offset + LAYOUT.section_padding_bottom
 end
 
+function RotationSettingsUI:_render_segmented_control(group, y_offset)
+    local element = group.element
+    local options = group.options
+    if not element or not options or #options == 0 then
+        return y_offset
+    end
+
+    local window_size = self.window:get_size()
+    local content_width = window_size.x - (2 * LAYOUT.padding_side)
+    local x_start = LAYOUT.padding_side
+
+    y_offset = y_offset + LAYOUT.section_padding_top
+
+    local ok_val, current_index = pcall(function() return element:get() end)
+    if not ok_val or current_index == nil then current_index = 1 end
+
+    local height = LAYOUT.element_height
+    local seg_width = content_width / #options
+
+    -- Tooltip on hover over entire control
+    local ctrl_start = vec2.new(x_start, y_offset)
+    local ctrl_end = vec2.new(x_start + content_width, y_offset + height)
+    if self.window:is_mouse_hovering_rect(ctrl_start, ctrl_end) and group.tooltip then
+        self._tooltip = group.tooltip
+    end
+
+    -- Background pill
+    self.window:render_rect_filled(ctrl_start, ctrl_end, self.colors.slider_bg, 8.0)
+
+    for i, option_name in ipairs(options) do
+        local seg_x = x_start + (i - 1) * seg_width
+        local seg_start = vec2.new(seg_x, y_offset)
+        local seg_end = vec2.new(seg_x + seg_width, y_offset + height)
+        local is_selected = (i == current_index)
+        local is_hovered = self.window:is_mouse_hovering_rect(seg_start, seg_end)
+        self.window:is_mouse_hovering_rect_block_movement(seg_start, seg_end)
+
+        if is_selected then
+            -- Selected: accent blue pill on top, inset 2px for floating effect
+            local sel_start = vec2.new(seg_x + 2, y_offset + 2)
+            local sel_end = vec2.new(seg_x + seg_width - 2, y_offset + height - 2)
+            self.window:render_rect_filled(sel_start, sel_end, self.colors.primary_accent, 6.0)
+        elseif is_hovered then
+            -- Hovered unselected: subtle lighten
+            local hov_start = vec2.new(seg_x + 1, y_offset + 1)
+            local hov_end = vec2.new(seg_x + seg_width - 1, y_offset + height - 1)
+            self.window:render_rect_filled(hov_start, hov_end, lighten_color(self.colors.slider_bg, 15), 6.0)
+        end
+
+        -- Divider: 1px line between unselected adjacent segments
+        if i < #options then
+            local next_selected = ((i + 1) == current_index)
+            if not is_selected and not next_selected then
+                local div_x = seg_x + seg_width
+                local div_start = vec2.new(div_x, y_offset + 6)
+                local div_end = vec2.new(div_x + 1, y_offset + height - 6)
+                self.window:render_rect_filled(div_start, div_end, self.colors.section_border, 0)
+            end
+        end
+
+        -- Centered text
+        local text_color = is_selected and self.colors.text_primary or self.colors.text_secondary
+        local text_size = self.window:get_text_size(option_name)
+        local text_x = seg_x + (seg_width - text_size.x) / 2
+        local text_y = y_offset + (height - text_size.y) / 2
+        self.window:render_text(enums.window_enums.font_id.FONT_SMALL,
+            vec2.new(text_x, text_y), text_color, option_name)
+
+        -- Click
+        if self.window:is_rect_clicked(seg_start, seg_end) and not is_selected then
+            pcall(function()
+                if element.set then element:set(i) end
+            end)
+        end
+    end
+
+    return y_offset + height + LAYOUT.element_spacing + LAYOUT.section_padding_bottom
+end
+
 function RotationSettingsUI:_render_tab_groups(section, y_offset)
     if not section.groups or #section.groups == 0 then
         return y_offset
@@ -1458,9 +1577,9 @@ function RotationSettingsUI:_render_tab_groups(section, y_offset)
 
         if group.label then
             local label_pos = vec2.new(LAYOUT.padding_side, y_offset)
-            self.window:render_text(enums.window_enums.font_id.FONT_SMALL, label_pos,
-                self.colors.primary_accent, group.label)
-            y_offset = y_offset + self.window:get_text_size(group.label).y + 6
+            self.window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG, label_pos,
+                self.colors.text_secondary, group.label)
+            y_offset = y_offset + self.window:get_text_size(group.label).y + 10
         end
 
         if group.type == "checkbox_grid" then
@@ -1469,6 +1588,8 @@ function RotationSettingsUI:_render_tab_groups(section, y_offset)
             y_offset = self:_render_slider_list(group, y_offset)
         elseif group.type == "combo_list" then
             y_offset = self:_render_combo_list(group, y_offset)
+        elseif group.type == "segmented_control" then
+            y_offset = self:_render_segmented_control(group, y_offset)
         elseif group.type == "keybind_grid" then
             y_offset = self:_render_keybind_grid(group, y_offset)
         elseif group.type == "custom" and group.render_fn then
@@ -1498,10 +1619,10 @@ function RotationSettingsUI:_render_tooltip()
     local bar_height = text_size.y + 8
     local bar_y = window_size.y - bar_height
 
-    -- Background
+    -- Background (translucent overlay)
     self.window:render_rect_filled(
         vec2.new(0, bar_y), vec2.new(window_size.x, window_size.y),
-        self.colors.section_bg, 0)
+        color.new(32, 32, 35, 140), 0)
 
     -- Separator
     self.window:render_rect_filled(
@@ -1535,10 +1656,10 @@ function RotationSettingsUI:_render_sections()
     -- Add separator line below tabs
     local window_size = self.window:get_size()
     local separator_start = vec2.new(LAYOUT.padding_side, y_offset)
-    local separator_end = vec2.new(window_size.x - LAYOUT.padding_side, y_offset + 2)
+    local separator_end = vec2.new(window_size.x - LAYOUT.padding_side, y_offset + LAYOUT.separator_height)
     self.window:render_rect_filled(separator_start, separator_end, self.colors.separator, 0)
 
-    y_offset = y_offset + 2 + LAYOUT.tab_content_padding_top
+    y_offset = y_offset + LAYOUT.separator_height + LAYOUT.tab_content_padding_top
 
     -- Scrollable tab content area
     local tab_content_top = y_offset
@@ -1571,17 +1692,18 @@ function RotationSettingsUI:_render_sections()
         local sb_thumb_height = math.max(20, (visible_height / self._content_height) * sb_track_height)
         local sb_thumb_y = tab_content_top + (self._scroll_y / max_scroll) * (sb_track_height - sb_thumb_height)
 
-        -- Track background
+        -- Track background (nearly invisible)
         self.window:render_rect_filled(
             vec2.new(sb_x, tab_content_top),
             vec2.new(sb_x + sb_width, tab_content_bottom),
-            self.colors.slider_bg, 2)
+            color.new(255, 255, 255, 15), 3)
 
-        -- Thumb
-        self.window:render_rect_filled(
-            vec2.new(sb_x, sb_thumb_y),
-            vec2.new(sb_x + sb_width, sb_thumb_y + sb_thumb_height),
-            self.colors.primary_accent, 2)
+        -- Thumb (muted gray, brightens on hover)
+        local sb_thumb_start = vec2.new(sb_x, sb_thumb_y)
+        local sb_thumb_end = vec2.new(sb_x + sb_width, sb_thumb_y + sb_thumb_height)
+        local sb_hovered = self.window:is_mouse_hovering_rect(sb_thumb_start, sb_thumb_end)
+        local sb_thumb_color = sb_hovered and color.new(255, 255, 255, 140) or color.new(255, 255, 255, 100)
+        self.window:render_rect_filled(sb_thumb_start, sb_thumb_end, sb_thumb_color, 3)
 
         -- Scrollbar drag interaction
         local sb_track_start = vec2.new(sb_x - 4, tab_content_top)
