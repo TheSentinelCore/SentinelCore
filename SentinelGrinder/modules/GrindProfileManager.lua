@@ -1,5 +1,6 @@
 local vec3 = require("common/geometry/vector_3")
 local JSON = require("lib/JSON")
+local HonorbuddyRouteSeeds = require("modules/HonorbuddyRouteSeeds")
 
 local GrindProfileManager = {}
 GrindProfileManager.__index = GrindProfileManager
@@ -7,7 +8,6 @@ GrindProfileManager.__index = GrindProfileManager
 local DATA_FOLDER = "grindbuddy"
 local PROFILE_FOLDER = "grindbuddy/profiles"
 local INDEX_FILE = "grindbuddy/profiles/index.json"
-local SAMPLE_FILE = "grindbuddy/profiles/example_auto.json"
 
 local function call_method(obj, name, ...)
     if not obj then
@@ -121,6 +121,24 @@ local function parse_points(raw_points)
     return points
 end
 
+local function copy_seed_points(raw_points)
+    local points = {}
+    if type(raw_points) ~= "table" then
+        return points
+    end
+    for _, p in ipairs(raw_points) do
+        if type(p) == "table" then
+            local x = to_number(p.x or p[1])
+            local y = to_number(p.y or p[2])
+            local z = to_number(p.z or p[3])
+            if x and y and z then
+                points[#points + 1] = { x = x, y = y, z = z }
+            end
+        end
+    end
+    return points
+end
+
 function GrindProfileManager:new(config)
     local instance = setmetatable({}, GrindProfileManager)
     instance._config = {
@@ -157,48 +175,234 @@ function GrindProfileManager:_reset_profiles()
     self._profile_descriptors = {}
 end
 
-function GrindProfileManager:_write_example_files(anchor_pos)
-    core.create_data_folder(DATA_FOLDER)
-    core.create_data_folder(PROFILE_FOLDER)
-
-    local sample_points = build_circle_points(anchor_pos, self._config.default_radius, self._config.default_point_count)
-    local sample_profile = {
-        name = "Example Auto Route",
-        description = "Generated fallback route. Edit this file with your own points.",
-        map_id = 0,
-        min_level = 1,
-        max_level = 80,
-        there_and_back = false,
-        points = sample_points,
-    }
-    local sample_raw, sample_err = encode_json(sample_profile)
-    if sample_raw then
-        core.create_data_file(SAMPLE_FILE)
-        core.write_data_file(SAMPLE_FILE, sample_raw)
-    else
-        core.log_warning("[GrindBuddy] Failed to encode sample profile: " .. tostring(sample_err))
+local function append_seed_profile_spec(specs, def, raw_points)
+    if type(specs) ~= "table" or type(def) ~= "table" then
+        return false
     end
 
-    local sample_index = {
-        profiles = {
-            {
-                id = "example_auto",
-                label = "Example Auto Route",
-                file = SAMPLE_FILE,
-                enabled = true,
-                min_level = 1,
-                max_level = 80,
-                map_id = 0,
-                there_and_back = false,
-            },
+    local id = tostring(def.id or "")
+    if id == "" then
+        return false
+    end
+
+    local points = copy_seed_points(raw_points)
+    if #points < 2 then
+        return false
+    end
+
+    local file = PROFILE_FOLDER .. "/" .. id .. ".json"
+    local map_id = clamp_int(to_number(def.map_id) or 0, 0, 99999)
+    local min_level = clamp_int(to_number(def.min_level) or 1, 1, 255)
+    local max_level = clamp_int(to_number(def.max_level) or min_level, min_level, 255)
+    local label = tostring(def.label or id)
+
+    specs[#specs + 1] = {
+        id = id,
+        index_entry = {
+            id = id,
+            label = label,
+            file = file,
+            enabled = true,
+            min_level = min_level,
+            max_level = max_level,
+            map_id = map_id,
+            there_and_back = def.there_and_back == true,
+        },
+        file = file,
+        file_payload = {
+            name = label,
+            description = tostring(def.description or ""),
+            map_id = map_id,
+            min_level = min_level,
+            max_level = max_level,
+            there_and_back = def.there_and_back == true,
+            source = tostring(def.source or ""),
+            points = points,
         },
     }
-    local index_raw, index_err = encode_json(sample_index)
-    if index_raw then
-        core.create_data_file(INDEX_FILE)
-        core.write_data_file(INDEX_FILE, index_raw)
-    else
-        core.log_warning("[GrindBuddy] Failed to encode profile index: " .. tostring(index_err))
+
+    return true
+end
+
+local function build_fallback_seed_definitions(base_radius, base_points)
+    return {
+        {
+            id = "classic_test_1_20",
+            label = "Classic Test 1-20",
+            min_level = 1,
+            max_level = 20,
+            there_and_back = false,
+            radius = base_radius * 0.90,
+            point_count = base_points,
+            description = "Auto-generated Classic starter loop for local testing.",
+        },
+        {
+            id = "classic_test_20_40",
+            label = "Classic Test 20-40",
+            min_level = 20,
+            max_level = 40,
+            there_and_back = true,
+            radius = base_radius * 1.05,
+            point_count = base_points + 1,
+            description = "Auto-generated Classic mid-level route for local testing.",
+        },
+        {
+            id = "classic_test_40_58",
+            label = "Classic Test 40-58",
+            min_level = 40,
+            max_level = 58,
+            there_and_back = false,
+            radius = base_radius * 1.20,
+            point_count = base_points + 2,
+            description = "Auto-generated Classic high-level route for local testing.",
+        },
+        {
+            id = "tbc_test_58_64",
+            label = "TBC Test 58-64",
+            min_level = 58,
+            max_level = 64,
+            there_and_back = false,
+            radius = base_radius * 1.30,
+            point_count = base_points + 2,
+            description = "Auto-generated TBC entry route for local testing.",
+        },
+        {
+            id = "tbc_test_64_70",
+            label = "TBC Test 64-70",
+            min_level = 64,
+            max_level = 70,
+            there_and_back = true,
+            radius = base_radius * 1.45,
+            point_count = base_points + 3,
+            description = "Auto-generated TBC endgame route for local testing.",
+        },
+    }
+end
+
+local function build_seed_profile_specs(anchor_pos, default_radius, default_point_count)
+    local base_radius = math.max(20.0, tonumber(default_radius) or 35.0)
+    local base_points = math.max(6, math.floor(tonumber(default_point_count) or 8))
+
+    local specs = {}
+    local catalog = call_method(HonorbuddyRouteSeeds, "get_all")
+    if type(catalog) == "table" then
+        for _, def in ipairs(catalog) do
+            append_seed_profile_spec(specs, def, def and def.points)
+        end
+    end
+
+    if #specs == 0 then
+        local fallback_definitions = build_fallback_seed_definitions(base_radius, base_points)
+        for _, def in ipairs(fallback_definitions) do
+            local points = build_circle_points(anchor_pos, def.radius, def.point_count)
+            append_seed_profile_spec(specs, def, points)
+        end
+    end
+
+    return specs
+end
+
+function GrindProfileManager:_ensure_seed_profile_files(anchor_pos)
+    local specs = build_seed_profile_specs(anchor_pos, self._config.default_radius, self._config.default_point_count)
+    for _, spec in ipairs(specs) do
+        local existing = core.read_data_file(spec.file)
+        if not existing or existing == "" then
+            local payload_raw, payload_err = encode_json(spec.file_payload)
+            if payload_raw then
+                core.create_data_file(spec.file)
+                core.write_data_file(spec.file, payload_raw)
+            else
+                core.log_warning(string.format("[GrindBuddy] Failed to encode seed profile '%s': %s", tostring(spec.id),
+                    tostring(payload_err)))
+            end
+        end
+    end
+    return specs
+end
+
+local function resolve_index_entries_container(index_data)
+    if type(index_data) ~= "table" then
+        return { profiles = {} }, {}
+    end
+
+    if type(index_data.profiles) == "table" then
+        return index_data, index_data.profiles
+    end
+
+    if type(index_data.routes) == "table" then
+        index_data.profiles = index_data.routes
+        return index_data, index_data.profiles
+    end
+
+    if #index_data > 0 then
+        return { profiles = index_data }, index_data
+    end
+
+    index_data.profiles = {}
+    return index_data, index_data.profiles
+end
+
+function GrindProfileManager:_ensure_profile_index(seed_specs)
+    local seed_entries = {}
+    for _, spec in ipairs(seed_specs or {}) do
+        seed_entries[#seed_entries + 1] = spec.index_entry
+    end
+
+    local index_raw = core.read_data_file(INDEX_FILE)
+    if not index_raw or index_raw == "" then
+        local seeded_index = { profiles = seed_entries }
+        local seeded_raw, seeded_err = encode_json(seeded_index)
+        if seeded_raw then
+            core.create_data_file(INDEX_FILE)
+            core.write_data_file(INDEX_FILE, seeded_raw)
+            return
+        end
+        core.log_warning("[GrindBuddy] Failed to encode seeded profile index: " .. tostring(seeded_err))
+        return
+    end
+
+    local index_data, index_err = decode_json(index_raw)
+    if not index_data then
+        core.log_warning("[GrindBuddy] Failed to parse profile index, replacing with seeded defaults: " .. tostring(index_err))
+        local seeded_index = { profiles = seed_entries }
+        local seeded_raw, seeded_err = encode_json(seeded_index)
+        if seeded_raw then
+            core.create_data_file(INDEX_FILE)
+            core.write_data_file(INDEX_FILE, seeded_raw)
+        else
+            core.log_warning("[GrindBuddy] Failed to encode fallback profile index: " .. tostring(seeded_err))
+        end
+        return
+    end
+
+    local container, entries = resolve_index_entries_container(index_data)
+    local existing_ids = {}
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" then
+            local id = tostring(entry.id or entry.name or "")
+            if id ~= "" then
+                existing_ids[id] = true
+            end
+        end
+    end
+
+    local changed = false
+    for _, seed_entry in ipairs(seed_entries) do
+        if not existing_ids[seed_entry.id] then
+            entries[#entries + 1] = seed_entry
+            changed = true
+        end
+    end
+
+    if changed then
+        local merged_raw, merged_err = encode_json(container)
+        if merged_raw then
+            core.create_data_file(INDEX_FILE)
+            core.write_data_file(INDEX_FILE, merged_raw)
+            core.log("[GrindBuddy] Added seeded route profiles to index")
+        else
+            core.log_warning("[GrindBuddy] Failed to encode merged profile index: " .. tostring(merged_err))
+        end
     end
 end
 
@@ -206,10 +410,8 @@ function GrindProfileManager:_ensure_profile_files(anchor_pos)
     core.create_data_folder(DATA_FOLDER)
     core.create_data_folder(PROFILE_FOLDER)
 
-    local index_raw = core.read_data_file(INDEX_FILE)
-    if not index_raw or index_raw == "" then
-        self:_write_example_files(anchor_pos)
-    end
+    local specs = self:_ensure_seed_profile_files(anchor_pos)
+    self:_ensure_profile_index(specs)
 end
 
 function GrindProfileManager:_load_profile_points(file_path)

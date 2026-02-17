@@ -28,9 +28,17 @@ Lightweight grinding module scaffold for SentinelCore.
 
 - Route profiles are stored in `scripts_data/grindbuddy/profiles/`.
 - Index file: `scripts_data/grindbuddy/profiles/index.json`.
-- On first load, GrindBuddy auto-generates:
-- `index.json`
-- `example_auto.json`
+- On first load, GrindBuddy seeds Honorbuddy-based Classic/TBC routes converted from the provided profile pack:
+- `hb_classic_horde_durotar_5_12.json`
+- `hb_classic_alliance_ek_5_12.json`
+- `hb_classic_horde_kalimdor_40_45.json`
+- `hb_classic_ungoro_48_55.json`
+- `hb_classic_silithus_55_60.json`
+- `hb_tbc_sporeggar_60_63.json`
+- `hb_tbc_kurenai_64_66.json`
+- `hb_tbc_netherwing_67_70.json`
+- If the Honorbuddy seed catalog is unavailable, GrindBuddy falls back to generated circle test routes.
+- Existing `index.json` entries are preserved; missing seeded entries are appended automatically.
 - Profile route supports:
 - map filter (`map_id`),
 - level range (`min_level`, `max_level`),
