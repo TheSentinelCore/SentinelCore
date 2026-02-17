@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/detour-sys",
     "crates/detour",
-    "crates/tc-mmap",
+    "crates/mmap-loader",
     "crates/path-smoothing",
     "crates/polygon-sampling",
 ]
@@ -59,7 +59,7 @@ edition.workspace = true
 
 [dependencies]
 detour = { path = "crates/detour" }
-tc-mmap = { path = "crates/tc-mmap" }
+mmap-loader = { path = "crates/mmap-loader" }
 path-smoothing = { path = "crates/path-smoothing" }
 polygon-sampling = { path = "crates/polygon-sampling" }
 tokio.workspace = true
