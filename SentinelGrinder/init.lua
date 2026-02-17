@@ -69,8 +69,20 @@ function GrindBuddy:get_instance()
             _movement = nil,
             _nav_error = nil,
             _move_inflight = false,
+            _move_request_id = 0,
+            _move_target = nil,
+            _move_status_text = nil,
             _move_started_at = 0,
             _move_timeout = 20.0,
+            _move_stall_timeout = 2.6,
+            _move_progress_min = 0.9,
+            _move_last_progress_at = 0,
+            _move_last_progress_pos = nil,
+            _unstuck_enabled = true,
+            _unstuck_attempt_count = 0,
+            _unstuck_max_attempts = 5,
+            _unstuck_action = nil,
+            _unstuck_last_reason = nil,
             _waypoints = {},
             _waypoint_index = 1,
             _waypoint_direction = 1,
@@ -416,9 +428,8 @@ function GrindBuddy:_maybe_dismount(local_player, reason)
 
     local movement = instance._movement
     local moving = movement and movement.is_moving and movement:is_moving() or false
-    if moving and movement.stop then
-        movement:stop()
-        instance._move_inflight = false
+    if moving then
+        self:_cancel_inflight_move("dismount")
     end
 
     core.input.dismount()
@@ -468,9 +479,8 @@ function GrindBuddy:_maybe_mount_for_patrol(local_player, travel_distance)
 
     local movement = instance._movement
     local moving = movement and movement.is_moving and movement:is_moving() or false
-    if moving and movement.stop then
-        movement:stop()
-        instance._move_inflight = false
+    if moving then
+        self:_cancel_inflight_move("mount")
     end
 
     core.input.mount(mount_index)
@@ -890,6 +900,256 @@ function GrindBuddy:_attempt_pull(target)
     self:_set_status("Attempting pull")
 end
 
+function GrindBuddy:_invalidate_move_request()
+    local instance = self:get_instance()
+    instance._move_request_id = (instance._move_request_id or 0) + 1
+    return instance._move_request_id
+end
+
+function GrindBuddy:_reset_unstuck_runtime(reset_attempts)
+    local instance = self:get_instance()
+    instance._unstuck_action = nil
+    instance._unstuck_last_reason = nil
+    if reset_attempts then
+        instance._unstuck_attempt_count = 0
+    end
+end
+
+function GrindBuddy:_track_move_progress(local_player, now)
+    local instance = self:get_instance()
+    if not local_player or not local_player:is_valid() then
+        return 0.0
+    end
+
+    local pos = local_player:get_position()
+    if not pos then
+        return 0.0
+    end
+
+    if not instance._move_last_progress_pos then
+        instance._move_last_progress_pos = copy_vec3(pos)
+        instance._move_last_progress_at = now
+        return 0.0
+    end
+
+    local moved = pos:dist_to(instance._move_last_progress_pos)
+    if moved >= instance._move_progress_min then
+        instance._move_last_progress_pos = copy_vec3(pos)
+        instance._move_last_progress_at = now
+        if instance._unstuck_attempt_count > 0 then
+            instance._unstuck_attempt_count = 0
+        end
+    end
+
+    return moved
+end
+
+function GrindBuddy:_add_blackspot_here(pos, reason, ttl)
+    local instance = self:get_instance()
+    local map_id = current_map_id()
+    if not (instance._blackspots and pos and map_id) then
+        return false
+    end
+    return instance._blackspots:add(pos, map_id, instance._blackspot_radius, reason, ttl or instance._blackspot_ttl) == true
+end
+
+function GrindBuddy:_cancel_inflight_move(reason)
+    local instance = self:get_instance()
+    local had_inflight = instance._move_inflight == true
+
+    self:_invalidate_move_request()
+
+    if instance._movement and instance._movement.stop then
+        instance._movement:stop()
+    end
+
+    instance._move_inflight = false
+    if had_inflight and reason then
+        core.log("[GrindBuddy] Move canceled: " .. tostring(reason))
+    end
+end
+
+function GrindBuddy:_retry_move_after_unstuck(reason)
+    local instance = self:get_instance()
+    local target = instance._move_target
+    if not target then
+        return false
+    end
+
+    local attempt = instance._unstuck_attempt_count or 0
+    local status = string.format("Recovering (%d/%d)", attempt, instance._unstuck_max_attempts)
+    if reason and reason ~= "" then
+        status = status .. ": " .. reason
+    end
+    return self:_begin_move(target, status)
+end
+
+function GrindBuddy:_start_unstuck_action(local_player, action_name, duration, start_fn, stop_fn, jump_after, retry_reason)
+    local instance = self:get_instance()
+    local now = now_time()
+
+    self:_cancel_inflight_move("unstuck-" .. tostring(action_name))
+
+    if start_fn then
+        start_fn()
+    end
+
+    if duration and duration > 0 then
+        instance._unstuck_action = {
+            name = action_name,
+            ends_at = now + duration,
+            stop_fn = stop_fn,
+            jump_after = jump_after == true,
+            retry_reason = retry_reason,
+        }
+        self:_set_state("recovering")
+        self:_set_status("Unstuck: " .. tostring(action_name))
+        return true
+    end
+
+    if jump_after and core.input and core.input.jump then
+        core.input.jump()
+    end
+
+    self:_set_state("recovering")
+    self:_set_status("Unstuck: " .. tostring(action_name))
+
+    return self:_retry_move_after_unstuck(retry_reason or action_name)
+end
+
+function GrindBuddy:_attempt_unstuck(local_player, now, stall_reason)
+    local instance = self:get_instance()
+    if instance._unstuck_enabled ~= true then
+        return false
+    end
+
+    if instance._unstuck_action then
+        return true
+    end
+
+    instance._unstuck_attempt_count = (instance._unstuck_attempt_count or 0) + 1
+    local attempt = instance._unstuck_attempt_count
+    instance._unstuck_last_reason = stall_reason
+
+    core.log(string.format("[GrindBuddy] Unstuck attempt %d/%d (%s)", attempt, instance._unstuck_max_attempts, tostring(stall_reason)))
+
+    if attempt > instance._unstuck_max_attempts then
+        local pos = local_player and local_player:is_valid() and local_player:get_position() or nil
+        local tagged = self:_add_blackspot_here(pos, "unstuck-failed", instance._blackspot_ttl)
+
+        self:_cancel_inflight_move("unstuck-failed")
+        self:_set_state("patrol")
+        self:_set_status(tagged and "Unstuck failed, blackspot added" or "Unstuck failed, skipping current move")
+
+        if instance._target then
+            self:_blacklist_target(instance._target, "unstuck-failed")
+            self:_clear_target()
+        else
+            self:_advance_waypoint()
+        end
+
+        self:_reset_unstuck_runtime(true)
+        return true
+    end
+
+    local input = core.input
+    if attempt == 1 then
+        return self:_start_unstuck_action(local_player, "jump", 0.0, nil, nil, true, "jump")
+    end
+
+    if attempt == 2 and input and input.strafe_left_start and input.strafe_left_stop then
+        return self:_start_unstuck_action(local_player, "strafe-left", 0.45, function()
+            input.strafe_left_start()
+        end, function()
+            input.strafe_left_stop()
+        end, true, "strafe-left")
+    end
+
+    if attempt == 3 and input and input.strafe_right_start and input.strafe_right_stop then
+        return self:_start_unstuck_action(local_player, "strafe-right", 0.45, function()
+            input.strafe_right_start()
+        end, function()
+            input.strafe_right_stop()
+        end, true, "strafe-right")
+    end
+
+    if attempt == 4 and input and input.move_backward_start and input.move_backward_stop then
+        return self:_start_unstuck_action(local_player, "backward", 0.80, function()
+            input.move_backward_start()
+        end, function()
+            input.move_backward_stop()
+        end, true, "backward")
+    end
+
+    if attempt == 5 and input and input.turn_left_start and input.turn_left_stop then
+        return self:_start_unstuck_action(local_player, "turn-left", 0.50, function()
+            input.turn_left_start()
+        end, function()
+            input.turn_left_stop()
+        end, false, "turn-left")
+    end
+
+    -- Fallback: no low-level input available for this step, just retry the move directly.
+    self:_cancel_inflight_move("unstuck-retry-direct")
+    self:_set_state("recovering")
+    self:_set_status("Unstuck: direct retry")
+    return self:_retry_move_after_unstuck("retry")
+end
+
+function GrindBuddy:_process_unstuck_action(local_player, now)
+    local instance = self:get_instance()
+    local action = instance._unstuck_action
+    if not action then
+        return false
+    end
+
+    if now < action.ends_at then
+        self:_set_state("recovering")
+        self:_set_status("Unstuck: " .. tostring(action.name))
+        return true
+    end
+
+    if action.stop_fn then
+        action.stop_fn()
+    end
+
+    if action.jump_after and core.input and core.input.jump then
+        core.input.jump()
+    end
+
+    instance._unstuck_action = nil
+    self:_retry_move_after_unstuck(action.retry_reason or action.name)
+    return true
+end
+
+function GrindBuddy:_monitor_inflight_move(local_player, now)
+    local instance = self:get_instance()
+    if self:_process_unstuck_action(local_player, now) then
+        return true
+    end
+
+    if not instance._move_inflight then
+        return false
+    end
+
+    self:_track_move_progress(local_player, now)
+
+    local started = instance._move_started_at or now
+    local last_progress = instance._move_last_progress_at or started
+    local stall_age = now - last_progress
+    local total_age = now - started
+
+    if stall_age >= instance._move_stall_timeout then
+        return self:_attempt_unstuck(local_player, now, "stalled")
+    end
+
+    if total_age >= instance._move_timeout then
+        return self:_attempt_unstuck(local_player, now, "timeout")
+    end
+
+    return false
+end
+
 function GrindBuddy:_begin_move(target, status_text)
     local instance = self:get_instance()
     local movement = instance._movement
@@ -897,14 +1157,35 @@ function GrindBuddy:_begin_move(target, status_text)
         return false
     end
 
+    local request_id = self:_invalidate_move_request()
+    local started = now_time()
+    local player = core.object_manager.get_local_player()
+
+    instance._move_target = copy_vec3(target)
+    instance._move_status_text = status_text
     instance._move_inflight = true
-    instance._move_started_at = now_time()
+    instance._move_started_at = started
+    instance._move_last_progress_at = started
+    instance._move_last_progress_pos = (player and player:is_valid()) and copy_vec3(player:get_position()) or nil
     self:_set_state("moving")
     self:_set_status(status_text or "Moving")
 
     movement:move_to(target, function(success, reason)
+        if request_id ~= instance._move_request_id then
+            return
+        end
+
         instance._move_inflight = false
-        if not success then
+        if success then
+            self:_reset_unstuck_runtime(true)
+            return
+        end
+
+        if reason and tostring(reason) == "stopped" then
+            return
+        end
+
+        if not instance._unstuck_action then
             self:_set_status("Navigation failed: " .. tostring(reason or "unknown"))
             core.log("[GrindBuddy] Navigation failed: " .. tostring(reason or "unknown"))
         end
@@ -1062,9 +1343,8 @@ function GrindBuddy:_tick_target(local_player)
         return
     end
 
-    if moving and movement.stop then
-        movement:stop()
-        instance._move_inflight = false
+    if moving then
+        self:_cancel_inflight_move("target-in-range")
     end
 
     if distance <= instance._pull_range then
@@ -1170,13 +1450,19 @@ function GrindBuddy:start()
 
     self:_clear_target()
     instance._running = true
+    self:_invalidate_move_request()
     instance._move_inflight = false
+    instance._move_target = nil
+    instance._move_status_text = nil
     instance._move_started_at = 0
+    instance._move_last_progress_at = 0
+    instance._move_last_progress_pos = nil
     instance._last_target_seen_at = now_time()
     instance._last_route_expand_at = 0
     instance._last_route_profile_refresh = 0
     instance._last_mount_attempt = 0
     instance._last_dismount_attempt = 0
+    self:_reset_unstuck_runtime(true)
     self:_set_state("patrol")
     self:_set_status("Patrol started")
     core.log("[GrindBuddy] Started")
@@ -1189,13 +1475,14 @@ function GrindBuddy:stop()
         return
     end
 
-    if instance._movement and instance._movement.stop then
-        instance._movement:stop()
-    end
-
+    self:_cancel_inflight_move("stop")
     instance._running = false
-    instance._move_inflight = false
+    instance._move_target = nil
+    instance._move_status_text = nil
     instance._move_started_at = 0
+    instance._move_last_progress_at = 0
+    instance._move_last_progress_pos = nil
+    self:_reset_unstuck_runtime(true)
     self:_clear_target()
     self:_set_state("idle")
     self:_set_status("Stopped")
@@ -1242,24 +1529,8 @@ function GrindBuddy:update()
         return
     end
 
-    local moving = movement.is_moving and movement:is_moving() or false
-    if moving and instance._move_inflight and (now - instance._move_started_at) > instance._move_timeout then
-        -- No local unstuck logic: just cancel this move and continue behavior loop.
-        if movement.stop then
-            movement:stop()
-        end
-        instance._move_inflight = false
-        local me = core.object_manager.get_local_player()
-        local pos = me and me:is_valid() and me:get_position() or nil
-        local map_id = current_map_id()
-        if instance._blackspots and pos and map_id then
-            instance._blackspots:add(pos, map_id, instance._blackspot_radius, "move-timeout", instance._blackspot_ttl)
-            self:_set_status("Move timeout, blackspot added")
-            core.log("[GrindBuddy] Move timeout, blackspot added")
-        else
-            self:_set_status("Move timeout, continuing")
-            core.log("[GrindBuddy] Move timeout, continuing")
-        end
+    if self:_monitor_inflight_move(local_player, now) then
+        return
     end
 
     if instance._target then
@@ -1409,10 +1680,7 @@ function GrindBuddy:set_route_profile_index(index)
     if instance._running and instance._route_mode == ROUTE_MODE_PROFILE then
         local local_player = core.object_manager.get_local_player()
         if local_player and local_player:is_valid() then
-            if instance._movement and instance._movement.stop then
-                instance._movement:stop()
-            end
-            instance._move_inflight = false
+            self:_cancel_inflight_move("route-profile-change")
             self:_build_patrol_route(local_player, true)
         end
     end
@@ -1450,10 +1718,7 @@ function GrindBuddy:set_route_auto_select(enabled)
     end
 
     if instance._running and instance._route_mode == ROUTE_MODE_PROFILE and local_player and local_player:is_valid() then
-        if instance._movement and instance._movement.stop then
-            instance._movement:stop()
-        end
-        instance._move_inflight = false
+        self:_cancel_inflight_move("route-auto-select-change")
         self:_build_patrol_route(local_player, true)
     end
 end
@@ -1494,10 +1759,7 @@ function GrindBuddy:set_route_mode(mode)
     if instance._running then
         local local_player = core.object_manager.get_local_player()
         if local_player and local_player:is_valid() then
-            if instance._movement and instance._movement.stop then
-                instance._movement:stop()
-            end
-            instance._move_inflight = false
+            self:_cancel_inflight_move("route-mode-change")
             self:_build_patrol_route(local_player, true)
         end
     end

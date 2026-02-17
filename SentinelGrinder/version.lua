@@ -2,9 +2,14 @@ local Version = {
     major = 0,
     minor = 1,
     patch = 0,
-    revision = 14,
+    revision = 15,
     author = "Laidbak",
     history = {
+        {
+            revision = 15,
+            date = "2026-02-17",
+            summary = "Add Unstuck v2 move recovery pipeline with staged input actions, progress stall detection, and unified move cancellation handling",
+        },
         {
             revision = 14,
             date = "2026-02-17",

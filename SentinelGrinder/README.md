@@ -8,7 +8,7 @@ Lightweight grinding module scaffold for SentinelCore.
 
 ## Current Version
 
-- Defined in `GrindBuddy/version.lua`.
+- Defined in `SentinelGrinder/version.lua`.
 - Format: `major.minor.patch-rrevision`
 
 ## Controls
@@ -89,12 +89,20 @@ Example route profile file:
 - On repeated movement timeout, GrindBuddy adds a blackspot automatically at the stuck location.
 - Patrol waypoints and candidate targets inside blackspots are skipped on the same map.
 
+## Movement Recovery (Unstuck v2)
+
+- Move requests now use tokens so stale nav callbacks are ignored.
+- Stuck detection now checks both hard timeout and no-progress stall windows.
+- Recovery attempts run staged movement actions (jump, strafe, backward, turn) when low-level input is available.
+- Each recovery step retries the same move target automatically.
+- Route/profile changes, mount/dismount flow, and stop now use one cancel path for inflight moves.
+
 ## Versioning Workflow
 
 Use the helper script for every code change:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\GrindBuddy\tools\bump_version.ps1 -Level revision -Message "Describe the change"
+powershell -ExecutionPolicy Bypass -File .\SentinelGrinder\tools\bump_version.ps1 -Level revision -Message "Describe the change"
 ```
 
 Levels: `revision`, `patch`, `minor`, `major`.
