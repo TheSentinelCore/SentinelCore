@@ -1,4 +1,4 @@
-//! TrinityCore mmap file format structures.
+//! Navigation mesh file format structures.
 
 use crate::error::MmapError;
 
@@ -73,7 +73,7 @@ pub struct MmapTileHeader {
     pub mmap_magic: u32,
     /// Detour navmesh version (should be 7).
     pub dt_version: u32,
-    /// TrinityCore mmap generator version.
+    /// CMaNGOS mmap generator version.
     pub mmap_version: u32,
     /// Size of tile data following this header.
     pub size: u32,

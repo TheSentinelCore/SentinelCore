@@ -11,7 +11,7 @@ const MAX_COORD: f32 = 65536.0;
 /// Height bounds (WoW terrain ranges roughly -10k to +10k)
 const MAX_HEIGHT: f32 = 10000.0;
 
-/// Maximum valid map ID (TrinityCore maps are typically < 1000)
+/// Maximum valid map ID (WoW emulator maps are typically < 1000)
 const MAX_MAP_ID: u32 = 10000;
 
 /// Maximum search/circle radius
@@ -80,7 +80,7 @@ pub fn validate_coordinate(x: f32, y: f32, z: f32) -> Result<(), AppError> {
 
 /// Validate a map ID.
 ///
-/// Map IDs should be reasonable (< 10000 for TrinityCore).
+/// Map IDs should be reasonable (< 10000 for WoW emulators).
 pub fn validate_map_id(map_id: u32) -> Result<(), AppError> {
     if map_id >= MAX_MAP_ID {
         return Err(AppError::InvalidParams(format!(
