@@ -17,7 +17,7 @@ local MovementTab    = require("ui/tabs/movement_tab")
 local PathfindingTab = require("ui/tabs/pathfinding_tab")
 local ObstaclesTab   = require("ui/tabs/obstacles_tab")
 local DebugTab       = require("ui/tabs/debug_tab")
-local Visualizer     = require("core/Visualizer")
+local Visualizer     = require("ui/Visualizer")
 
 local LAYOUT = AstroUI.LAYOUT
 
