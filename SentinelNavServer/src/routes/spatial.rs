@@ -14,7 +14,7 @@ use axum::{
 use detour::types::Vec3;
 use polygon_sampling::SamplingConfig;
 use serde::{Deserialize, Deserializer, Serialize};
-use tc_mmap::error::MmapError;
+use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
 use crate::state::AppState;

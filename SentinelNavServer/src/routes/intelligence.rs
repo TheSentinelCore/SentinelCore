@@ -6,7 +6,7 @@ use axum::{
 };
 use detour::types::Vec3;
 use serde::{Deserialize, Serialize};
-use tc_mmap::error::MmapError;
+use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
 use crate::pipeline::{
