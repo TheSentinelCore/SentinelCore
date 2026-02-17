@@ -93,7 +93,7 @@ impl Config {
     /// Load configuration from file or defaults.
     pub fn load() -> anyhow::Result<Self> {
         // Try to load from config.toml
-        let config_path = std::env::var("NAVBUDDY_CONFIG")
+        let config_path = std::env::var("SENTINEL_NAV_SERVER_CONFIG")
             .unwrap_or_else(|_| "config.toml".to_string());
 
         if let Ok(content) = std::fs::read_to_string(&config_path) {
