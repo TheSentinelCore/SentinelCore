@@ -88,7 +88,7 @@ An intelligent gathering bot that:
 #### US1: Load Gathering Profile
 **Acceptance Criteria:**
 - User can select from available profiles in a dropdown
-- Profiles are loaded from `scripts_data/gatherbuddy/profiles/`
+- Profiles are loaded from `scripts_data/sentinel_gather/profiles/`
 - Invalid profiles show clear error messages
 - Profile metadata (name, zone, estimated time) displayed before loading
 
@@ -143,7 +143,7 @@ An intelligent gathering bot that:
 #### F1: Profile System
 
 **Requirements:**
-- REQ-F1-01: Load profiles from `scripts_data/gatherbuddy/profiles/`
+- REQ-F1-01: Load profiles from `scripts_data/sentinel_gather/profiles/`
 - REQ-F1-02: Validate JSON schema on load
 - REQ-F1-03: Support waypoint types: path, hotspot, vendor, mailbox, safe
 - REQ-F1-04: Support blackspot definitions (areas to avoid)
@@ -303,7 +303,7 @@ An intelligent gathering bot that:
 
 ### 8.2 References
 
-- GATHERBUDDY_DESIGN.md - Architecture design document
+- SENTINEL_GATHER_DESIGN.md - Architecture design document
 - CLAUDE.md - Technical reference for Claude Code
 - combined_documentation.md - Sylvannas API reference
 

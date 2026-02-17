@@ -9,7 +9,7 @@
 ## Ticket Format
 
 Each ticket follows this format:
-- **ID**: Unique identifier (GB-XXX)
+- **ID**: Unique identifier (SG-XXX)
 - **Title**: Brief description
 - **Priority**: P0 (Critical), P1 (High), P2 (Medium), P3 (Low)
 - **Estimate**: Story points or hours
@@ -20,7 +20,7 @@ Each ticket follows this format:
 
 ## Epic 1: Foundation (Days 1-2)
 
-### GB-001: Implement JSON Parser
+### SG-001: Implement JSON Parser
 **Priority:** P0  
 **Estimate:** 2 hours  
 **Dependencies:** None  
@@ -43,7 +43,7 @@ Create a pure-Lua JSON parser/encoder that doesn't rely on external libraries.
 
 ---
 
-### GB-002: Implement Logger Utility
+### SG-002: Implement Logger Utility
 **Priority:** P0  
 **Estimate:** 1 hour  
 **Dependencies:** None  
@@ -68,7 +68,7 @@ log:debug("Scanning...")
 
 ---
 
-### GB-003: Implement Helper Utilities
+### SG-003: Implement Helper Utilities
 **Priority:** P0  
 **Estimate:** 2 hours  
 **Dependencies:** None  
@@ -92,7 +92,7 @@ Create utility functions used across the codebase.
 
 ---
 
-### GB-004: Define Constants
+### SG-004: Define Constants
 **Priority:** P0  
 **Estimate:** 1 hour  
 **Dependencies:** None  
@@ -112,10 +112,10 @@ Define all constants used throughout the application.
 
 ---
 
-### GB-005: Implement EventBus
+### SG-005: Implement EventBus
 **Priority:** P0  
 **Estimate:** 3 hours  
-**Dependencies:** GB-002  
+**Dependencies:** SG-002  
 **File:** `core/EventBus.lua`
 
 **Description:**
@@ -138,10 +138,10 @@ Implement pub/sub event system for inter-module communication.
 
 ---
 
-### GB-006: Implement StateMachine
+### SG-006: Implement StateMachine
 **Priority:** P0  
 **Estimate:** 3 hours  
-**Dependencies:** GB-004, GB-005  
+**Dependencies:** SG-004, SG-005  
 **File:** `core/StateMachine.lua`
 
 **Description:**
@@ -163,7 +163,7 @@ Implement finite state machine with transition validation.
 
 ## Epic 2: Core Systems (Days 3-5)
 
-### GB-007: Implement Node Patterns Database
+### SG-007: Implement Node Patterns Database
 **Priority:** P0  
 **Estimate:** 2 hours  
 **Dependencies:** None  
@@ -183,17 +183,17 @@ Create database of herb and ore node name patterns.
 
 ---
 
-### GB-008: Implement Settings System
+### SG-008: Implement Settings System
 **Priority:** P1  
 **Estimate:** 2 hours  
-**Dependencies:** GB-001, GB-004  
+**Dependencies:** SG-001, SG-004  
 **File:** `data/Settings.lua`
 
 **Description:**
 Settings management with persistence to JSON file.
 
 **Acceptance Criteria:**
-- [ ] `load()` loads settings from `scripts_data/gatherbuddy/settings.json`
+- [ ] `load()` loads settings from `scripts_data/sentinel_gather/settings.json`
 - [ ] `save()` saves current settings to file
 - [ ] `get(path)` gets nested setting (e.g., "movement.mount_threshold")
 - [ ] `set(path, value)` sets nested setting
@@ -204,10 +204,10 @@ Settings management with persistence to JSON file.
 
 ---
 
-### GB-009: Implement ProfileManager
+### SG-009: Implement ProfileManager
 **Priority:** P0  
 **Estimate:** 4 hours  
-**Dependencies:** GB-001, GB-005  
+**Dependencies:** SG-001, SG-005  
 **File:** `modules/ProfileManager.lua`
 
 **Description:**
@@ -229,10 +229,10 @@ Load, validate, and manage gathering profiles.
 
 ---
 
-### GB-010: Implement NavigationClient
+### SG-010: Implement NavigationClient
 **Priority:** P0  
 **Estimate:** 3 hours  
-**Dependencies:** GB-001, GB-005  
+**Dependencies:** SG-001, SG-005  
 **File:** `modules/NavigationClient.lua`
 
 **Description:**
@@ -250,10 +250,10 @@ HTTP client for communicating with navigation service.
 
 ---
 
-### GB-011: Implement BotManager
+### SG-011: Implement BotManager
 **Priority:** P0  
 **Estimate:** 4 hours  
-**Dependencies:** GB-005, GB-006, GB-009  
+**Dependencies:** SG-005, SG-006, SG-009  
 **File:** `core/BotManager.lua`
 
 **Description:**
@@ -275,10 +275,10 @@ Central manager that coordinates all modules and tick loop.
 
 ## Epic 3: Movement (Days 6-7)
 
-### GB-012: Implement MovementModule
+### SG-012: Implement MovementModule
 **Priority:** P0  
 **Estimate:** 5 hours  
-**Dependencies:** GB-005, GB-010  
+**Dependencies:** SG-005, SG-010  
 **File:** `modules/MovementModule.lua`
 
 **Description:**
@@ -298,10 +298,10 @@ Handle all movement using simple_movement and nav service.
 
 ---
 
-### GB-013: Implement Stuck Detection
+### SG-013: Implement Stuck Detection
 **Priority:** P1  
 **Estimate:** 3 hours  
-**Dependencies:** GB-012  
+**Dependencies:** SG-012  
 **File:** `modules/MovementModule.lua` (extension)
 
 **Description:**
@@ -321,10 +321,10 @@ Detect and recover from stuck situations.
 
 ## Epic 4: Gathering (Days 8-10)
 
-### GB-014: Implement NodeScanner
+### SG-014: Implement NodeScanner
 **Priority:** P0  
 **Estimate:** 4 hours  
-**Dependencies:** GB-005, GB-007, GB-009  
+**Dependencies:** SG-005, SG-007, SG-009  
 **File:** `modules/NodeScanner.lua`
 
 **Description:**
@@ -345,10 +345,10 @@ Detect gatherable nodes in the game world.
 
 ---
 
-### GB-015: Implement GatherModule
+### SG-015: Implement GatherModule
 **Priority:** P0  
 **Estimate:** 5 hours  
-**Dependencies:** GB-005, GB-014  
+**Dependencies:** SG-005, SG-014  
 **File:** `modules/GatherModule.lua`
 
 **Description:**
@@ -370,10 +370,10 @@ Handle node interaction and loot collection.
 
 ---
 
-### GB-016: Implement MountModule
+### SG-016: Implement MountModule
 **Priority:** P1  
 **Estimate:** 3 hours  
-**Dependencies:** GB-005  
+**Dependencies:** SG-005  
 **File:** `modules/MountModule.lua`
 
 **Description:**
@@ -395,10 +395,10 @@ Handle mounting and dismounting logic.
 
 ## Epic 5: Safety (Days 11-12)
 
-### GB-017: Implement SafetyModule - Enemy Detection
+### SG-017: Implement SafetyModule - Enemy Detection
 **Priority:** P1  
 **Estimate:** 3 hours  
-**Dependencies:** GB-005  
+**Dependencies:** SG-005  
 **File:** `modules/SafetyModule.lua`
 
 **Description:**
@@ -416,10 +416,10 @@ Monitor for nearby enemies and threat levels.
 
 ---
 
-### GB-018: Implement SafetyModule - Combat Handling
+### SG-018: Implement SafetyModule - Combat Handling
 **Priority:** P1  
 **Estimate:** 3 hours  
-**Dependencies:** GB-017  
+**Dependencies:** SG-017  
 **File:** `modules/SafetyModule.lua` (extension)
 
 **Description:**
@@ -436,10 +436,10 @@ Handle combat state transitions.
 
 ---
 
-### GB-019: Implement SafetyModule - Death Recovery
+### SG-019: Implement SafetyModule - Death Recovery
 **Priority:** P0  
 **Estimate:** 4 hours  
-**Dependencies:** GB-017, GB-012  
+**Dependencies:** SG-017, SG-012  
 **File:** `modules/SafetyModule.lua` (extension)
 
 **Description:**
@@ -458,10 +458,10 @@ Handle player death and corpse run.
 
 ---
 
-### GB-020: Implement InventoryModule
+### SG-020: Implement InventoryModule
 **Priority:** P2  
 **Estimate:** 2 hours  
-**Dependencies:** GB-005  
+**Dependencies:** SG-005  
 **File:** `modules/InventoryModule.lua`
 
 **Description:**
@@ -480,10 +480,10 @@ Track inventory and bag space.
 
 ## Epic 6: UI & Polish (Days 13-14)
 
-### GB-021: Implement Main Control Window
+### SG-021: Implement Main Control Window
 **Priority:** P0  
 **Estimate:** 4 hours  
-**Dependencies:** GB-011  
+**Dependencies:** SG-011  
 **File:** `ui/MainWindow.lua`
 
 **Description:**
@@ -503,10 +503,10 @@ Create control panel UI for bot operation.
 
 ---
 
-### GB-022: Implement Statistics Display
+### SG-022: Implement Statistics Display
 **Priority:** P2  
 **Estimate:** 2 hours  
-**Dependencies:** GB-021  
+**Dependencies:** SG-021  
 **File:** `ui/MainWindow.lua` (extension)
 
 **Description:**
@@ -522,10 +522,10 @@ Add statistics panel to UI.
 
 ---
 
-### GB-023: Implement Random Pause System
+### SG-023: Implement Random Pause System
 **Priority:** P1  
 **Estimate:** 2 hours  
-**Dependencies:** GB-003, GB-011  
+**Dependencies:** SG-003, SG-011  
 **File:** `core/BotManager.lua` (extension)
 
 **Description:**
@@ -541,10 +541,10 @@ Add human-like random pauses during operation.
 
 ---
 
-### GB-024: Implement Jump System
+### SG-024: Implement Jump System
 **Priority:** P2  
 **Estimate:** 1 hour  
-**Dependencies:** GB-012  
+**Dependencies:** SG-012  
 **File:** `modules/MovementModule.lua` (extension)
 
 **Description:**
@@ -558,7 +558,7 @@ Add random jumps during movement.
 
 ---
 
-### GB-025: Create Entry Points
+### SG-025: Create Entry Points
 **Priority:** P0  
 **Estimate:** 2 hours  
 **Dependencies:** All modules  
@@ -578,11 +578,11 @@ Create the entry point files that wire everything together.
 
 ---
 
-### GB-026: Create Example Profiles
+### SG-026: Create Example Profiles
 **Priority:** P1  
 **Estimate:** 2 hours  
-**Dependencies:** GB-009  
-**Files:** `scripts_data/gatherbuddy/profiles/`
+**Dependencies:** SG-009  
+**Files:** `scripts_data/sentinel_gather/profiles/`
 
 **Description:**
 Create sample profiles for testing.
@@ -598,7 +598,7 @@ Create sample profiles for testing.
 
 ---
 
-### GB-027: Documentation & README
+### SG-027: Documentation & README
 **Priority:** P1  
 **Estimate:** 2 hours  
 **Dependencies:** All  
@@ -620,31 +620,31 @@ Create user documentation.
 ## Dependency Graph
 
 ```
-GB-001 (JSON) ─────────────────────────────────────────┐
-GB-002 (Logger) ───────────────────────────────────────┤
-GB-003 (Helpers) ──────────────────────────────────────┤
-GB-004 (Constants) ────────────────────────────────────┤
+SG-001 (JSON) ─────────────────────────────────────────┐
+SG-002 (Logger) ───────────────────────────────────────┤
+SG-003 (Helpers) ──────────────────────────────────────┤
+SG-004 (Constants) ────────────────────────────────────┤
                                                        ▼
-                                              GB-005 (EventBus)
+                                              SG-005 (EventBus)
                                                        │
                     ┌──────────────────┬───────────────┼───────────────┬──────────────────┐
                     ▼                  ▼               ▼               ▼                  ▼
-            GB-006 (StateMachine) GB-007 (Nodes) GB-008 (Settings) GB-010 (NavClient) GB-014 (Scanner)
+            SG-006 (StateMachine) SG-007 (Nodes) SG-008 (Settings) SG-010 (NavClient) SG-014 (Scanner)
                     │                                  │               │                  │
                     ▼                                  ▼               ▼                  ▼
-            GB-011 (BotManager) ◀────────────── GB-009 (Profile)     GB-012 (Movement)  GB-015 (Gather)
+            SG-011 (BotManager) ◀────────────── SG-009 (Profile)     SG-012 (Movement)  SG-015 (Gather)
                     │                                                  │                  │
                     ▼                                                  ▼                  ▼
-            GB-021 (UI) ◀─────────────────────────────────── GB-013 (Stuck) ◀─── GB-016 (Mount)
+            SG-021 (UI) ◀─────────────────────────────────── SG-013 (Stuck) ◀─── SG-016 (Mount)
                     │
                     ▼
-            GB-022 (Stats), GB-023 (Pause), GB-024 (Jump)
+            SG-022 (Stats), SG-023 (Pause), SG-024 (Jump)
                     │
                     ▼
-            GB-025 (Entry Points)
+            SG-025 (Entry Points)
                     │
                     ▼
-            GB-026 (Profiles), GB-027 (Docs)
+            SG-026 (Profiles), SG-027 (Docs)
 ```
 
 ---
@@ -654,43 +654,43 @@ GB-004 (Constants) ────────────────────�
 ### Sprint 1 (Days 1-5): Foundation + Core
 | Ticket | Points | Assignee |
 |--------|--------|----------|
-| GB-001 | 2 | - |
-| GB-002 | 1 | - |
-| GB-003 | 2 | - |
-| GB-004 | 1 | - |
-| GB-005 | 3 | - |
-| GB-006 | 3 | - |
-| GB-007 | 2 | - |
-| GB-008 | 2 | - |
-| GB-009 | 4 | - |
-| GB-010 | 3 | - |
-| GB-011 | 4 | - |
+| SG-001 | 2 | - |
+| SG-002 | 1 | - |
+| SG-003 | 2 | - |
+| SG-004 | 1 | - |
+| SG-005 | 3 | - |
+| SG-006 | 3 | - |
+| SG-007 | 2 | - |
+| SG-008 | 2 | - |
+| SG-009 | 4 | - |
+| SG-010 | 3 | - |
+| SG-011 | 4 | - |
 | **Total** | **27** | |
 
 ### Sprint 2 (Days 6-10): Movement + Gathering
 | Ticket | Points | Assignee |
 |--------|--------|----------|
-| GB-012 | 5 | - |
-| GB-013 | 3 | - |
-| GB-014 | 4 | - |
-| GB-015 | 5 | - |
-| GB-016 | 3 | - |
+| SG-012 | 5 | - |
+| SG-013 | 3 | - |
+| SG-014 | 4 | - |
+| SG-015 | 5 | - |
+| SG-016 | 3 | - |
 | **Total** | **20** | |
 
 ### Sprint 3 (Days 11-14): Safety + Polish
 | Ticket | Points | Assignee |
 |--------|--------|----------|
-| GB-017 | 3 | - |
-| GB-018 | 3 | - |
-| GB-019 | 4 | - |
-| GB-020 | 2 | - |
-| GB-021 | 4 | - |
-| GB-022 | 2 | - |
-| GB-023 | 2 | - |
-| GB-024 | 1 | - |
-| GB-025 | 2 | - |
-| GB-026 | 2 | - |
-| GB-027 | 2 | - |
+| SG-017 | 3 | - |
+| SG-018 | 3 | - |
+| SG-019 | 4 | - |
+| SG-020 | 2 | - |
+| SG-021 | 4 | - |
+| SG-022 | 2 | - |
+| SG-023 | 2 | - |
+| SG-024 | 1 | - |
+| SG-025 | 2 | - |
+| SG-026 | 2 | - |
+| SG-027 | 2 | - |
 | **Total** | **27** | |
 
 ---

@@ -76,7 +76,7 @@ These modules are being rewritten from scratch to be simpler, more robust, and m
 12. **File naming**: NavigationClient.lua and MovementModule.lua, both in the SentinelGather plugin folder.
 </critical_constraints>
 
-<navbuddy_api_reference>
+<sentinel_nav_server_api_reference>
 ## SentinelNavServer REST API (localhost:47110)
 
 All endpoints are GET requests. All return JSON with `"success": true/false`.
@@ -157,7 +157,7 @@ GET /health
 ### Coordinate System
 WoW coordinates: X,Y = horizontal plane, Z = height. Range: ±65536 for X/Y, ±10000 for Z.
 Multi-point params use semicolons: "x1,y1,z1;x2,y2,z2"
-</navbuddy_api_reference>
+</sentinel_nav_server_api_reference>
 
 <architecture>
 ## Target Architecture

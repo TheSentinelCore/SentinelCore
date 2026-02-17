@@ -575,7 +575,7 @@ Death Recovery:
 
 ```
 scripts_data/
-└── gatherbuddy/
+└── sentinel_gather/
     ├── profiles/
     │   ├── retail/
     │   │   └── zone_name_route.json

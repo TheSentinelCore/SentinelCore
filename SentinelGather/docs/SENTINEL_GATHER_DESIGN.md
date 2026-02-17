@@ -255,7 +255,7 @@ After evaluating options, **JSON** is recommended for profiles:
 
 ```
 scripts_data/
-└── gatherbuddy/
+└── sentinel_gather/
     ├── profiles/
     │   ├── retail/
     │   │   ├── eastern_kingdoms/
@@ -659,12 +659,12 @@ local mounted = player:is_mounted()
 ### File I/O (Profiles)
 ```lua
 -- Read profile
-local json_str = core.read_data_file("gatherbuddy/profiles/retail/elwynn.json")
+local json_str = core.read_data_file("sentinel_gather/profiles/retail/elwynn.json")
 
 -- Write profile
-core.create_data_folder("gatherbuddy/profiles")
-core.create_data_file("gatherbuddy/profiles/my_profile.json")
-core.write_data_file("gatherbuddy/profiles/my_profile.json", json_content)
+core.create_data_folder("sentinel_gather/profiles")
+core.create_data_file("sentinel_gather/profiles/my_profile.json")
+core.write_data_file("sentinel_gather/profiles/my_profile.json", json_content)
 ```
 
 ---
