@@ -3,7 +3,7 @@
 
     Creates and manages the AstroUI settings window, registers all tabs,
     renders the "Show Advanced" toggle above the tab bar, and syncs menu
-    element values into the Facade config every frame.
+    element values into the Client config every frame.
 ]]
 
 local color = require("common/color")
@@ -26,7 +26,7 @@ local Window = {}
 -- Private state
 local _ui = nil              -- RotationSettingsUI instance
 local _initialized = false
-local _facade = nil          -- SentinelNavClient Facade instance
+local _client = nil          -- SentinelNavClient Client instance
 local _menu = nil            -- menu elements table
 local _visualizer = nil      -- Visualizer instance
 local _reset_mappings = {}   -- per-tab reset mappings keyed by tab ID
@@ -208,11 +208,11 @@ local function render_advanced_toggle(ui, y_offset)
 end
 
 --------------------------------------------------------------------------------
--- Settings sync: menu elements -> Facade config
+-- Settings sync: menu elements -> Client config
 --------------------------------------------------------------------------------
 
-local function sync_to_facade()
-    if not _facade then return end
+local function sync_to_client()
+    if not _client then return end
 
     -- Resolve smoothing algorithm name from combo index
     local smoothing_id = PathfindingTab.SMOOTHING_IDS[_menu.smoothing:get()] or "chaikin"
@@ -220,7 +220,7 @@ local function sync_to_facade()
     -- Wall clearance: 0 when disabled, slider value when enabled
     local wall_cl = _menu.wall_clearance_en:get_state() and _menu.wall_clearance:get() or 0
 
-    _facade:update_config({
+    _client:update_config({
         movement = {
             dynamic_speed               = _menu.dynamic_speed:get_state(),
             dynamic_speed_max_tolerance_scale = _menu.dyn_tol_scale:get(),
@@ -281,11 +281,11 @@ end
 --------------------------------------------------------------------------------
 
 ---Initialize the SentinelNavClient settings UI
----@param facade table The SentinelNavClient Facade instance
-function Window.init(facade)
+---@param client table The SentinelNavClient Client instance
+function Window.init(client)
     if _initialized then return end
 
-    _facade = facade
+    _client = client
     _menu = create_menu_elements()
 
     -- Create the AstroUI window
@@ -376,10 +376,10 @@ function Window.init(facade)
     MovementTab.register(_ui, _menu)
     PathfindingTab.register(_ui, _menu)
     ObstaclesTab.register(_ui, _menu)
-    DebugTab.register(_ui, _menu, _facade, _reset_mappings)
+    DebugTab.register(_ui, _menu, _client, _reset_mappings)
 
     -- Create 3D Visualizer (self-registers its own render callback)
-    _visualizer = Visualizer:new(_facade, _menu)
+    _visualizer = Visualizer:new(_client, _menu)
 
     -- Always start with window closed; user opens via menu button
     _ui.menu.enable:set(false)
@@ -391,8 +391,8 @@ end
 ---Called every render frame
 function Window.on_render()
     if not _initialized or not _ui then return end
-    sync_to_facade()
-    DebugTab.update(_facade, _menu)
+    sync_to_client()
+    DebugTab.update(_client, _menu)
     _ui:on_render()
 end
 

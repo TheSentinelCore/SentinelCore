@@ -79,15 +79,15 @@ end
 -- Go button dispatch for all 13 modes
 --------------------------------------------------------------------------------
 
-local function dispatch_go(mode_idx, facade, waypoints)
+local function dispatch_go(mode_idx, client, waypoints)
     local mode = MODES[mode_idx]
-    if not mode or not facade then return end
+    if not mode or not client then return end
 
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then return end
     local player_pos = player:get_position()
 
-    local nav_client = facade.nav_client
+    local nav_client = client.nav_client
 
     -- Shared failure callback for navigation modes
     local function nav_callback(success, reason)
@@ -113,11 +113,11 @@ local function dispatch_go(mode_idx, facade, waypoints)
         end
         local dist = data.distance or data.total_distance or 0
         _last_result = string.format("%s: %d wps, %.0f yd", mode.name, #wps, dist)
-        facade:follow_path(wps, nav_callback)
+        client:follow_path(wps, nav_callback)
     end
 
     -- Reset state
-    facade:stop()
+    client:stop()
     _last_result = nil
 
     -- Query modes don't set _nav_active
@@ -129,23 +129,23 @@ local function dispatch_go(mode_idx, facade, waypoints)
     end
 
     -- Gather avoidance zones for modes that call nav_client directly
-    local zones = facade.obstacle and facade.obstacle:get_avoidance_zones() or {}
+    local zones = client.obstacle and client.obstacle:get_avoidance_zones() or {}
 
     -- Build opts once for modes that call nav_client directly
-    local path_opts = facade:get_path_opts({ avoid_zones = zones })
+    local path_opts = client:get_path_opts({ avoid_zones = zones })
 
     -- ===== Navigation modes =====
     if mode_idx == 1 then
         -- Move To (sequential)
-        facade:move_to(waypoints[1], nav_callback)
+        client:move_to(waypoints[1], nav_callback)
 
     elseif mode_idx == 2 then
         -- Move Direct (sequential, no pathfinding)
-        facade:move_direct(waypoints[1], nav_callback)
+        client:move_direct(waypoints[1], nav_callback)
 
     elseif mode_idx == 3 then
         -- TSP Route
-        facade:plan_route(waypoints, function(success)
+        client:plan_route(waypoints, function(success)
             if not success then
                 core.log("[SentinelNavClient Debug] TSP route failed")
                 _nav_active = false
@@ -162,7 +162,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
 
     elseif mode_idx == 5 then
         -- Corridor Path
-        nav_client:find_path_corridor(player_pos, waypoints[1], raw_path_callback, facade:get_corridor_opts({ avoid_zones = zones }))
+        nav_client:find_path_corridor(player_pos, waypoints[1], raw_path_callback, client:get_corridor_opts({ avoid_zones = zones }))
 
     elseif mode_idx == 6 then
         -- Path + Avoid (uses current obstacle zones)
@@ -174,7 +174,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
 
     elseif mode_idx == 8 then
         -- Kite (arc around waypoint 1)
-        nav_client:kite(player_pos, waypoints[1], raw_path_callback, facade:get_path_opts({ kite_radius = 8.0, avoid_zones = zones }))
+        nav_client:kite(player_pos, waypoints[1], raw_path_callback, client:get_path_opts({ kite_radius = 8.0, avoid_zones = zones }))
 
     elseif mode_idx == 9 then
         -- Random Point → navigate to it
@@ -186,7 +186,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
             end
             _last_result = string.format("Random: %.0f, %.0f, %.0f",
                 data.point.x, data.point.y, data.point.z)
-            facade:move_to(data.point, nav_callback)
+            client:move_to(data.point, nav_callback)
         end)
 
     -- ===== Query modes =====
@@ -207,7 +207,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
 
     elseif mode_idx == 11 then
         -- Validate destination
-        facade:validate_destination(waypoints[1], function(reachable, reason, distance)
+        client:validate_destination(waypoints[1], function(reachable, reason, distance)
             if reachable then
                 _last_result = string.format("REACHABLE (%.1f yd)", distance or 0)
             else
@@ -228,7 +228,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
 
     elseif mode_idx == 13 then
         -- Health Check
-        facade:health_check(function(ok, data, err)
+        client:health_check(function(ok, data, err)
             if not ok then
                 _last_result = "Health ERROR: " .. tostring(err)
                 return
@@ -248,8 +248,8 @@ end
 ---Register the debug tab with the UI
 ---@param ui any RotationSettingsUI instance
 ---@param menu table Menu elements table
----@param facade table|nil SentinelNavClient Facade instance
-function DebugTab.register(ui, menu, facade, reset_mappings)
+---@param client table|nil SentinelNavClient Client instance
+function DebugTab.register(ui, menu, client, reset_mappings)
     ui:add_tab({ id = "debug", label = "Debug" }, function(t)
 
         -- Live Status (custom rendered)
@@ -264,12 +264,12 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                     vec2.new(x, y_offset), colors.text_secondary, "Live Status")
                 y_offset = y_offset + window:get_text_size("Live Status").y + 10
 
-                if not facade then
-                    y_offset = render_line(window, colors, x, y_offset, "State", "no facade")
+                if not client then
+                    y_offset = render_line(window, colors, x, y_offset, "State", "no client")
                     return y_offset + 8
                 end
 
-                local state = facade:get_state()
+                local state = client:get_state()
                 y_offset = render_line(window, colors, x, y_offset, "State", state)
 
                 local player = core.object_manager.get_local_player()
@@ -279,7 +279,7 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                         string.format("%.1f, %.1f, %.1f", pos.x, pos.y, pos.z))
                 end
 
-                local dest = facade:get_destination()
+                local dest = client:get_destination()
                 if dest then
                     y_offset = render_line(window, colors, x, y_offset, "Destination",
                         string.format("%.1f, %.1f, %.1f", dest.x, dest.y, dest.z))
@@ -290,9 +290,9 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                     end
                 end
 
-                local path = facade:get_current_path()
+                local path = client:get_current_path()
                 if path then
-                    local idx = facade:get_path_index()
+                    local idx = client:get_path_index()
                     y_offset = render_line(window, colors, x, y_offset, "Waypoint",
                         string.format("%d / %d", idx, #path))
                 end
@@ -334,8 +334,8 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
         -- Avoid Zones (custom rendered)
         t:custom_render({
             render_fn = function(self, y_offset)
-                if not facade then return y_offset end
-                local obstacle = facade.obstacle
+                if not client then return y_offset end
+                local obstacle = client.obstacle
                 if not obstacle then return y_offset end
 
                 local window = self.window
@@ -509,7 +509,7 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                     _nav_active = false
                     _nav_index = 0
                     _last_result = nil
-                    if facade then facade:stop() end
+                    if client then client:stop() end
                     core.log("[SentinelNavClient Debug] Cleared all waypoints")
                 end
 
@@ -521,14 +521,14 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
 
                 local clicked_go = render_button(window, colors, x, y_offset,
                     btn_w, btn_h, mode.btn, go_enabled)
-                if clicked_go and facade then
-                    dispatch_go(mode_idx, facade, _waypoints)
+                if clicked_go and client then
+                    dispatch_go(mode_idx, client, _waypoints)
                 end
 
                 local clicked_stop = render_button(window, colors, x + btn_w + 4, y_offset,
                     btn_w, btn_h, "Stop", _nav_active)
-                if clicked_stop and facade then
-                    facade:stop()
+                if clicked_stop and client then
+                    client:stop()
                     _nav_active = false
                     _nav_index = 0
                 end
@@ -580,14 +580,14 @@ end
 -- Sequential navigation update — call from Window.on_render()
 --------------------------------------------------------------------------------
 
-function DebugTab.update(facade, menu)
-    if not _nav_active or not facade or not menu then return end
+function DebugTab.update(client, menu)
+    if not _nav_active or not client or not menu then return end
 
     local mode_idx = menu.debug_mode:get() + 1
     if mode_idx < 1 or mode_idx > #MODES then return end
     if not MODES[mode_idx].sequential then return end
 
-    local state = facade:get_state()
+    local state = client:get_state()
     if state == "arrived" and _nav_index < #_waypoints then
         _nav_index = _nav_index + 1
         local cb = function(success)
@@ -597,9 +597,9 @@ function DebugTab.update(facade, menu)
             end
         end
         if mode_idx == 1 then
-            facade:move_to(_waypoints[_nav_index], cb)
+            client:move_to(_waypoints[_nav_index], cb)
         elseif mode_idx == 2 then
-            facade:move_direct(_waypoints[_nav_index], cb)
+            client:move_direct(_waypoints[_nav_index], cb)
         end
     elseif state == "arrived" and _nav_index >= #_waypoints then
         core.log("[SentinelNavClient Debug] All waypoints reached!")

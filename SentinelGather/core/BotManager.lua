@@ -12,8 +12,8 @@
 ---@field private _pause_system table
 ---@field private _consecutive_nav_failures number
 ---@field private _max_consecutive_failures number
----@field private _nav_facade_available boolean
----@field private _nav_facade_error string|nil
+---@field private _nav_client_available boolean
+---@field private _nav_client_error string|nil
 ---@field private _nav_recovery_cancel function|nil
 local BotManager = {}
 BotManager.__index = BotManager
@@ -73,8 +73,8 @@ function BotManager:new(config)
     instance._max_consecutive_failures = Constants.OPERATIONAL.MAX_CONSECUTIVE_NAV_FAILURES
 
     -- SentinelNavClient availability
-    instance._nav_facade_available = false
-    instance._nav_facade_error = nil
+    instance._nav_client_available = false
+    instance._nav_client_error = nil
 
     -- Anti-detection
     instance._pause_system = {
@@ -105,25 +105,25 @@ function BotManager:initialize()
         self._log:info("Initializing modules...")
     end
 
-    -- Use SentinelNavClient's shared Facade (SentinelNavClient plugin must load before SentinelGather)
-    if _G.SentinelNavClient and _G.SentinelNavClient.facade then
-        self._nav_facade = _G.SentinelNavClient.facade
-        self._modules.Navigation = self._nav_facade.nav_client
-        self._modules.Movement   = self._nav_facade.movement
-        self._modules.Obstacle   = self._nav_facade.obstacle
+    -- Use SentinelNavClient's shared Client (SentinelNavClient plugin must load before SentinelGather)
+    if _G.SentinelNavClient and _G.SentinelNavClient.client then
+        self._nav_client = _G.SentinelNavClient.client
+        self._modules.Navigation = self._nav_client.nav_client
+        self._modules.Movement   = self._nav_client.movement
+        self._modules.Obstacle   = self._nav_client.obstacle
 
-        self._nav_facade_available = true
+        self._nav_client_available = true
         if self._log then
-            self._log:debug("Using SentinelNavClient shared facade")
+            self._log:debug("Using SentinelNavClient shared client")
         end
     else
-        self._nav_facade_available = false
-        self._nav_facade_error = "SentinelNavClient plugin not loaded. Load SentinelNavClient before SentinelGather for navigation."
+        self._nav_client_available = false
+        self._nav_client_error = "SentinelNavClient plugin not loaded. Load SentinelNavClient before SentinelGather for navigation."
         if self._log then
-            self._log:error(self._nav_facade_error)
+            self._log:error(self._nav_client_error)
         end
         self._event_bus:publish(EVENTS.NAV_UNAVAILABLE, {
-            error = self._nav_facade_error,
+            error = self._nav_client_error,
             timestamp = core.time()
         })
     end
@@ -411,7 +411,7 @@ end
 
 ---Update all modules
 function BotManager:_update_modules()
-    -- SentinelNavClient facade updates itself via its own on_update callback.
+    -- SentinelNavClient client updates itself via its own on_update callback.
     -- We only update SentinelGather-specific modules here.
     local update_order = {
         "Safety",
@@ -721,13 +721,13 @@ end
 ---Check if navigation is available
 ---@return boolean
 function BotManager:is_navigation_available()
-    return self._nav_facade_available
+    return self._nav_client_available
 end
 
 ---Get navigation error message
 ---@return string|nil
 function BotManager:get_navigation_error()
-    return self._nav_facade_error
+    return self._nav_client_error
 end
 
 ---Get the event bus
@@ -773,9 +773,9 @@ function BotManager:destroy()
     -- Destroy SentinelGather-owned modules only.
     -- SentinelNavClient modules (Navigation, Movement, Obstacle) are shared references
     -- owned by SentinelNavClient's singleton — do not destroy them here.
-    local nav_facade_modules = { Navigation = true, Movement = true, Obstacle = true }
+    local nav_client_modules = { Navigation = true, Movement = true, Obstacle = true }
     for name, module in pairs(self._modules) do
-        if not nav_facade_modules[name] and module.destroy then
+        if not nav_client_modules[name] and module.destroy then
             pcall(module.destroy, module)
         end
     end

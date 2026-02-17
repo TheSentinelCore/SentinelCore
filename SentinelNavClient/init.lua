@@ -1,19 +1,19 @@
 --[[
     SentinelNavClient - Standalone Navigation Plugin
 
-    Singleton that owns the shared Facade instance.
-    All consumers (SentinelGather, BgBuddy, etc.) share this single Facade.
+    Singleton that owns the shared Client instance.
+    All consumers (SentinelGather, BgBuddy, etc.) share this single Client.
 
     Usage:
         -- Other plugins access via _G.SentinelNavClient (set by main.lua)
-        local facade = _G.SentinelNavClient.facade
-        facade:move_to(target)
+        local client = _G.SentinelNavClient.client
+        client:move_to(target)
 ]]
 
-local Facade = require("Facade")
+local Client = require("core/Client")
 
 ---@class SentinelNavClient
----@field private _facade Facade|nil
+---@field private _client Client|nil
 ---@field private _initialized boolean
 ---@field VERSION string
 ---@field NAME string
@@ -30,13 +30,13 @@ local _instance = nil
 function SentinelNavClient:get_instance()
     if not _instance then
         _instance = setmetatable({}, SentinelNavClient)
-        _instance._facade = nil
+        _instance._client = nil
         _instance._initialized = false
     end
     return _instance
 end
 
----Initialize SentinelNavClient — creates the shared Facade
+---Initialize SentinelNavClient — creates the shared Client
 ---@return boolean success
 function SentinelNavClient:initialize()
     local instance = self:get_instance()
@@ -45,19 +45,19 @@ function SentinelNavClient:initialize()
         return true
     end
 
-    -- Create the shared Facade (empty config — UI syncs real values immediately)
-    instance._facade = Facade:new({})
+    -- Create the shared Client (empty config — UI syncs real values immediately)
+    instance._client = Client:new({})
 
     instance._initialized = true
     core.log("[SentinelNavClient] Initialized v" .. SentinelNavClient.VERSION)
     return true
 end
 
----Get the shared Facade
----@return Facade|nil
-function SentinelNavClient:get_facade()
+---Get the shared Client
+---@return Client|nil
+function SentinelNavClient:get_client()
     local instance = self:get_instance()
-    return instance._facade
+    return instance._client
 end
 
 ---Check if initialized
@@ -70,9 +70,9 @@ end
 ---Clean up
 function SentinelNavClient:destroy()
     local instance = self:get_instance()
-    if instance._facade then
-        instance._facade:destroy()
-        instance._facade = nil
+    if instance._client then
+        instance._client:destroy()
+        instance._client = nil
     end
     instance._initialized = false
     _instance = nil
