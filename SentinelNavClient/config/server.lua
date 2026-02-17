@@ -1,6 +1,7 @@
--- config/server.lua
--- Shared server configuration consumed by SentinelNavClient and other projects.
--- Single source of truth for SentinelNavServer connection details.
+-- SentinelNavClient/config/server.lua
+-- Server connection defaults bundled with the client.
+-- Consumers can override via Navigation:new({ base_url = "..." }) or
+-- Navigation:update_config({ base_url = "..." }).
 
 local ServerConfig = {
     --- Base URL for SentinelNavServer HTTP API
