@@ -1,7 +1,7 @@
 local plugin = {}
 local VERSION = require("version")
 
-plugin["name"] = "BgBuddy"
+plugin["name"] = "SentinelBattlegrounder"
 plugin["version"] = VERSION
 plugin["author"] = "Laidbak83"
 plugin["load"] = true

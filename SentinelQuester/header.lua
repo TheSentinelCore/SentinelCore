@@ -1,6 +1,6 @@
 local plugin = {}
 
-plugin["name"] = "QuestingBuddy"
+plugin["name"] = "SentinelQuester"
 plugin["version"] = "0.1.0"
 plugin["author"] = "Laidbak"
 plugin["load"] = true
