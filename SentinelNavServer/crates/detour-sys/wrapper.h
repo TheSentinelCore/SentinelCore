@@ -11,8 +11,8 @@
  * - This allows Rust to call Detour functions via FFI
  */
 
-#ifndef NAVBUDDY_WRAPPER_H
-#define NAVBUDDY_WRAPPER_H
+#ifndef SENTINEL_NAV_SERVER_WRAPPER_H
+#define SENTINEL_NAV_SERVER_WRAPPER_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -614,4 +614,4 @@ dtStatus wrapper_dtNavMeshQuery_queryPolygons(
 }
 #endif
 
-#endif // NAVBUDDY_WRAPPER_H
+#endif // SENTINEL_NAV_SERVER_WRAPPER_H
