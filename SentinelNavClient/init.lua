@@ -2,7 +2,7 @@
     SentinelNavClient - Standalone Navigation Plugin
 
     Singleton that owns the shared Facade instance.
-    All consumers (GatherBuddy, BgBuddy, etc.) share this single Facade.
+    All consumers (SentinelGather, BgBuddy, etc.) share this single Facade.
 
     Usage:
         -- Other plugins access via _G.SentinelNavClient (set by main.lua)

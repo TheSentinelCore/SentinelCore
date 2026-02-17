@@ -290,7 +290,7 @@ function Window.init(facade)
 
     -- Create the AstroUI window
     _ui = AstroUI.new({
-        id = "navlib",
+        id = "sentinel_nav_client",
         title = "Sentinel Navigation Client",
         default_x = 550,
         default_y = 180,
