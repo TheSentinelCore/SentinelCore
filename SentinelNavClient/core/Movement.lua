@@ -179,8 +179,12 @@ function Movement:update_config(overrides)
                     self:_verbose("Config: ignoring non-number for '" .. k .. "'")
                     goto continue
                 end
-                if def.min and v < def.min then v = def.min end
-                if def.max and v > def.max then v = def.max end
+                -- Skip clamping for smooth_ratio: Defaults range is %-based (50-95)
+                -- but callers already convert to decimal (0.50-0.95) before calling.
+                if k ~= "smooth_ratio" then
+                    if def.min and v < def.min then v = def.min end
+                    if def.max and v > def.max then v = def.max end
+                end
             end
         end
         self._config[k] = v
