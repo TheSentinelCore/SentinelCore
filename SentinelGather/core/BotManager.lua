@@ -18,7 +18,7 @@
 local BotManager = {}
 BotManager.__index = BotManager
 
--- Import dependencies (relative paths since we're in GatherBuddy folder)
+-- Import dependencies (relative paths since we're in SentinelGather folder)
 local EventBus = require("core/EventBus")
 local StateMachine = require("core/StateMachine")
 local Constants = require("core/Constants")
@@ -72,7 +72,7 @@ function BotManager:new(config)
     instance._consecutive_nav_failures = 0
     instance._max_consecutive_failures = Constants.OPERATIONAL.MAX_CONSECUTIVE_NAV_FAILURES
 
-    -- NavLib availability
+    -- SentinelNavClient availability
     instance._navlib_available = false
     instance._navlib_error = nil
 
@@ -105,20 +105,20 @@ function BotManager:initialize()
         self._log:info("Initializing modules...")
     end
 
-    -- Use NavLib's shared Facade (NavLib plugin must load before GatherBuddy)
-    if _G.NavLib and _G.NavLib.facade then
-        self._navlib = _G.NavLib.facade
+    -- Use SentinelNavClient's shared Facade (SentinelNavClient plugin must load before SentinelGather)
+    if _G.SentinelNavClient and _G.SentinelNavClient.facade then
+        self._navlib = _G.SentinelNavClient.facade
         self._modules.Navigation = self._navlib.nav_client
         self._modules.Movement   = self._navlib.movement
         self._modules.Obstacle   = self._navlib.obstacle
 
         self._navlib_available = true
         if self._log then
-            self._log:debug("Using NavLib shared facade")
+            self._log:debug("Using SentinelNavClient shared facade")
         end
     else
         self._navlib_available = false
-        self._navlib_error = "NavLib plugin not loaded. Load NavLib before GatherBuddy for navigation."
+        self._navlib_error = "SentinelNavClient plugin not loaded. Load SentinelNavClient before SentinelGather for navigation."
         if self._log then
             self._log:error(self._navlib_error)
         end
@@ -411,8 +411,8 @@ end
 
 ---Update all modules
 function BotManager:_update_modules()
-    -- NavLib facade updates itself via its own on_update callback.
-    -- We only update GatherBuddy-specific modules here.
+    -- SentinelNavClient facade updates itself via its own on_update callback.
+    -- We only update SentinelGather-specific modules here.
     local update_order = {
         "Safety",
         "NodeScanner",
@@ -770,9 +770,9 @@ end
 function BotManager:destroy()
     self:stop()
 
-    -- Destroy GatherBuddy-owned modules only.
-    -- NavLib modules (Navigation, Movement, Obstacle) are shared references
-    -- owned by NavLib's singleton — do not destroy them here.
+    -- Destroy SentinelGather-owned modules only.
+    -- SentinelNavClient modules (Navigation, Movement, Obstacle) are shared references
+    -- owned by SentinelNavClient's singleton — do not destroy them here.
     local navlib_modules = { Navigation = true, Movement = true, Obstacle = true }
     for name, module in pairs(self._modules) do
         if not navlib_modules[name] and module.destroy then
