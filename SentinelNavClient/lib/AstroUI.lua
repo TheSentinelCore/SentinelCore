@@ -389,7 +389,7 @@ function RotationSettingsUI.new(config)
     self._scroll_y = 0
     self._content_height = 0
     self._scroll_drag = false
-    self._last_scroll_mouse_y = nil
+    self._prev_window_scroll = 0
 
     return self
 end
@@ -1667,6 +1667,31 @@ function RotationSettingsUI:_render_sections()
     local tab_content_bottom = window_size.y - LAYOUT.padding_bottom - tooltip_reserve
     local visible_height = tab_content_bottom - tab_content_top
 
+    -- Register tall artificial content so the window tracks mouse wheel events
+    if self._content_height > visible_height then
+        pcall(function()
+            self.window:add_artificial_item_bounds(
+                vec2.new(0, 0),
+                vec2.new(window_size.x, window_size.y + self._content_height),
+                "scroll_content"
+            )
+        end)
+    end
+
+    -- Mouse wheel: read delta from the midpoint of the window's built-in scroll
+    local ok_scroll, current_scroll = pcall(function() return self.window:get_scroll() end)
+    if ok_scroll and current_scroll then
+        local delta = current_scroll.y - self._prev_window_scroll
+        if math.abs(delta) > 0.1 then
+            self._scroll_y = self._scroll_y + delta
+        end
+        -- Reset to midpoint so both up and down wheel events produce a detectable delta
+        local ok_max, win_max = pcall(function() return self.window:get_max_scroll_y() end)
+        local midpoint = (ok_max and win_max and win_max > 0) and (win_max / 2) or 0
+        pcall(function() self.window:set_scroll_y(midpoint) end)
+        self._prev_window_scroll = midpoint
+    end
+
     -- Clamp scroll
     local max_scroll = math.max(0, self._content_height - visible_height)
     self._scroll_y = math.max(0, math.min(self._scroll_y, max_scroll))
@@ -1721,6 +1746,10 @@ function RotationSettingsUI:_render_sections()
                     local track_progress = (mouse_pos.y - tab_content_top - sb_thumb_height / 2) / (sb_track_height - sb_thumb_height)
                     track_progress = math.max(0, math.min(1, track_progress))
                     self._scroll_y = track_progress * max_scroll
+                    local ok_max2, win_max2 = pcall(function() return self.window:get_max_scroll_y() end)
+                    local mid2 = (ok_max2 and win_max2 and win_max2 > 0) and (win_max2 / 2) or 0
+                    self._prev_window_scroll = mid2
+                    pcall(function() self.window:set_scroll_y(mid2) end)
                 end
                 self.window:block_input_capture()
             else
@@ -1785,6 +1814,7 @@ function RotationSettingsUI:on_render()
         self.colors.background,
         self.colors.border,
         enums.window_enums.window_cross_visuals.DEFAULT,
+        enums.window_enums.window_behaviour_flags.NO_SCROLLBAR,
         render_window_content
     )
 
