@@ -475,7 +475,7 @@ function Movement:update()
         end
 
         -- Safety: if soft repath is pending and we've run out of path, stop and wait
-        if self._validity_repath_pending and simple_movement:is_finished() then
+        if self._validity_repath_pending and not simple_movement:is_moving() then
             self:_verbose("Path exhausted while soft repath in-flight, stopping to wait")
             simple_movement:stop()
         end
