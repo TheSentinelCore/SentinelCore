@@ -167,7 +167,24 @@ end
 function Movement:update_config(overrides)
     if not overrides then return end
     for k, v in pairs(overrides) do
+        local def = Defaults.movement[k]
+        if def then
+            if def.type == "bool" then
+                if type(v) ~= "boolean" then
+                    self:_verbose("Config: ignoring non-boolean for '" .. k .. "'")
+                    goto continue
+                end
+            elseif def.type == "float" or def.type == "int" then
+                if type(v) ~= "number" then
+                    self:_verbose("Config: ignoring non-number for '" .. k .. "'")
+                    goto continue
+                end
+                if def.min and v < def.min then v = def.min end
+                if def.max and v > def.max then v = def.max end
+            end
+        end
         self._config[k] = v
+        ::continue::
     end
     -- Propagate tolerance changes to simple_movement when not using dynamic speed
     -- (dynamic speed handles this itself in _apply_dynamic_speed)
