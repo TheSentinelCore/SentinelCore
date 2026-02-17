@@ -1,104 +1,94 @@
-# SentinelCore
+# SentinelCore 🧭
 
 SentinelCore is a monorepo for navigation and gathering systems used by Sentinel plugins.
 
-This README is developer-focused: it explains what each module is, who owns which concerns, and where to make changes.
+This README is a **developer reference**: who owns what, where logic lives, and where to implement changes.
 
-## Repository Map
+## Repo Layout 📂
 
 ```text
 SentinelCore/
 |- SentinelNavServer/      Rust navigation HTTP service
 |- SentinelNavClient/      Lua navigation client/plugin facade
-|- SentinelGather/         Lua gathering plugin using SentinelNavClient
+|- SentinelGather/         Lua gathering plugin built on SentinelNavClient
 |- docs/
 |  `- plans/               Architecture and migration plans
 `- README.md
 ```
 
-## Component Responsibilities
+## Ownership Matrix 👥
 
-### `SentinelNavServer` (Rust)
+| Component | Main Role | Owns |
+| --- | --- | --- |
+| `SentinelNavServer` | Compute + API | Navmesh compute, routing endpoints, validation, path post-processing |
+| `SentinelNavClient` | Runtime orchestration | Movement state machine, HTTP integration, UI framework/tabs, plugin facade |
+| `SentinelGather` | Domain workflow | Gathering behavior, profiles, safety/inventory flow, bot lifecycle |
 
-Primary responsibility: navmesh compute engine and API surface.
+## Component Responsibilities ⚙️
+
+### `SentinelNavServer` (Rust) 🦀
+
+**Primary responsibility:** navmesh compute engine and API surface.
 
 - Loads and queries navmesh data (Recast/Detour stack).
-- Exposes HTTP endpoints for:
-  - pathfinding,
-  - multi-stop and TSP routes,
-  - tactical helpers (flee/kite/LOS),
-  - spatial queries (height/raycast/random points).
-- Owns request validation, server-side path smoothing, and route computation.
-- Contains integration and unit tests for API and path logic.
+- Exposes endpoints for pathfinding, multi-stop routes, TSP, tactical helpers (flee/kite/LOS), and spatial queries.
+- Owns request validation and server-side route/path processing.
+- Holds integration and unit tests for API and path logic.
 
-Where to change things:
-
+**Edit here:**
 - Endpoint behavior: `SentinelNavServer/src/routes/`
-- Path algorithms/pipeline: `SentinelNavServer/src/pipeline.rs`
+- Routing/path pipeline: `SentinelNavServer/src/pipeline.rs`
 - Validation rules: `SentinelNavServer/src/validation.rs`
-- API contracts/docs: `SentinelNavServer/docs/`
+- API docs/contracts: `SentinelNavServer/docs/`
 
-### `SentinelNavClient` (Lua)
+### `SentinelNavClient` (Lua) 🌐
 
-Primary responsibility: runtime navigation orchestration for Sylvannas.
+**Primary responsibility:** runtime navigation orchestration for Sylvannas.
 
-- Talks to `SentinelNavServer` over HTTP.
-- Provides a shared `Facade` consumed by other plugins.
-- Manages movement state machine:
-  - path requests,
-  - path following,
-  - repath/stuck handling,
-  - obstacle-aware behavior.
-- Hosts settings/UI layer (AstroUI-based tabs).
+- Calls `SentinelNavServer` over HTTP.
+- Provides shared facade APIs consumed by plugins.
+- Manages path requests, follow logic, repath/stuck recovery, and obstacle-aware movement.
+- Hosts settings/UI layer (AstroUI tabs + window composition).
 
-Where to change things:
-
+**Edit here:**
 - HTTP request/response mapping: `SentinelNavClient/core/Navigation.lua`
-- Movement orchestration/state: `SentinelNavClient/core/Movement.lua`
-- Obstacle logic: `SentinelNavClient/core/Obstacle.lua`
+- Movement orchestration/state logic: `SentinelNavClient/core/Movement.lua`
+- Obstacle handling: `SentinelNavClient/core/Obstacle.lua`
 - UI framework/theme/controls: `SentinelNavClient/shared/AstroUI.lua`
 - UI composition/tabs: `SentinelNavClient/ui/`
-- Public integration surface: `SentinelNavClient/Facade.lua`
+- Public plugin-facing surface: `SentinelNavClient/Facade.lua`
 
-### `SentinelGather` (Lua)
+### `SentinelGather` (Lua) 🌿
 
-Primary responsibility: gathering domain logic.
+**Primary responsibility:** gathering domain behavior.
 
-- Profile-driven gather routes and node handling.
-- Safety, inventory, mount, stats, and bot lifecycle logic.
-- Uses `SentinelNavClient` facade for all navigation concerns.
+- Profile-driven routes and node processing.
+- Safety/inventory/mount/stats workflows.
+- Bot lifecycle and gather execution flow.
+- Uses `SentinelNavClient` for navigation concerns.
 
-Where to change things:
-
-- Core module coordination: `SentinelGather/core/`
-- Gathering behavior modules: `SentinelGather/modules/`
+**Edit here:**
+- Core orchestration: `SentinelGather/core/`
+- Gathering modules: `SentinelGather/modules/`
 - Data/profiles and settings UI: `SentinelGather/data/`, `SentinelGather/ui/`
 - Product and design docs: `SentinelGather/docs/`
 
-## How Components Interact
+## Interaction Flow 🔄
 
-1. `SentinelGather` asks `SentinelNavClient` for movement/navigation actions.
-2. `SentinelNavClient` decides runtime movement behavior and calls `SentinelNavServer`.
-3. `SentinelNavServer` computes navmesh results and returns JSON responses.
-4. `SentinelNavClient` applies results in-game (movement/path progression/state updates).
+1. `SentinelGather` requests movement/navigation actions from `SentinelNavClient`.
+2. `SentinelNavClient` decides runtime behavior and sends compute requests to `SentinelNavServer`.
+3. `SentinelNavServer` computes results and returns JSON responses.
+4. `SentinelNavClient` applies those results in-game (movement execution + state transitions).
 
-In short:
+## Source of Truth 📌
 
-- `SentinelNavServer` = compute + API.
-- `SentinelNavClient` = orchestration + runtime behavior + UI.
-- `SentinelGather` = domain workflow (gathering) on top of nav services.
+- Server API behavior: `SentinelNavServer/src/routes/` and `SentinelNavServer/docs/API_DESIGN.md`
+- Client API usage/contracts: `SentinelNavClient/docs/API.md`
+- Gathering product behavior: `SentinelGather/docs/PRD.md`
 
-## Source of Truth
+## Change Discipline ✅
 
-- Navigation API behavior: `SentinelNavServer/src/routes/` and `SentinelNavServer/docs/API_DESIGN.md`
-- Client API usage and facade contracts: `SentinelNavClient/docs/API.md`
-- Gathering behavior/product intent: `SentinelGather/docs/PRD.md`
-
-## Change Guidelines
-
-- Keep server/client API changes synchronized:
-  - update route handlers and request models in `SentinelNavServer`,
-  - update request builders/parsers in `SentinelNavClient/core/Navigation.lua`,
-  - update docs in both modules.
-- Keep movement behavior changes in `SentinelNavClient/core/Movement.lua` scoped and testable.
-- Avoid putting gathering domain logic in nav modules.
+- Keep server/client API changes synchronized.
+- Update route/request models on server side and request parsing/builders on client side in the same change set.
+- Update docs when contracts change.
+- Keep gathering domain logic out of nav layers.
