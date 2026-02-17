@@ -1,5 +1,5 @@
 --[[
-    GatherBuddy Main Entry Point
+    SentinelGather Main Entry Point
 
     Slim entry point that registers callbacks, manages menu elements,
     handles profile scanning, and delegates UI rendering to ui/window.lua.
@@ -8,7 +8,7 @@
 ]]
 
 -- Imports
-local GatherBuddy = require("init")
+local SentinelGather = require("init")
 local color = require("common/color")
 local UIWindow = require("ui/window")
 local Constants = require("core/Constants")
@@ -65,7 +65,7 @@ local menu_elements = {
 
 -- Profile scanning delegated to ProfileManager
 local function scan_profiles()
-    local profile_mgr = GatherBuddy and GatherBuddy:get_module("ProfileManager")
+    local profile_mgr = SentinelGather and SentinelGather:get_module("ProfileManager")
     if profile_mgr and profile_mgr.scan_available_profiles then
         return profile_mgr:scan_available_profiles()
     end
@@ -91,7 +91,7 @@ local function render_path_overlay()
         return
     end
 
-    local movement = GatherBuddy:get_module("Movement")
+    local movement = SentinelGather:get_module("Movement")
     if not movement then return end
 
     local current_path = movement:get_current_path()
@@ -135,31 +135,31 @@ end
 local function on_load()
     if _is_loaded then return end
 
-    core.log("[GatherBuddy] Loading...")
+    core.log("[SentinelGather] Loading...")
 
-    local success = GatherBuddy:initialize()
+    local success = SentinelGather:initialize()
     if not success then
-        core.log_error("[GatherBuddy] Failed to initialize")
+        core.log_error("[SentinelGather] Failed to initialize")
         return
     end
 
     -- Initialize the UI window (starts hidden; user opens via menu button)
-    UIWindow.init(GatherBuddy, menu_elements, _ui_state)
+    UIWindow.init(SentinelGather, menu_elements, _ui_state)
     local ui = UIWindow.get_ui()
     if ui and ui.menu and ui.menu.enable then
         ui.menu.enable:set(false)
     end
 
     _is_loaded = true
-    core.log("[GatherBuddy] Loaded successfully")
+    core.log("[SentinelGather] Loaded successfully")
 end
 
 local function on_unload()
-    if GatherBuddy then
-        GatherBuddy:destroy()
+    if SentinelGather then
+        SentinelGather:destroy()
     end
     _is_loaded = false
-    core.log("[GatherBuddy] Unloaded")
+    core.log("[SentinelGather] Unloaded")
 end
 
 -- =============================================================================
@@ -191,7 +191,7 @@ core.register_on_render_menu_callback(function()
     UIWindow.on_menu_render()
 
     -- Toggle button in Sylvannas main menu
-    if menu_elements.open_btn:render("GatherBuddy") then
+    if menu_elements.open_btn:render("Sentinel Gather") then
         local ui = UIWindow.get_ui()
         if ui and ui.menu and ui.menu.enable then
             ui.menu.enable:set(not ui.menu.enable:get_state())
@@ -204,23 +204,23 @@ end)
 -- =============================================================================
 
 return {
-    name = "GatherBuddy",
-    version = GatherBuddy.VERSION,
+    name = "SentinelGather",
+    version = SentinelGather.VERSION,
 
-    start = function(profile) return GatherBuddy:start(profile) end,
-    stop = function() GatherBuddy:stop() end,
-    pause = function() GatherBuddy:pause() end,
-    resume = function() GatherBuddy:resume() end,
-    toggle_pause = function() GatherBuddy:toggle_pause() end,
+    start = function(profile) return SentinelGather:start(profile) end,
+    stop = function() SentinelGather:stop() end,
+    pause = function() SentinelGather:pause() end,
+    resume = function() SentinelGather:resume() end,
+    toggle_pause = function() SentinelGather:toggle_pause() end,
 
-    is_running = function() return GatherBuddy:is_running() end,
-    is_paused = function() return GatherBuddy:is_paused() end,
-    get_state = function() return GatherBuddy:get_state() end,
+    is_running = function() return SentinelGather:is_running() end,
+    is_paused = function() return SentinelGather:is_paused() end,
+    get_state = function() return SentinelGather:get_state() end,
 
-    get_statistics = function() return GatherBuddy:get_statistics() end,
-    load_profile = function(path) return GatherBuddy:load_profile(path) end,
+    get_statistics = function() return SentinelGather:get_statistics() end,
+    load_profile = function(path) return SentinelGather:load_profile(path) end,
 
-    run_tests = function() return GatherBuddy:run_tests() end,
+    run_tests = function() return SentinelGather:run_tests() end,
 
     show_ui = function(show)
         local ui = UIWindow.get_ui()

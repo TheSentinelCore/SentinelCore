@@ -1,6 +1,6 @@
 local plugin = {}
 
-plugin["name"] = "GatherBuddy"
+plugin["name"] = "Sentinel Gather"
 plugin["version"] = "0.1.0"
 plugin["author"] = "Claude"
 plugin["load"] = true
