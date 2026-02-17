@@ -262,12 +262,8 @@ pub async fn find_path(
         }));
     }
 
-    // Acquire concurrency permit
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 
