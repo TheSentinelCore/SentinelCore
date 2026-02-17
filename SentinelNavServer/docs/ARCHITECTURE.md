@@ -74,7 +74,7 @@ AmeisenNav-RS is a high-performance navigation mesh server that bridges the gap 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                            Storage Layer                                     │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                     TrinityCore MMAP Files                              │ │
+│  │                     CMaNGOS MMAP Files                                  │ │
 │  │  ┌────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐ │ │
 │  │  │ 0000.mmap  │  │ 00003232.mmtile │  │ 00003233.mmtile  ...       │ │ │
 │  │  │ (metadata) │  │  (tile data)    │  │  (tile data)               │ │ │
@@ -116,7 +116,7 @@ ameisen-nav-rs/
 │   │       ├── error.rs           # Error types
 │   │       └── pool.rs            # Query pool implementation
 │   │
-│   ├── tc-mmap/                   # Layer 3: TrinityCore loader
+│   ├── mmap-loader/               # Layer 3: CMaNGOS-compatible loader
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -157,8 +157,8 @@ ameisen-nav-rs/
            │                   │                   │
            ▼                   ▼                   ▼
     ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-    │ path-smoothing│   │   tc-mmap    │   │    detour    │
-    │ (pure Rust)  │   │  (TC loader) │   │ (safe wrappers)
+    │ path-smoothing│   │ mmap-loader  │   │    detour    │
+    │ (pure Rust)  │   │ (mmap I/O)  │   │ (safe wrappers)
     └──────────────┘   └──────┬───────┘   └──────┬───────┘
                               │                   │
                               │                   │
@@ -268,9 +268,9 @@ ameisen-nav-rs/
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.3 TrinityCore Loader (tc-mmap)
+### 3.3 MMap Loader (mmap-loader)
 
-**Purpose:** Load and parse TrinityCore navigation mesh files.
+**Purpose:** Load and parse CMaNGOS-compatible navigation mesh files.
 
 **Component Structure:**
 
