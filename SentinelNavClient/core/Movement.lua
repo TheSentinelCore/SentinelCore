@@ -453,6 +453,12 @@ function Movement:update()
             end
         end
 
+        -- Safety: if soft repath is pending and we've run out of path, stop and wait
+        if self._validity_repath_pending and simple_movement:is_finished() then
+            self:_verbose("Path exhausted while soft repath in-flight, stopping to wait")
+            simple_movement:stop()
+        end
+
         -- Stuck detection (skip while casting)
         if not player:is_casting_spell() and not player:is_channelling_spell() then
             self:_check_stuck(player)
