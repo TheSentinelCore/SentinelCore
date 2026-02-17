@@ -9,13 +9,12 @@ use serde::{Deserialize, Serialize};
 use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
-use path_smoothing::SmoothingAlgorithm;
+use path_smoothing::SmootherPipeline;
 
 use crate::pipeline::{
     has_custom_filter, create_custom_filter, parse_threats,
     parse_avoidance_zones, pathfind_maybe_avoid,
-    create_smoothing_config, project_waypoints_to_surface,
-    validate_smoothed_path, apply_wall_clearance,
+    apply_wall_clearance,
     PathOptions, SEARCH_EXTENTS, HEIGHT_EXTENTS,
 };
 use crate::routes::path::{
@@ -513,20 +512,12 @@ pub async fn kite(
     }
 
     // Apply smoothing pipeline to arc waypoints
-    let smoothing =
-        SmoothingAlgorithm::from_str(params.smoothing.as_deref().unwrap_or("none"));
-    let smoothing_config = create_smoothing_config(
-        params.smooth_iterations,
-        params.smooth_samples,
-        params.smooth_ratio,
-        params.min_corner_angle,
-        params.keep_originals,
-    );
-
-    let original_waypoints = waypoints.clone();
-    let mut waypoints = smoothing.smooth_with_config(&waypoints, &smoothing_config);
-    project_waypoints_to_surface(&mut waypoints, &query, filter);
-    let mut waypoints = validate_smoothed_path(&waypoints, &original_waypoints, &query, filter);
+    let mut waypoints = if params.smoothing.as_deref().unwrap_or("none") != "none" {
+        let smoother = SmootherPipeline::with_default_config();
+        smoother.smooth(&waypoints, &query, filter)
+    } else {
+        waypoints
+    };
 
     if let Some(clearance) = params.wall_clearance {
         if clearance > 0.0 {
