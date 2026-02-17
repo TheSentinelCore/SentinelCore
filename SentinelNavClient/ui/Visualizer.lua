@@ -58,13 +58,13 @@ local ARRIVED_FLASH_DURATION = 2.0
 
 ---Create a new Visualizer instance.
 ---Registers its own render callback via core.register_on_render_callback.
----@param facade table SentinelNavClient Facade instance
+---@param client table SentinelNavClient Client instance
 ---@param menu table Menu elements table (must contain viz_* checkboxes)
 ---@return Visualizer
-function Visualizer:new(facade, menu)
+function Visualizer:new(client, menu)
     local o = setmetatable({}, Visualizer)
 
-    o._facade       = facade
+    o._client       = client
     o._menu         = menu
     o._arrived_time = nil
     o._last_state   = "idle"
@@ -109,17 +109,17 @@ end
 --------------------------------------------------------------------------------
 
 function Visualizer:_on_render()
-    if not self._facade or not self._menu then return end
+    if not self._client or not self._menu then return end
     if not self:_is_enabled() then return end
 
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then return end
 
     local player_pos = player:get_position()
-    local facade = self._facade
+    local client = self._client
 
     -- Track state transitions for animations
-    local current_state = facade:get_state()
+    local current_state = client:get_state()
     if current_state ~= self._last_state then
         if current_state == "arrived" then
             self._arrived_time = core.time()
@@ -129,23 +129,23 @@ function Visualizer:_on_render()
 
     -- Render layers back-to-front
     if self:_show_corridor() then
-        self:_render_corridor(facade, player_pos)
+        self:_render_corridor(client, player_pos)
     end
 
     if self:_show_obstacles() then
-        self:_render_obstacles(facade, player_pos)
+        self:_render_obstacles(client, player_pos)
     end
 
     if self:_show_path() then
-        self:_render_path(facade, player_pos)
+        self:_render_path(client, player_pos)
     end
 
     if self:_show_destination() then
-        self:_render_destination(facade, player_pos)
+        self:_render_destination(client, player_pos)
     end
 
     if self:_show_state() then
-        self:_render_state_indicator(facade, player_pos, current_state)
+        self:_render_state_indicator(client, player_pos, current_state)
     end
 end
 
@@ -153,13 +153,13 @@ end
 -- Layer: Path + Waypoints
 --------------------------------------------------------------------------------
 
----@param facade table
+---@param client table
 ---@param player_pos vec3
-function Visualizer:_render_path(facade, player_pos)
-    local path = facade:get_current_path()
+function Visualizer:_render_path(client, player_pos)
+    local path = client:get_current_path()
     if not path or #path == 0 then return end
 
-    local path_index = facade:get_path_index()
+    local path_index = client:get_path_index()
 
     for i = 1, #path do
         local wp = path[i]
@@ -218,10 +218,10 @@ end
 -- Layer: Destination Marker
 --------------------------------------------------------------------------------
 
----@param facade table
+---@param client table
 ---@param player_pos vec3
-function Visualizer:_render_destination(facade, player_pos)
-    local dest = facade:get_destination()
+function Visualizer:_render_destination(client, player_pos)
+    local dest = client:get_destination()
     if not dest then return end
 
     local dist = Helpers.distance_3d(player_pos, dest)
@@ -245,10 +245,10 @@ end
 -- Layer: Obstacle Zones
 --------------------------------------------------------------------------------
 
----@param facade table
+---@param client table
 ---@param player_pos vec3
-function Visualizer:_render_obstacles(facade, player_pos)
-    local obstacle = facade.obstacle
+function Visualizer:_render_obstacles(client, player_pos)
+    local obstacle = client.obstacle
     if not obstacle then return end
 
     local zones = obstacle:get_avoidance_zones()
@@ -280,16 +280,16 @@ end
 -- Layer: Corridor Boundaries
 --------------------------------------------------------------------------------
 
----@param facade table
+---@param client table
 ---@param player_pos vec3
-function Visualizer:_render_corridor(facade, player_pos)
-    local widths = facade:get_corridor_widths()
+function Visualizer:_render_corridor(client, player_pos)
+    local widths = client:get_corridor_widths()
     if not widths then return end
 
-    local path = facade:get_current_path()
+    local path = client:get_current_path()
     if not path or #path < 2 then return end
 
-    local path_index = facade:get_path_index()
+    local path_index = client:get_path_index()
 
     for i = 1, math.min(#path - 1, #widths) do
         -- Only render current + future segments
@@ -337,10 +337,10 @@ end
 -- Layer: State Indicators
 --------------------------------------------------------------------------------
 
----@param facade table
+---@param client table
 ---@param player_pos vec3
 ---@param state string
-function Visualizer:_render_state_indicator(facade, player_pos, state)
+function Visualizer:_render_state_indicator(client, player_pos, state)
     if state == "idle" or state == "moving" then return end
 
     if state == "stuck" then
@@ -393,7 +393,7 @@ end
 --------------------------------------------------------------------------------
 
 function Visualizer:destroy()
-    self._facade = nil
+    self._client = nil
     self._menu = nil
 end
 

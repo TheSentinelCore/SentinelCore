@@ -90,14 +90,19 @@ local function render_control_bar(ui, y_offset)
 
     -- Start/Stop button
     if not running then
-        local start_color = color.new(60, 160, 60, 255)
-        if render_ctrl_button(window, x_start, y_offset, btn_w, btn_h, "Start", colors, start_color) then
-            local selected_idx = _menu_elements.profile_combo:get()
-            local profile = _ui_state.profiles[selected_idx]
-            if profile and profile.path then
-                _sentinel_gather:start(profile.path)
-            else
-                _sentinel_gather:start()
+        local bot_mgr_btn = _sentinel_gather:get_bot_manager()
+        local nav_ok = bot_mgr_btn and bot_mgr_btn:is_navigation_available()
+        local start_color = nav_ok and color.new(60, 160, 60, 255) or color.new(80, 80, 80, 255)
+        local label = nav_ok and "Start" or "No Nav"
+        if render_ctrl_button(window, x_start, y_offset, btn_w, btn_h, label, colors, start_color) then
+            if nav_ok then
+                local selected_idx = _menu_elements.profile_combo:get()
+                local profile = _ui_state.profiles[selected_idx]
+                if profile and profile.path then
+                    _sentinel_gather:start(profile.path)
+                else
+                    _sentinel_gather:start()
+                end
             end
         end
     else

@@ -14,7 +14,7 @@ use axum::{
 use detour::types::Vec3;
 use polygon_sampling::SamplingConfig;
 use serde::{Deserialize, Deserializer, Serialize};
-use tc_mmap::error::MmapError;
+use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
 use crate::state::AppState;
@@ -67,12 +67,8 @@ pub async fn move_along_surface(
     validate_coordinate(params.start_x, params.start_y, params.start_z)?;
     validate_coordinate(params.end_x, params.end_y, params.end_z)?;
 
-    // Acquire concurrency permit
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     // Load map
     let _mesh = state
@@ -161,12 +157,8 @@ pub async fn raycast(
     validate_coordinate(params.start_x, params.start_y, params.start_z)?;
     validate_coordinate(params.end_x, params.end_y, params.end_z)?;
 
-    // Acquire concurrency permit
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     // Load map
     let _mesh = state
@@ -275,12 +267,8 @@ pub async fn random_point(
         validate_radius(r)?;
     }
 
-    // Acquire concurrency permit
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     // Load map
     let _mesh = state
@@ -374,12 +362,8 @@ pub async fn get_height(
     validate_map_id(params.map_id)?;
     validate_coordinate(params.x, params.y, params.z)?;
 
-    // Acquire concurrency permit
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     // Load map
     let _mesh = state
@@ -512,12 +496,8 @@ pub async fn get_heights(
         ));
     }
 
-    // Acquire concurrency permit
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     // Load map
     let _mesh = state
@@ -762,12 +742,8 @@ pub async fn explore_polygon(
         validate_coordinate(x, y, z)?;
     }
 
-    // Acquire concurrency permit
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     // Load map
     let _mesh = state

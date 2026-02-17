@@ -58,7 +58,7 @@ cargo doc --open
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                  Navigation Layer                            │
-│  tc-mmap (loader) ←→ detour (safe wrappers) ←→ path-smoothing│
+│  mmap-loader ←→ detour (safe wrappers) ←→ path-smoothing     │
 │                        polygon-sampling                      │
 └─────────────────────────┬───────────────────────────────────┘
                           │
@@ -136,7 +136,7 @@ SentinelNavServer/
 │   │       ├── filter.rs     # QueryFilter (area costs, water_only())
 │   │       ├── pool.rs       # Thread-safe QueryPool (Mutex<Vec>)
 │   │       └── types.rs      # Vec3, PolyRef
-│   ├── tc-mmap/              # TrinityCore .mmap/.mmtile loader
+│   ├── mmap-loader/          # CMaNGOS-compatible .mmap/.mmtile loader
 │   │   └── src/
 │   │       ├── format.rs     # File format structs
 │   │       ├── coords.rs     # Tile coordinate math
@@ -220,7 +220,7 @@ pub fn add_tile(&mut self, tile_data: Box<[u8]>, last_ref: u32) -> Result<u32> {
 | `QueryPool` | Yes | Yes | Mutex-protected Vec |
 | `PathCache` | Yes | Yes | DashMap (concurrent HashMap) |
 
-### TrinityCore File Formats
+### MMap File Formats
 
 **.mmap file** (28 bytes) - NavMeshParams:
 ```

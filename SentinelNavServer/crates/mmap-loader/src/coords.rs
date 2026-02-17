@@ -25,7 +25,7 @@ impl TileCoord {
 
     /// Calculate tile coordinates for a world position.
     ///
-    /// Note: TrinityCore uses a coordinate system where the origin is at
+    /// Note: CMaNGOS uses a coordinate system where the origin is at
     /// the center of the map, and tile coordinates increase outward.
     pub fn from_world_pos(map_id: u32, params: &MmapHeader, pos: Vec3) -> Self {
         let x = ((pos.x - params.orig[0]) / params.tile_width) as i32;

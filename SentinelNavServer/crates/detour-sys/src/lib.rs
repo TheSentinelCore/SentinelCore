@@ -17,7 +17,7 @@
 //! - WoW: X = North-South, Y = West-East, Z = Height (up)
 //! - Detour: X = horizontal, Y = Height (up), Z = horizontal
 //!
-//! TrinityCore mmaps expect Detour coords as: `[WoW.Y, WoW.Z, WoW.X]`
+//! CMaNGOS mmaps expect Detour coords as: `[WoW.Y, WoW.Z, WoW.X]`
 //!
 //! The `detour` safe wrapper crate handles this conversion automatically.
 

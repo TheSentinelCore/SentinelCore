@@ -4,7 +4,7 @@ use crate::error::DetourError;
 use crate::filter::QueryFilter;
 use crate::mesh::NavMesh;
 use crate::query::NavMeshQuery;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -44,12 +44,13 @@ pub struct QueryPool {
     filter: Arc<QueryFilter>,
     max_nodes: u32,
     max_size: usize,
-    /// Mutex serializing avoidance-zone pathfinding requests.
+    /// RwLock serializing avoidance-zone pathfinding requests.
     ///
     /// Avoidance temporarily modifies polygon area types on the shared NavMesh
-    /// via `set_poly_area`. This mutex prevents concurrent avoidance requests
-    /// from interfering with each other's modifications.
-    avoidance_mutex: Mutex<()>,
+    /// via `set_poly_area`. Write lock prevents concurrent avoidance requests
+    /// from interfering with each other's modifications. Read lock ensures
+    /// normal pathfinding doesn't observe partially-mutated area types.
+    avoidance_lock: RwLock<()>,
 }
 
 impl QueryPool {
@@ -94,7 +95,7 @@ impl QueryPool {
             filter,
             max_nodes,
             max_size,
-            avoidance_mutex: Mutex::new(()),
+            avoidance_lock: RwLock::new(()),
         })
     }
 
@@ -158,13 +159,19 @@ impl QueryPool {
         &self.mesh
     }
 
-    /// Acquire exclusive access for avoidance-zone pathfinding.
+    /// Acquire exclusive write access for avoidance-zone pathfinding.
     ///
-    /// Returns a mutex guard that must be held for the entire
-    /// modify-pathfind-restore cycle. Normal pathfinding does NOT
-    /// need this lock.
-    pub fn avoidance_lock(&self) -> parking_lot::MutexGuard<'_, ()> {
-        self.avoidance_mutex.lock()
+    /// Returns a write guard that must be held for the entire
+    /// modify-pathfind-restore cycle.
+    pub fn avoidance_lock(&self) -> parking_lot::RwLockWriteGuard<'_, ()> {
+        self.avoidance_lock.write()
+    }
+
+    /// Acquire shared read access for normal pathfinding.
+    ///
+    /// Ensures avoidance mutations are not in progress during the query.
+    pub fn pathfind_lock(&self) -> parking_lot::RwLockReadGuard<'_, ()> {
+        self.avoidance_lock.read()
     }
 }
 

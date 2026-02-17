@@ -10,7 +10,7 @@ port = 47110
 max_concurrent_requests = 100
 
 [navmesh]
-# Path to TrinityCore mmap files directory
+# Path to CMaNGOS mmap files directory
 # Relative to SentinelNavServer directory or absolute path
 mmap_path = "./mmaps"
 
@@ -29,3 +29,13 @@ default_smoothing = "none"
 max_path_length = 2048
 # Query pool size per map (number of concurrent queries per map)
 query_pool_size = 4
+# Tiered polygon search extents [tight, medium, wide] in yards
+# Tight first for correct floor selection, broader as fallback
+search_extents = [6.0, 10.0, 50.0]
+# Max segment length before inserting midpoints (yards)
+# Shorter = smoother curves on ramps, higher CPU cost
+max_segment_length = 3.0
+# Island recovery retry count (cardinal + diagonal offsets)
+island_retry_count = 8
+# Default area costs [ground, water, lava]
+default_area_costs = [1.0, 1.5, 100.0]

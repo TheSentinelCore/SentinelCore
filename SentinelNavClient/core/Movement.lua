@@ -84,6 +84,7 @@ function Movement:new(nav_client, config)
     o._last_stuck_time = 0
     o._last_stuck_pos = nil
     o._stuck_count = 0
+    o._stuck_path_index = 0
     o._unstuck_timer = 0
     o._unstuck_phase = nil
 
@@ -167,7 +168,28 @@ end
 function Movement:update_config(overrides)
     if not overrides then return end
     for k, v in pairs(overrides) do
+        local def = Defaults.movement[k]
+        if def then
+            if def.type == "bool" then
+                if type(v) ~= "boolean" then
+                    self:_verbose("Config: ignoring non-boolean for '" .. k .. "'")
+                    goto continue
+                end
+            elseif def.type == "float" or def.type == "int" then
+                if type(v) ~= "number" then
+                    self:_verbose("Config: ignoring non-number for '" .. k .. "'")
+                    goto continue
+                end
+                -- Skip clamping for smooth_ratio: Defaults range is %-based (50-95)
+                -- but callers already convert to decimal (0.50-0.95) before calling.
+                if k ~= "smooth_ratio" then
+                    if def.min and v < def.min then v = def.min end
+                    if def.max and v > def.max then v = def.max end
+                end
+            end
+        end
         self._config[k] = v
+        ::continue::
     end
     -- Propagate tolerance changes to simple_movement when not using dynamic speed
     -- (dynamic speed handles this itself in _apply_dynamic_speed)
@@ -453,6 +475,12 @@ function Movement:update()
             end
         end
 
+        -- Safety: if soft repath is pending and we've run out of path, stop and wait
+        if self._validity_repath_pending and not simple_movement:is_moving() then
+            self:_verbose("Path exhausted while soft repath in-flight, stopping to wait")
+            simple_movement:stop()
+        end
+
         -- Stuck detection (skip while casting)
         if not player:is_casting_spell() and not player:is_channelling_spell() then
             self:_check_stuck(player)
@@ -692,7 +720,7 @@ function Movement:_start_movement(waypoints)
         self._pending_move = {
             target = self._destination,
             callback = self._callback,
-            opts = { use_navmesh = false },
+            opts = { use_navmesh = true },
         }
         -- Store waypoints so deferred path uses them directly
         self._current_path = waypoints
@@ -810,6 +838,9 @@ function Movement:_check_stuck(player)
     end
     expected_dist = math.min(expected_dist, 3.0)
     if simple_movement:is_moving() and moved < expected_dist then
+        if self._stuck_count == 0 then
+            self._stuck_path_index = simple_movement:get_current_index()
+        end
         self._stuck_count = self._stuck_count + 1
         local moved_2d = pos:dist_to_ignore_z(self._last_stuck_pos)
         local dz = math.abs(pos.z - self._last_stuck_pos.z)
@@ -819,10 +850,15 @@ function Movement:_check_stuck(player)
             .. " dZ=" .. string.format("%.2f", dz) .. ")")
         self:_handle_stuck()
     else
-        if self._stuck_count > 0 then
-            self:_verbose("Unstuck (3D=" .. string.format("%.2f", moved) .. " yards)")
+        -- Only reset stuck counter when we've actually advanced past the stuck point.
+        -- A jump can move the player >0.1yd without making forward progress.
+        local cur_idx = simple_movement:get_current_index()
+        if self._stuck_count == 0 or cur_idx > self._stuck_path_index + 2 then
+            if self._stuck_count > 0 then
+                self:_verbose("Unstuck (3D=" .. string.format("%.2f", moved) .. " yards)")
+            end
+            self._stuck_count = 0
         end
-        self._stuck_count = 0
     end
 
     self._last_stuck_pos = pos
@@ -830,6 +866,13 @@ end
 
 ---Apply recovery strategy based on stuck count
 function Movement:_handle_stuck()
+    -- Don't attempt recovery while casting (would desync state)
+    local player = core.object_manager.get_local_player()
+    if player and (player:is_casting_spell() or player:is_channelling_spell()) then
+        self:_verbose("Unstuck: deferring — player is casting")
+        return
+    end
+
     if self._stuck_count >= self._config.max_stuck_attempts then
         core.log_error("[Movement] Max stuck attempts reached, failing")
         self:_set_state(S_FAILED)
