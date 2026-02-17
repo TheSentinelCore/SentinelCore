@@ -1,4 +1,4 @@
-# GatherBuddy - Technical Design Document (TDD)
+# SentinelGather - Technical Design Document (TDD)
 
 **Version:** 1.0  
 **Date:** January 31, 2025  
@@ -9,7 +9,7 @@
 
 ## 1. Introduction
 
-This document provides detailed technical specifications for implementing GatherBuddy. It covers data structures, algorithms, API contracts, and implementation details.
+This document provides detailed technical specifications for implementing SentinelGather. It covers data structures, algorithms, API contracts, and implementation details.
 
 ---
 

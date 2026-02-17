@@ -1,4 +1,4 @@
-# GatherBuddy - Implementation Tickets
+# SentinelGather - Implementation Tickets
 
 **Version:** 1.0  
 **Date:** January 31, 2025  

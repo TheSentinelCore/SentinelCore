@@ -1,4 +1,4 @@
-# GatherBuddy - API Specification
+# SentinelGather - API Specification
 
 **Version:** 1.0  
 **Date:** January 31, 2025  

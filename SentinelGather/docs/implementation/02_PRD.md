@@ -1,15 +1,15 @@
-# Product Requirements Document: GatherBuddy Movement & Navigation Client v2
+# Product Requirements Document: SentinelGather Movement & Navigation Client v2
 
 **Version:** 2.0
 **Date:** February 5, 2026
-**Author:** Alex (Team Lead, GatherBuddy)
+**Author:** Alex (Team Lead, SentinelGather)
 **Status:** Ready for Implementation
 
 ---
 
 ## 1. Executive Summary
 
-Rewrite the Movement and Navigation Client modules for GatherBuddy from scratch. The current implementation (MovementModule.lua at 1420 lines, NavigationClient.lua at 775 lines) has grown organically with excessive coupling to external systems (EventBus, StateMachine, ProfileManager, Settings module). The rewrite targets a clean, self-contained, minimal-dependency architecture where the navigation server handles all pathfinding intelligence and the client modules are thin, focused layers.
+Rewrite the Movement and Navigation Client modules for SentinelGather from scratch. The current implementation (MovementModule.lua at 1420 lines, NavigationClient.lua at 775 lines) has grown organically with excessive coupling to external systems (EventBus, StateMachine, ProfileManager, Settings module). The rewrite targets a clean, self-contained, minimal-dependency architecture where the navigation server handles all pathfinding intelligence and the client modules are thin, focused layers.
 
 **Goals:**
 - Reduce combined codebase from ~2200 lines to ~800-900 lines
@@ -44,7 +44,7 @@ Rewrite the Movement and Navigation Client modules for GatherBuddy from scratch.
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| NC-1 | Provide typed methods for all NavBuddy REST endpoints | Must |
+| NC-1 | Provide typed methods for all SentinelNavServer REST endpoints | Must |
 | NC-2 | Convert JSON path arrays to vec3[] automatically | Must |
 | NC-3 | Retry failed requests with exponential backoff (max 3) | Must |
 | NC-4 | Track connection health (consecutive failures, last success time) | Must |
@@ -217,20 +217,20 @@ Applied in rotation, one per stuck detection cycle:
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Inline JSON decoder bugs | Path data corruption | Only handle NavBuddy's simple JSON schema; pcall wrap |
+| Inline JSON decoder bugs | Path data corruption | Only handle SentinelNavServer's simple JSON schema; pcall wrap |
 | Async callback state mismatch | Stale movement commands | Check `_state` at callback entry; ignore if state changed |
 | simple_movement behavior changes | Movement breaks | Pin to known-good simple_movement API; use only documented methods |
-| NavBuddy server not running | All pathfinding fails | Graceful fallback: log error, callback with failure, allow direct movement |
+| SentinelNavServer server not running | All pathfinding fails | Graceful fallback: log error, callback with failure, allow direct movement |
 | Player teleported during movement | Stuck detection false positive | Compare distance to destination, not just incremental movement |
 
 ---
 
 ## 7. Integration Points
 
-### How GatherBuddy calls MovementModule:
+### How SentinelGather calls MovementModule:
 
 ```lua
--- In GatherBuddy's main on_update callback:
+-- In SentinelGather's main on_update callback:
 local nav_client = NavigationClient:new({ base_url = "http://localhost:47110" })
 local movement = MovementModule:new(nav_client, { anti_detection = true })
 
@@ -239,7 +239,7 @@ movement:move_to(node_position, function(success, reason)
     if success then
         -- Start gathering interaction
     else
-        core.log_warning("[GatherBuddy] Movement failed: " .. (reason or "unknown"))
+        core.log_warning("[SentinelGather] Movement failed: " .. (reason or "unknown"))
     end
 end)
 
@@ -249,7 +249,7 @@ movement:update()
 -- Plan a full gathering route
 movement:plan_route(node_positions, function(success, reason)
     if success then
-        core.log("[GatherBuddy] Route started")
+        core.log("[SentinelGather] Route started")
     end
 end)
 
