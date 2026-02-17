@@ -49,7 +49,6 @@ function SentinelNavClient:initialize()
     instance._client = Client:new({})
 
     instance._initialized = true
-    core.log("[SentinelNavClient] Initialized v" .. SentinelNavClient.VERSION)
     return true
 end
 
@@ -76,7 +75,6 @@ function SentinelNavClient:destroy()
     end
     instance._initialized = false
     _instance = nil
-    core.log("[SentinelNavClient] Destroyed")
 end
 
 return SentinelNavClient
