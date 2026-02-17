@@ -830,6 +830,13 @@ end
 
 ---Apply recovery strategy based on stuck count
 function Movement:_handle_stuck()
+    -- Don't attempt recovery while casting (would desync state)
+    local player = core.object_manager.get_local_player()
+    if player and (player:is_casting_spell() or player:is_channelling_spell()) then
+        self:_verbose("Unstuck: deferring — player is casting")
+        return
+    end
+
     if self._stuck_count >= self._config.max_stuck_attempts then
         core.log_error("[Movement] Max stuck attempts reached, failing")
         self:_set_state(S_FAILED)
