@@ -23,7 +23,7 @@
 local Gather = {}
 Gather.__index = Gather
 
--- Import dependencies (relative paths since we're in GatherBuddy folder)
+-- Import dependencies (relative paths since we're in SentinelGather folder)
 local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")
 

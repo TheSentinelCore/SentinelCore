@@ -30,7 +30,7 @@ local LEVEL_NAMES = {
 ---@return Logger
 function Logger:new(name, level)
     local instance = setmetatable({}, Logger)
-    instance._name = name or "GatherBuddy"
+    instance._name = name or "SentinelGather"
 
     if type(level) == "string" then
         instance._level = LOG_LEVELS[level:upper()] or LOG_LEVELS.INFO

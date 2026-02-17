@@ -12,7 +12,7 @@
 local StateMachine = {}
 StateMachine.__index = StateMachine
 
--- Import dependencies (relative paths since we're in GatherBuddy folder)
+-- Import dependencies (relative paths since we're in SentinelGather folder)
 local Constants = require("core/Constants")
 local STATES = Constants.STATES
 local EVENTS = Constants.EVENTS

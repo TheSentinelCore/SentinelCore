@@ -3,7 +3,7 @@
 local Settings = {}
 Settings.__index = Settings
 
--- Import dependencies (relative paths since we're in GatherBuddy folder)
+-- Import dependencies (relative paths since we're in SentinelGather folder)
 local JSON = require("lib/JSON")
 local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")

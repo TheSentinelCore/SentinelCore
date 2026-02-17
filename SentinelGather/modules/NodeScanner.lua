@@ -8,7 +8,7 @@
 local NodeScanner = {}
 NodeScanner.__index = NodeScanner
 
--- Import dependencies (relative paths since we're in GatherBuddy folder)
+-- Import dependencies (relative paths since we're in SentinelGather folder)
 local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")
 local Nodes = require("data/Nodes")
