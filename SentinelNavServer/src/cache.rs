@@ -1,11 +1,12 @@
 //! Path cache with spatial quantization for fast repeated lookups.
 //!
-//! Caches path results keyed by (map_id, quantized_start, quantized_end)
+//! Uses moka's concurrent LRU cache keyed by (map_id, quantized_start, quantized_end)
 //! so that similar start/end positions within a 5-yard grid cell hit the cache.
 
-use dashmap::DashMap;
 use detour::types::Vec3;
-use std::time::{Duration, Instant};
+use moka::sync::Cache;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 /// Grid cell size in yards for spatial quantization.
 const CELL_SIZE: f32 = 5.0;
@@ -13,8 +14,8 @@ const CELL_SIZE: f32 = 5.0;
 /// Default cache TTL.
 const DEFAULT_TTL: Duration = Duration::from_secs(60);
 
-/// Default max entries per map.
-const DEFAULT_MAX_ENTRIES: usize = 1000;
+/// Default max entries.
+const DEFAULT_MAX_ENTRIES: u64 = 1000;
 
 /// A cached path entry.
 #[derive(Debug, Clone)]
@@ -22,7 +23,6 @@ pub struct CachedPath {
     pub waypoints: Vec<Vec3>,
     pub distance: f32,
     pub partial: bool,
-    pub created_at: Instant,
 }
 
 /// Cache key with spatial quantization.
@@ -43,20 +43,23 @@ fn quantize_vec3(v: &Vec3) -> (i32, i32, i32) {
     (quantize(v.x), quantize(v.y), quantize(v.z))
 }
 
-/// Thread-safe path cache using DashMap.
+/// Thread-safe path cache using moka LRU.
 pub struct PathCache {
-    cache: DashMap<PathCacheKey, CachedPath>,
-    ttl: Duration,
-    max_entries: usize,
+    cache: Cache<PathCacheKey, CachedPath>,
+    hits: AtomicU64,
+    misses: AtomicU64,
 }
 
 impl PathCache {
     /// Create a new path cache with default settings.
     pub fn new() -> Self {
         Self {
-            cache: DashMap::new(),
-            ttl: DEFAULT_TTL,
-            max_entries: DEFAULT_MAX_ENTRIES,
+            cache: Cache::builder()
+                .max_capacity(DEFAULT_MAX_ENTRIES)
+                .time_to_live(DEFAULT_TTL)
+                .build(),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
         }
     }
 
@@ -68,53 +71,46 @@ impl PathCache {
             end_cell: quantize_vec3(end),
         };
 
-        if let Some(entry) = self.cache.get(&key) {
-            if entry.created_at.elapsed() < self.ttl {
-                return Some(entry.clone());
+        match self.cache.get(&key) {
+            Some(entry) => {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(entry)
             }
-            // Expired — drop the ref before removing
-            drop(entry);
-            self.cache.remove(&key);
+            None => {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
         }
-
-        None
     }
 
     /// Insert a path into the cache.
     pub fn insert(&self, map_id: u32, start: &Vec3, end: &Vec3, path: CachedPath) {
-        // Evict expired entries if we're at capacity
-        if self.cache.len() >= self.max_entries {
-            self.evict_expired();
-        }
-
-        // If still at capacity after eviction, skip insert (LRU would be better but adds complexity)
-        if self.cache.len() >= self.max_entries {
-            tracing::debug!("Path cache full ({} entries), skipping insert", self.max_entries);
-            return;
-        }
-
         let key = PathCacheKey {
             map_id,
             start_cell: quantize_vec3(start),
             end_cell: quantize_vec3(end),
         };
-
         self.cache.insert(key, path);
-    }
-
-    /// Remove expired entries.
-    fn evict_expired(&self) {
-        self.cache.retain(|_, v| v.created_at.elapsed() < self.ttl);
     }
 
     /// Get the number of cached entries (for health endpoint).
     pub fn len(&self) -> usize {
-        self.cache.len()
+        self.cache.entry_count() as usize
     }
 
     /// Check if cache is empty.
     pub fn is_empty(&self) -> bool {
-        self.cache.is_empty()
+        self.cache.entry_count() == 0
+    }
+
+    /// Get cache hit count.
+    pub fn hit_count(&self) -> u64 {
+        self.hits.load(Ordering::Relaxed)
+    }
+
+    /// Get cache miss count.
+    pub fn miss_count(&self) -> u64 {
+        self.misses.load(Ordering::Relaxed)
     }
 }
 
@@ -152,7 +148,6 @@ mod tests {
                 waypoints: vec![start, end],
                 distance: 100.0,
                 partial: false,
-                created_at: Instant::now(),
             },
         );
 
@@ -160,6 +155,8 @@ mod tests {
         let nearby_start = Vec3::new(2.0, 3.0, 4.0);
         let nearby_end = Vec3::new(101.0, 201.0, 51.0);
         assert!(cache.get(0, &nearby_start, &nearby_end).is_some());
+        assert_eq!(cache.hit_count(), 1);
+        assert_eq!(cache.miss_count(), 0);
     }
 
     #[test]
@@ -176,13 +173,13 @@ mod tests {
                 waypoints: vec![start, end],
                 distance: 100.0,
                 partial: false,
-                created_at: Instant::now(),
             },
         );
 
         // Different cell — should miss
         let far_start = Vec3::new(50.0, 50.0, 3.0);
         assert!(cache.get(0, &far_start, &end).is_none());
+        assert_eq!(cache.miss_count(), 1);
     }
 
     #[test]
@@ -199,11 +196,32 @@ mod tests {
                 waypoints: vec![start, end],
                 distance: 100.0,
                 partial: false,
-                created_at: Instant::now(),
             },
         );
 
         // Different map — should miss
         assert!(cache.get(1, &start, &end).is_none());
+    }
+
+    #[test]
+    fn test_cache_metrics() {
+        let cache = PathCache::new();
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let end = Vec3::new(100.0, 200.0, 50.0);
+
+        // Miss
+        cache.get(0, &start, &end);
+        assert_eq!(cache.hit_count(), 0);
+        assert_eq!(cache.miss_count(), 1);
+
+        // Insert + hit
+        cache.insert(0, &start, &end, CachedPath {
+            waypoints: vec![start, end],
+            distance: 100.0,
+            partial: false,
+        });
+        cache.get(0, &start, &end);
+        assert_eq!(cache.hit_count(), 1);
+        assert_eq!(cache.miss_count(), 1);
     }
 }
