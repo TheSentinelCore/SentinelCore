@@ -30,33 +30,33 @@ local _ui_state = {
 
 local menu_elements = {
     -- Window toggle
-    open_btn = core.menu.button("gb_open"),
+    open_btn = core.menu.button("sg_open"),
 
     -- Overlay toggle
-    overlay_enabled_cb = core.menu.checkbox(true, "gb_overlay_enabled"),
+    overlay_enabled_cb = core.menu.checkbox(true, "sg_overlay_enabled"),
 
     -- Profile tab
-    profile_combo = core.menu.combobox(1, "gb_profile_select"),
-    hotspot_radius_slider = core.menu.slider_int(10, 100, 30, "gb_hotspot_radius"),
+    profile_combo = core.menu.combobox(1, "sg_profile_select"),
+    hotspot_radius_slider = core.menu.slider_int(10, 100, 30, "sg_hotspot_radius"),
 
     -- Gathering tab
-    gather_herbs_cb = core.menu.checkbox(true, "gb_gather_herbs"),
-    gather_ores_cb = core.menu.checkbox(true, "gb_gather_ores"),
-    check_skills_cb = core.menu.checkbox(true, "gb_check_skills"),
-    node_search_radius_slider = core.menu.slider_int(20, 150, 80, "gb_node_search_radius"),
-    gather_timeout_slider = core.menu.slider_float(5.0, 30.0, 10.0, "gb_gather_timeout"),
-    mount_threshold_slider = core.menu.slider_int(10, 100, 40, "gb_mount_threshold"),
+    gather_herbs_cb = core.menu.checkbox(true, "sg_gather_herbs"),
+    gather_ores_cb = core.menu.checkbox(true, "sg_gather_ores"),
+    check_skills_cb = core.menu.checkbox(true, "sg_check_skills"),
+    node_search_radius_slider = core.menu.slider_int(20, 150, 80, "sg_node_search_radius"),
+    gather_timeout_slider = core.menu.slider_float(5.0, 30.0, 10.0, "sg_gather_timeout"),
+    mount_threshold_slider = core.menu.slider_int(10, 100, 40, "sg_mount_threshold"),
 
     -- Safety tab
-    enemy_scan_radius_slider = core.menu.slider_int(10, 60, 30, "gb_enemy_scan_radius"),
-    skip_if_enemies_cb = core.menu.checkbox(true, "gb_skip_if_enemies"),
-    flee_health_slider = core.menu.slider_int(10, 50, 30, "gb_flee_health"),
+    enemy_scan_radius_slider = core.menu.slider_int(10, 60, 30, "sg_enemy_scan_radius"),
+    skip_if_enemies_cb = core.menu.checkbox(true, "sg_skip_if_enemies"),
+    flee_health_slider = core.menu.slider_int(10, 50, 30, "sg_flee_health"),
 
     -- Anti-detection (rendered in safety tab)
-    random_pause_cb = core.menu.checkbox(false, "gb_random_pause"),
-    pause_interval_min_slider = core.menu.slider_float(15.0, 120.0, 30.0, "gb_pause_interval_min"),
-    pause_interval_max_slider = core.menu.slider_float(30.0, 180.0, 90.0, "gb_pause_interval_max"),
-    random_jump_cb = core.menu.checkbox(false, "gb_random_jump"),
+    random_pause_cb = core.menu.checkbox(false, "sg_random_pause"),
+    pause_interval_min_slider = core.menu.slider_float(15.0, 120.0, 30.0, "sg_pause_interval_min"),
+    pause_interval_max_slider = core.menu.slider_float(30.0, 180.0, 90.0, "sg_pause_interval_max"),
+    random_jump_cb = core.menu.checkbox(false, "sg_random_jump"),
 }
 
 -- =============================================================================

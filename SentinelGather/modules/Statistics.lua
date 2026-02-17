@@ -392,7 +392,7 @@ function Statistics:get_summary()
     return table.concat(lines, "\n")
 end
 
-local STATS_FILE = "gatherbuddy/statistics.json"
+local STATS_FILE = "sentinel_gather/statistics.json"
 
 ---Save session statistics to disk
 function Statistics:save()
