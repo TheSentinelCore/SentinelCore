@@ -32,6 +32,11 @@ function GrindTab.register(ui, menu, route_profile_labels, theme_labels)
                     label = "Route Profile",
                     options = route_profile_labels,
                     tooltip = "Manual profile when auto profile selection is disabled.",
+                    visible_when = function()
+                        local profile_mode = menu.route_mode and menu.route_mode:get() == 2
+                        local auto_profile = menu.route_auto_profile and menu.route_auto_profile:get_state() == true
+                        return profile_mode and not auto_profile
+                    end,
                 },
             },
         })
@@ -44,105 +49,54 @@ function GrindTab.register(ui, menu, route_profile_labels, theme_labels)
                     element = menu.route_auto_profile,
                     label = "Auto Route Profile",
                     tooltip = "Auto-select route profile by current map and player level.",
+                    visible_when = function()
+                        return menu.route_mode and menu.route_mode:get() == 2
+                    end,
                 },
             },
         })
 
         t:slider_list({
-            label = "Target Search",
+            label = "Route Radius",
             elements = {
-                { element = menu.scan_radius, label = "Scan Radius", suffix = " yd", tooltip = "How far to scan enemies." },
-                { element = menu.pull_range, label = "Pull Range", suffix = " yd", tooltip = "Max range to start combat actions." },
-                { element = menu.chase_stop_range, label = "Chase Stop", suffix = " yd", tooltip = "Distance where chase turns into pull/combat." },
+                {
+                    element = menu.route_radius_min,
+                    label = "Min Radius",
+                    suffix = " yd",
+                    tooltip = "Base radius for circle patrol mode.",
+                    visible_when = function() return menu.route_mode and menu.route_mode:get() == 1 end,
+                },
+                {
+                    element = menu.route_radius_max,
+                    label = "Max Radius",
+                    suffix = " yd",
+                    tooltip = "Maximum expansion radius in circle mode.",
+                    visible_when = function() return menu.route_mode and menu.route_mode:get() == 1 end,
+                },
+                {
+                    element = menu.route_expand_step,
+                    label = "Expand Step",
+                    suffix = " yd",
+                    tooltip = "Amount of radius added when no target is found.",
+                    visible_when = function() return menu.route_mode and menu.route_mode:get() == 1 end,
+                },
+                {
+                    element = menu.route_expand_interval,
+                    label = "Expand Interval",
+                    suffix = " s",
+                    tooltip = "Delay between each expansion.",
+                    visible_when = function() return menu.route_mode and menu.route_mode:get() == 1 end,
+                },
                 { element = menu.mount_threshold, label = "Mount Threshold", suffix = " yd", tooltip = "Patrol distance needed before mounting." },
             },
         })
 
-        t:slider_list({
-            label = "Level Filter",
-            elements = {
-                { element = menu.min_level_delta, label = "Min Level Delta", tooltip = "Target level minus your level." },
-                { element = menu.max_level_delta, label = "Max Level Delta", tooltip = "Default requested cap is +2." },
-            },
-        })
-
         t:checkbox_grid({
-            label = "Safety",
+            label = "Route Behaviour",
             columns = 1,
             elements = {
-                { element = menu.ignore_players, label = "Ignore Player Targets", tooltip = "Do not attack player units." },
-                { element = menu.only_hostile_targets, label = "Only Hostile Targets", tooltip = "Ignore neutral (yellow) NPCs." },
                 { element = menu.auto_mount_enabled, label = "Auto Mount On Patrol", tooltip = "Mount for long patrol moves and dismount before combat/pull." },
-            },
-        })
-
-        t:checkbox_grid({
-            label = "Replenish",
-            columns = 1,
-            elements = {
-                { element = menu.auto_replenish_enabled, label = "Enable Replenish", tooltip = "When bags are near full, find vendor to sell junk and repair." },
-                {
-                    element = menu.auto_vendor_sell_junk,
-                    label = "Sell Junk (Gray)",
-                    tooltip = "Automatically sell poor quality items at merchant.",
-                    visible_when = function()
-                        return menu.auto_replenish_enabled and menu.auto_replenish_enabled:get_state() == true
-                    end,
-                },
-                {
-                    element = menu.auto_vendor_repair,
-                    label = "Auto Repair",
-                    tooltip = "Automatically repair when merchant can repair.",
-                    visible_when = function()
-                        return menu.auto_replenish_enabled and menu.auto_replenish_enabled:get_state() == true
-                    end,
-                },
-            },
-        })
-
-        t:slider_list({
-            label = "Replenish Limits",
-            elements = {
-                {
-                    element = menu.replenish_min_free_slots,
-                    label = "Min Free Slots",
-                    tooltip = "Start replenish mode when free slots are at or below this value.",
-                    visible_when = function()
-                        return menu.auto_replenish_enabled and menu.auto_replenish_enabled:get_state() == true
-                    end,
-                },
-            },
-        })
-
-        t:slider_list({
-            label = "Vendor",
-            elements = {
-                {
-                    element = menu.vendor_npc_id,
-                    label = "Vendor NPC ID",
-                    tooltip = "Exact vendor NPC ID to interact with.",
-                    visible_when = function()
-                        return menu.auto_replenish_enabled and menu.auto_replenish_enabled:get_state() == true
-                    end,
-                },
-                {
-                    element = menu.vendor_scan_radius,
-                    label = "Vendor Scan Radius",
-                    suffix = " yd",
-                    tooltip = "How far to look for the configured vendor.",
-                    visible_when = function()
-                        return menu.auto_replenish_enabled and menu.auto_replenish_enabled:get_state() == true
-                    end,
-                },
-                {
-                    element = menu.vendor_interact_range,
-                    label = "Vendor Interact Range",
-                    suffix = " yd",
-                    tooltip = "Distance considered close enough to interact.",
-                    visible_when = function()
-                        return menu.auto_replenish_enabled and menu.auto_replenish_enabled:get_state() == true
-                    end,
-                },
+                { element = menu.prefer_player_target, label = "Prefer Manual Target", tooltip = "Use your selected valid target before auto-acquiring one." },
             },
         })
     end)

@@ -151,6 +151,17 @@ function GrindBuddy:get_instance()
             _tick_interval = 0.10,
             _last_scan = 0,
             _scan_interval = 0.40,
+            _session_started_at = 0,
+            _session_elapsed_at_stop = 0,
+            _session_kills = 0,
+            _session_deaths = 0,
+            _session_loot_attempts = 0,
+            _session_vendor_runs = 0,
+            _session_vendor_completions = 0,
+            _session_junk_sold = 0,
+            _session_repairs = 0,
+            _session_last_reset_at = 0,
+            _was_player_dead = false,
             _movement = nil,
             _nav_error = nil,
             _move_inflight = false,
@@ -188,6 +199,7 @@ function GrindBuddy:get_instance()
             -- Targeting and combat flow
             _target = nil,
             _target_guid = nil,
+            _target_dead_counted = false,
             _target_acquired_at = 0,
             _last_pull_attempt = 0,
             _pull_cooldown = 1.5,
@@ -233,6 +245,10 @@ function GrindBuddy:get_instance()
             _last_vendor_action = 0,
             _vendor_action_interval = 0.8,
             _inventory_helper = nil,
+            _cached_free_slots = nil,
+            _cached_total_slots = nil,
+            _last_inventory_snapshot = 0,
+            _inventory_snapshot_interval = 0.5,
 
             -- Blacklist
             _blacklist_guid = {},
@@ -706,6 +722,7 @@ function GrindBuddy:_set_target(target, now, label)
 
     instance._target = target
     instance._target_guid = guid
+    instance._target_dead_counted = false
     instance._target_acquired_at = now
     instance._last_target_seen_at = now
 
@@ -812,6 +829,7 @@ function GrindBuddy:_try_loot_target(local_player, target, now)
             core.input.interact_with_unit(target)
         end
     end
+    instance._session_loot_attempts = (instance._session_loot_attempts or 0) + 1
 
     self:_set_state("looting")
     self:_set_status("Looting")
@@ -1088,7 +1106,11 @@ function GrindBuddy:_run_vendor_actions(now)
         core.log("[GrindBuddy] Vendor: repaired items")
     end
     if sold_count > 0 then
+        instance._session_junk_sold = (instance._session_junk_sold or 0) + sold_count
         core.log(string.format("[GrindBuddy] Vendor: sold %d junk items", sold_count))
+    end
+    if repaired then
+        instance._session_repairs = (instance._session_repairs or 0) + 1
     end
 
     local remaining_junk = instance._auto_vendor_sell_junk and self:_count_junk_slots() or 0
@@ -1126,6 +1148,7 @@ function GrindBuddy:_tick_replenish(local_player, now)
         self:_clear_target()
         instance._replenish_active = true
         instance._replenish_started_at = now
+        instance._session_vendor_runs = (instance._session_vendor_runs or 0) + 1
         instance._last_vendor_interact = 0
         instance._last_vendor_action = 0
         self:_set_state("replenish")
@@ -1188,6 +1211,7 @@ function GrindBuddy:_tick_replenish(local_player, now)
     local completed, sold_count, repaired = self:_run_vendor_actions(now)
     if completed then
         instance._replenish_active = false
+        instance._session_vendor_completions = (instance._session_vendor_completions or 0) + 1
         if sold_count == 0 and repaired ~= true then
             instance._replenish_cooldown_until = now + instance._replenish_cooldown
         end
@@ -1358,6 +1382,7 @@ function GrindBuddy:_clear_target()
     local instance = self:get_instance()
     instance._target = nil
     instance._target_guid = nil
+    instance._target_dead_counted = false
     instance._target_acquired_at = 0
 end
 
@@ -1745,6 +1770,11 @@ function GrindBuddy:_tick_target(local_player)
     end
 
     if not self:_is_target_alive(target) then
+        if not instance._target_dead_counted then
+            instance._target_dead_counted = true
+            instance._session_kills = (instance._session_kills or 0) + 1
+        end
+
         if self:_try_loot_target(local_player, target, now) then
             return
         end
@@ -1950,6 +1980,20 @@ function GrindBuddy:start()
     instance._last_route_profile_refresh = 0
     instance._last_mount_attempt = 0
     instance._last_dismount_attempt = 0
+    instance._session_started_at = now_time()
+    instance._session_elapsed_at_stop = 0
+    instance._session_kills = 0
+    instance._session_deaths = 0
+    instance._session_loot_attempts = 0
+    instance._session_vendor_runs = 0
+    instance._session_vendor_completions = 0
+    instance._session_junk_sold = 0
+    instance._session_repairs = 0
+    instance._session_last_reset_at = instance._session_started_at
+    instance._was_player_dead = false
+    instance._cached_free_slots = nil
+    instance._cached_total_slots = nil
+    instance._last_inventory_snapshot = 0
     instance._replenish_active = false
     instance._replenish_started_at = 0
     instance._replenish_cooldown_until = 0
@@ -1970,6 +2014,11 @@ function GrindBuddy:stop()
 
     self:_cancel_inflight_move("stop")
     instance._running = false
+    if instance._session_started_at and instance._session_started_at > 0 then
+        instance._session_elapsed_at_stop = math.max(0, now_time() - instance._session_started_at)
+    else
+        instance._session_elapsed_at_stop = 0
+    end
     instance._move_target = nil
     instance._move_status_text = nil
     instance._move_started_at = 0
@@ -1980,6 +2029,10 @@ function GrindBuddy:stop()
     instance._replenish_cooldown_until = 0
     instance._last_vendor_interact = 0
     instance._last_vendor_action = 0
+    instance._was_player_dead = false
+    instance._cached_free_slots = nil
+    instance._cached_total_slots = nil
+    instance._last_inventory_snapshot = 0
     self:_reset_unstuck_runtime(true)
     self:_clear_target()
     self:_set_state("idle")
@@ -2008,7 +2061,13 @@ function GrindBuddy:update()
         return
     end
 
-    if call_method(local_player, "is_dead") == true then
+    local player_dead = call_method(local_player, "is_dead") == true
+    if player_dead and not instance._was_player_dead then
+        instance._session_deaths = (instance._session_deaths or 0) + 1
+    end
+    instance._was_player_dead = player_dead
+
+    if player_dead then
         self:_set_state("waiting")
         self:_set_status("Player dead")
         return
@@ -2061,6 +2120,100 @@ function GrindBuddy:get_status()
     return self:get_instance()._status
 end
 
+function GrindBuddy:get_runtime_stats()
+    local instance = self:get_instance()
+    local now = now_time()
+
+    local duration_seconds = 0
+    if instance._running and instance._session_started_at > 0 then
+        duration_seconds = math.max(0, now - instance._session_started_at)
+    else
+        duration_seconds = math.max(0, instance._session_elapsed_at_stop or 0)
+    end
+
+    local hours = duration_seconds / 3600.0
+    local kills = instance._session_kills or 0
+    local loot_attempts = instance._session_loot_attempts or 0
+    local vendor_runs = instance._session_vendor_runs or 0
+    local vendor_completions = instance._session_vendor_completions or 0
+    local guid_count = 0
+    for _ in pairs(instance._blacklist_guid) do
+        guid_count = guid_count + 1
+    end
+
+    local free_slots = instance._cached_free_slots
+    local total_slots = instance._cached_total_slots
+    if (now - (instance._last_inventory_snapshot or 0)) >= (instance._inventory_snapshot_interval or 0.5) then
+        local snapshot_free, snapshot_total = self:_get_free_bag_slots()
+        instance._cached_free_slots = snapshot_free
+        instance._cached_total_slots = snapshot_total
+        instance._last_inventory_snapshot = now
+        free_slots = snapshot_free
+        total_slots = snapshot_total
+    end
+
+    local total_seconds = math.floor(duration_seconds + 0.5)
+    local hours_whole = math.floor(total_seconds / 3600)
+    local minutes = math.floor((total_seconds % 3600) / 60)
+    local seconds = total_seconds % 60
+    local duration_formatted = string.format("%02d:%02d:%02d", hours_whole, minutes, seconds)
+
+    return {
+        started_at = instance._session_started_at,
+        duration_seconds = duration_seconds,
+        duration_formatted = duration_formatted,
+        kills = kills,
+        kills_per_hour = hours > 0 and (kills / hours) or 0,
+        deaths = instance._session_deaths or 0,
+        loot_attempts = loot_attempts,
+        loot_attempts_per_hour = hours > 0 and (loot_attempts / hours) or 0,
+        vendor_runs = vendor_runs,
+        vendor_completions = vendor_completions,
+        junk_sold = instance._session_junk_sold or 0,
+        repairs = instance._session_repairs or 0,
+        free_slots = free_slots,
+        total_slots = total_slots,
+        blacklisted_guid_count = guid_count,
+        blacklisted_zone_count = #instance._blacklist_zones,
+        blackspot_count = instance._blackspots and instance._blackspots:get_count() or 0,
+        running = instance._running == true,
+        replenish_active = instance._replenish_active == true,
+    }
+end
+
+function GrindBuddy:reset_runtime_stats()
+    local instance = self:get_instance()
+    local now = now_time()
+    instance._session_kills = 0
+    instance._session_deaths = 0
+    instance._session_loot_attempts = 0
+    instance._session_vendor_runs = 0
+    instance._session_vendor_completions = 0
+    instance._session_junk_sold = 0
+    instance._session_repairs = 0
+    instance._session_last_reset_at = now
+    instance._cached_free_slots = nil
+    instance._cached_total_slots = nil
+    instance._last_inventory_snapshot = 0
+    if instance._running then
+        instance._session_started_at = now
+    else
+        instance._session_elapsed_at_stop = 0
+    end
+end
+
+function GrindBuddy:clear_runtime_blacklists()
+    local instance = self:get_instance()
+    local guid_count = 0
+    for _ in pairs(instance._blacklist_guid) do
+        guid_count = guid_count + 1
+    end
+    local zone_count = #instance._blacklist_zones
+    instance._blacklist_guid = {}
+    instance._blacklist_zones = {}
+    return guid_count, zone_count
+end
+
 function GrindBuddy:get_grind_settings()
     local instance = self:get_instance()
     local route_profiles = instance._route_profiles
@@ -2070,20 +2223,47 @@ function GrindBuddy:get_grind_settings()
         scan_radius = instance._scan_radius,
         pull_range = instance._pull_range,
         chase_stop_range = instance._chase_stop_range,
+        pull_cooldown = instance._pull_cooldown,
+        target_timeout = instance._target_timeout,
+        stickiness_bonus = instance._stickiness_bonus,
+        combat_retarget_interval = instance._combat_retarget_interval,
         auto_mount_enabled = instance._auto_mount_enabled,
         mount_threshold = instance._mount_threshold,
+        prefer_player_target = instance._prefer_player_target,
         min_target_level_delta = instance._min_target_level_delta,
         max_target_level_delta = instance._max_target_level_delta,
         ignore_players = instance._ignore_players,
         only_hostile_targets = instance._only_hostile_targets,
+        loot_enabled = instance._loot_enabled,
+        loot_range = instance._loot_range,
+        loot_attempt_interval = instance._loot_attempt_interval,
+        unstuck_enabled = instance._unstuck_enabled,
+        unstuck_max_attempts = instance._unstuck_max_attempts,
+        move_timeout = instance._move_timeout,
+        move_stall_timeout = instance._move_stall_timeout,
+        move_progress_min = instance._move_progress_min,
+        tick_interval = instance._tick_interval,
+        scan_interval = instance._scan_interval,
         route_mode = instance._route_mode,
+        route_radius_min = instance._route_radius_min,
+        route_radius_max = instance._route_radius_max,
+        route_expand_step = instance._route_expand_step,
+        route_expand_interval = instance._route_expand_interval,
+        route_profile_refresh_interval = instance._route_profile_refresh_interval,
         route_auto_profile = route_profiles and route_profiles:is_auto_select_enabled() or true,
         route_profile_index = active_route_index,
+        blacklist_ttl = instance._blacklist_ttl,
+        zone_blacklist_ttl = instance._zone_blacklist_ttl,
+        zone_blacklist_radius = instance._zone_blacklist_radius,
+        blackspot_radius = instance._blackspot_radius,
+        blackspot_ttl = instance._blackspot_ttl,
         auto_replenish_enabled = instance._auto_replenish_enabled,
         replenish_min_free_slots = instance._replenish_min_free_slots,
         vendor_npc_id = instance._vendor_npc_id,
         vendor_scan_radius = instance._vendor_scan_radius,
         vendor_interact_range = instance._vendor_interact_range,
+        replenish_timeout = instance._replenish_timeout,
+        replenish_cooldown = instance._replenish_cooldown,
         auto_vendor_sell_junk = instance._auto_vendor_sell_junk,
         auto_vendor_repair = instance._auto_vendor_repair,
     }
@@ -2095,6 +2275,7 @@ function GrindBuddy:set_grind_settings(settings)
         return
     end
     local was_replenish_active = instance._replenish_active == true
+    local route_geometry_changed = false
 
     if settings.scan_radius then
         local scan = tonumber(settings.scan_radius) or instance._scan_radius
@@ -2105,6 +2286,22 @@ function GrindBuddy:set_grind_settings(settings)
     end
     if settings.chase_stop_range then
         instance._chase_stop_range = math.max(instance._pull_range, tonumber(settings.chase_stop_range) or instance._chase_stop_range)
+    end
+    if settings.pull_cooldown ~= nil then
+        local cooldown = tonumber(settings.pull_cooldown) or instance._pull_cooldown
+        instance._pull_cooldown = math.max(0.2, math.min(4.0, cooldown))
+    end
+    if settings.target_timeout ~= nil then
+        local timeout = tonumber(settings.target_timeout) or instance._target_timeout
+        instance._target_timeout = math.max(6.0, math.min(90.0, timeout))
+    end
+    if settings.stickiness_bonus ~= nil then
+        local bonus = tonumber(settings.stickiness_bonus) or instance._stickiness_bonus
+        instance._stickiness_bonus = math.max(0.0, math.min(40.0, bonus))
+    end
+    if settings.combat_retarget_interval ~= nil then
+        local interval = tonumber(settings.combat_retarget_interval) or instance._combat_retarget_interval
+        instance._combat_retarget_interval = math.max(0.1, math.min(2.0, interval))
     end
     if settings.auto_mount_enabled ~= nil then
         instance._auto_mount_enabled = settings.auto_mount_enabled == true
@@ -2131,6 +2328,47 @@ function GrindBuddy:set_grind_settings(settings)
     end
     if settings.only_hostile_targets ~= nil then
         instance._only_hostile_targets = settings.only_hostile_targets == true
+    end
+    if settings.prefer_player_target ~= nil then
+        instance._prefer_player_target = settings.prefer_player_target == true
+    end
+    if settings.loot_enabled ~= nil then
+        instance._loot_enabled = settings.loot_enabled == true
+    end
+    if settings.loot_range ~= nil then
+        local loot_range = tonumber(settings.loot_range) or instance._loot_range
+        instance._loot_range = math.max(2.0, math.min(15.0, loot_range))
+    end
+    if settings.loot_attempt_interval ~= nil then
+        local loot_interval = tonumber(settings.loot_attempt_interval) or instance._loot_attempt_interval
+        instance._loot_attempt_interval = math.max(0.2, math.min(3.0, loot_interval))
+    end
+    if settings.unstuck_enabled ~= nil then
+        instance._unstuck_enabled = settings.unstuck_enabled == true
+    end
+    if settings.unstuck_max_attempts ~= nil then
+        local attempts = tonumber(settings.unstuck_max_attempts) or instance._unstuck_max_attempts
+        instance._unstuck_max_attempts = math.max(1, math.min(12, math.floor(attempts)))
+    end
+    if settings.move_timeout ~= nil then
+        local move_timeout = tonumber(settings.move_timeout) or instance._move_timeout
+        instance._move_timeout = math.max(5.0, math.min(60.0, move_timeout))
+    end
+    if settings.move_stall_timeout ~= nil then
+        local stall_timeout = tonumber(settings.move_stall_timeout) or instance._move_stall_timeout
+        instance._move_stall_timeout = math.max(0.8, math.min(12.0, stall_timeout))
+    end
+    if settings.move_progress_min ~= nil then
+        local progress_min = tonumber(settings.move_progress_min) or instance._move_progress_min
+        instance._move_progress_min = math.max(0.1, math.min(3.0, progress_min))
+    end
+    if settings.tick_interval ~= nil then
+        local tick_interval = tonumber(settings.tick_interval) or instance._tick_interval
+        instance._tick_interval = math.max(0.03, math.min(0.6, tick_interval))
+    end
+    if settings.scan_interval ~= nil then
+        local scan_interval = tonumber(settings.scan_interval) or instance._scan_interval
+        instance._scan_interval = math.max(0.10, math.min(2.0, scan_interval))
     end
     if settings.auto_replenish_enabled ~= nil then
         instance._auto_replenish_enabled = settings.auto_replenish_enabled == true
@@ -2161,11 +2399,86 @@ function GrindBuddy:set_grind_settings(settings)
         local interact_range = tonumber(settings.vendor_interact_range) or instance._vendor_interact_range
         instance._vendor_interact_range = math.max(2.0, math.min(12.0, interact_range))
     end
+    if settings.replenish_timeout ~= nil then
+        local replenish_timeout = tonumber(settings.replenish_timeout) or instance._replenish_timeout
+        instance._replenish_timeout = math.max(20.0, math.min(240.0, replenish_timeout))
+    end
+    if settings.replenish_cooldown ~= nil then
+        local replenish_cooldown = tonumber(settings.replenish_cooldown) or instance._replenish_cooldown
+        instance._replenish_cooldown = math.max(0.0, math.min(120.0, replenish_cooldown))
+    end
     if settings.auto_vendor_sell_junk ~= nil then
         instance._auto_vendor_sell_junk = settings.auto_vendor_sell_junk == true
     end
     if settings.auto_vendor_repair ~= nil then
         instance._auto_vendor_repair = settings.auto_vendor_repair == true
+    end
+    if settings.blacklist_ttl ~= nil then
+        local blacklist_ttl = tonumber(settings.blacklist_ttl) or instance._blacklist_ttl
+        instance._blacklist_ttl = math.max(10.0, math.min(900.0, blacklist_ttl))
+    end
+    if settings.zone_blacklist_ttl ~= nil then
+        local zone_blacklist_ttl = tonumber(settings.zone_blacklist_ttl) or instance._zone_blacklist_ttl
+        instance._zone_blacklist_ttl = math.max(10.0, math.min(900.0, zone_blacklist_ttl))
+    end
+    if settings.zone_blacklist_radius ~= nil then
+        local zone_blacklist_radius = tonumber(settings.zone_blacklist_radius) or instance._zone_blacklist_radius
+        instance._zone_blacklist_radius = math.max(2.0, math.min(30.0, zone_blacklist_radius))
+    end
+    if settings.blackspot_radius ~= nil then
+        local blackspot_radius = tonumber(settings.blackspot_radius) or instance._blackspot_radius
+        instance._blackspot_radius = math.max(3.0, math.min(30.0, blackspot_radius))
+    end
+    if settings.blackspot_ttl ~= nil then
+        local blackspot_ttl = tonumber(settings.blackspot_ttl) or instance._blackspot_ttl
+        instance._blackspot_ttl = math.max(0.0, math.min(7200.0, blackspot_ttl))
+    end
+    if settings.route_radius_min ~= nil then
+        local route_radius_min = tonumber(settings.route_radius_min) or instance._route_radius_min
+        local clamped = math.max(20.0, math.min(200.0, route_radius_min))
+        if math.abs(clamped - instance._route_radius_min) > 0.001 then
+            instance._route_radius_min = clamped
+            route_geometry_changed = true
+        end
+    end
+    if settings.route_radius_max ~= nil then
+        local route_radius_max = tonumber(settings.route_radius_max) or instance._route_radius_max
+        local clamped = math.max(40.0, math.min(400.0, route_radius_max))
+        if math.abs(clamped - instance._route_radius_max) > 0.001 then
+            instance._route_radius_max = clamped
+            route_geometry_changed = true
+        end
+    end
+    if instance._route_radius_max < instance._route_radius_min then
+        if math.abs(instance._route_radius_max - instance._route_radius_min) > 0.001 then
+            route_geometry_changed = true
+        end
+        instance._route_radius_max = instance._route_radius_min
+    end
+    if settings.route_expand_step ~= nil then
+        local route_expand_step = tonumber(settings.route_expand_step) or instance._route_expand_step
+        local clamped = math.max(2.0, math.min(80.0, route_expand_step))
+        if math.abs(clamped - instance._route_expand_step) > 0.001 then
+            instance._route_expand_step = clamped
+            route_geometry_changed = true
+        end
+    end
+    if settings.route_expand_interval ~= nil then
+        local route_expand_interval = tonumber(settings.route_expand_interval) or instance._route_expand_interval
+        local clamped = math.max(2.0, math.min(90.0, route_expand_interval))
+        if math.abs(clamped - instance._route_expand_interval) > 0.001 then
+            instance._route_expand_interval = clamped
+            route_geometry_changed = true
+        end
+    end
+    if settings.route_profile_refresh_interval ~= nil then
+        local route_refresh = tonumber(settings.route_profile_refresh_interval) or instance._route_profile_refresh_interval
+        instance._route_profile_refresh_interval = math.max(0.5, math.min(20.0, route_refresh))
+    end
+    local clamped_route_radius = math.max(instance._route_radius_min, math.min(instance._route_radius_max, instance._route_radius))
+    if math.abs(clamped_route_radius - instance._route_radius) > 0.001 then
+        instance._route_radius = clamped_route_radius
+        route_geometry_changed = true
     end
     if instance._chase_stop_range < instance._pull_range then
         instance._chase_stop_range = instance._pull_range
@@ -2187,6 +2500,14 @@ function GrindBuddy:set_grind_settings(settings)
     end
     if settings.route_profile_index and not auto_enabled then
         self:set_route_profile_index(settings.route_profile_index)
+    end
+
+    if route_geometry_changed and instance._running and instance._route_mode == ROUTE_MODE_CIRCLE then
+        local local_player = core.object_manager.get_local_player()
+        if local_player and local_player:is_valid() then
+            self:_cancel_inflight_move("route-geometry-change")
+            self:_build_patrol_route(local_player, true)
+        end
     end
 end
 
