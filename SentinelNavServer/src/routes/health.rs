@@ -2,6 +2,7 @@
 
 use axum::{extract::State, Json};
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 
 use crate::state::AppState;
 
@@ -20,6 +21,17 @@ pub struct HealthResponse {
     pub loaded_maps: Vec<u32>,
     /// Number of cached path entries.
     pub path_cache_size: usize,
+    /// Request and cache metrics.
+    pub metrics: MetricsResponse,
+}
+
+/// Metrics sub-response.
+#[derive(Debug, Serialize)]
+pub struct MetricsResponse {
+    pub total_requests: u64,
+    pub failed_requests: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
 }
 
 /// GET /health - Health check endpoint.
@@ -35,5 +47,11 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
         loaded_map_count: loaded_maps.len(),
         loaded_maps,
         path_cache_size: state.path_cache.len(),
+        metrics: MetricsResponse {
+            total_requests: state.metrics.total_requests.load(Ordering::Relaxed),
+            failed_requests: state.metrics.failed_requests.load(Ordering::Relaxed),
+            cache_hits: state.path_cache.hit_count(),
+            cache_misses: state.path_cache.miss_count(),
+        },
     })
 }

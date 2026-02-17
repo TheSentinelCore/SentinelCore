@@ -1,5 +1,6 @@
 //! Application state shared across handlers.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Semaphore;
@@ -7,6 +8,21 @@ use tokio::sync::Semaphore;
 use crate::cache::PathCache;
 use crate::config::Config;
 use tc_mmap::MmapManager;
+
+/// Server-wide request metrics.
+pub struct Metrics {
+    pub total_requests: AtomicU64,
+    pub failed_requests: AtomicU64,
+}
+
+impl Metrics {
+    pub fn new() -> Self {
+        Self {
+            total_requests: AtomicU64::new(0),
+            failed_requests: AtomicU64::new(0),
+        }
+    }
+}
 
 /// Shared application state.
 #[derive(Clone)]
@@ -21,6 +37,8 @@ pub struct AppState {
     pub path_cache: Arc<PathCache>,
     /// Server start time for uptime tracking.
     pub start_time: Instant,
+    /// Request metrics.
+    pub metrics: Arc<Metrics>,
 }
 
 impl AppState {
@@ -52,6 +70,7 @@ impl AppState {
             )),
             path_cache: Arc::new(PathCache::new()),
             start_time: Instant::now(),
+            metrics: Arc::new(Metrics::new()),
         })
     }
 
