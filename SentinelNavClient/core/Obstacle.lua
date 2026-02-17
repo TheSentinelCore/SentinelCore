@@ -284,7 +284,7 @@ end
 
 -- Query API (consumed by MovementModule) ---------------------------------
 
----Get avoidance zones for NavBuddy /path-avoid endpoint
+---Get avoidance zones for SentinelNavServer /path-avoid endpoint
 ---@return table[] Array of { x, y, z, radius, cost }
 function Obstacle:get_avoidance_zones()
     return self._zones

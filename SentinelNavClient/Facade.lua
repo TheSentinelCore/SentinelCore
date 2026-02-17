@@ -1,5 +1,5 @@
 -- Facade.lua
--- Single entry-point facade for NavLib: creates, wires, and drives all modules.
+-- Single entry-point facade for SentinelNavClient: creates, wires, and drives all modules.
 
 local Navigation = require("core/Navigation")
 local Movement   = require("core/Movement")
@@ -16,7 +16,7 @@ Facade.__index = Facade
 -- Construction
 --------------------------------------------------------------------------------
 
----Create a fully-wired NavLib instance.
+---Create a fully-wired SentinelNavClient instance.
 ---@param config? table { navigation?, movement?, obstacles? }
 ---@return Facade
 function Facade:new(config)
@@ -287,7 +287,7 @@ function Facade:_fire(event, data)
     for i = 1, #list do
         local ok, err = pcall(list[i], data)
         if not ok then
-            core.log_error("[NavLib] Event '" .. event .. "' handler error: " .. tostring(err))
+            core.log_error("[SentinelNavClient] Event '" .. event .. "' handler error: " .. tostring(err))
         end
     end
 end

@@ -532,7 +532,7 @@ function Movement:move_to(target, callback, opts)
         return
     end
 
-    -- Request path from NavBuddy
+    -- Request path from SentinelNavServer
     self:_set_state(S_REQUESTING)
 
     local start_pos = player:get_position()

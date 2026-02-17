@@ -1,5 +1,5 @@
--- NavLib/core/Defaults.lua
--- Single source of truth for all NavLib configuration defaults.
+-- SentinelNavClient/core/Defaults.lua
+-- Single source of truth for all SentinelNavClient configuration defaults.
 -- Movement.lua, Obstacle.lua, and window.lua all read from this file.
 
 local Defaults = {}
