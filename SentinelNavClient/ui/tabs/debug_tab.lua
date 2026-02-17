@@ -5,7 +5,7 @@
 local color    = require("common/color")
 local vec2     = require("common/geometry/vector_2")
 local enums    = require("common/enums")
-local AstroUI  = require("shared/AstroUI")
+local AstroUI  = require("lib/AstroUI")
 local Defaults = require("core/Defaults")
 
 local function lighten_color(base_color, amount)
