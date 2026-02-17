@@ -35,7 +35,7 @@ end
 ---@param y_offset number Current y position
 ---@return number New y_offset
 function StatsTab.render(ui, y_offset)
-    local GatherBuddy = require("init")
+    local SentinelGather = require("init")
     local window = ui.window
     local colors = ui.colors
     local LAYOUT = require("shared/rotation_settings_ui").LAYOUT
@@ -48,7 +48,7 @@ function StatsTab.render(ui, y_offset)
         vec2.new(x_start, y_offset), colors.primary_accent, "Session Statistics")
     y_offset = y_offset + LAYOUT.element_height + 4
 
-    local stats = GatherBuddy:get_statistics()
+    local stats = SentinelGather:get_statistics()
 
     if stats then
         y_offset = render_stat_row(window, x_start, y_offset,
@@ -85,7 +85,7 @@ function StatsTab.render(ui, y_offset)
         vec2.new(x_start, y_offset), colors.primary_accent, "Current Path")
     y_offset = y_offset + LAYOUT.element_height + 4
 
-    local bot_mgr = GatherBuddy:get_bot_manager()
+    local bot_mgr = SentinelGather:get_bot_manager()
     local movement = bot_mgr and bot_mgr._modules and bot_mgr._modules.Movement
 
     if movement and movement:get_current_path() then

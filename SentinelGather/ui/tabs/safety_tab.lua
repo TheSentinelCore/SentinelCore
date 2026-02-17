@@ -14,7 +14,7 @@ local SafetyTab = {}
 ---@param y_offset number Current y position
 ---@return number New y_offset
 function SafetyTab.render_debug(ui, y_offset)
-    local GatherBuddy = require("init")
+    local SentinelGather = require("init")
     local window = ui.window
     local colors = ui.colors
     local LAYOUT = require("shared/rotation_settings_ui").LAYOUT
@@ -45,13 +45,13 @@ function SafetyTab.render_debug(ui, y_offset)
         vec2.new(text_x, text_y), colors.text_primary, btn_text)
 
     if window:is_rect_clicked(btn_start, btn_end) then
-        GatherBuddy:run_tests()
+        SentinelGather:run_tests()
     end
 
     y_offset = y_offset + btn_height + LAYOUT.element_spacing
 
     -- Module count
-    local bot_mgr = GatherBuddy:get_bot_manager()
+    local bot_mgr = SentinelGather:get_bot_manager()
     if bot_mgr then
         local module_count = bot_mgr:get_module_count() or 0
         window:render_text(enums.window_enums.font_id.FONT_SMALL,
@@ -92,7 +92,7 @@ function SafetyTab.register(ui, menu_elements)
             }
         })
 
-        -- Anti-detection pauses (GatherBuddy-specific)
+        -- Anti-detection pauses (SentinelGather-specific)
         t:checkbox_grid({
             label = "Anti-Detection",
             columns = 1,

@@ -1,5 +1,5 @@
 --[[
-    GatherBuddy UI Window Orchestrator
+    SentinelGather UI Window Orchestrator
 
     Creates and manages the RotationSettingsUI instance, registers all tabs,
     renders the control bar above the tab bar, and handles overlay toggle.
@@ -183,7 +183,7 @@ local function render_control_bar(ui, y_offset)
 end
 
 ---Initialize the UI (called once)
----@param gatherbuddy table The GatherBuddy module
+---@param gatherbuddy table The SentinelGather module
 ---@param menu_elements table The menu elements table
 ---@param ui_state table The shared UI state (profiles, etc.)
 function Window.init(gatherbuddy, menu_elements, ui_state)
@@ -196,7 +196,7 @@ function Window.init(gatherbuddy, menu_elements, ui_state)
     -- Create the RotationSettingsUI instance
     _ui = rotation_settings_ui.new({
         id = "gatherbuddy",
-        title = "GatherBuddy",
+        title = "Sentinel Gather",
         default_x = 100,
         default_y = 100,
         default_w = 480,
