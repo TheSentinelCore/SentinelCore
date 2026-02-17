@@ -33,9 +33,11 @@ impl NavMeshQuery {
     /// * `mesh` - The navigation mesh to query
     /// * `max_nodes` - Maximum number of search nodes (typically 2048)
     pub fn new(mesh: Arc<NavMesh>, max_nodes: u32) -> Result<Self, DetourError> {
+        // SAFETY: wrapper_dtAllocNavMeshQuery returns a valid pointer or null (checked below).
         let ptr = unsafe { detour_sys::wrapper_dtAllocNavMeshQuery() };
         let ptr = NonNull::new(ptr).ok_or(DetourError::AllocationFailed)?;
 
+        // SAFETY: ptr is valid (NonNull check above); mesh.as_ptr() is valid for the mesh's lifetime.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_init(
                 ptr.as_ptr(),
@@ -45,6 +47,7 @@ impl NavMeshQuery {
         };
 
         if dt_status_failed(status) {
+            // SAFETY: ptr was successfully allocated above and init failed, so we must free it.
             unsafe {
                 detour_sys::wrapper_dtFreeNavMeshQuery(ptr.as_ptr());
             }
@@ -74,6 +77,8 @@ impl NavMeshQuery {
         let mut nearest_ref: PolyRef = 0;
         let mut nearest_pt = [0.0f32; 3];
 
+        // SAFETY: self.ptr is a valid, initialized dtNavMeshQuery; all output buffers are
+        // stack-allocated with correct sizes; coordinate arrays converted via to_detour().
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_findNearestPoly(
                 self.ptr.as_ptr(),
@@ -120,6 +125,7 @@ impl NavMeshQuery {
         let mut path = vec![0u64; max_path];
         let mut path_count: i32 = 0;
 
+        // SAFETY: self.ptr is valid; path buffer has max_path elements; path_count is written by Detour.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_findPath(
                 self.ptr.as_ptr(),
@@ -165,6 +171,8 @@ impl NavMeshQuery {
         let mut straight_path = vec![0.0f32; max_points * 3];
         let mut straight_count: i32 = 0;
 
+        // SAFETY: self.ptr is valid; straight_path has max_points*3 elements; null ptrs for
+        // optional output arrays (flags, refs) are documented as valid by Detour API.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_findStraightPath(
                 self.ptr.as_ptr(),
@@ -185,7 +193,9 @@ impl NavMeshQuery {
             return Err(DetourError::StraightPathFailed);
         }
 
-        let waypoints: Vec<Vec3> = (0..straight_count as usize)
+        // Clamp count to buffer size to prevent panic on malformed FFI output
+        let count = (straight_count as usize).min(max_points);
+        let waypoints: Vec<Vec3> = (0..count)
             .map(|i| {
                 let idx = i * 3;
                 Vec3::from_detour([
@@ -224,6 +234,8 @@ impl NavMeshQuery {
         let mut visited = [0u64; 16];
         let mut visited_count: i32 = 0;
 
+        // SAFETY: self.ptr is valid; all output buffers are stack-allocated with correct sizes;
+        // visited array has 16 elements and visited.len() is passed as the limit.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_moveAlongSurface(
                 self.ptr.as_ptr(),
@@ -268,6 +280,8 @@ impl NavMeshQuery {
         let mut t: f32 = 0.0;
         let mut hit_normal = [0.0f32; 3];
 
+        // SAFETY: self.ptr is valid; output params are stack-allocated; null ptrs for optional
+        // path/pathCount arrays are valid (maxPath=0 means no path output).
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_raycast(
                 self.ptr.as_ptr(),
@@ -316,6 +330,7 @@ impl NavMeshQuery {
         let mut hit_pos = [0.0f32; 3];
         let mut hit_normal = [0.0f32; 3];
 
+        // SAFETY: self.ptr is valid; all output params are stack-allocated f32/[f32;3].
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_findDistanceToWall(
                 self.ptr.as_ptr(),
@@ -352,6 +367,8 @@ impl NavMeshQuery {
             rand::random::<f32>()
         }
 
+        // SAFETY: self.ptr is valid; random_fn is an extern "C" fn matching Detour's callback
+        // signature; output params are stack-allocated.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_findRandomPoint(
                 self.ptr.as_ptr(),
@@ -395,6 +412,8 @@ impl NavMeshQuery {
             rand::random::<f32>()
         }
 
+        // SAFETY: self.ptr is valid; random_fn matches Detour's extern "C" callback signature;
+        // output params are stack-allocated with correct sizes.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_findRandomPointAroundCircle(
                 self.ptr.as_ptr(),
@@ -427,6 +446,7 @@ impl NavMeshQuery {
         let pos_d = pos.to_detour();
         let mut height: f32 = 0.0;
 
+        // SAFETY: self.ptr is valid; height is a stack-allocated f32 output param.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_getPolyHeight(
                 self.ptr.as_ptr(),
@@ -469,6 +489,7 @@ impl NavMeshQuery {
         let mut polys = vec![0u64; max_polys];
         let mut poly_count: i32 = 0;
 
+        // SAFETY: self.ptr is valid; polys buffer has max_polys elements; max_polys passed as limit.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_queryPolygons(
                 self.ptr.as_ptr(),
@@ -506,6 +527,7 @@ impl NavMeshQuery {
         let mut closest = [0.0f32; 3];
         let mut pos_over_poly: bool = false;
 
+        // SAFETY: self.ptr is valid; output buffers (closest, pos_over_poly) are stack-allocated.
         let status = unsafe {
             detour_sys::wrapper_dtNavMeshQuery_closestPointOnPoly(
                 self.ptr.as_ptr(),
@@ -526,6 +548,7 @@ impl NavMeshQuery {
 
 impl Drop for NavMeshQuery {
     fn drop(&mut self) {
+        // SAFETY: self.ptr was allocated by wrapper_dtAllocNavMeshQuery in new() and is valid.
         unsafe {
             detour_sys::wrapper_dtFreeNavMeshQuery(self.ptr.as_ptr());
         }

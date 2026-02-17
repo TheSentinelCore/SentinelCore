@@ -89,6 +89,7 @@ impl PathCache {
 
         // If still at capacity after eviction, skip insert (LRU would be better but adds complexity)
         if self.cache.len() >= self.max_entries {
+            tracing::debug!("Path cache full ({} entries), skipping insert", self.max_entries);
             return;
         }
 
