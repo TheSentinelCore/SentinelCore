@@ -28,7 +28,7 @@ local _ui = nil           -- RotationSettingsUI instance
 local _initialized = false
 local _menu_elements = nil
 local _ui_state = nil
-local _gatherbuddy = nil
+local _sentinel_gather = nil
 
 -- Status colors
 local STATUS_COLORS = {
@@ -70,11 +70,11 @@ local function render_control_bar(ui, y_offset)
     local window_size = window:get_size()
     local content_width = window_size.x - (2 * LAYOUT.padding_side)
 
-    local running = _gatherbuddy:is_running()
-    local paused = _gatherbuddy:is_paused()
+    local running = _sentinel_gather:is_running()
+    local paused = _sentinel_gather:is_paused()
 
     -- Row 1: Profile name (if loaded)
-    local bot_mgr = _gatherbuddy:get_bot_manager()
+    local bot_mgr = _sentinel_gather:get_bot_manager()
     local profile_mgr = bot_mgr and bot_mgr._modules and bot_mgr._modules.ProfileManager
     if profile_mgr and profile_mgr._profile_name then
         window:render_text(enums.window_enums.font_id.FONT_SMALL,
@@ -95,15 +95,15 @@ local function render_control_bar(ui, y_offset)
             local selected_idx = _menu_elements.profile_combo:get()
             local profile = _ui_state.profiles[selected_idx]
             if profile and profile.path then
-                _gatherbuddy:start(profile.path)
+                _sentinel_gather:start(profile.path)
             else
-                _gatherbuddy:start()
+                _sentinel_gather:start()
             end
         end
     else
         local stop_color = color.new(180, 50, 50, 255)
         if render_ctrl_button(window, x_start, y_offset, btn_w, btn_h, "Stop", colors, stop_color) then
-            _gatherbuddy:stop()
+            _sentinel_gather:stop()
         end
     end
 
@@ -113,12 +113,12 @@ local function render_control_bar(ui, y_offset)
     local pause_color = paused and color.new(60, 160, 60, 255) or color.new(180, 160, 40, 255)
     if render_ctrl_button(window, pause_x, y_offset, btn_w, btn_h, pause_text, colors, pause_color) then
         if running then
-            _gatherbuddy:toggle_pause()
+            _sentinel_gather:toggle_pause()
         end
     end
 
     -- Status text (to the right of buttons)
-    local state = _gatherbuddy:get_state()
+    local state = _sentinel_gather:get_state()
     local status_text = "Stopped"
     local status_color = STATUS_COLORS.stopped
     if running then
@@ -183,19 +183,19 @@ local function render_control_bar(ui, y_offset)
 end
 
 ---Initialize the UI (called once)
----@param gatherbuddy table The SentinelGather module
+---@param sentinel_gather table The SentinelGather module
 ---@param menu_elements table The menu elements table
 ---@param ui_state table The shared UI state (profiles, etc.)
-function Window.init(gatherbuddy, menu_elements, ui_state)
+function Window.init(sentinel_gather, menu_elements, ui_state)
     if _initialized then return end
 
-    _gatherbuddy = gatherbuddy
+    _sentinel_gather = sentinel_gather
     _menu_elements = menu_elements
     _ui_state = ui_state
 
     -- Create the RotationSettingsUI instance
     _ui = rotation_settings_ui.new({
-        id = "gatherbuddy",
+        id = "sentinel_gather",
         title = "Sentinel Gather",
         default_x = 100,
         default_y = 100,

@@ -9,8 +9,8 @@ local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")
 
 -- Settings file path (relative to scripts_data/)
-local SETTINGS_PATH = "gatherbuddy/settings.json"
-local SETTINGS_FOLDER = "gatherbuddy"
+local SETTINGS_PATH = "sentinel_gather/settings.json"
+local SETTINGS_FOLDER = "sentinel_gather"
 
 -- Import logger if available
 local Logger

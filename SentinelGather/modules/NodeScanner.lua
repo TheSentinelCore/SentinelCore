@@ -612,7 +612,7 @@ function NodeScanner:clear_blacklist()
     self._blacklisted_nodes = {}
 end
 
-local BLACKLIST_FILE = "gatherbuddy/blacklist.json"
+local BLACKLIST_FILE = "sentinel_gather/blacklist.json"
 
 ---Save blacklist to disk
 function NodeScanner:_save_blacklist()

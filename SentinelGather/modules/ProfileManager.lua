@@ -753,8 +753,8 @@ end
 ---@return boolean success
 function ProfileManager:install_example_profiles()
     -- Create the profiles directory
-    core.create_data_folder("gatherbuddy")
-    core.create_data_folder("gatherbuddy/profiles")
+    core.create_data_folder("sentinel_gather")
+    core.create_data_folder("sentinel_gather/profiles")
 
     -- Example profile: Elwynn Forest
     -- Coordinates use Sylvannas/WoW format: X=north-south, Y=west-east, Z=height
@@ -804,7 +804,7 @@ function ProfileManager:install_example_profiles()
 }]]
 
     -- Write the example profile
-    local profile_path = "gatherbuddy/profiles/elwynn_copper.json"
+    local profile_path = "sentinel_gather/profiles/elwynn_copper.json"
     core.create_data_file(profile_path)
     core.write_data_file(profile_path, example_profile)
 
@@ -821,7 +821,7 @@ end
 ---Ensure profiles folder exists and has example profiles
 function ProfileManager:ensure_profiles_exist()
     -- Check if profile folder exists by trying to read a known file
-    local test_content = core.read_data_file("gatherbuddy/profiles/elwynn_copper.json")
+    local test_content = core.read_data_file("sentinel_gather/profiles/elwynn_copper.json")
     if not test_content or #test_content == 0 then
         if self._log then
             self._log:info("No profiles found, installing examples...")
@@ -923,8 +923,8 @@ function ProfileManager:scan_available_profiles()
         { name = "Select profile...", path = nil }
     }
 
-    local base_path = "gatherbuddy/profiles/"
-    local entries = core.read_dir("gatherbuddy/profiles")
+    local base_path = "sentinel_gather/profiles/"
+    local entries = core.read_dir("sentinel_gather/profiles")
     if not entries then
         return profiles
     end
