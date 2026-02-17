@@ -1,5 +1,5 @@
 --[[
-    GatherBuddy - Automated Gathering Bot
+    SentinelGather - Automated Gathering Bot
 
     A World of Warcraft herbalism/mining gathering bot built on the Sylvannas API.
 
@@ -11,31 +11,31 @@
     - Combat and death handling
 
     Usage:
-        local GatherBuddy = require("init")
-        GatherBuddy:start("profiles/elwynn_copper.json")
+        local SentinelGather = require("init")
+        SentinelGather:start("profiles/elwynn_copper.json")
 
     CRITICAL: Uses ONLY Sylvannas API - no WoW Lua API calls permitted.
 ]]
 
----@class GatherBuddy
+---@class SentinelGather
 ---@field private _bot_manager BotManager|nil
 ---@field private _initialized boolean
 ---@field private _update_registered boolean
 ---@field VERSION string
 ---@field NAME string
-local GatherBuddy = {}
-GatherBuddy.__index = GatherBuddy
+local SentinelGather = {}
+SentinelGather.__index = SentinelGather
 
 -- Version info
-GatherBuddy.VERSION = "1.0.0"
-GatherBuddy.NAME = "GatherBuddy"
+SentinelGather.VERSION = "1.0.0"
+SentinelGather.NAME = "Sentinel Gather"
 
 -- Singleton instance
 local _instance = nil
 
----Get the GatherBuddy singleton instance
----@return GatherBuddy
-function GatherBuddy:get_instance()
+---Get the SentinelGather singleton instance
+---@return SentinelGather
+function SentinelGather:get_instance()
     if not _instance then
         _instance = self:_create_instance()
     end
@@ -43,14 +43,14 @@ function GatherBuddy:get_instance()
 end
 
 ---Create a new instance (internal)
----@return GatherBuddy
-function GatherBuddy:_create_instance()
-    local instance = setmetatable({}, GatherBuddy)
+---@return SentinelGather
+function SentinelGather:_create_instance()
+    local instance = setmetatable({}, SentinelGather)
 
-    -- Import BotManager (relative path since we're in GatherBuddy folder)
+    -- Import BotManager (relative path since we're in SentinelGather folder)
     local success, BotManager = pcall(require, "core/BotManager")
     if not success then
-        core.log_error("[GatherBuddy] Failed to load BotManager: " .. tostring(BotManager))
+        core.log_error("[SentinelGather] Failed to load BotManager: " .. tostring(BotManager))
         return instance
     end
 
@@ -62,9 +62,9 @@ function GatherBuddy:_create_instance()
     return instance
 end
 
----Initialize GatherBuddy
+---Initialize SentinelGather
 ---@return boolean success
-function GatherBuddy:initialize()
+function SentinelGather:initialize()
     local instance = self:get_instance()
 
     if instance._initialized then
@@ -72,14 +72,14 @@ function GatherBuddy:initialize()
     end
 
     if not instance._bot_manager then
-        core.log_error("[GatherBuddy] BotManager not available")
+        core.log_error("[SentinelGather] BotManager not available")
         return false
     end
 
     -- Initialize bot manager
     local success = instance._bot_manager:initialize()
     if not success then
-        core.log_error("[GatherBuddy] Failed to initialize BotManager")
+        core.log_error("[SentinelGather] Failed to initialize BotManager")
         return false
     end
 
@@ -92,7 +92,7 @@ function GatherBuddy:initialize()
     end
 
     instance._initialized = true
-    core.log("[GatherBuddy] Initialized v" .. GatherBuddy.VERSION)
+    core.log("[SentinelGather] Initialized v" .. SentinelGather.VERSION)
 
     return true
 end
@@ -100,7 +100,7 @@ end
 ---Start gathering with optional profile
 ---@param profile_path? string Path to profile JSON file
 ---@return boolean success
-function GatherBuddy:start(profile_path)
+function SentinelGather:start(profile_path)
     local instance = self:get_instance()
 
     -- Auto-initialize if needed
@@ -118,7 +118,7 @@ function GatherBuddy:start(profile_path)
 end
 
 ---Stop gathering
-function GatherBuddy:stop()
+function SentinelGather:stop()
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -127,7 +127,7 @@ function GatherBuddy:stop()
 end
 
 ---Pause gathering
-function GatherBuddy:pause()
+function SentinelGather:pause()
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -136,7 +136,7 @@ function GatherBuddy:pause()
 end
 
 ---Resume gathering
-function GatherBuddy:resume()
+function SentinelGather:resume()
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -145,7 +145,7 @@ function GatherBuddy:resume()
 end
 
 ---Toggle pause state
-function GatherBuddy:toggle_pause()
+function SentinelGather:toggle_pause()
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -154,7 +154,7 @@ function GatherBuddy:toggle_pause()
 end
 
 ---Update tick (called automatically)
-function GatherBuddy:update()
+function SentinelGather:update()
     local instance = self:get_instance()
 
     if instance._bot_manager and instance._initialized then
@@ -164,7 +164,7 @@ end
 
 ---Check if running
 ---@return boolean
-function GatherBuddy:is_running()
+function SentinelGather:is_running()
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -175,7 +175,7 @@ end
 
 ---Check if paused
 ---@return boolean
-function GatherBuddy:is_paused()
+function SentinelGather:is_paused()
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -186,7 +186,7 @@ end
 
 ---Get current state
 ---@return string
-function GatherBuddy:get_state()
+function SentinelGather:get_state()
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -197,7 +197,7 @@ end
 
 ---Get bot manager (for advanced usage)
 ---@return BotManager|nil
-function GatherBuddy:get_bot_manager()
+function SentinelGather:get_bot_manager()
     local instance = self:get_instance()
     return instance._bot_manager
 end
@@ -205,7 +205,7 @@ end
 ---Get a specific module
 ---@param name string Module name
 ---@return table|nil
-function GatherBuddy:get_module(name)
+function SentinelGather:get_module(name)
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -216,7 +216,7 @@ end
 
 ---Get statistics
 ---@return table|nil
-function GatherBuddy:get_statistics()
+function SentinelGather:get_statistics()
     local stats_module = self:get_module("Statistics")
     if stats_module then
         return stats_module:get_stats()
@@ -227,7 +227,7 @@ end
 ---Load a profile
 ---@param path string Profile path
 ---@return boolean success
-function GatherBuddy:load_profile(path)
+function SentinelGather:load_profile(path)
     local profile_mgr = self:get_module("ProfileManager")
     if profile_mgr then
         return profile_mgr:load_profile(path)
@@ -236,7 +236,7 @@ function GatherBuddy:load_profile(path)
 end
 
 ---Clean up (call when unloading)
-function GatherBuddy:destroy()
+function SentinelGather:destroy()
     local instance = self:get_instance()
 
     if instance._bot_manager then
@@ -247,15 +247,15 @@ function GatherBuddy:destroy()
     instance._initialized = false
     _instance = nil
 
-    core.log("[GatherBuddy] Destroyed")
+    core.log("[SentinelGather] Destroyed")
 end
 
 ---Run all unit tests
 ---@return table<string, table<string, boolean>> All test results
-function GatherBuddy:run_tests()
+function SentinelGather:run_tests()
     local results = {}
 
-    -- Test modules (use relative paths since we're in GatherBuddy folder)
+    -- Test modules (use relative paths since we're in SentinelGather folder)
     local test_modules = {
         { name = "JSON", path = "lib/JSON" },
         { name = "Helpers", path = "lib/Helpers" },
@@ -292,7 +292,7 @@ function GatherBuddy:run_tests()
     local total_tests = 0
     local passed_tests = 0
 
-    core.log("[GatherBuddy] Test Results:")
+    core.log("[SentinelGather] Test Results:")
     for module_name, module_results in pairs(results) do
         local module_passed = 0
         local module_total = 0
@@ -311,9 +311,9 @@ function GatherBuddy:run_tests()
         core.log(string.format("  %s: %s (%d/%d)", module_name, status, module_passed, module_total))
     end
 
-    core.log(string.format("[GatherBuddy] Total: %d/%d tests passed", passed_tests, total_tests))
+    core.log(string.format("[SentinelGather] Total: %d/%d tests passed", passed_tests, total_tests))
 
     return results
 end
 
-return GatherBuddy
+return SentinelGather
