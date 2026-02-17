@@ -2,7 +2,7 @@
 
 local ok, Version = pcall(require, "version")
 
-plugin["name"] = "GrindBuddy"
+plugin["name"] = "SentinelGrinder"
 plugin["version"] = ok and Version.to_string() or "0.1.0-r1"
 plugin["author"] = "Laidbak"
 plugin["load"] = true
