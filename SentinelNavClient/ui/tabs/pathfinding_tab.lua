@@ -4,7 +4,7 @@
 
 local PathfindingTab = {}
 
--- Smoothing algorithm names (combo options) — order matches NavBuddy API
+-- Smoothing algorithm names (combo options) — order matches SentinelNavServer API
 local SMOOTHING_NAMES = { "None", "Chaikin", "Catmull-Rom", "Bezier" }
 local SMOOTHING_IDS   = { "none", "chaikin", "catmull", "bezier" }
 

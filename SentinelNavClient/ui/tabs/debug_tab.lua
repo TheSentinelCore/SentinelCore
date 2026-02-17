@@ -92,7 +92,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
     -- Shared failure callback for navigation modes
     local function nav_callback(success, reason)
         if not success then
-            core.log("[NavLib Debug] " .. mode.name .. " failed: " .. tostring(reason))
+            core.log("[SentinelNavClient Debug] " .. mode.name .. " failed: " .. tostring(reason))
             _nav_active = false
         end
     end
@@ -101,7 +101,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
     local function raw_path_callback(ok, data, err)
         if not ok or not data then
             _last_result = "ERROR: " .. tostring(err)
-            core.log("[NavLib Debug] " .. mode.name .. " failed: " .. tostring(err))
+            core.log("[SentinelNavClient Debug] " .. mode.name .. " failed: " .. tostring(err))
             _nav_active = false
             return
         end
@@ -147,7 +147,7 @@ local function dispatch_go(mode_idx, facade, waypoints)
         -- TSP Route
         facade:plan_route(waypoints, function(success)
             if not success then
-                core.log("[NavLib Debug] TSP route failed")
+                core.log("[SentinelNavClient Debug] TSP route failed")
                 _nav_active = false
             end
         end)
@@ -248,7 +248,7 @@ end
 ---Register the debug tab with the UI
 ---@param ui any RotationSettingsUI instance
 ---@param menu table Menu elements table
----@param facade table|nil NavLib Facade instance
+---@param facade table|nil SentinelNavClient Facade instance
 function DebugTab.register(ui, menu, facade, reset_mappings)
     ui:add_tab({ id = "debug", label = "Debug" }, function(t)
 
@@ -390,7 +390,7 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                     local player = core.object_manager.get_local_player()
                     if player then
                         obstacle:add_zone(player:get_position())
-                        core.log("[NavLib Debug] Added avoid zone at player position")
+                        core.log("[SentinelNavClient Debug] Added avoid zone at player position")
                     end
                 end
 
@@ -398,7 +398,7 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                     btn_w, btn_h, "Clear Zones", #zones > 0)
                 if clicked_clear_zones then
                     obstacle:clear()
-                    core.log("[NavLib Debug] Cleared all avoid zones")
+                    core.log("[SentinelNavClient Debug] Cleared all avoid zones")
                 end
 
                 y_offset = y_offset + btn_h + 4
@@ -498,7 +498,7 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                     local player = core.object_manager.get_local_player()
                     if player then
                         table.insert(_waypoints, player:get_position())
-                        core.log("[NavLib Debug] Added waypoint #" .. #_waypoints)
+                        core.log("[SentinelNavClient Debug] Added waypoint #" .. #_waypoints)
                     end
                 end
 
@@ -510,7 +510,7 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                     _nav_index = 0
                     _last_result = nil
                     if facade then facade:stop() end
-                    core.log("[NavLib Debug] Cleared all waypoints")
+                    core.log("[SentinelNavClient Debug] Cleared all waypoints")
                 end
 
                 y_offset = y_offset + btn_h + 4
@@ -565,7 +565,7 @@ function DebugTab.register(ui, menu, facade, reset_mappings)
                     for _, mappings in pairs(reset_mappings) do
                         Defaults.reset(mappings)
                     end
-                    core.log("[NavLib] All settings reset to defaults")
+                    core.log("[SentinelNavClient] All settings reset to defaults")
                 end
 
                 y_offset = y_offset + 26 + 8
@@ -592,7 +592,7 @@ function DebugTab.update(facade, menu)
         _nav_index = _nav_index + 1
         local cb = function(success)
             if not success then
-                core.log("[NavLib Debug] Failed at waypoint #" .. _nav_index)
+                core.log("[SentinelNavClient Debug] Failed at waypoint #" .. _nav_index)
                 _nav_active = false
             end
         end
@@ -602,10 +602,10 @@ function DebugTab.update(facade, menu)
             facade:move_direct(_waypoints[_nav_index], cb)
         end
     elseif state == "arrived" and _nav_index >= #_waypoints then
-        core.log("[NavLib Debug] All waypoints reached!")
+        core.log("[SentinelNavClient Debug] All waypoints reached!")
         _nav_active = false
     elseif state == "failed" then
-        core.log("[NavLib Debug] Navigation failed at waypoint #" .. _nav_index)
+        core.log("[SentinelNavClient Debug] Navigation failed at waypoint #" .. _nav_index)
         _nav_active = false
     end
 end

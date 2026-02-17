@@ -1,5 +1,5 @@
 --[[
-    NavLib UI Window Orchestrator
+    SentinelNavClient UI Window Orchestrator
 
     Creates and manages the AstroUI settings window, registers all tabs,
     renders the "Show Advanced" toggle above the tab bar, and syncs menu
@@ -26,7 +26,7 @@ local Window = {}
 -- Private state
 local _ui = nil              -- RotationSettingsUI instance
 local _initialized = false
-local _facade = nil          -- NavLib Facade instance
+local _facade = nil          -- SentinelNavClient Facade instance
 local _menu = nil            -- menu elements table
 local _visualizer = nil      -- Visualizer instance
 local _reset_mappings = {}   -- per-tab reset mappings keyed by tab ID
@@ -280,8 +280,8 @@ end
 -- Public API
 --------------------------------------------------------------------------------
 
----Initialize the NavLib settings UI
----@param facade table The NavLib Facade instance
+---Initialize the SentinelNavClient settings UI
+---@param facade table The SentinelNavClient Facade instance
 function Window.init(facade)
     if _initialized then return end
 
@@ -291,7 +291,7 @@ function Window.init(facade)
     -- Create the AstroUI window
     _ui = AstroUI.new({
         id = "navlib",
-        title = "NavLib",
+        title = "Sentinel Navigation Client",
         default_x = 550,
         default_y = 180,
         default_w = 480,
@@ -385,7 +385,7 @@ function Window.init(facade)
     _ui.menu.enable:set(false)
 
     _initialized = true
-    core.log("[NavLib] Settings UI initialized")
+    core.log("[SentinelNavClient] Settings UI initialized")
 end
 
 ---Called every render frame
