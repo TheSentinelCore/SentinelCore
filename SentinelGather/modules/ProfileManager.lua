@@ -56,7 +56,7 @@
 local ProfileManager = {}
 ProfileManager.__index = ProfileManager
 
--- Import dependencies (relative paths since we're in GatherBuddy folder)
+-- Import dependencies (relative paths since we're in SentinelGather folder)
 local JSON = require("lib/JSON")
 local Helpers = require("lib/Helpers")
 local Constants = require("core/Constants")
@@ -762,7 +762,7 @@ function ProfileManager:install_example_profiles()
   "version": "1.0",
   "metadata": {
     "name": "Elwynn Forest - Copper & Peacebloom",
-    "author": "GatherBuddy",
+    "author": "SentinelGather",
     "description": "Starter zone route around Goldshire",
     "game_version": "Classic"
   },

@@ -29,7 +29,7 @@ function ModuleFactory.create(name, module_class, deps)
     return nil
 end
 
--- Register all GatherBuddy modules
+-- Register all SentinelGather modules
 
 ModuleFactory.register("Settings", function(cls, _deps)
     cls.init()

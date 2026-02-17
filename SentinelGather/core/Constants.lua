@@ -1,5 +1,5 @@
 ---@class Constants
----GatherBuddy constants - states, events, configuration defaults
+---SentinelGather constants - states, events, configuration defaults
 local Constants = {}
 
 -- Make tables read-only (Lua 5.1 compatible)
@@ -40,7 +40,7 @@ Constants.STATES = freeze({
     PAUSED          = "paused",         -- Temporarily paused
 })
 
----Event names for the event bus (from GATHERBUDDY_DESIGN.md)
+---Event names for the event bus (from SENTINEL_GATHER_DESIGN.md)
 Constants.EVENTS = freeze({
     -- Lifecycle
     BOT_START               = "bot:start",
@@ -396,7 +396,7 @@ Constants.ERROR_CODES = freeze({
     INVALID_GAME_STATE      = "E008",
 })
 
----Available smoothing algorithms for path processing (NavBuddy)
+---Available smoothing algorithms for path processing (SentinelNavServer)
 ---@type table<number, {id: string, name: string, description: string}>
 Constants.SMOOTHING_ALGORITHMS = {
     { id = "none", name = "None", description = "Keep exact navmesh waypoints" },
