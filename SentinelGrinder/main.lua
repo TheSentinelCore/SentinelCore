@@ -92,5 +92,6 @@ return {
     get_status = function() return GrindBuddy:get_status() end,
     get_version_info = function() return GrindBuddy:get_version_info() end,
     get_rotation_profiles = function() return GrindBuddy:get_rotation_profiles() end,
+    get_route_profiles = function() return GrindBuddy:get_route_profiles() end,
     unload = on_unload,
 }

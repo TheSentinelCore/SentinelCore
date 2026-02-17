@@ -15,11 +15,15 @@ local _menu = nil
 local _controller = nil
 local _initialized = false
 local _profile_labels = {}
+local _route_profile_labels = {}
 
 local function create_menu_elements(defaults)
     return {
         auto_rotation = core.menu.checkbox(true, "grindbuddy_rotation_auto"),
         rotation_profile = core.menu.combobox(defaults.rotation_profile_index or 1, "grindbuddy_rotation_profile"),
+        route_mode = core.menu.combobox(defaults.route_mode or 1, "grindbuddy_route_mode"),
+        route_auto_profile = core.menu.checkbox(defaults.route_auto_profile ~= false, "grindbuddy_route_auto_profile"),
+        route_profile = core.menu.combobox(defaults.route_profile_index or 1, "grindbuddy_route_profile"),
 
         scan_radius = core.menu.slider_float(20.0, 300.0, defaults.scan_radius or 60.0, "grindbuddy_scan_radius"),
         pull_range = core.menu.slider_float(5.0, 35.0, defaults.pull_range or 28.0, "grindbuddy_pull_range"),
@@ -33,13 +37,13 @@ local function create_menu_elements(defaults)
     }
 end
 
-local function build_profile_labels(profiles)
+local function build_profile_labels(profiles, fallback_label)
     local labels = {}
     for _, profile in ipairs(profiles or {}) do
         labels[#labels + 1] = profile.label
     end
     if #labels == 0 then
-        labels[1] = "No TBC profile available"
+        labels[1] = fallback_label or "No profile available"
     end
     return labels
 end
@@ -53,16 +57,20 @@ local function render_header(ui, y_offset)
     local state = _controller and _controller:get_state() or "unknown"
     local status = _controller and _controller:get_status() or ""
     local profile = _controller and _controller:get_rotation_profile_label() or "none"
+    local route_profile = _controller and _controller:get_route_profile_label() or "none"
 
     local line1 = string.format("State: %s | Running: %s", tostring(state), running and "yes" or "no")
     local line2 = string.format("Active Rotation: %s", tostring(profile))
-    local line3 = string.format("Status: %s", tostring(status))
+    local line3 = string.format("Route Profile: %s", tostring(route_profile))
+    local line4 = string.format("Status: %s", tostring(status))
 
     window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x_start, y_offset), colors.text_primary, line1)
     y_offset = y_offset + 16
     window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x_start, y_offset), colors.text_secondary, line2)
     y_offset = y_offset + 16
     window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x_start, y_offset), colors.text_muted or color.white(180), line3)
+    y_offset = y_offset + 16
+    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x_start, y_offset), colors.text_muted or color.white(180), line4)
     y_offset = y_offset + 10
 
     local window_size = window:get_size()
@@ -90,6 +98,9 @@ local function sync_to_controller()
         max_target_level_delta = _menu.max_level_delta:get(),
         ignore_players = _menu.ignore_players:get_state(),
         only_hostile_targets = _menu.only_hostile_targets:get_state(),
+        route_mode = _menu.route_mode:get(),
+        route_auto_profile = _menu.route_auto_profile:get_state(),
+        route_profile_index = _menu.route_profile:get(),
     })
 
     local auto_mode = _menu.auto_rotation:get_state()
@@ -117,11 +128,16 @@ function Window.init(controller)
 
     _controller = controller
     local profiles = controller:get_rotation_profiles()
-    _profile_labels = build_profile_labels(profiles)
+    _profile_labels = build_profile_labels(profiles, "No TBC profile available")
+    local route_profiles = controller:get_route_profiles()
+    _route_profile_labels = build_profile_labels(route_profiles, "No route profile available")
     local grind = controller:get_grind_settings()
 
     local defaults = {
         rotation_profile_index = controller:get_rotation_profile_index() or 1,
+        route_mode = controller:get_route_mode() or 1,
+        route_auto_profile = controller:is_route_auto_select(),
+        route_profile_index = controller:get_route_profile_index() or 1,
         scan_radius = grind.scan_radius,
         pull_range = grind.pull_range,
         chase_stop_range = grind.chase_stop_range,
@@ -148,7 +164,7 @@ function Window.init(controller)
 
     _ui._before_tabs_fn = render_header
 
-    GrindTab.register(_ui, _menu)
+    GrindTab.register(_ui, _menu, _route_profile_labels)
     RotationTab.register(_ui, _menu, _profile_labels)
 
     _initialized = true

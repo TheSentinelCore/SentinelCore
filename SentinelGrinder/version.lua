@@ -2,9 +2,14 @@ local Version = {
     major = 0,
     minor = 1,
     patch = 0,
-    revision = 13,
+    revision = 14,
     author = "Laidbak",
     history = {
+        {
+            revision = 14,
+            date = "2026-02-17",
+            summary = "Add route profile manager with map/level auto-selection, profile patrol mode, and closest-waypoint resume with legacy circle fallback",
+        },
         {
             revision = 13,
             date = "2026-02-15",

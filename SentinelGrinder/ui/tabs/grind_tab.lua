@@ -2,8 +2,39 @@ local GrindTab = {}
 
 ---@param ui any
 ---@param menu table
-function GrindTab.register(ui, menu)
+---@param route_profile_labels string[]
+function GrindTab.register(ui, menu, route_profile_labels)
     ui:add_tab({ id = "grind", label = "Grind" }, function(t)
+        t:combo_list({
+            label = "Patrol Route",
+            elements = {
+                {
+                    element = menu.route_mode,
+                    label = "Route Mode",
+                    options = { "Circle (Legacy)", "Profile Route" },
+                    tooltip = "Circle uses anchor-based patrol. Profile Route uses loaded grind profiles.",
+                },
+                {
+                    element = menu.route_profile,
+                    label = "Route Profile",
+                    options = route_profile_labels,
+                    tooltip = "Manual profile when auto profile selection is disabled.",
+                },
+            },
+        })
+
+        t:checkbox_grid({
+            label = "Route Selection",
+            columns = 1,
+            elements = {
+                {
+                    element = menu.route_auto_profile,
+                    label = "Auto Route Profile",
+                    tooltip = "Auto-select route profile by current map and player level.",
+                },
+            },
+        })
+
         t:slider_list({
             label = "Target Search",
             elements = {

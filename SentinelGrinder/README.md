@@ -19,8 +19,59 @@ Lightweight grinding module scaffold for SentinelCore.
 - `Scan Radius`, `Pull Range`, `Chase Stop`
 - `Min/Max Level Delta` (default max set to `+2`)
 - `Ignore Player Targets` enabled by default.
+- `Route Mode`: `Circle (Legacy)` or `Profile Route`.
+- `Auto Route Profile` + `Route Profile` selector (map/level-aware profile auto-pick).
 - Patrol now expands automatically when no enemies are found (search radius growth over time).
 - UI init/load was hardened so it can open without requiring a manual `F6` reload.
+
+## Route Profiles
+
+- Route profiles are stored in `scripts_data/grindbuddy/profiles/`.
+- Index file: `scripts_data/grindbuddy/profiles/index.json`.
+- On first load, GrindBuddy auto-generates:
+- `index.json`
+- `example_auto.json`
+- Profile route supports:
+- map filter (`map_id`),
+- level range (`min_level`, `max_level`),
+- route style (`there_and_back` or loop),
+- closest-waypoint resume on start.
+- If no valid route profile is available, GrindBuddy falls back to the legacy circle patrol.
+
+Example `index.json` entry:
+
+```json
+{
+  "profiles": [
+    {
+      "id": "example_auto",
+      "label": "Example Auto Route",
+      "file": "grindbuddy/profiles/example_auto.json",
+      "enabled": true,
+      "min_level": 1,
+      "max_level": 80,
+      "map_id": 0,
+      "there_and_back": false
+    }
+  ]
+}
+```
+
+Example route profile file:
+
+```json
+{
+  "name": "Example Auto Route",
+  "map_id": 0,
+  "min_level": 1,
+  "max_level": 80,
+  "there_and_back": false,
+  "points": [
+    { "x": 1234.0, "y": 567.0, "z": 45.0 },
+    { "x": 1240.0, "y": 590.0, "z": 45.0 }
+  ]
+}
+```
 
 ## Basic Rotation (TBC/Sylvanas)
 
