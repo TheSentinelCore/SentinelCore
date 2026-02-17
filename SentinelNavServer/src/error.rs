@@ -18,6 +18,8 @@ pub enum AppError {
     InvalidParams(String),
     /// Internal server error.
     Internal(String),
+    /// Server overloaded — too many concurrent requests.
+    Overloaded,
 }
 
 /// Error response body.
@@ -49,6 +51,11 @@ impl IntoResponse for AppError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR",
                 msg,
+            ),
+            AppError::Overloaded => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "OVERLOADED",
+                "Server overloaded, try again later".to_string(),
             ),
         };
 

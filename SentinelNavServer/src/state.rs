@@ -59,4 +59,10 @@ impl AppState {
     pub fn uptime_secs(&self) -> f64 {
         self.start_time.elapsed().as_secs_f64()
     }
+
+    /// Try to acquire a request permit, returning 503 if overloaded.
+    pub fn try_acquire_permit(&self) -> Result<tokio::sync::OwnedSemaphorePermit, crate::error::AppError> {
+        self.request_semaphore.clone().try_acquire_owned()
+            .map_err(|_| crate::error::AppError::Overloaded)
+    }
 }
