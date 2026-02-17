@@ -1,4 +1,4 @@
-# NavBuddy Configuration
+# Sentinel Navigation Server Configuration
 # High-performance navigation server for WoW pathfinding
 
 [server]
@@ -11,7 +11,7 @@ max_concurrent_requests = 100
 
 [navmesh]
 # Path to TrinityCore mmap files directory
-# Relative to NavBuddy directory or absolute path
+# Relative to SentinelNavServer directory or absolute path
 mmap_path = "./mmaps"
 
 # Maps to preload at startup (empty = lazy load on first request)

@@ -1,4 +1,4 @@
-//! NavBuddy - High-performance navigation server for WoW pathfinding.
+//! Sentinel Navigation Server - High-performance navigation server for WoW pathfinding.
 //!
 //! This server provides HTTP endpoints for pathfinding using TrinityCore
 //! navigation mesh files (mmaps).
@@ -25,14 +25,14 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("navbuddy=info".parse()?)
+                .add_directive("sentinel_nav_server=info".parse()?)
                 .add_directive("tc_mmap=info".parse()?)
                 .add_directive("detour=warn".parse()?),
         )
         .init();
 
     tracing::info!(
-        "NavBuddy v{} starting...",
+        "Sentinel Navigation Server v{} starting...",
         env!("CARGO_PKG_VERSION")
     );
 
