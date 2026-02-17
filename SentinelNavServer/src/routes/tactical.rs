@@ -6,7 +6,7 @@ use axum::{
 };
 use detour::types::Vec3;
 use serde::{Deserialize, Serialize};
-use tc_mmap::error::MmapError;
+use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
 use path_smoothing::SmoothingAlgorithm;
@@ -120,11 +120,8 @@ pub async fn flee(
     let start_time = std::time::Instant::now();
     let player_pos = Vec3::new(params.player_x, params.player_y, params.player_z);
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 
@@ -304,11 +301,8 @@ pub async fn los_cover(
     let start_time = std::time::Instant::now();
     let player_pos = Vec3::new(params.player_x, params.player_y, params.player_z);
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
     let filter = pool.filter();
@@ -468,11 +462,8 @@ pub async fn kite(
     let player_pos = Vec3::new(params.player_x, params.player_y, params.player_z);
     let target_pos = Vec3::new(params.target_x, params.target_y, params.target_z);
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 

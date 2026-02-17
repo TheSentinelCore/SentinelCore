@@ -31,6 +31,8 @@ pub struct MmapManager {
     query_pools: DashMap<u32, QueryPool>,
     query_pool_size: usize,
     max_query_nodes: u32,
+    /// Per-map loading locks to prevent duplicate concurrent loads.
+    loading_locks: DashMap<u32, Arc<parking_lot::Mutex<()>>>,
 }
 
 impl MmapManager {
@@ -51,6 +53,7 @@ impl MmapManager {
             query_pools: DashMap::new(),
             query_pool_size,
             max_query_nodes,
+            loading_locks: DashMap::new(),
         }
     }
 
@@ -75,6 +78,21 @@ impl MmapManager {
         // Check if already loaded (fast path)
         if let Some(mesh) = self.meshes.get(&map_id) {
             debug!("Map {} already loaded, returning cached mesh", map_id);
+            return Ok(mesh.clone());
+        }
+
+        // Get or create a per-map loading lock to prevent duplicate loads
+        let lock = self.loading_locks
+            .entry(map_id)
+            .or_insert_with(|| Arc::new(parking_lot::Mutex::new(())))
+            .clone();
+
+        // Serialize loading for this specific map
+        let _guard = lock.lock();
+
+        // Re-check after acquiring lock (another thread may have loaded it)
+        if let Some(mesh) = self.meshes.get(&map_id) {
+            debug!("Map {} loaded by another thread, returning cached mesh", map_id);
             return Ok(mesh.clone());
         }
 

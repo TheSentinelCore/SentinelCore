@@ -1,6 +1,6 @@
-//! TrinityCore mmap file loader.
+//! Navigation mesh (.mmap/.mmtile) file loader.
 //!
-//! Handles loading TrinityCore navigation mesh files (.mmap and .mmtile).
+//! Handles loading CMaNGOS-compatible navigation mesh files (.mmap and .mmtile).
 
 pub mod format;
 pub mod coords;

@@ -1,8 +1,8 @@
 [package]
-name = "tc-mmap"
+name = "mmap-loader"
 version.workspace = true
 edition.workspace = true
-description = "TrinityCore mmap file loader"
+description = "Navigation mesh (.mmap/.mmtile) file loader"
 
 [dependencies]
 detour = { path = "../detour" }

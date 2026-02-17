@@ -1,16 +1,16 @@
--- Facade.lua
+-- Client.lua
 -- Single entry-point facade for SentinelNavClient: creates, wires, and drives all modules.
 
 local Navigation = require("core/Navigation")
 local Movement   = require("core/Movement")
 local Obstacle   = require("core/Obstacle")
 
----@class Facade
+---@class Client
 ---@field nav_client Navigation   Escape-hatch: raw HTTP client
 ---@field movement   Movement     Escape-hatch: path-following module
 ---@field obstacle   Obstacle     Escape-hatch: obstacle detection module
-local Facade = {}
-Facade.__index = Facade
+local Client = {}
+Client.__index = Client
 
 --------------------------------------------------------------------------------
 -- Construction
@@ -18,10 +18,10 @@ Facade.__index = Facade
 
 ---Create a fully-wired SentinelNavClient instance.
 ---@param config? table { navigation?, movement?, obstacles? }
----@return Facade
-function Facade:new(config)
+---@return Client
+function Client:new(config)
     config = config or {}
-    local o = setmetatable({}, Facade)
+    local o = setmetatable({}, Client)
 
     -- 1. Create modules
     o.nav_client = Navigation:new(config.navigation)
@@ -43,7 +43,7 @@ end
 --------------------------------------------------------------------------------
 
 ---Drive all modules. Call once per frame.
-function Facade:update()
+function Client:update()
     self.obstacle:update()
     self.movement:update()
 
@@ -70,14 +70,14 @@ end
 ---@param target vec3
 ---@param callback? fun(success: boolean, reason: string|nil)
 ---@param opts? table
-function Facade:move_to(target, callback, opts)
+function Client:move_to(target, callback, opts)
     self.movement:move_to(target, callback, opts)
 end
 
 ---Move directly without pathfinding (short range / emergency).
 ---@param target vec3
 ---@param callback? fun(success: boolean, reason: string|nil)
-function Facade:move_direct(target, callback)
+function Client:move_direct(target, callback)
     self.movement:move_direct(target, callback)
 end
 
@@ -85,37 +85,37 @@ end
 ---@param nodes vec3[]
 ---@param callback? fun(success: boolean, data: table)
 ---@param opts? table
-function Facade:plan_route(nodes, callback, opts)
+function Client:plan_route(nodes, callback, opts)
     self.movement:plan_route(nodes, callback, opts)
 end
 
 ---Follow a pre-computed waypoint path (no pathfinding request).
 ---@param waypoints vec3[]
 ---@param callback? fun(success: boolean, reason: string|nil)
-function Facade:follow_path(waypoints, callback)
+function Client:follow_path(waypoints, callback)
     self.movement:follow_path(waypoints, callback)
 end
 
 ---Re-request path from current position to current destination.
 ---@param reason? string
-function Facade:replan(reason)
+function Client:replan(reason)
     self.movement:replan(reason)
 end
 
 ---Pre-validate whether a destination is reachable.
 ---@param target vec3
 ---@param callback fun(reachable: boolean, reason: string|nil, distance: number|nil)
-function Facade:validate_destination(target, callback)
+function Client:validate_destination(target, callback)
     self.movement:validate_destination_reachable(target, callback)
 end
 
 ---Stop all movement and reset to idle.
-function Facade:stop()
+function Client:stop()
     self.movement:stop()
 end
 
 ---Stop movement, clear obstacle zones, nil references.
-function Facade:destroy()
+function Client:destroy()
     self.movement:stop()
     self.obstacle:clear()
     self._listeners = {}
@@ -126,37 +126,37 @@ end
 --------------------------------------------------------------------------------
 
 ---@return string
-function Facade:get_state()
+function Client:get_state()
     return self.movement:get_state()
 end
 
 ---@return boolean
-function Facade:is_moving()
+function Client:is_moving()
     return self.movement:is_moving()
 end
 
 ---@return vec3|nil
-function Facade:get_destination()
+function Client:get_destination()
     return self.movement:get_destination()
 end
 
 ---@return vec3[]|nil
-function Facade:get_current_path()
+function Client:get_current_path()
     return self.movement:get_current_path()
 end
 
 ---@return number
-function Facade:get_path_index()
+function Client:get_path_index()
     return self.movement:get_path_index()
 end
 
 ---@return table
-function Facade:get_progress()
+function Client:get_progress()
     return self.movement:get_progress()
 end
 
 ---@return number[]|nil
-function Facade:get_corridor_widths()
+function Client:get_corridor_widths()
     return self.movement:get_corridor_widths()
 end
 
@@ -165,25 +165,25 @@ end
 --------------------------------------------------------------------------------
 
 ---@return boolean
-function Facade:is_server_available()
+function Client:is_server_available()
     return self.nav_client:is_available()
 end
 
 ---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
-function Facade:health_check(callback)
+function Client:health_check(callback)
     self.nav_client:health_check(callback)
 end
 
 ---Get navmesh height at a specific position.
 ---@param pos vec3
 ---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
-function Facade:get_height(pos, callback)
+function Client:get_height(pos, callback)
     self.nav_client:get_height(pos, callback)
 end
 
 ---Get navmesh height at the local player's current position.
 ---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
-function Facade:get_player_height(callback)
+function Client:get_player_height(callback)
     local me = core.object_manager.get_local_player()
     if not me then
         if callback then callback(false, nil, "No local player") end
@@ -196,7 +196,7 @@ end
 ---@param pos vec3
 ---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
 ---@param opts? table { filter_unreachable?, from_pos?, xy_extent?, z_extent?, max_polys?, cluster_tolerance? }
-function Facade:get_all_heights(pos, callback, opts)
+function Client:get_all_heights(pos, callback, opts)
     self.nav_client:get_all_heights(pos, callback, opts)
 end
 
@@ -204,7 +204,7 @@ end
 ---When opts.filter_unreachable is true, automatically sets from_pos to player position.
 ---@param callback fun(ok: boolean, data: table|nil, err: string|nil)
 ---@param opts? table { filter_unreachable?, xy_extent?, z_extent?, max_polys?, cluster_tolerance? }
-function Facade:get_player_all_heights(callback, opts)
+function Client:get_player_all_heights(callback, opts)
     local me = core.object_manager.get_local_player()
     if not me then
         if callback then callback(false, nil, "No local player") end
@@ -221,14 +221,14 @@ end
 ---Get current pathfinding options from config (for callers that bypass Movement).
 ---@param extra? table Additional opts to merge
 ---@return table
-function Facade:get_path_opts(extra)
+function Client:get_path_opts(extra)
     return self.movement:_build_path_opts(extra)
 end
 
 ---Get current corridor pathfinding options from config.
 ---@param extra? table Additional opts to merge
 ---@return table
-function Facade:get_corridor_opts(extra)
+function Client:get_corridor_opts(extra)
     return self.movement:_build_corridor_opts(extra)
 end
 
@@ -238,7 +238,7 @@ end
 
 ---Distribute config updates to underlying modules.
 ---@param overrides table { movement?: table, obstacles?: table, navigation?: table }
-function Facade:update_config(overrides)
+function Client:update_config(overrides)
     if not overrides then return end
     if overrides.movement then
         self.movement:update_config(overrides.movement)
@@ -259,7 +259,7 @@ end
 ---Events: "state_change", "arrived", "stuck", "failed"
 ---@param event string
 ---@param callback function
-function Facade:on(event, callback)
+function Client:on(event, callback)
     if not self._listeners[event] then
         self._listeners[event] = {}
     end
@@ -270,7 +270,7 @@ end
 ---Remove a listener.
 ---@param event string
 ---@param callback function
-function Facade:off(event, callback)
+function Client:off(event, callback)
     local list = self._listeners[event]
     if not list then return end
     for i = #list, 1, -1 do
@@ -281,7 +281,7 @@ function Facade:off(event, callback)
 end
 
 ---@private
-function Facade:_fire(event, data)
+function Client:_fire(event, data)
     local list = self._listeners[event]
     if not list then return end
     for i = 1, #list do
@@ -292,4 +292,4 @@ function Facade:_fire(event, data)
     end
 end
 
-return Facade
+return Client

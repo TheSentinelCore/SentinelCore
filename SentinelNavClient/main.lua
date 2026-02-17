@@ -31,17 +31,17 @@ local function on_load()
         return
     end
 
-    -- Initialize UI with the shared Facade
-    local facade = SentinelNavClient:get_facade()
-    if facade then
-        UIWindow.init(facade)
+    -- Initialize UI with the shared Client
+    local client = SentinelNavClient:get_client()
+    if client then
+        UIWindow.init(client)
     end
 
     _is_loaded = true
-    core.log("[SentinelNavClient] Loaded — standalone plugin ready")
+    core.log("[SentinelNavClient] Loaded | Plugin Ready!")
 end
 
--- Initialize eagerly so the Facade exists before other plugins' on_update fires.
+-- Initialize eagerly so the Client exists before other plugins' on_update fires.
 -- header.lua already gates on a valid player, so this is safe.
 on_load()
 
@@ -53,13 +53,13 @@ on_load()
 core.register_on_update_callback(function()
     if not _is_loaded then return end
 
-    local facade = SentinelNavClient:get_facade()
-    if facade then
-        facade:update()
+    local client = SentinelNavClient:get_client()
+    if client then
+        client:update()
     end
 end)
 
--- Render: sync settings from UI to Facade + render the window
+-- Render: sync settings from UI to Client + render the window
 core.register_on_render_callback(function()
     if not _is_loaded then return end
     UIWindow.on_render()
@@ -86,15 +86,15 @@ end)
 -- ---------------------------------------------------------------------------
 
 _G.SentinelNavClient = {
-    --- Returns the shared Facade. Config param is ignored (settings owned by SentinelNavClient UI).
+    --- Returns the shared Client. Config param is ignored (settings owned by SentinelNavClient UI).
     ---@param config? table Ignored — kept for backward compatibility
-    ---@return Facade|nil
+    ---@return Client|nil
     create = function(config)
-        return SentinelNavClient:get_facade()
+        return SentinelNavClient:get_client()
     end,
 
     --- No-op. UI is created automatically by SentinelNavClient.
-    create_ui = function(facade_arg)
+    create_ui = function(client_arg)
         return UIWindow
     end,
 
@@ -114,12 +114,12 @@ _G.SentinelNavClient = {
     VERSION = SentinelNavClient.VERSION,
 }
 
--- Make .facade a live getter so it returns the current Facade even when
--- accessed before on_load (returns nil gracefully) or after (returns Facade).
+-- Make .client a live getter so it returns the current Client even when
+-- accessed before on_load (returns nil gracefully) or after (returns Client).
 setmetatable(_G.SentinelNavClient, {
     __index = function(t, k)
-        if k == "facade" then
-            return SentinelNavClient:get_facade()
+        if k == "client" then
+            return SentinelNavClient:get_client()
         end
     end
 })
@@ -132,10 +132,9 @@ local function on_unload()
     SentinelNavClient:destroy()
     _G.SentinelNavClient = nil
     _is_loaded = false
-    core.log("[SentinelNavClient] Unloaded")
 end
 
-core.log("[SentinelNavClient] Module loaded — _G.SentinelNavClient available")
+-- Unload is handled via the return table's `unload` field below.
 
 -- ---------------------------------------------------------------------------
 -- Module export (matches SentinelGather pattern)

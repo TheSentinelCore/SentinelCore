@@ -1102,7 +1102,7 @@ pub fn execute_pathfind_with_avoidance(
     end_pos: Vec3,
     options: &PathOptions,
     zones: &[AvoidanceZone],
-    _avoidance_proof: &parking_lot::MutexGuard<'_, ()>,
+    _avoidance_proof: &parking_lot::RwLockWriteGuard<'_, ()>,
 ) -> Result<PathResult, AppError> {
     if zones.is_empty() {
         return execute_pathfind(query, mesh, base_filter, start_pos, end_pos, options);
@@ -1205,6 +1205,7 @@ pub fn pathfind_maybe_avoid(
     zones: &[AvoidanceZone],
 ) -> Result<PathResult, AppError> {
     if zones.is_empty() {
+        let _pathfind_guard = pool.pathfind_lock();
         execute_pathfind(query, pool.mesh(), filter, start_pos, end_pos, options)
     } else {
         let guard = pool.avoidance_lock();

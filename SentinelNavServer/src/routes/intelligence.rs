@@ -6,7 +6,7 @@ use axum::{
 };
 use detour::types::Vec3;
 use serde::{Deserialize, Serialize};
-use tc_mmap::error::MmapError;
+use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
 use crate::pipeline::{
@@ -96,11 +96,8 @@ pub async fn path_multi(
 
     let start_time = std::time::Instant::now();
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 
@@ -367,11 +364,8 @@ pub async fn path_tsp(
 
     let start_time = std::time::Instant::now();
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 
@@ -603,11 +597,8 @@ pub async fn path_avoid(
     let start_pos = Vec3::new(params.start_x, params.start_y, params.start_z);
     let end_pos = Vec3::new(params.end_x, params.end_y, params.end_z);
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 
@@ -712,11 +703,8 @@ pub async fn path_check(
 
     let start_time = std::time::Instant::now();
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
     let filter = pool.filter();
@@ -878,11 +866,8 @@ pub async fn path_corridor(
     let start_pos = Vec3::new(params.start_x, params.start_y, params.start_z);
     let end_pos = Vec3::new(params.end_x, params.end_y, params.end_z);
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 
@@ -1051,11 +1036,8 @@ pub async fn explore_route(
 
     let start_time = std::time::Instant::now();
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 

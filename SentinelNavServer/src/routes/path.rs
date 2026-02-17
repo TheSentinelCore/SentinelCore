@@ -7,7 +7,7 @@ use axum::{
 use detour::types::Vec3;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tc_mmap::error::MmapError;
+use mmap_loader::error::MmapError;
 
 use crate::cache::CachedPath;
 use crate::error::AppError;
@@ -227,6 +227,8 @@ pub async fn find_path(
     State(state): State<AppState>,
     Query(params): Query<PathRequest>,
 ) -> Result<Json<PathResponse>, AppError> {
+    state.metrics.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     // Validate inputs
     validate_map_id(params.map_id)?;
     validate_coordinate(params.start_x, params.start_y, params.start_z)?;
@@ -262,12 +264,8 @@ pub async fn find_path(
         }));
     }
 
-    // Acquire concurrency permit
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // Acquire concurrency permit (503 if overloaded)
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 
@@ -333,7 +331,6 @@ pub async fn find_path(
             waypoints: result.waypoints.clone(),
             distance: result.distance,
             partial: result.partial,
-            created_at: std::time::Instant::now(),
         },
     );
 

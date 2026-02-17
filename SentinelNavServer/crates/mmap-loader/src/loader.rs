@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Loader for TrinityCore mmap files.
+/// Loader for CMaNGOS-compatible mmap files.
 pub struct MmapLoader {
     mmap_path: PathBuf,
     params_cache: Mutex<HashMap<u32, MmapHeader>>,
