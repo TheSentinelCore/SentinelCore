@@ -1,5 +1,5 @@
 target
-NavBuddy/reference
+SentinelNavServer/reference
 mmaps*
 common
 core_lua
@@ -12,8 +12,8 @@ seri
 .claude
 backup
 BgBuddy
-debug_cursor
+SentinelDebugCursor
 follower
 playground
 nul
-HeightQuery
+SentinelHeightQuery
