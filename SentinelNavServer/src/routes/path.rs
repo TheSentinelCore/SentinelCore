@@ -7,7 +7,7 @@ use axum::{
 use detour::types::Vec3;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tc_mmap::error::MmapError;
+use mmap_loader::error::MmapError;
 
 use crate::cache::CachedPath;
 use crate::error::AppError;

@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("sentinel_nav_server=info".parse()?)
-                .add_directive("tc_mmap=info".parse()?)
+                .add_directive("mmap_loader=info".parse()?)
                 .add_directive("detour=warn".parse()?),
         )
         .init();

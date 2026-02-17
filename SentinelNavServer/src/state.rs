@@ -7,7 +7,7 @@ use tokio::sync::Semaphore;
 
 use crate::cache::PathCache;
 use crate::config::Config;
-use tc_mmap::MmapManager;
+use mmap_loader::MmapManager;
 
 /// Server-wide request metrics.
 pub struct Metrics {
