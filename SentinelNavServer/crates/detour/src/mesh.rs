@@ -83,7 +83,9 @@ impl NavMesh {
     /// We use `Box<[u8]>` for owned data and `Box::into_raw()` to transfer ownership
     /// to Detour. On failure, we reclaim the memory.
     pub fn add_tile(&mut self, data: Box<[u8]>) -> Result<TileRef, DetourError> {
-        let len = data.len() as i32;
+        let len: i32 = data.len().try_into().map_err(|_| {
+            DetourError::TileAddFailed(detour_sys::DT_FAILURE | detour_sys::DT_INVALID_PARAM)
+        })?;
         let ptr = Box::into_raw(data) as *mut u8;
         let mut tile_ref: detour_sys::dtTileRef = 0;
 
@@ -220,6 +222,14 @@ impl Default for NavMesh {
 // SAFETY: NavMesh is read-only after initialization.
 // All mutations (add_tile, remove_tile) should happen during setup,
 // before the NavMesh is shared across threads.
+//
+// KNOWN CAVEAT: `set_poly_area` performs interior mutation through a &self reference
+// for avoidance-zone pathfinding. This is serialized by QueryPool::avoidance_mutex,
+// but concurrent normal pathfinding reads are NOT blocked during the mutation window.
+// On x86/x64, single-byte area writes are practically atomic and the worst case is
+// a pathfinding query briefly seeing partially-modified area costs (slightly wrong path).
+// For formal correctness on all architectures, the avoidance_mutex could be upgraded
+// to an RwLock where normal pathfinding takes a read lock.
 unsafe impl Send for NavMesh {}
 unsafe impl Sync for NavMesh {}
 

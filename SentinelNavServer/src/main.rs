@@ -59,7 +59,10 @@ async fn main() -> anyhow::Result<()> {
     // Start server
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
         .parse()
-        .expect("Invalid address");
+        .map_err(|e| anyhow::anyhow!(
+            "Invalid listen address '{}:{}': {}",
+            config.server.host, config.server.port, e
+        ))?;
 
     tracing::info!("Listening on http://{}", addr);
 

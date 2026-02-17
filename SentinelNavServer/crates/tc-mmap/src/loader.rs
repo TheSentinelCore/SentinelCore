@@ -69,7 +69,9 @@ impl MmapLoader {
 
         // Extract tile data (skip header)
         let tile_start = MmapTileHeader::SIZE;
-        let tile_end = tile_start + header.size as usize;
+        let tile_end = tile_start
+            .checked_add(header.size as usize)
+            .ok_or(MmapError::TruncatedTileData)?;
 
         if data.len() < tile_end {
             return Err(MmapError::TruncatedTileData);
