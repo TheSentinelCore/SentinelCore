@@ -692,7 +692,7 @@ function Movement:_start_movement(waypoints)
         self._pending_move = {
             target = self._destination,
             callback = self._callback,
-            opts = { use_navmesh = false },
+            opts = { use_navmesh = true },
         }
         -- Store waypoints so deferred path uses them directly
         self._current_path = waypoints
