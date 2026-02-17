@@ -1,5 +1,5 @@
 -- Navigation.lua
--- Thin HTTP client for the NavBuddy pathfinding REST API
+-- Thin HTTP client for the SentinelNavServer pathfinding REST API
 -- Zero external dependencies beyond Sylvannas core + izi SDK + existing JSON
 
 local vec3 = require("common/geometry/vector_3")
@@ -47,7 +47,7 @@ local function apply_avoid_zones(params, zones)
     params.avoid = table.concat(parts, ";")
 end
 
--- UiMapID → NavBuddy continent ID (Map.dbc MapID) -----------------------
+-- UiMapID → SentinelNavServer continent ID (Map.dbc MapID) -----------------------
 -- Source: WotLK 3.3.5 UiMapID data
 -- 0 = Eastern Kingdoms, 1 = Kalimdor, 530 = Outland, 571 = Northrend
 local UI_MAP_TO_CONTINENT = {
@@ -153,7 +153,7 @@ local INDOOR_UI_MAPS = {
     [1375] = true,
 }
 
----Resolve current UiMapID to NavBuddy continent ID
+---Resolve current UiMapID to SentinelNavServer continent ID
 ---@return number continent_id (0=EK, 1=Kalimdor, 530=Outland, 571=Northrend)
 local function get_continent_id()
     local ui_map_id = core.get_map_id()
@@ -307,7 +307,7 @@ function Navigation:_request(url, callback, attempt)
     end)
 end
 
----Check if NavBuddy appears connected
+---Check if SentinelNavServer appears connected
 ---@return boolean
 function Navigation:is_available()
     return self._is_connected
@@ -855,7 +855,7 @@ end
 
 -- Health -----------------------------------------------------------------
 
----Check NavBuddy server health
+---Check SentinelNavServer server health
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
 function Navigation:health_check(callback)
     self:_request(self._base_url .. "/health", function(ok, data, err)

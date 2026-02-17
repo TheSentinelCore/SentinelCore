@@ -1,5 +1,5 @@
 -- Visualizer.lua
--- In-world 3D visualization for NavLib navigation data.
+-- In-world 3D visualization for SentinelNavClient navigation data.
 -- Renders path lines, waypoint markers, destination, obstacle zones,
 -- corridor boundaries, and state indicators.
 
@@ -58,7 +58,7 @@ local ARRIVED_FLASH_DURATION = 2.0
 
 ---Create a new Visualizer instance.
 ---Registers its own render callback via core.register_on_render_callback.
----@param facade table NavLib Facade instance
+---@param facade table SentinelNavClient Facade instance
 ---@param menu table Menu elements table (must contain viz_* checkboxes)
 ---@return Visualizer
 function Visualizer:new(facade, menu)
