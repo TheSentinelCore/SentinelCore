@@ -84,6 +84,7 @@ function Movement:new(nav_client, config)
     o._last_stuck_time = 0
     o._last_stuck_pos = nil
     o._stuck_count = 0
+    o._stuck_path_index = 0
     o._unstuck_timer = 0
     o._unstuck_phase = nil
 
@@ -837,6 +838,9 @@ function Movement:_check_stuck(player)
     end
     expected_dist = math.min(expected_dist, 3.0)
     if simple_movement:is_moving() and moved < expected_dist then
+        if self._stuck_count == 0 then
+            self._stuck_path_index = simple_movement:get_current_index()
+        end
         self._stuck_count = self._stuck_count + 1
         local moved_2d = pos:dist_to_ignore_z(self._last_stuck_pos)
         local dz = math.abs(pos.z - self._last_stuck_pos.z)
@@ -846,10 +850,15 @@ function Movement:_check_stuck(player)
             .. " dZ=" .. string.format("%.2f", dz) .. ")")
         self:_handle_stuck()
     else
-        if self._stuck_count > 0 then
-            self:_verbose("Unstuck (3D=" .. string.format("%.2f", moved) .. " yards)")
+        -- Only reset stuck counter when we've actually advanced past the stuck point.
+        -- A jump can move the player >0.1yd without making forward progress.
+        local cur_idx = simple_movement:get_current_index()
+        if self._stuck_count == 0 or cur_idx > self._stuck_path_index + 2 then
+            if self._stuck_count > 0 then
+                self:_verbose("Unstuck (3D=" .. string.format("%.2f", moved) .. " yards)")
+            end
+            self._stuck_count = 0
         end
-        self._stuck_count = 0
     end
 
     self._last_stuck_pos = pos
