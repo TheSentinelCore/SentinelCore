@@ -14,8 +14,8 @@ local GatherTab = {}
 ---@param y_offset number Current y position
 ---@return number New y_offset
 function GatherTab.render_status(ui, y_offset)
-    local GatherBuddy = require("init")
-    local node_scanner = GatherBuddy:get_module("NodeScanner")
+    local SentinelGather = require("init")
+    local node_scanner = SentinelGather:get_module("NodeScanner")
     local has_herb = node_scanner and node_scanner:has_herbalism() or false
     local has_mining = node_scanner and node_scanner:has_mining() or false
 

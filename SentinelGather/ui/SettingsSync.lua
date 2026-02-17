@@ -18,7 +18,7 @@ function SettingsSync.sync(menu_elements)
     Settings.set("gathering.node_search_radius", menu_elements.node_search_radius_slider:get())
     Settings.set("gathering.gather_timeout", menu_elements.gather_timeout_slider:get())
 
-    -- Movement (GatherBuddy-specific only)
+    -- Movement (SentinelGather-specific only)
     Settings.set("movement.mount_threshold", menu_elements.mount_threshold_slider:get())
 
     -- Safety
@@ -26,7 +26,7 @@ function SettingsSync.sync(menu_elements)
     Settings.set("safety.skip_if_enemies_near", menu_elements.skip_if_enemies_cb:get_state())
     Settings.set("safety.flee_health_threshold", menu_elements.flee_health_slider:get())
 
-    -- Anti-detection (GatherBuddy-specific pause/jump behavior)
+    -- Anti-detection (SentinelGather-specific pause/jump behavior)
     Settings.set("anti_detection.random_pause_enabled", menu_elements.random_pause_cb:get_state())
     Settings.set("anti_detection.random_pause_interval_min", menu_elements.pause_interval_min_slider:get())
     Settings.set("anti_detection.random_pause_interval_max", menu_elements.pause_interval_max_slider:get())

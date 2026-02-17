@@ -47,7 +47,7 @@ end
 ---@param y_offset number Current y position
 ---@return number New y_offset
 function ProfileTab.render(ui, y_offset)
-    local GatherBuddy = require("init")
+    local SentinelGather = require("init")
     local window = ui.window
     local colors = ui.colors
     local lib = require("shared/rotation_settings_ui")
@@ -123,7 +123,7 @@ function ProfileTab.render(ui, y_offset)
     if render_button(window, load_x, y_offset, load_btn_width, LAYOUT.element_height,
         "Load", colors, colors.primary_accent) then
         if profile and profile.path then
-            GatherBuddy:load_profile(profile.path)
+            SentinelGather:load_profile(profile.path)
         end
     end
 
@@ -169,7 +169,7 @@ function ProfileTab.render(ui, y_offset)
 
     -- Editor content (if open)
     if _editor_open then
-        local bot_mgr = GatherBuddy:get_bot_manager()
+        local bot_mgr = SentinelGather:get_bot_manager()
         local profile_mgr = bot_mgr and bot_mgr._modules and bot_mgr._modules.ProfileManager
         local player = core.object_manager.get_local_player()
 
@@ -219,7 +219,7 @@ function ProfileTab.render(ui, y_offset)
             if player and player:is_valid() and profile_mgr then
                 local pos = player:get_position()
                 local id = profile_mgr:add_waypoint_at_position(pos, "path")
-                if id then core.log("[GatherBuddy] Added path waypoint #" .. id) end
+                if id then core.log("[SentinelGather] Added path waypoint #" .. id) end
             end
         end
 
@@ -230,7 +230,7 @@ function ProfileTab.render(ui, y_offset)
                 local pos = player:get_position()
                 local radius = menu_elements.hotspot_radius_slider:get()
                 local id = profile_mgr:add_waypoint_at_position(pos, "hotspot", radius)
-                if id then core.log("[GatherBuddy] Added hotspot #" .. id) end
+                if id then core.log("[SentinelGather] Added hotspot #" .. id) end
             end
         end
 
@@ -258,7 +258,7 @@ function ProfileTab.render(ui, y_offset)
                 local current_wp = profile_mgr:get_current_waypoint()
                 if current_wp then
                     profile_mgr:remove_waypoint(current_wp.id, true)
-                    core.log("[GatherBuddy] Removed waypoint")
+                    core.log("[SentinelGather] Removed waypoint")
                 end
             end
         end
@@ -267,7 +267,7 @@ function ProfileTab.render(ui, y_offset)
             "Clear All", colors, danger_color) then
             if profile_mgr then
                 profile_mgr:clear_waypoints()
-                core.log("[GatherBuddy] Cleared all waypoints")
+                core.log("[SentinelGather] Cleared all waypoints")
             end
         end
 
@@ -279,9 +279,9 @@ function ProfileTab.render(ui, y_offset)
             if profile_mgr then
                 local success = profile_mgr:save_current_profile()
                 if success then
-                    core.log("[GatherBuddy] Profile saved")
+                    core.log("[SentinelGather] Profile saved")
                 else
-                    core.log_error("[GatherBuddy] Failed to save profile")
+                    core.log_error("[SentinelGather] Failed to save profile")
                 end
             end
         end
