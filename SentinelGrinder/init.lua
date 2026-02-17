@@ -19,6 +19,145 @@ local function copy_vec3(v)
     return vec3.new(v.x, v.y, v.z)
 end
 
+local function sq_distance_xy(a, b)
+    local dx = (a.x or 0.0) - (b.x or 0.0)
+    local dy = (a.y or 0.0) - (b.y or 0.0)
+    return (dx * dx) + (dy * dy)
+end
+
+local function sq_segment_distance_xy(p, a, b)
+    local ax = a.x or 0.0
+    local ay = a.y or 0.0
+    local bx = b.x or 0.0
+    local by = b.y or 0.0
+    local px = p.x or 0.0
+    local py = p.y or 0.0
+
+    local dx = bx - ax
+    local dy = by - ay
+    if dx == 0.0 and dy == 0.0 then
+        local qx = px - ax
+        local qy = py - ay
+        return (qx * qx) + (qy * qy)
+    end
+
+    local t = ((px - ax) * dx + (py - ay) * dy) / ((dx * dx) + (dy * dy))
+    if t < 0.0 then
+        t = 0.0
+    elseif t > 1.0 then
+        t = 1.0
+    end
+
+    local cx = ax + (dx * t)
+    local cy = ay + (dy * t)
+    local qx = px - cx
+    local qy = py - cy
+    return (qx * qx) + (qy * qy)
+end
+
+local function clone_points(points)
+    local out = {}
+    for i, p in ipairs(points or {}) do
+        out[#out + 1] = vec3.new(p.x, p.y, p.z)
+    end
+    return out
+end
+
+local function simplify_points_near_duplicates(points, min_step)
+    if type(points) ~= "table" or #points <= 1 then
+        return clone_points(points)
+    end
+
+    local step = math.max(0.10, tonumber(min_step) or 0.50)
+    local sq_step = step * step
+    local out = { vec3.new(points[1].x, points[1].y, points[1].z) }
+
+    for i = 2, #points do
+        local p = points[i]
+        if sq_distance_xy(out[#out], p) >= sq_step then
+            out[#out + 1] = vec3.new(p.x, p.y, p.z)
+        end
+    end
+
+    if #out == 1 and #points > 1 then
+        local last = points[#points]
+        out[#out + 1] = vec3.new(last.x, last.y, last.z)
+    end
+
+    return out
+end
+
+local function simplify_points_douglas_peucker(points, tolerance)
+    if type(points) ~= "table" or #points <= 2 then
+        return clone_points(points)
+    end
+
+    local sq_tolerance = math.max(0.01, tonumber(tolerance) or 2.0)
+    sq_tolerance = sq_tolerance * sq_tolerance
+
+    local n = #points
+    local markers = {}
+    markers[1] = true
+    markers[n] = true
+
+    local stack = { { 1, n } }
+    while #stack > 0 do
+        local seg = stack[#stack]
+        stack[#stack] = nil
+
+        local first = seg[1]
+        local last = seg[2]
+        local max_sq_dist = 0.0
+        local index = nil
+
+        for i = first + 1, last - 1 do
+            local sq_dist = sq_segment_distance_xy(points[i], points[first], points[last])
+            if sq_dist > max_sq_dist then
+                max_sq_dist = sq_dist
+                index = i
+            end
+        end
+
+        if index and max_sq_dist > sq_tolerance then
+            markers[index] = true
+            stack[#stack + 1] = { first, index }
+            stack[#stack + 1] = { index, last }
+        end
+    end
+
+    local out = {}
+    for i = 1, n do
+        if markers[i] then
+            local p = points[i]
+            out[#out + 1] = vec3.new(p.x, p.y, p.z)
+        end
+    end
+
+    if #out < 2 and n >= 2 then
+        return { vec3.new(points[1].x, points[1].y, points[1].z), vec3.new(points[n].x, points[n].y, points[n].z) }
+    end
+
+    return out
+end
+
+local function simplify_route_points(points, tolerance, min_step)
+    if type(points) ~= "table" or #points < 3 then
+        return clone_points(points)
+    end
+
+    local compact = simplify_points_near_duplicates(points, min_step)
+    if #compact < 3 then
+        return compact
+    end
+
+    local reduced = simplify_points_douglas_peucker(compact, tolerance)
+    if #reduced < 2 then
+        return compact
+    end
+
+    return simplify_points_near_duplicates(reduced, min_step)
+end
+
 local function safe_state_name(state)
     if state == nil then
         return "unknown"
@@ -187,6 +326,8 @@ function GrindBuddy:get_instance()
             _route_radius_max = 140.0,
             _route_expand_step = 20.0,
             _route_expand_interval = 12.0,
+            _route_simplify_tolerance = 2.2,
+            _route_simplify_min_step = 1.0,
             _last_target_seen_at = 0,
             _last_route_expand_at = 0,
             _route_mode = ROUTE_MODE_CIRCLE,
@@ -333,7 +474,18 @@ end
 
 function GrindBuddy:_set_waypoints(points, start_at_closest, there_and_back, local_player)
     local instance = self:get_instance()
-    instance._waypoints = points or {}
+    local original_points = points or {}
+    local simplified_points = simplify_route_points(
+        original_points,
+        instance._route_simplify_tolerance,
+        instance._route_simplify_min_step
+    )
+
+    if #simplified_points >= 2 then
+        instance._waypoints = simplified_points
+    else
+        instance._waypoints = clone_points(original_points)
+    end
     instance._waypoint_direction = 1
 
     if #instance._waypoints == 0 then
