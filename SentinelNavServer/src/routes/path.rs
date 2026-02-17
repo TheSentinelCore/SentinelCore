@@ -333,7 +333,6 @@ pub async fn find_path(
             waypoints: result.waypoints.clone(),
             distance: result.distance,
             partial: result.partial,
-            created_at: std::time::Instant::now(),
         },
     );
 

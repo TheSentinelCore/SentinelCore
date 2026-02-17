@@ -75,6 +75,7 @@ parking_lot.workspace = true
 toml.workspace = true
 tower-http.workspace = true
 rand.workspace = true
+moka = { version = "0.12", features = ["sync"] }
 
 [lib]
 name = "sentinel_nav_server"
