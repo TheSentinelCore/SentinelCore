@@ -385,7 +385,6 @@ function Window.init(client)
     _ui.menu.enable:set(false)
 
     _initialized = true
-    core.log("[SentinelNavClient] Settings UI initialized")
 end
 
 ---Called every render frame

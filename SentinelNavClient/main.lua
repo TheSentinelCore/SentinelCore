@@ -38,7 +38,7 @@ local function on_load()
     end
 
     _is_loaded = true
-    core.log("[SentinelNavClient] Loaded — standalone plugin ready")
+    core.log("[SentinelNavClient] Loaded | Plugin Ready!")
 end
 
 -- Initialize eagerly so the Client exists before other plugins' on_update fires.
@@ -132,12 +132,9 @@ local function on_unload()
     SentinelNavClient:destroy()
     _G.SentinelNavClient = nil
     _is_loaded = false
-    core.log("[SentinelNavClient] Unloaded")
 end
 
 -- Unload is handled via the return table's `unload` field below.
-
-core.log("[SentinelNavClient] Module loaded — _G.SentinelNavClient available")
 
 -- ---------------------------------------------------------------------------
 -- Module export (matches SentinelGather pattern)
