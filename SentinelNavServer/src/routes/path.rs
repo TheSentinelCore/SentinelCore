@@ -422,20 +422,12 @@ pub async fn find_path_random(
     apply_random_deviation(&mut waypoints, &query, filter, params.max_deviation);
 
     // Now apply smoothing manually
-    let smoothing = path_smoothing::SmoothingAlgorithm::from_str(
-        options.smoothing.as_deref().unwrap_or("none"),
-    );
-    let smoothing_config = pipeline::create_smoothing_config(
-        options.smooth_iterations,
-        options.smooth_samples,
-        options.smooth_ratio,
-        options.min_corner_angle,
-        options.keep_originals,
-    );
-    let original_waypoints = waypoints.clone();
-    let mut waypoints = smoothing.smooth_with_config(&waypoints, &smoothing_config);
-    pipeline::project_waypoints_to_surface(&mut waypoints, &query, filter);
-    let waypoints = pipeline::validate_smoothed_path(&waypoints, &original_waypoints, &query, filter);
+    let waypoints = if options.smoothing.as_deref().unwrap_or("none") != "none" {
+        let smoother = path_smoothing::SmootherPipeline::with_default_config();
+        smoother.smooth(&waypoints, &query, filter)
+    } else {
+        waypoints
+    };
     let distance = pipeline::calculate_path_distance(&waypoints);
 
     Ok(Json(PathResponse {

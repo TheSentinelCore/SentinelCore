@@ -10,7 +10,7 @@ use detour::filter::{
 use detour::mesh::NavMesh;
 use detour::query::NavMeshQuery;
 use detour::types::{PolyRef, Vec3};
-use path_smoothing::{SmoothingAlgorithm, SmoothingConfig};
+use path_smoothing::SmootherPipeline;
 
 use crate::error::AppError;
 
@@ -134,34 +134,6 @@ pub fn create_custom_filter(
         .area_cost(NAV_AREA_MAGMA_SLIME, lava)      // area 8: magma/slime
         .build()
         .map_err(|e| AppError::Internal(format!("Failed to create filter: {}", e)))
-}
-
-/// Create a SmoothingConfig from optional parameters.
-pub fn create_smoothing_config(
-    smooth_iterations: Option<u32>,
-    smooth_samples: Option<u32>,
-    smooth_ratio: Option<f32>,
-    min_corner_angle: Option<f32>,
-    keep_originals: Option<bool>,
-) -> SmoothingConfig {
-    let mut config = SmoothingConfig::new();
-    if let Some(iterations) = smooth_iterations {
-        config = config.with_chaikin_iterations(iterations);
-    }
-    if let Some(samples) = smooth_samples {
-        config = config.with_catmull_rom_samples(samples);
-        config = config.with_bezier_samples(samples);
-    }
-    if let Some(ratio) = smooth_ratio {
-        config = config.with_chaikin_ratio(ratio);
-    }
-    if let Some(angle) = min_corner_angle {
-        config = config.with_min_corner_angle(angle);
-    }
-    if let Some(keep) = keep_originals {
-        config = config.with_keep_originals(keep);
-    }
-    config
 }
 
 /// Find the nearest polygon using tiered 3D-extent search with water-aware selection.
@@ -352,26 +324,12 @@ pub fn execute_pathfind(
     // On spiral ramps, this snaps chord midpoints onto the actual ramp arc.
     waypoints = densify_segments(&waypoints, query, filter);
 
-    // Store original waypoints before smoothing (for corner validation)
-    let original_waypoints = waypoints.clone();
-
-    // Apply smoothing if requested
-    let smoothing =
-        SmoothingAlgorithm::from_str(options.smoothing.as_deref().unwrap_or("none"));
-    let smoothing_config = create_smoothing_config(
-        options.smooth_iterations,
-        options.smooth_samples,
-        options.smooth_ratio,
-        options.min_corner_angle,
-        options.keep_originals,
-    );
-    let mut waypoints = smoothing.smooth_with_config(&waypoints, &smoothing_config);
-
-    // Project smoothed waypoints to navmesh surface for correct Z heights
-    project_waypoints_to_surface(&mut waypoints, query, filter);
-
-    // Validate smoothed path doesn't cut through walls at corners
-    let mut waypoints = validate_smoothed_path(&waypoints, &original_waypoints, query, filter);
+    let mut waypoints = if options.smoothing.as_deref().unwrap_or("none") != "none" {
+        let smoother = SmootherPipeline::with_default_config();
+        smoother.smooth(&waypoints, query, filter)
+    } else {
+        waypoints
+    };
 
     // Apply wall clearance LAST — after validation, so validation can't undo the push
     // by inserting pre-clearance original waypoints.
@@ -796,76 +754,6 @@ pub fn densify_segments(
     }
 
     result
-}
-
-/// Project waypoints to navmesh surface for correct Z heights.
-pub fn project_waypoints_to_surface(
-    waypoints: &mut [Vec3],
-    query: &NavMeshQuery,
-    filter: &QueryFilter,
-) {
-    for waypoint in waypoints.iter_mut() {
-        if let Ok((poly_ref, _)) = query.find_nearest_poly(*waypoint, HEIGHT_EXTENTS, filter) {
-            if let Ok((snapped, _)) = query.closest_point_on_poly(poly_ref, *waypoint) {
-                *waypoint = snapped;
-            }
-        }
-    }
-}
-
-/// Validate smoothed path doesn't cut through walls.
-///
-/// After smoothing, paths may cut through walls at tight corners.
-/// Uses raycast to check line-of-sight between consecutive waypoints
-/// and inserts the closest original waypoint where blocked.
-pub fn validate_smoothed_path(
-    smoothed: &[Vec3],
-    original: &[Vec3],
-    query: &NavMeshQuery,
-    filter: &QueryFilter,
-) -> Vec<Vec3> {
-    if smoothed.len() <= 2 {
-        return smoothed.to_vec();
-    }
-
-    let mut result = Vec::with_capacity(smoothed.len());
-    result.push(smoothed[0]);
-
-    for i in 0..smoothed.len() - 1 {
-        let current = result.last().copied().unwrap_or(smoothed[i]);
-        let next = smoothed[i + 1];
-
-        if let Ok((current_ref, _)) = query.find_nearest_poly(current, HEIGHT_EXTENTS, filter) {
-            if let Ok((hit_t, _)) = query.raycast(current_ref, current, next, filter) {
-                if hit_t < 1.0 {
-                    // Wall detected — find closest original waypoint to hit point
-                    let hit_point = Vec3::new(
-                        current.x + (next.x - current.x) * hit_t,
-                        current.y + (next.y - current.y) * hit_t,
-                        current.z + (next.z - current.z) * hit_t,
-                    );
-                    if let Some(closest) = find_closest_waypoint(&hit_point, original) {
-                        result.push(closest);
-                    }
-                }
-            }
-        }
-        result.push(next);
-    }
-
-    result
-}
-
-/// Find the closest waypoint from a list to a given point.
-pub fn find_closest_waypoint(point: &Vec3, waypoints: &[Vec3]) -> Option<Vec3> {
-    waypoints
-        .iter()
-        .min_by(|a, b| {
-            let dist_a = (a.x - point.x).powi(2) + (a.y - point.y).powi(2);
-            let dist_b = (b.x - point.x).powi(2) + (b.y - point.y).powi(2);
-            dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .copied()
 }
 
 /// Parse waypoints from semicolon-separated string format "x1,y1,z1;x2,y2,z2;...".

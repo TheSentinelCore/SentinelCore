@@ -6,7 +6,7 @@ use detour::Vec3;
 ///
 /// Returns the angle between vectors (prev -> current) and (current -> next).
 /// A smaller angle means a sharper turn (90° = right angle, 180° = straight line).
-fn corner_angle(prev: Vec3, current: Vec3, next: Vec3) -> f32 {
+pub(crate) fn corner_angle(prev: Vec3, current: Vec3, next: Vec3) -> f32 {
     // Vector from current to prev
     let v1_x = prev.x - current.x;
     let v1_y = prev.y - current.y;
@@ -34,6 +34,45 @@ fn corner_angle(prev: Vec3, current: Vec3, next: Vec3) -> f32 {
     cos_angle.acos().to_degrees()
 }
 
+/// Remove waypoints whose turn angle is sharper than the outlier threshold.
+///
+/// Angles < outlier_angle indicate extreme corners (data glitches or
+/// hairpin turns) that should be removed entirely, not smoothed.
+/// Start and end points are always preserved.
+fn reject_outliers(path: &[Vec3], outlier_angle: f32) -> Vec<Vec3> {
+    if path.len() < 3 || outlier_angle <= 0.0 || outlier_angle >= 180.0 {
+        return path.to_vec();
+    }
+
+    let mut result = Vec::with_capacity(path.len());
+    result.push(path[0]);
+
+    for i in 1..path.len() - 1 {
+        let angle = corner_angle(path[i - 1], path[i], path[i + 1]);
+        if angle >= outlier_angle {
+            result.push(path[i]);
+        }
+        // else: angle too sharp, remove this waypoint
+    }
+
+    result.push(*path.last().unwrap());
+    result
+}
+
+/// Chaikin smoothing with outlier rejection pre-pass.
+///
+/// First removes extreme-angle waypoints, then applies standard Chaikin.
+pub fn smooth_chaikin_with_outlier_rejection(
+    path: &[Vec3],
+    iterations: usize,
+    ratio: f32,
+    min_angle: f32,
+    outlier_angle: f32,
+) -> Vec<Vec3> {
+    let filtered = reject_outliers(path, outlier_angle);
+    smooth_chaikin(&filtered, iterations, ratio, min_angle, false)
+}
+
 /// Smooth a path using Chaikin's algorithm with angle-aware corner handling.
 ///
 /// Iteratively cuts corners to create smoother curves.
@@ -44,7 +83,7 @@ fn corner_angle(prev: Vec3, current: Vec3, next: Vec3) -> f32 {
 /// * `iterations` - Number of smoothing iterations (2-3 recommended)
 /// * `ratio` - Corner-cut ratio (0.5-0.95, default 0.75). Higher = tighter corners.
 /// * `min_angle` - Minimum corner angle to smooth (degrees, 0-180). Corners sharper than
-///                 this angle won't be smoothed. 0 = smooth all, 90 = skip tight turns.
+///   this angle won't be smoothed. 0 = smooth all, 90 = skip tight turns.
 /// * `keep_originals` - If true, preserve original waypoints and only insert interpolation points.
 pub fn smooth_chaikin(
     path: &[Vec3],
@@ -279,6 +318,59 @@ mod tests {
         let smoothed = smooth_chaikin(&path, 1, 0.75, 0.0, true);
 
         // Original endpoint should be preserved
+        assert_eq!(*smoothed.last().unwrap(), *path.last().unwrap());
+    }
+
+    #[test]
+    fn test_outlier_rejection_removes_sharp_turn() {
+        let path = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.1, 0.0), // Nearly 180° reversal (~0° angle)
+            Vec3::new(20.0, 0.0, 0.0),
+        ];
+        let filtered = reject_outliers(&path, 90.0);
+        // The sharp turn point should be removed
+        assert!(filtered.len() < path.len());
+        assert_eq!(filtered[0], path[0]);
+        assert_eq!(*filtered.last().unwrap(), *path.last().unwrap());
+    }
+
+    #[test]
+    fn test_outlier_rejection_preserves_endpoints() {
+        let path = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(5.0, 0.0, 0.0),
+            Vec3::new(5.0, 5.0, 0.0),
+        ];
+        let filtered = reject_outliers(&path, 90.0);
+        assert_eq!(filtered[0], path[0]);
+        assert_eq!(*filtered.last().unwrap(), *path.last().unwrap());
+    }
+
+    #[test]
+    fn test_outlier_rejection_keeps_gentle_turns() {
+        let path = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(20.0, 2.0, 0.0), // gentle turn (~170° angle)
+            Vec3::new(30.0, 2.0, 0.0),
+        ];
+        let filtered = reject_outliers(&path, 90.0);
+        assert_eq!(filtered.len(), path.len()); // nothing removed
+    }
+
+    #[test]
+    fn test_smooth_with_outlier_rejection() {
+        let path = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.1, 0.0), // outlier
+            Vec3::new(20.0, 0.0, 0.0),
+            Vec3::new(20.0, 10.0, 0.0),
+        ];
+        let smoothed = smooth_chaikin_with_outlier_rejection(&path, 2, 0.75, 30.0, 90.0);
+        assert_eq!(smoothed[0], path[0]);
         assert_eq!(*smoothed.last().unwrap(), *path.last().unwrap());
     }
 }
