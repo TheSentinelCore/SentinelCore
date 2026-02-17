@@ -1,6 +1,6 @@
-# NavLib API Reference
+# SentinelNavClient API Reference
 
-Complete API reference for NavLib — covers the consumer-facing Facade, the Navigation HTTP client, the Movement path follower, and the Obstacle detection system.
+Complete API reference for SentinelNavClient — covers the consumer-facing Facade, the Navigation HTTP client, the Movement path follower, and the Obstacle detection system.
 
 **For consumers:** Start with [Facade](#facade) — it wraps everything and is the recommended API.
 **For internals/advanced use:** See [Navigation](#navigation), [Movement](#movement), and [Obstacle](#obstacle) for the underlying module APIs.
@@ -56,45 +56,45 @@ Complete API reference for NavLib — covers the consumer-facing Facade, the Nav
 
 # Facade
 
-Single entry-point facade for NavLib. Wires and drives all modules, with a built-in event system for state-change notifications.
+Single entry-point facade for SentinelNavClient. Wires and drives all modules, with a built-in event system for state-change notifications.
 
-**This is the recommended way to use NavLib.** NavLib creates and owns a single shared Facade instance. Consumers access it via `_G.NavLib.facade`. For advanced use cases requiring direct module access, see the [escape hatch](#escape-hatch) section or the individual module sections below.
+**This is the recommended way to use SentinelNavClient.** SentinelNavClient creates and owns a single shared Facade instance. Consumers access it via `_G.SentinelNavClient.facade`. For advanced use cases requiring direct module access, see the [escape hatch](#escape-hatch) section or the individual module sections below.
 
 ---
 
 ## Accessing the Facade
 
-NavLib creates a single shared Facade at initialization. All consumers share this instance. There are three ways to access it:
+SentinelNavClient creates a single shared Facade at initialization. All consumers share this instance. There are three ways to access it:
 
-### `_G.NavLib.facade` (Recommended)
+### `_G.SentinelNavClient.facade` (Recommended)
 
-Live getter via metatable `__index`. Returns the shared Facade, or `nil` if NavLib hasn't initialized yet.
+Live getter via metatable `__index`. Returns the shared Facade, or `nil` if SentinelNavClient hasn't initialized yet.
 
 ```lua
-local facade = _G.NavLib.facade
+local facade = _G.SentinelNavClient.facade
 if facade then
     facade:move_to(target, callback)
 end
 ```
 
-### `_G.NavLib.create(config?)` (Backward Compatible)
+### `_G.SentinelNavClient.create(config?)` (Backward Compatible)
 
-Returns the same shared Facade. The `config` parameter is accepted but **ignored** — NavLib's UI owns all settings.
+Returns the same shared Facade. The `config` parameter is accepted but **ignored** — SentinelNavClient's UI owns all settings.
 
 ```lua
-local facade = _G.NavLib.create()
+local facade = _G.SentinelNavClient.create()
 ```
 
 ### `Facade:new(config)` (Internal Only)
 
-Called by `NavLib/init.lua` during plugin initialization. **Consumers should NOT call this directly** — it would create an isolated Facade disconnected from NavLib's update loop and settings sync.
+Called by `SentinelNavClient/init.lua` during plugin initialization. **Consumers should NOT call this directly** — it would create an isolated Facade disconnected from SentinelNavClient's update loop and settings sync.
 
 ### Consumer Example
 
 ```lua
 -- In your plugin's initialize():
-if _G.NavLib and _G.NavLib.facade then
-    local facade = _G.NavLib.facade
+if _G.SentinelNavClient and _G.SentinelNavClient.facade then
+    local facade = _G.SentinelNavClient.facade
 
     facade:move_to(destination, function(ok, reason)
         if ok then core.log("Arrived!") end
@@ -118,7 +118,7 @@ Drives all internal modules in the correct order:
 2. `movement:update()` — advances waypoints, stuck detection, obstacle scanning, path validation
 3. Detects state transitions and fires [events](#events)
 
-> **Note:** NavLib calls `facade:update()` from its own `on_update` callback every frame. **Consumers do NOT need to call this.** If a consumer calls it anyway, it is harmless — Movement rate-limits internally via `_tick_interval`.
+> **Note:** SentinelNavClient calls `facade:update()` from its own `on_update` callback every frame. **Consumers do NOT need to call this.** If a consumer calls it anyway, it is harmless — Movement rate-limits internally via `_tick_interval`.
 
 ---
 
@@ -168,7 +168,7 @@ Move directly without pathfinding. Equivalent to `move_to(target, callback, { us
 facade:follow_path(waypoints, callback?)
 ```
 
-Follow a pre-computed waypoint array without requesting a new path from NavBuddy. Useful when you already have waypoints (e.g., from a direct `nav_client:find_path()` call or cached path).
+Follow a pre-computed waypoint array without requesting a new path from SentinelNavServer. Useful when you already have waypoints (e.g., from a direct `nav_client:find_path()` call or cached path).
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -260,7 +260,7 @@ Stop all movement and reset to idle. Clears active path, destination, callbacks,
 facade:destroy()
 ```
 
-Stop movement, clear all obstacle zones, and remove event listeners. Call when permanently done with the NavLib instance.
+Stop movement, clear all obstacle zones, and remove event listeners. Call when permanently done with the SentinelNavClient instance.
 
 ---
 
@@ -277,7 +277,7 @@ Returns the current movement state:
 | State | Description |
 |-------|-------------|
 | `"idle"` | Not moving |
-| `"requesting_path"` | Waiting for path from NavBuddy |
+| `"requesting_path"` | Waiting for path from SentinelNavServer |
 | `"moving"` | Actively following waypoints |
 | `"stuck"` | Stuck recovery in progress |
 | `"arrived"` | Reached destination |
@@ -366,7 +366,7 @@ Returns corridor width data for the current indoor path, or `nil` if outdoors or
 facade:is_server_available() -> boolean
 ```
 
-Returns `true` if NavBuddy server appears connected (has had a recent successful request, fewer than 3 consecutive failures).
+Returns `true` if SentinelNavServer server appears connected (has had a recent successful request, fewer than 3 consecutive failures).
 
 ---
 
@@ -376,7 +376,7 @@ Returns `true` if NavBuddy server appears connected (has had a recent successful
 facade:health_check(callback)
 ```
 
-Check NavBuddy server health.
+Check SentinelNavServer server health.
 
 ```lua
 function(ok, data, err)
@@ -450,20 +450,20 @@ Same as `get_path_opts` but also includes `probe_distance` from the corridor con
 
 ### How Settings Work
 
-NavLib owns all navigation settings via its built-in UI. The settings flow is:
+SentinelNavClient owns all navigation settings via its built-in UI. The settings flow is:
 
-1. ~40 menu elements in `NavLib/ui/window.lua` (persisted across sessions via `core.menu.*`)
+1. ~40 menu elements in `SentinelNavClient/ui/window.lua` (persisted across sessions via `core.menu.*`)
 2. `sync_to_facade()` reads all elements every render frame
 3. Calls `facade:update_config()` with the resolved values
 4. Movement and Obstacle modules update their internal config
 
-**Consumers should NOT call `update_config()` directly** — their changes will be overwritten on the next render frame by NavLib's sync.
+**Consumers should NOT call `update_config()` directly** — their changes will be overwritten on the next render frame by SentinelNavClient's sync.
 
-To change navigation settings, use the NavLib Settings UI (toggled via the "NavLib" button in the Sylvannas menu).
+To change navigation settings, use the SentinelNavClient Settings UI (toggled via the "SentinelNavClient" button in the Sylvannas menu).
 
 ### Constructor Config (Internal)
 
-The Facade constructor accepts sectioned config, but this is only used internally by `NavLib/init.lua`:
+The Facade constructor accepts sectioned config, but this is only used internally by `SentinelNavClient/init.lua`:
 
 | Section | Module | Description |
 |---------|--------|-------------|
@@ -481,7 +481,7 @@ facade:update_config(overrides)
 
 Distribute config updates to underlying modules at runtime. Only provided keys are changed.
 
-> **Internal:** This is called by NavLib's `sync_to_facade()` every render frame. Consumer calls will be overwritten. Use NavLib's Settings UI instead.
+> **Internal:** This is called by SentinelNavClient's `sync_to_facade()` every render frame. Consumer calls will be overwritten. Use SentinelNavClient's Settings UI instead.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -522,7 +522,7 @@ Remove a previously registered listener. Pass the **same function reference** us
 
 ```lua
 facade:on("state_change", function(data)
-    core.log(string.format("NavLib: %s -> %s", data.from, data.to))
+    core.log(string.format("SentinelNavClient: %s -> %s", data.from, data.to))
 end)
 
 facade:on("arrived", function()
@@ -534,7 +534,7 @@ facade:on("failed", function()
 end)
 ```
 
-**Error handling:** Event callbacks are wrapped in `pcall`. If a handler throws, it is caught and logged but does not affect other handlers or NavLib operation.
+**Error handling:** Event callbacks are wrapped in `pcall`. If a handler throws, it is caught and logged but does not affect other handlers or SentinelNavClient operation.
 
 ---
 
@@ -549,7 +549,7 @@ For advanced use cases, the underlying module instances are exposed as public fi
 | `facade.obstacle` | Obstacle | Obstacle detector — zone memory, ray probing |
 
 ```lua
-local facade = _G.NavLib.facade
+local facade = _G.SentinelNavClient.facade
 
 -- Use the facade for common operations
 facade:move_to(target, callback)
@@ -575,15 +575,15 @@ local widths = facade.movement:get_corridor_widths()
 ## Complete Consumer Example
 
 ```lua
--- Example: Using NavLib from a consumer plugin (e.g., a gathering bot)
+-- Example: Using SentinelNavClient from a consumer plugin (e.g., a gathering bot)
 
 -- 1. Get the shared Facade (in your plugin's initialize)
-if not (_G.NavLib and _G.NavLib.facade) then
-    core.log_error("NavLib not loaded — navigation unavailable")
+if not (_G.SentinelNavClient and _G.SentinelNavClient.facade) then
+    core.log_error("SentinelNavClient not loaded — navigation unavailable")
     return
 end
 
-local facade = _G.NavLib.facade
+local facade = _G.SentinelNavClient.facade
 
 -- 2. Register event listeners (optional)
 facade:on("arrived", function()
@@ -601,9 +601,9 @@ end)
 -- 3. Check server health
 facade:health_check(function(ok, data)
     if ok then
-        core.log("NavBuddy v" .. data.version .. " (" .. data.uptime_secs .. "s uptime)")
+        core.log("SentinelNavServer v" .. data.version .. " (" .. data.uptime_secs .. "s uptime)")
     else
-        core.log_error("NavBuddy server not reachable")
+        core.log_error("SentinelNavServer server not reachable")
     end
 end)
 
@@ -642,9 +642,9 @@ end)
 -- 7. Stop when needed
 -- facade:stop()
 
--- Note: No update() call needed (NavLib drives it)
--- Note: No update_config() needed (NavLib UI syncs settings)
--- Note: No destroy() needed (NavLib manages Facade lifecycle)
+-- Note: No update() call needed (SentinelNavClient drives it)
+-- Note: No update_config() needed (SentinelNavClient UI syncs settings)
+-- Note: No destroy() needed (SentinelNavClient manages Facade lifecycle)
 ```
 
 ---
@@ -652,11 +652,11 @@ end)
 
 # Navigation
 
-HTTP client for the NavBuddy pathfinding server. Provides async pathfinding, raycasting, height queries, and tactical movement endpoints.
+HTTP client for the SentinelNavServer pathfinding server. Provides async pathfinding, raycasting, height queries, and tactical movement endpoints.
 
-All pathfinding methods are **asynchronous** — they issue an HTTP GET to NavBuddy and invoke a callback with the result. Failed requests retry with exponential backoff.
+All pathfinding methods are **asynchronous** — they issue an HTTP GET to SentinelNavServer and invoke a callback with the result. Failed requests retry with exponential backoff.
 
-> **Note:** Consumers should access the shared Navigation client via `_G.NavLib.facade.nav_client` rather than creating a new instance. The shared client is already configured by NavLib.
+> **Note:** Consumers should access the shared Navigation client via `_G.SentinelNavClient.facade.nav_client` rather than creating a new instance. The shared client is already configured by SentinelNavClient.
 
 ---
 
@@ -668,7 +668,7 @@ Create a new client instance.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `config.base_url` | string | `"http://78.31.71.163:47110"` | NavBuddy server URL |
+| `config.base_url` | string | `"http://78.31.71.163:47110"` | SentinelNavServer server URL |
 | `config.max_retries` | number | `3` | Max retry attempts per request |
 
 ```lua
@@ -811,7 +811,7 @@ Request a navmesh path that routes around avoidance zones. Used by Movement when
 }
 ```
 
-Zones are sent to NavBuddy as a semicolon-separated `avoid` query parameter: `x,y,z,radius,cost;x,y,z,radius,cost;...`
+Zones are sent to SentinelNavServer as a semicolon-separated `avoid` query parameter: `x,y,z,radius,cost;x,y,z,radius,cost;...`
 
 **Fallback behavior:**
 - If `avoid_zones` is empty or nil, delegates to `find_path()` directly
@@ -825,7 +825,7 @@ Zones are sent to NavBuddy as a semicolon-separated `avoid` query parameter: `x,
 nav:find_route_tsp(nodes, callback, opts?)
 ```
 
-Plan a TSP-optimized (Traveling Salesman Problem) route through multiple nodes. NavBuddy computes the optimal visit order to minimize total travel distance.
+Plan a TSP-optimized (Traveling Salesman Problem) route through multiple nodes. SentinelNavServer computes the optimal visit order to minimize total travel distance.
 
 **Endpoint:** `GET /api/v1/path-tsp`
 
@@ -856,7 +856,7 @@ Plan a TSP-optimized (Traveling Salesman Problem) route through multiple nodes. 
 }
 ```
 
-> **Note:** `visit_order` is automatically converted from NavBuddy's 0-indexed format to Lua's 1-indexed format.
+> **Note:** `visit_order` is automatically converted from SentinelNavServer's 0-indexed format to Lua's 1-indexed format.
 
 ---
 
@@ -1080,7 +1080,7 @@ nav:health_check(callback)
 ```lua
 {
     status = string,       -- "ok", "degraded", etc.
-    version = string,      -- NavBuddy version
+    version = string,      -- SentinelNavServer version
     uptime_secs = number,  -- Server uptime
     loaded_maps = table,   -- Map/continent status
 }
@@ -1126,7 +1126,7 @@ Navigation.is_indoor() -> boolean
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `base_url` | string | `"http://78.31.71.163:47110"` | NavBuddy server URL |
+| `base_url` | string | `"http://78.31.71.163:47110"` | SentinelNavServer server URL |
 | `max_retries` | number | `3` | Max retry attempts with exponential backoff |
 
 ### Map ID Auto-Detection
@@ -1142,7 +1142,7 @@ If `opts.map_id` is not provided, Navigation automatically detects the current c
 
 ### UI_MAP_TO_CONTINENT
 
-Table mapping WoW UiMapIDs to NavBuddy continent IDs:
+Table mapping WoW UiMapIDs to SentinelNavServer continent IDs:
 
 | Continent ID | Continent | Example UiMapIDs |
 |-------------|-----------|------------------|
@@ -1196,7 +1196,7 @@ Common error strings:
 
 ### Callback Safety
 
-All callbacks are wrapped in `pcall`. If your callback throws an error, it is caught and logged but does not crash NavLib.
+All callbacks are wrapped in `pcall`. If your callback throws an error, it is caught and logged but does not crash SentinelNavClient.
 
 ---
 ---
@@ -1205,7 +1205,7 @@ All callbacks are wrapped in `pcall`. If your callback throws an error, it is ca
 
 High-level path-following module that wraps [Navigation](#navigation). Handles waypoint traversal, stuck detection and recovery, route planning, indoor corridor adaptation, obstacle avoidance, and casting deferral.
 
-> **Note:** Consumers should access the shared Movement module via `_G.NavLib.facade.movement`. The shared instance is created and configured by NavLib. `movement:update()` is called by NavLib's `on_update` callback every frame — consumers do not need to call it. `update_config()` is called by NavLib's UI sync system every render frame — consumer calls would be overwritten.
+> **Note:** Consumers should access the shared Movement module via `_G.SentinelNavClient.facade.movement`. The shared instance is created and configured by SentinelNavClient. `movement:update()` is called by SentinelNavClient's `on_update` callback every frame — consumers do not need to call it. `update_config()` is called by SentinelNavClient's UI sync system every render frame — consumer calls would be overwritten.
 
 ---
 
@@ -1221,8 +1221,8 @@ Create a new movement module instance.
 | `config` | table | no | Configuration overrides (see [Movement Configuration](#movement-configuration)) |
 
 ```lua
-local nav = _G.NavLib.Navigation:new()
-local movement = _G.NavLib.Movement:new(nav, {
+local nav = _G.SentinelNavClient.Navigation:new()
+local movement = _G.SentinelNavClient.Movement:new(nav, {
     waypoint_tolerance = 3.0,
     smoothing = "chaikin",
     optimize = true,
@@ -1250,7 +1250,7 @@ Move to a target position using navmesh pathfinding. Requests a path from Naviga
 **Behavior:**
 1. If player is casting/channeling, defers until cast ends
 2. If `use_navmesh = false`, moves directly without pathfinding
-3. Otherwise requests path from NavBuddy (corridor path if indoors, normal path outdoors)
+3. Otherwise requests path from SentinelNavServer (corridor path if indoors, normal path outdoors)
 4. If an Obstacle is attached and has avoidance zones, uses `find_path_avoid()` instead of `find_path()`
 5. On path received, starts following waypoints
 6. Adjusts waypoint tolerance for narrow indoor corridors (40% of min corridor width, minimum 1.0)
@@ -1283,7 +1283,7 @@ Stop all movement and reset to idle state. Clears active path, destination, pend
 movement:follow_path(waypoints, callback?)
 ```
 
-Follow a pre-computed waypoint array without requesting a new path from NavBuddy. Sets state to `"moving"` and begins waypoint traversal with stuck detection.
+Follow a pre-computed waypoint array without requesting a new path from SentinelNavServer. Sets state to `"moving"` and begins waypoint traversal with stuck detection.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -1300,7 +1300,7 @@ Follow a pre-computed waypoint array without requesting a new path from NavBuddy
 movement:plan_route(nodes, callback?, opts?)
 ```
 
-Plan and execute a TSP-optimized route through multiple nodes. NavBuddy calculates the optimal visit order, then Movement follows each leg sequentially.
+Plan and execute a TSP-optimized route through multiple nodes. SentinelNavServer calculates the optimal visit order, then Movement follows each leg sequentially.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -1362,7 +1362,7 @@ movement:update()
 
 **Must be called every frame.** Drives the movement state machine: advances waypoints, checks for arrival, runs stuck detection, processes recovery actions, validates paths, scans for obstacles, and tracks route progress.
 
-> **Note:** NavLib calls this automatically from its `on_update` callback. Consumers do not need to call it.
+> **Note:** SentinelNavClient calls this automatically from its `on_update` callback. Consumers do not need to call it.
 
 ---
 
@@ -1491,7 +1491,7 @@ movement:update_config(overrides)
 
 Update configuration at runtime. Only provided keys are changed; others keep their current values.
 
-> **Note:** This is called by NavLib's UI sync system every render frame. Consumer calls would be overwritten. Use NavLib's Settings UI to change movement settings.
+> **Note:** This is called by SentinelNavClient's UI sync system every render frame. Consumer calls would be overwritten. Use SentinelNavClient's Settings UI to change movement settings.
 
 ---
 
@@ -1522,7 +1522,7 @@ Update configuration at runtime. Only provided keys are changed; others keep the
 
 **Transitions:**
 - `idle` -> `requesting_path`: `move_to()` or `plan_route()` called
-- `requesting_path` -> `moving`: Path received from NavBuddy
+- `requesting_path` -> `moving`: Path received from SentinelNavServer
 - `requesting_path` -> `failed`: Path request failed
 - `moving` -> `arrived`: Reached destination
 - `arrived` -> `idle`: Automatic reset after callback fires
@@ -1618,7 +1618,7 @@ During movement, paths are periodically validated:
 
 Doodad collision detection via `core.graphics.trace_line` ray probing, with avoidance zone memory. Detected obstacles are stored as zones and fed to [Navigation:find_path_avoid()](#find_path_avoid) for rerouting.
 
-> **Note:** Consumers should access the shared Obstacle module via `_G.NavLib.facade.obstacle`. The shared instance is created and configured by NavLib. `update_config()` is called by NavLib's UI sync system every render frame — consumer calls would be overwritten.
+> **Note:** Consumers should access the shared Obstacle module via `_G.SentinelNavClient.facade.obstacle`. The shared instance is created and configured by SentinelNavClient. `update_config()` is called by SentinelNavClient's UI sync system every render frame — consumer calls would be overwritten.
 
 Obstacle has two probing modes, both driven by [Movement](#movement):
 
@@ -1636,7 +1636,7 @@ Obstacle has two probing modes, both driven by [Movement](#movement):
 | `config` | table | no | Configuration overrides (see [Obstacle Configuration](#obstacle-configuration)) |
 
 ```lua
-local obstacle = _G.NavLib.Obstacle:new({
+local obstacle = _G.SentinelNavClient.Obstacle:new({
     avoidance_radius = 4.0,
     max_zones = 8,
 })
@@ -1720,7 +1720,7 @@ Probe upcoming waypoint segments for obstacles. Iterates through the first N seg
 obstacle:add_zone(pos, radius?)
 ```
 
-Add an avoidance zone at the given position. Zones are remembered and passed to NavBuddy's `/path-avoid` endpoint for rerouting.
+Add an avoidance zone at the given position. Zones are remembered and passed to SentinelNavServer's `/path-avoid` endpoint for rerouting.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -1811,7 +1811,7 @@ All config fields with their defaults:
 | `avoidance_radius` | number | `5.0` | Radius in yards around each detected obstacle |
 | `zone_ttl` | number | `120.0` | Seconds before zones auto-expire |
 | `zone_prune_dist` | number | `100.0` | Yards — remove zones farther than this from player |
-| `max_zones` | number | `5` | Maximum remembered zones (NavBuddy supports up to 20) |
+| `max_zones` | number | `5` | Maximum remembered zones (SentinelNavServer supports up to 20) |
 | `collision_flags` | number | `0x00000001` | Trace line flags (`DoodadCollision`) |
 | `probe_distance` | number | `8.0` | Reactive probe distance in yards (from player position) |
 | `probe_spread_deg` | number | `20` | Reactive probe spread angle in degrees |
@@ -1830,7 +1830,7 @@ obstacle:update_config(overrides)
 
 Update configuration at runtime. Only provided keys are changed.
 
-> **Note:** This is called by NavLib's UI sync system every render frame. Consumer calls would be overwritten. Use NavLib's Settings UI to change obstacle settings.
+> **Note:** This is called by SentinelNavClient's UI sync system every render frame. Consumer calls would be overwritten. Use SentinelNavClient's Settings UI to change obstacle settings.
 
 ---
 
@@ -1859,7 +1859,7 @@ local obstacle = Obstacle:new()
 movement:set_obstacle_module(obstacle)
 
 -- Or automatic via Facade
-local facade = _G.NavLib.facade  -- wires everything internally
+local facade = _G.SentinelNavClient.facade  -- wires everything internally
 ```
 
 Once wired:
@@ -1874,7 +1874,7 @@ Once wired:
 
 3. **Zone data flows to pathfinding:**
    - `obstacle:get_avoidance_zones()` returns zones for `Navigation:find_path_avoid()`
-   - NavBuddy computes paths that avoid the zones with the specified cost multiplier
+   - SentinelNavServer computes paths that avoid the zones with the specified cost multiplier
 
 ---
 
