@@ -135,8 +135,7 @@ local function on_unload()
     core.log("[SentinelNavClient] Unloaded")
 end
 
--- Register unload so state is cleaned up on plugin reload
-core.register_on_unload_callback(on_unload)
+-- Unload is handled via the return table's `unload` field below.
 
 core.log("[SentinelNavClient] Module loaded — _G.SentinelNavClient available")
 
