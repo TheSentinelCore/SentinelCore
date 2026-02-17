@@ -2,10 +2,21 @@
     Debug Tab - Live status, logging, waypoint testing, all pathfinding modes
 ]]
 
+local color    = require("common/color")
 local vec2     = require("common/geometry/vector_2")
 local enums    = require("common/enums")
 local AstroUI  = require("shared/AstroUI")
 local Defaults = require("core/Defaults")
+
+local function lighten_color(base_color, amount)
+    local r, g, b, a = base_color:get()
+    return color.new(
+        math.min(255, r + amount),
+        math.min(255, g + amount),
+        math.min(255, b + amount),
+        a
+    )
+end
 
 local LAYOUT = AstroUI.LAYOUT
 
@@ -42,14 +53,13 @@ local function render_button(window, colors, x, y, w, h, label, enabled)
     local hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
     window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
 
-    local bg = enabled and (hovered and colors.primary_accent or colors.slider_fill) or colors.slider_bg
-    window:render_rect_filled(btn_start, btn_end, bg, 2)
-    window:render_rect(btn_start, btn_end, colors.primary_accent, 2, 1.0)
+    local bg = enabled and (hovered and lighten_color(colors.primary_accent, 15) or colors.primary_accent) or colors.checkbox_inactive
+    window:render_rect_filled(btn_start, btn_end, bg, 6)
 
     local text_size = window:get_text_size(label)
     local text_x = x + (w - text_size.x) / 2
     local text_y = y + (h - text_size.y) / 2
-    local text_col = enabled and colors.text_primary or colors.text_secondary
+    local text_col = enabled and colors.text_primary or colors.text_disabled
     window:render_text(enums.window_enums.font_id.FONT_SMALL,
         vec2.new(text_x, text_y), text_col, label)
 
@@ -239,7 +249,7 @@ end
 ---@param ui any RotationSettingsUI instance
 ---@param menu table Menu elements table
 ---@param facade table|nil NavLib Facade instance
-function DebugTab.register(ui, menu, facade)
+function DebugTab.register(ui, menu, facade, reset_mappings)
     ui:add_tab({ id = "debug", label = "Debug" }, function(t)
 
         -- Live Status (custom rendered)
@@ -250,9 +260,9 @@ function DebugTab.register(ui, menu, facade)
                 local x = LAYOUT.padding_side
 
                 -- Section label
-                window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                    vec2.new(x, y_offset), colors.primary_accent, "Live Status")
-                y_offset = y_offset + window:get_text_size("Live Status").y + 4
+                window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG,
+                    vec2.new(x, y_offset), colors.text_secondary, "Live Status")
+                y_offset = y_offset + window:get_text_size("Live Status").y + 10
 
                 if not facade then
                     y_offset = render_line(window, colors, x, y_offset, "State", "no facade")
@@ -339,9 +349,9 @@ function DebugTab.register(ui, menu, facade)
                 -- Section label with count
                 local zones = obstacle:get_avoidance_zones()
                 local header = "Avoid Zones (" .. #zones .. ")"
-                window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                    vec2.new(x, y_offset), colors.primary_accent, header)
-                y_offset = y_offset + window:get_text_size(header).y + 4
+                window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG,
+                    vec2.new(x, y_offset), colors.text_secondary, header)
+                y_offset = y_offset + window:get_text_size(header).y + 10
 
                 -- Zone list with inline remove buttons
                 for i, zone in ipairs(zones) do
@@ -409,28 +419,33 @@ function DebugTab.register(ui, menu, facade)
                 local btn_h = 20
 
                 -- Section label
-                window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                    vec2.new(x, y_offset), colors.primary_accent, "Waypoints")
-                y_offset = y_offset + window:get_text_size("Waypoints").y + 4
+                window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG,
+                    vec2.new(x, y_offset), colors.text_secondary, "Waypoints")
+                y_offset = y_offset + window:get_text_size("Waypoints").y + 10
 
                 -- Mode selector (click-to-cycle)
                 local mode_idx = menu.debug_mode:get() + 1
                 if mode_idx < 1 or mode_idx > #MODES then mode_idx = 1 end
                 local mode = MODES[mode_idx]
 
-                window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                    vec2.new(x, y_offset), colors.text_primary, "Mode")
                 local box_x = x + 40
                 local box_w = content_width - 40
-                local box_h = 18
+                local box_h = LAYOUT.element_height
                 local box_start = vec2.new(box_x, y_offset)
                 local box_end = vec2.new(box_x + box_w, y_offset + box_h)
                 local box_hovered = window:is_mouse_hovering_rect(box_start, box_end)
                 window:is_mouse_hovering_rect_block_movement(box_start, box_end)
 
-                local box_bg = box_hovered and colors.slider_fill or colors.slider_bg
-                window:render_rect_filled(box_start, box_end, box_bg, 2)
-                window:render_rect(box_start, box_end, colors.primary_accent, 2, 1.0)
+                -- "Mode" label, vertically centered with box
+                local mode_label_size = window:get_text_size("Mode")
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x, y_offset + (box_h - mode_label_size.y) / 2),
+                    colors.text_primary, "Mode")
+
+                local box_bg = box_hovered and lighten_color(colors.slider_bg, 15) or colors.slider_bg
+                local box_border = box_hovered and colors.primary_accent or colors.section_border
+                window:render_rect_filled(box_start, box_end, box_bg, 6)
+                window:render_rect(box_start, box_end, box_border, 6, 1.0)
 
                 local mode_text = mode.name
                 local mode_size = window:get_text_size(mode_text)
@@ -534,34 +549,30 @@ function DebugTab.register(ui, menu, facade)
             end
         })
 
-        -- Reset Defaults
+        -- Reset All Defaults (custom rendered)
         t:custom_render({
             render_fn = function(self, y_offset)
+                if not reset_mappings then return y_offset end
                 local window = self.window
                 local colors = self.colors
                 local x = LAYOUT.padding_side
-                local w = window:get_size().x - (2 * LAYOUT.padding_side)
-                local h = 22
+                local window_size = window:get_size()
+                local content_width = window_size.x - (2 * LAYOUT.padding_side)
 
-                local clicked = render_button(window, colors, x, y_offset, w, h, "Reset Defaults")
+                local clicked = render_button(window, colors, x, y_offset,
+                    content_width, 26, "Reset All Defaults")
                 if clicked then
-                    local Dd = Defaults.debug
-                    local Dm = Defaults.movement
-                    Defaults.reset({
-                        { menu.debug_verbose,   Dm.debug_verbose },
-                        { menu.debug_mode,      Dd.debug_mode },
-                        { menu.viz_master,      Dd.viz_master },
-                        { menu.viz_path,        Dd.viz_path },
-                        { menu.viz_destination, Dd.viz_destination },
-                        { menu.viz_obstacles,   Dd.viz_obstacles },
-                        { menu.viz_corridor,    Dd.viz_corridor },
-                        { menu.viz_state,       Dd.viz_state },
-                    })
+                    for _, mappings in pairs(reset_mappings) do
+                        Defaults.reset(mappings)
+                    end
+                    core.log("[NavLib] All settings reset to defaults")
                 end
 
-                return y_offset + h + 4
+                y_offset = y_offset + 26 + 8
+                return y_offset
             end
         })
+
     end)
 end
 

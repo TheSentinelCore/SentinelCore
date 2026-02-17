@@ -2,14 +2,6 @@
     Pathfinding Tab - Smoothing, optimization, terrain costs, indoor, wall clearance
 ]]
 
-local vec2      = require("common/geometry/vector_2")
-local enums     = require("common/enums")
-local AstroUI   = require("shared/AstroUI")
-local Defaults  = require("core/Defaults")
-
-local LAYOUT = AstroUI.LAYOUT
-local D = Defaults.movement
-
 local PathfindingTab = {}
 
 -- Smoothing algorithm names (combo options) — order matches NavBuddy API
@@ -50,11 +42,11 @@ function PathfindingTab.register(ui, menu)
 
     ui:add_tab({ id = "pathfinding", label = "Pathfinding" }, function(t)
         -- Path Smoothing
-        t:combo_list({
+        t:segmented_control({
             label = "Path Smoothing",
-            elements = {
-                { element = menu.smoothing, label = "Algorithm", options = SMOOTHING_NAMES, tooltip = "Chaikin for sharp turns, Catmull-Rom/Bezier for smooth curves" },
-            }
+            element = menu.smoothing,
+            options = SMOOTHING_NAMES,
+            tooltip = "Chaikin for sharp turns, Catmull-Rom/Bezier for smooth curves",
         })
 
         -- Smoothing Params (conditional on algorithm)
@@ -69,8 +61,9 @@ function PathfindingTab.register(ui, menu)
             }
         })
 
+        -- Keep originals (advanced, conditional on smoothing)
         t:checkbox_grid({
-            visible_when = smoothing_not_none,
+            visible_when = function() return smoothing_not_none() and show_advanced() end,
             columns = 1,
             elements = {
                 { element = menu.keep_originals, label = "Keep Original Waypoints", tooltip = "Retains original path points alongside smoothed points" },
@@ -84,32 +77,6 @@ function PathfindingTab.register(ui, menu)
             elements = {
                 { element = menu.optimize, label = "String-Pulling", tooltip = "Removes unnecessary waypoints by testing line-of-sight" },
                 { element = menu.allow_partial, label = "Allow Partial Paths", tooltip = "Accept incomplete paths when a full path is unavailable" },
-            }
-        })
-
-        -- Terrain Costs
-        t:slider_list({
-            label = "Terrain Costs",
-            elements = {
-                { element = menu.filter_ground, label = "Ground", tooltip = "Pathfinding cost multiplier for ground terrain" },
-                { element = menu.filter_water, label = "Water", tooltip = "Pathfinding cost multiplier \xe2\x80\x94 higher values avoid water" },
-                { element = menu.filter_lava, label = "Lava", tooltip = "Pathfinding cost multiplier \xe2\x80\x94 higher values avoid lava" },
-            }
-        })
-
-        -- Indoor
-        t:checkbox_grid({
-            label = "Indoor Navigation",
-            columns = 1,
-            elements = {
-                { element = menu.corridor, label = "Corridor Pathfinding", tooltip = "Uses tighter pathfinding for indoor and corridor areas" },
-            }
-        })
-
-        t:slider_list({
-            visible_when = function() return corridor_on() and show_advanced() end,
-            elements = {
-                { element = menu.corridor_probe, label = "Probe Distance", suffix = " yd", tooltip = "How far ahead to probe for corridor detection" },
             }
         })
 
@@ -129,53 +96,33 @@ function PathfindingTab.register(ui, menu)
             }
         })
 
-        -- Reset Defaults
-        t:custom_render({
-            render_fn = function(self, y_offset)
-                local window = self.window
-                local colors = self.colors
-                local x = LAYOUT.padding_side
-                local w = window:get_size().x - (2 * LAYOUT.padding_side)
-                local h = 22
-
-                local label = "Reset Defaults"
-                local btn_start = vec2.new(x, y_offset)
-                local btn_end = vec2.new(x + w, y_offset + h)
-                local hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
-                window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
-
-                local bg = hovered and colors.primary_accent or colors.slider_fill
-                window:render_rect_filled(btn_start, btn_end, bg, 2)
-                window:render_rect(btn_start, btn_end, colors.primary_accent, 2, 1.0)
-
-                local text_size = window:get_text_size(label)
-                window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                    vec2.new(x + (w - text_size.x) / 2, y_offset + (h - text_size.y) / 2),
-                    colors.text_primary, label)
-
-                if window:is_rect_clicked(btn_start, btn_end) then
-                    Defaults.reset({
-                        { menu.smoothing,         D.smoothing },
-                        { menu.smooth_iterations, D.smooth_iterations },
-                        { menu.smooth_samples,    D.smooth_samples },
-                        { menu.smooth_ratio,      D.smooth_ratio },
-                        { menu.corner_angle,      D.min_corner_angle },
-                        { menu.keep_originals,    D.keep_originals },
-                        { menu.optimize,          D.optimize },
-                        { menu.allow_partial,     D.allow_partial },
-                        { menu.filter_ground,     D.filter_ground },
-                        { menu.filter_water,      D.filter_water },
-                        { menu.filter_lava,       D.filter_lava },
-                        { menu.corridor,          D.use_corridor_indoor },
-                        { menu.corridor_probe,    D.corridor_probe_dist },
-                        { menu.wall_clearance_en, D.wall_clearance_enabled },
-                        { menu.wall_clearance,    D.wall_clearance },
-                    })
-                end
-
-                return y_offset + h + 4
-            end
+        -- Indoor Navigation (always visible)
+        t:checkbox_grid({
+            label = "Indoor Navigation",
+            columns = 1,
+            elements = {
+                { element = menu.corridor, label = "Corridor Pathfinding", tooltip = "Uses tighter pathfinding for indoor and corridor areas" },
+            }
         })
+
+        t:slider_list({
+            visible_when = function() return corridor_on() and show_advanced() end,
+            elements = {
+                { element = menu.corridor_probe, label = "Probe Distance", suffix = " yd", tooltip = "How far ahead to probe for corridor detection" },
+            }
+        })
+
+        -- Terrain Costs (advanced)
+        t:slider_list({
+            label = "Terrain Costs",
+            visible_when = show_advanced,
+            elements = {
+                { element = menu.filter_ground, label = "Ground", tooltip = "Pathfinding cost multiplier for ground terrain" },
+                { element = menu.filter_water, label = "Water", tooltip = "Pathfinding cost multiplier \xe2\x80\x94 higher values avoid water" },
+                { element = menu.filter_lava, label = "Lava", tooltip = "Pathfinding cost multiplier \xe2\x80\x94 higher values avoid lava" },
+            }
+        })
+
     end)
 end
 

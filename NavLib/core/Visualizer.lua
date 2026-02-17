@@ -15,29 +15,29 @@ Visualizer.__index = Visualizer
 --------------------------------------------------------------------------------
 
 local COLORS = {
-    -- Path layer
-    path_future_line = color.cyan(150),
-    path_past_line   = color.new(80, 80, 90, 60),
-    waypoint_current = color.orange(255),
-    waypoint_future  = color.cyan(180),
-    player_to_target = color.orange(120),
+    -- Path layer — accent blue, unified with UI theme
+    path_future_line = color.new(10, 132, 255, 140),
+    path_past_line   = color.new(120, 120, 130, 40),
+    waypoint_current = color.new(255, 255, 255, 240),
+    waypoint_future  = color.new(10, 132, 255, 160),
+    player_to_target = color.new(255, 255, 255, 80),
 
-    -- Destination layer
-    destination_ring = color.green(220),
-    destination_text = color.white(255),
+    -- Destination layer — iOS system green
+    destination_ring = color.new(48, 209, 88, 200),
+    destination_text = color.new(255, 255, 255, 220),
 
-    -- Obstacle layer
-    obstacle_fill = color.new(220, 40, 40, 50),
-    obstacle_ring = color.new(220, 40, 40, 150),
-    obstacle_text = color.new(220, 80, 80, 200),
+    -- Obstacle layer — iOS system red
+    obstacle_fill = color.new(255, 69, 58, 35),
+    obstacle_ring = color.new(255, 69, 58, 140),
+    obstacle_text = color.new(255, 69, 58, 180),
 
-    -- Corridor layer
-    corridor_line = color.new(160, 140, 220, 120),
+    -- Corridor layer — white structural guides
+    corridor_line = color.new(255, 255, 255, 60),
 
-    -- State indicators
-    requesting_ring = color.yellow(180),
-    failed_ring     = color.red(220),
-    failed_text     = color.red(255),
+    -- State indicators — iOS system colors
+    requesting_ring = color.new(255, 214, 10, 160),
+    failed_ring     = color.new(255, 69, 58, 200),
+    failed_text     = color.new(255, 69, 58, 240),
 }
 
 --------------------------------------------------------------------------------
@@ -347,7 +347,7 @@ function Visualizer:_render_state_indicator(facade, player_pos, state)
         -- Pulsing red circle around player
         local pulse = math.sin(core.time() * 4)
         local alpha = math.floor(100 + 120 * ((pulse + 1) * 0.5))
-        local stuck_color = color.new(255, 40, 40, alpha)
+        local stuck_color = color.new(255, 69, 58, alpha)
         core.graphics.circle_3d(player_pos, 2.5, stuck_color, 3, Z_OFFSET)
 
     elseif state == "requesting_path" then
@@ -362,7 +362,7 @@ function Visualizer:_render_state_indicator(facade, player_pos, state)
             if elapsed < ARRIVED_FLASH_DURATION then
                 local fade = 1.0 - (elapsed / ARRIVED_FLASH_DURATION)
                 local alpha = math.floor(255 * fade)
-                local arrived_color = color.new(40, 255, 40, alpha)
+                local arrived_color = color.new(48, 209, 88, alpha)
                 local radius = 2.0 + (1.0 - fade) * 2.0
                 core.graphics.circle_3d(player_pos, radius,
                     arrived_color, 3, Z_OFFSET)
