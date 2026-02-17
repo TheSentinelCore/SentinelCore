@@ -87,6 +87,72 @@ local function lighten_color(base_color, amount)
     return color.new(60, 60, 70, 200)
 end
 
+local SLIDER_METADATA = setmetatable({}, { __mode = "k" })
+
+local function decimal_places(value)
+    if type(value) ~= "number" then
+        return 0
+    end
+
+    local text = string.format("%.6f", value)
+    text = text:gsub("0+$", ""):gsub("%.$", "")
+    local dot = text:find("%.")
+    if not dot then
+        return 0
+    end
+    return #text - dot
+end
+
+local function register_slider_metadata(element, def)
+    if not element or type(def) ~= "table" then
+        return
+    end
+
+    if def.type ~= "int" and def.type ~= "float" then
+        return
+    end
+
+    local meta = {
+        value_type = def.type
+    }
+
+    if type(def.min) == "number" and type(def.max) == "number" then
+        meta.min = def.min
+        meta.max = def.max
+    end
+
+    if def.type == "float" then
+        local precision = math.max(
+            decimal_places(def.min),
+            decimal_places(def.max),
+            decimal_places(def.default)
+        )
+        meta.precision = math.max(1, math.min(3, precision))
+    else
+        meta.precision = 0
+    end
+
+    SLIDER_METADATA[element] = meta
+end
+
+local function get_slider_metadata(element)
+    return SLIDER_METADATA[element]
+end
+
+local function format_slider_value(value, precision, suffix)
+    local text_suffix = suffix or ""
+    if type(value) ~= "number" then
+        return tostring(value) .. text_suffix
+    end
+
+    local safe_precision = math.max(0, math.floor(precision or 0))
+    if safe_precision > 0 then
+        return string.format("%." .. safe_precision .. "f%s", value, text_suffix)
+    end
+
+    return string.format("%d%s", math.floor(value + 0.5), text_suffix)
+end
+
 -- ============================================================================
 -- COLOR THEMES
 -- ============================================================================
@@ -558,6 +624,26 @@ function RotationSettingsUI:_is_enabled()
         return self.menu.enable:get_state()
     end
     return false
+end
+
+function RotationSettingsUI:set_theme(theme_name)
+    if type(theme_name) ~= "string" or theme_name == "" then
+        return false
+    end
+
+    local normalized = string.lower(theme_name)
+    local palette = THEMES[normalized]
+    if not palette then
+        return false
+    end
+
+    self.theme_name = normalized
+    self.colors = palette
+    return true
+end
+
+function RotationSettingsUI:get_theme()
+    return self.theme_name
 end
 
 -- ============================================================================
@@ -1089,6 +1175,16 @@ function RotationSettingsUI:_get_slider_bounds(element)
         return normalized_min, normalized_max
     end
 
+    local meta = get_slider_metadata(element)
+    if meta and type(meta.min) == "number" and type(meta.max) == "number" then
+        local registered_min = meta.min
+        local registered_max = meta.max
+        if registered_max < registered_min then
+            registered_max = registered_min
+        end
+        return registered_min, registered_max
+    end
+
     return 0, 100
 end
 
@@ -1113,12 +1209,32 @@ function RotationSettingsUI:_apply_active_slider_from_mouse()
     local clamped_x = math.max(0, math.min(slider.bar_width, local_mouse_x))
     local progress = clamped_x / slider.bar_width
     local new_value = slider.min_value + (slider.max_value - slider.min_value) * progress
-    local rounded_value = math.floor(new_value + 0.5)
-    local clamped_value = math.max(slider.min_value, math.min(slider.max_value, rounded_value))
 
-    pcall(function()
+    local clamped_value
+    if slider.value_type == "int" then
+        clamped_value = math.floor(new_value + 0.5)
+    else
+        local safe_precision = math.max(0, math.floor(slider.precision or 0))
+        if safe_precision > 0 then
+            local factor = 10 ^ safe_precision
+            clamped_value = math.floor((new_value * factor) + 0.5) / factor
+        else
+            clamped_value = new_value
+        end
+    end
+
+    clamped_value = math.max(slider.min_value, math.min(slider.max_value, clamped_value))
+
+    local ok_set = pcall(function()
         slider.element:set(clamped_value)
     end)
+
+    if not ok_set then
+        local fallback_int = math.floor(clamped_value + 0.5)
+        pcall(function()
+            slider.element:set(fallback_int)
+        end)
+    end
 end
 
 function RotationSettingsUI:_start_key_capture(element, label)
@@ -1258,6 +1374,29 @@ function RotationSettingsUI:_render_slider_list(section, y_offset)
                 max_value = min_value
             end
 
+            local meta = get_slider_metadata(element)
+            local value_type = item.value_type
+            if value_type ~= "int" and value_type ~= "float" then
+                value_type = meta and meta.value_type or nil
+            end
+            if value_type ~= "int" and value_type ~= "float" then
+                value_type = "int"
+            end
+
+            local precision = tonumber(item.precision)
+            if precision == nil and meta then
+                precision = tonumber(meta.precision)
+            end
+            if precision == nil then
+                local inferred = math.max(decimal_places(min_value), decimal_places(max_value), decimal_places(value))
+                if value_type == "float" then
+                    precision = math.max(1, math.min(3, inferred))
+                else
+                    precision = 0
+                end
+            end
+            precision = math.max(0, math.min(3, math.floor(precision)))
+
             -- Define rectangles
             local bar_x_start = x_start + label_width
             local bar_start = vec2.new(bar_x_start, y_offset)
@@ -1296,7 +1435,7 @@ function RotationSettingsUI:_render_slider_list(section, y_offset)
             self.window:render_rect(bar_start, bar_end, border_color, 1.5, 1.0)
 
             -- Value text
-            local value_text = string.format("%d%s", value, suffix)
+            local value_text = format_slider_value(value, precision, suffix)
             local value_x = bar_x_start + bar_width + 10
             local value_y = y_offset + (LAYOUT.slider_bar_height - self.window:get_text_size(value_text).y) / 2
             self.window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(value_x, value_y),
@@ -1345,7 +1484,9 @@ function RotationSettingsUI:_render_slider_list(section, y_offset)
                     bar_x_start = bar_x_start,
                     bar_width = bar_width,
                     last_mouse_pos = chosen_pos,
-                    mouse_space = use_space
+                    mouse_space = use_space,
+                    value_type = value_type,
+                    precision = precision
                 }
                 self:_apply_active_slider_from_mouse()
             end
@@ -1677,4 +1818,5 @@ return {
     new = RotationSettingsUI.new,
     LAYOUT = LAYOUT,
     THEMES = THEMES,
+    register_slider_metadata = register_slider_metadata,
 }

@@ -55,6 +55,91 @@ local function current_map_id()
     return nil
 end
 
+local function bag_get_num_slots(bag_id)
+    if C_Container and type(C_Container.GetContainerNumSlots) == "function" then
+        local ok, slots = pcall(C_Container.GetContainerNumSlots, bag_id)
+        if ok and type(slots) == "number" then
+            return slots
+        end
+    end
+
+    if type(GetContainerNumSlots) == "function" then
+        local ok, slots = pcall(GetContainerNumSlots, bag_id)
+        if ok and type(slots) == "number" then
+            return slots
+        end
+    end
+
+    return 0
+end
+
+local function bag_get_item_info(bag_id, slot_id)
+    if C_Container and type(C_Container.GetContainerItemInfo) == "function" then
+        local ok, info = pcall(C_Container.GetContainerItemInfo, bag_id, slot_id)
+        if ok and type(info) == "table" then
+            return info
+        end
+    end
+
+    if type(GetContainerItemInfo) == "function" then
+        local ok, texture, item_count, locked, quality, readable, lootable, hyperlink = pcall(GetContainerItemInfo, bag_id,
+            slot_id)
+        if ok and texture then
+            return {
+                iconFileID = texture,
+                stackCount = item_count,
+                isLocked = locked,
+                quality = quality,
+                isReadable = readable,
+                hasLoot = lootable,
+                hyperlink = hyperlink
+            }
+        end
+    end
+
+    return nil
+end
+
+local function bag_use_item(bag_id, slot_id)
+    if C_Container and type(C_Container.UseContainerItem) == "function" then
+        local ok = pcall(C_Container.UseContainerItem, bag_id, slot_id)
+        if ok then
+            return true
+        end
+    end
+
+    if type(UseContainerItem) == "function" then
+        local ok = pcall(UseContainerItem, bag_id, slot_id)
+        if ok then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function is_merchant_frame_open()
+    if type(MerchantFrame) ~= "table" then
+        return false
+    end
+
+    if type(MerchantFrame.IsShown) == "function" then
+        local ok, shown = pcall(MerchantFrame.IsShown, MerchantFrame)
+        if ok and shown == true then
+            return true
+        end
+    end
+
+    if type(MerchantFrame.IsVisible) == "function" then
+        local ok, visible = pcall(MerchantFrame.IsVisible, MerchantFrame)
+        if ok and visible == true then
+            return true
+        end
+    end
+
+    return false
+end
+
 function GrindBuddy:get_instance()
     if not _instance then
         _instance = setmetatable({
@@ -129,6 +214,25 @@ function GrindBuddy:get_instance()
             _loot_range = 7.0,
             _loot_attempt_interval = 0.8,
             _last_loot_attempt = 0,
+
+            -- Replenish / vendor flow
+            _auto_replenish_enabled = false,
+            _replenish_min_free_slots = 2,
+            _vendor_npc_id = 0,
+            _vendor_scan_radius = 120.0,
+            _vendor_interact_range = 5.0,
+            _auto_vendor_sell_junk = true,
+            _auto_vendor_repair = true,
+            _replenish_active = false,
+            _replenish_started_at = 0,
+            _replenish_timeout = 90.0,
+            _replenish_cooldown = 20.0,
+            _replenish_cooldown_until = 0,
+            _last_vendor_interact = 0,
+            _vendor_interact_interval = 1.1,
+            _last_vendor_action = 0,
+            _vendor_action_interval = 0.8,
+            _inventory_helper = nil,
 
             -- Blacklist
             _blacklist_guid = {},
@@ -711,6 +815,390 @@ function GrindBuddy:_try_loot_target(local_player, target, now)
 
     self:_set_state("looting")
     self:_set_status("Looting")
+    return true
+end
+
+function GrindBuddy:_get_bag_slot_count(bag_id)
+    if bag_id == 0 then
+        local slots = bag_get_num_slots(0)
+        if slots > 0 then
+            return slots
+        end
+        return 16
+    end
+
+    local instance = self:get_instance()
+    if instance._inventory_helper == nil then
+        local ok, helper = pcall(require, "common/utility/inventory_helper")
+        instance._inventory_helper = ok and helper or false
+    end
+
+    if instance._inventory_helper and instance._inventory_helper.get_character_bag_slots then
+        local slots = instance._inventory_helper:get_character_bag_slots()
+        if slots then
+            local max_slot = 0
+            for _, slot_data in ipairs(slots) do
+                if slot_data.bag_id == bag_id and slot_data.bag_slot > max_slot then
+                    max_slot = slot_data.bag_slot
+                end
+            end
+            if max_slot > 0 then
+                return max_slot
+            end
+        end
+    end
+
+    return math.max(0, bag_get_num_slots(bag_id))
+end
+
+function GrindBuddy:_get_bag_item_count(bag_id)
+    if core.inventory and core.inventory.get_items_in_bag then
+        local items = core.inventory.get_items_in_bag(bag_id)
+        if items then
+            local count = 0
+            for _, item in ipairs(items) do
+                if item and item.id and item.id > 0 then
+                    count = count + 1
+                end
+            end
+            return count
+        end
+    end
+
+    local slot_count = bag_get_num_slots(bag_id)
+    if slot_count <= 0 then
+        return 0
+    end
+
+    local count = 0
+    for slot_id = 1, slot_count do
+        local info = bag_get_item_info(bag_id, slot_id)
+        if info and (info.hyperlink or info.itemID or info.itemLink) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function GrindBuddy:_get_free_bag_slots()
+    local total_slots = 0
+    local free_slots = 0
+
+    for bag_id = 0, 4 do
+        local bag_slots = self:_get_bag_slot_count(bag_id)
+        if bag_slots > 0 then
+            total_slots = total_slots + bag_slots
+            local bag_items = self:_get_bag_item_count(bag_id)
+            if bag_items > bag_slots then
+                bag_items = bag_slots
+            end
+            free_slots = free_slots + (bag_slots - bag_items)
+        end
+    end
+
+    if total_slots <= 0 then
+        return nil, nil
+    end
+    return free_slots, total_slots
+end
+
+function GrindBuddy:_is_replenish_needed()
+    local instance = self:get_instance()
+    if not instance._auto_replenish_enabled then
+        return false, nil, nil
+    end
+    if instance._vendor_npc_id <= 0 then
+        return false, nil, nil
+    end
+    if now_time() < (instance._replenish_cooldown_until or 0) then
+        return false, nil, nil
+    end
+
+    local free_slots, total_slots = self:_get_free_bag_slots()
+    if free_slots == nil then
+        return false, nil, nil
+    end
+
+    return free_slots <= instance._replenish_min_free_slots, free_slots, total_slots
+end
+
+function GrindBuddy:_find_vendor_target(local_player)
+    local instance = self:get_instance()
+    if instance._vendor_npc_id <= 0 then
+        return nil, math.huge
+    end
+
+    local all_objects = core.object_manager.get_all_objects()
+    if not all_objects then
+        return nil, math.huge
+    end
+
+    local my_pos = local_player:get_position()
+    local best = nil
+    local best_dist = math.huge
+
+    for _, obj in ipairs(all_objects) do
+        if obj and call_method(obj, "is_valid") ~= false and call_method(obj, "is_unit") == true and call_method(obj, "is_player") ~= true then
+            local npc_id = tonumber(call_method(obj, "get_npc_id")) or -1
+            if npc_id == instance._vendor_npc_id then
+                local obj_pos = call_method(obj, "get_position")
+                local dist = self:_distance_to(my_pos, obj_pos)
+                if dist <= instance._vendor_scan_radius and dist < best_dist then
+                    best = obj
+                    best_dist = dist
+                end
+            end
+        end
+    end
+
+    return best, best_dist
+end
+
+function GrindBuddy:_interact_with_object(target, target_pos)
+    if not target or not core.input then
+        return false
+    end
+
+    if target_pos and core.input.look_at then
+        core.input.look_at(target_pos)
+    end
+
+    if core.input.interact_with_object then
+        core.input.interact_with_object(target)
+        return true
+    end
+    if core.input.interact_with_unit then
+        core.input.interact_with_unit(target)
+        return true
+    end
+    if core.input.use_object then
+        core.input.use_object(target)
+        return true
+    end
+
+    return false
+end
+
+function GrindBuddy:_get_bag_slot_quality(bag_id, slot_id)
+    local info = bag_get_item_info(bag_id, slot_id)
+    if not info then
+        return nil
+    end
+
+    local quality = tonumber(info.quality)
+    if quality ~= nil then
+        return quality
+    end
+
+    local link = info.hyperlink or info.itemLink
+    if link and type(GetItemInfo) == "function" then
+        local ok, _, _, link_quality = pcall(GetItemInfo, link)
+        if ok then
+            return tonumber(link_quality)
+        end
+    end
+
+    return nil
+end
+
+function GrindBuddy:_count_junk_slots()
+    local junk = 0
+    for bag_id = 0, 4 do
+        local slot_count = bag_get_num_slots(bag_id)
+        if slot_count > 0 then
+            for slot_id = 1, slot_count do
+                local quality = self:_get_bag_slot_quality(bag_id, slot_id)
+                if quality == 0 then
+                    junk = junk + 1
+                end
+            end
+        end
+    end
+    return junk
+end
+
+function GrindBuddy:_sell_junk_items()
+    local sold = 0
+    for bag_id = 0, 4 do
+        local slot_count = bag_get_num_slots(bag_id)
+        if slot_count > 0 then
+            for slot_id = slot_count, 1, -1 do
+                local quality = self:_get_bag_slot_quality(bag_id, slot_id)
+                if quality == 0 and bag_use_item(bag_id, slot_id) then
+                    sold = sold + 1
+                end
+            end
+        end
+    end
+    return sold
+end
+
+function GrindBuddy:_needs_repair()
+    if type(CanMerchantRepair) == "function" then
+        local ok, can_repair = pcall(CanMerchantRepair)
+        if ok and can_repair ~= true then
+            return false
+        end
+    end
+
+    if type(GetRepairAllCost) ~= "function" then
+        return false
+    end
+
+    local ok, cost, can_repair = pcall(GetRepairAllCost)
+    if not ok then
+        return false
+    end
+    return (tonumber(cost) or 0) > 0 and can_repair == true
+end
+
+function GrindBuddy:_repair_items()
+    if type(RepairAllItems) ~= "function" then
+        return false
+    end
+    if not self:_needs_repair() then
+        return false
+    end
+
+    local ok = pcall(RepairAllItems)
+    if not ok then
+        ok = pcall(RepairAllItems, false)
+    end
+    return ok == true
+end
+
+function GrindBuddy:_run_vendor_actions(now)
+    local instance = self:get_instance()
+    if (now - instance._last_vendor_action) < instance._vendor_action_interval then
+        return false
+    end
+    instance._last_vendor_action = now
+
+    local repaired = false
+    local sold_count = 0
+
+    if instance._auto_vendor_repair then
+        repaired = self:_repair_items()
+    end
+    if instance._auto_vendor_sell_junk then
+        sold_count = self:_sell_junk_items()
+    end
+
+    if repaired then
+        core.log("[GrindBuddy] Vendor: repaired items")
+    end
+    if sold_count > 0 then
+        core.log(string.format("[GrindBuddy] Vendor: sold %d junk items", sold_count))
+    end
+
+    local remaining_junk = instance._auto_vendor_sell_junk and self:_count_junk_slots() or 0
+    local remaining_repair = instance._auto_vendor_repair and self:_needs_repair() or false
+    local completed = remaining_junk == 0 and remaining_repair == false
+    return completed, sold_count, repaired
+end
+
+function GrindBuddy:_tick_replenish(local_player, now)
+    local instance = self:get_instance()
+    if not instance._auto_replenish_enabled then
+        instance._replenish_active = false
+        return false
+    end
+    if instance._vendor_npc_id <= 0 then
+        if instance._replenish_active then
+            instance._replenish_active = false
+            self:_set_state("patrol")
+            self:_set_status("Replenish disabled (vendor NPC ID not set)")
+        end
+        return false
+    end
+
+    if call_method(local_player, "is_in_combat") == true then
+        return false
+    end
+
+    local should_replenish, free_slots, total_slots = self:_is_replenish_needed()
+    if not should_replenish and not instance._replenish_active then
+        return false
+    end
+
+    if not instance._replenish_active then
+        self:_cancel_inflight_move("replenish-start")
+        self:_clear_target()
+        instance._replenish_active = true
+        instance._replenish_started_at = now
+        instance._last_vendor_interact = 0
+        instance._last_vendor_action = 0
+        self:_set_state("replenish")
+        if free_slots and total_slots then
+            self:_set_status(string.format("Replenish started (%d/%d free)", free_slots, total_slots))
+        else
+            self:_set_status("Replenish started")
+        end
+        core.log(string.format("[GrindBuddy] Replenish started (vendor npc_id=%d)", instance._vendor_npc_id))
+    end
+
+    if (now - instance._replenish_started_at) > instance._replenish_timeout then
+        instance._replenish_active = false
+        instance._replenish_cooldown_until = now + instance._replenish_cooldown
+        self:_set_state("patrol")
+        self:_set_status("Replenish timeout")
+        core.log_warning("[GrindBuddy] Replenish timeout, resuming patrol")
+        return false
+    end
+
+    local vendor, dist = self:_find_vendor_target(local_player)
+    if not vendor then
+        self:_set_state("replenish")
+        self:_set_status(string.format("Searching vendor npc_id=%d", instance._vendor_npc_id))
+        return true
+    end
+
+    local vendor_pos = call_method(vendor, "get_position")
+    local movement = instance._movement
+    local moving = movement and movement.is_moving and movement:is_moving() or false
+
+    if dist > instance._vendor_interact_range then
+        if not moving and not instance._move_inflight and vendor_pos then
+            self:_begin_move(vendor_pos, string.format("Moving to vendor (%.1f yd)", dist))
+        else
+            self:_set_state("replenish")
+            self:_set_status(string.format("Approaching vendor (%.1f yd)", dist))
+        end
+        return true
+    end
+
+    if moving then
+        self:_cancel_inflight_move("vendor-in-range")
+    end
+
+    if not is_merchant_frame_open() then
+        if (now - instance._last_vendor_interact) >= instance._vendor_interact_interval then
+            if self:_interact_with_object(vendor, vendor_pos) then
+                instance._last_vendor_interact = now
+                self:_set_state("replenish")
+                self:_set_status("Opening vendor")
+            end
+        else
+            self:_set_state("replenish")
+            self:_set_status("Waiting vendor window")
+        end
+        return true
+    end
+
+    local completed, sold_count, repaired = self:_run_vendor_actions(now)
+    if completed then
+        instance._replenish_active = false
+        if sold_count == 0 and repaired ~= true then
+            instance._replenish_cooldown_until = now + instance._replenish_cooldown
+        end
+        self:_set_state("patrol")
+        self:_set_status("Replenish complete")
+        core.log("[GrindBuddy] Replenish complete")
+        return false
+    end
+
+    self:_set_state("replenish")
+    self:_set_status("Vendor actions in progress")
     return true
 end
 
@@ -1462,6 +1950,11 @@ function GrindBuddy:start()
     instance._last_route_profile_refresh = 0
     instance._last_mount_attempt = 0
     instance._last_dismount_attempt = 0
+    instance._replenish_active = false
+    instance._replenish_started_at = 0
+    instance._replenish_cooldown_until = 0
+    instance._last_vendor_interact = 0
+    instance._last_vendor_action = 0
     self:_reset_unstuck_runtime(true)
     self:_set_state("patrol")
     self:_set_status("Patrol started")
@@ -1482,6 +1975,11 @@ function GrindBuddy:stop()
     instance._move_started_at = 0
     instance._move_last_progress_at = 0
     instance._move_last_progress_pos = nil
+    instance._replenish_active = false
+    instance._replenish_started_at = 0
+    instance._replenish_cooldown_until = 0
+    instance._last_vendor_interact = 0
+    instance._last_vendor_action = 0
     self:_reset_unstuck_runtime(true)
     self:_clear_target()
     self:_set_state("idle")
@@ -1538,6 +2036,10 @@ function GrindBuddy:update()
         return
     end
 
+    if self:_tick_replenish(local_player, now) then
+        return
+    end
+
     self:_acquire_target(local_player)
     if instance._target then
         self:_tick_target(local_player)
@@ -1577,6 +2079,13 @@ function GrindBuddy:get_grind_settings()
         route_mode = instance._route_mode,
         route_auto_profile = route_profiles and route_profiles:is_auto_select_enabled() or true,
         route_profile_index = active_route_index,
+        auto_replenish_enabled = instance._auto_replenish_enabled,
+        replenish_min_free_slots = instance._replenish_min_free_slots,
+        vendor_npc_id = instance._vendor_npc_id,
+        vendor_scan_radius = instance._vendor_scan_radius,
+        vendor_interact_range = instance._vendor_interact_range,
+        auto_vendor_sell_junk = instance._auto_vendor_sell_junk,
+        auto_vendor_repair = instance._auto_vendor_repair,
     }
 end
 
@@ -1585,6 +2094,7 @@ function GrindBuddy:set_grind_settings(settings)
     if not settings then
         return
     end
+    local was_replenish_active = instance._replenish_active == true
 
     if settings.scan_radius then
         local scan = tonumber(settings.scan_radius) or instance._scan_radius
@@ -1621,6 +2131,41 @@ function GrindBuddy:set_grind_settings(settings)
     end
     if settings.only_hostile_targets ~= nil then
         instance._only_hostile_targets = settings.only_hostile_targets == true
+    end
+    if settings.auto_replenish_enabled ~= nil then
+        instance._auto_replenish_enabled = settings.auto_replenish_enabled == true
+        if not instance._auto_replenish_enabled then
+            instance._replenish_active = false
+            if was_replenish_active then
+                self:_cancel_inflight_move("replenish-disabled")
+            end
+        end
+    end
+    if settings.replenish_min_free_slots ~= nil then
+        local min_slots = tonumber(settings.replenish_min_free_slots) or instance._replenish_min_free_slots
+        instance._replenish_min_free_slots = math.max(0, math.min(16, math.floor(min_slots)))
+    end
+    if settings.vendor_npc_id ~= nil then
+        local npc_id = tonumber(settings.vendor_npc_id) or instance._vendor_npc_id
+        instance._vendor_npc_id = math.max(0, math.floor(npc_id))
+        if instance._vendor_npc_id <= 0 and was_replenish_active then
+            instance._replenish_active = false
+            self:_cancel_inflight_move("replenish-vendor-cleared")
+        end
+    end
+    if settings.vendor_scan_radius ~= nil then
+        local radius = tonumber(settings.vendor_scan_radius) or instance._vendor_scan_radius
+        instance._vendor_scan_radius = math.max(20.0, math.min(250.0, radius))
+    end
+    if settings.vendor_interact_range ~= nil then
+        local interact_range = tonumber(settings.vendor_interact_range) or instance._vendor_interact_range
+        instance._vendor_interact_range = math.max(2.0, math.min(12.0, interact_range))
+    end
+    if settings.auto_vendor_sell_junk ~= nil then
+        instance._auto_vendor_sell_junk = settings.auto_vendor_sell_junk == true
+    end
+    if settings.auto_vendor_repair ~= nil then
+        instance._auto_vendor_repair = settings.auto_vendor_repair == true
     end
     if instance._chase_stop_range < instance._pull_range then
         instance._chase_stop_range = instance._pull_range
