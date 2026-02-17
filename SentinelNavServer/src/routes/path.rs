@@ -227,6 +227,8 @@ pub async fn find_path(
     State(state): State<AppState>,
     Query(params): Query<PathRequest>,
 ) -> Result<Json<PathResponse>, AppError> {
+    state.metrics.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     // Validate inputs
     validate_map_id(params.map_id)?;
     validate_coordinate(params.start_x, params.start_y, params.start_z)?;
