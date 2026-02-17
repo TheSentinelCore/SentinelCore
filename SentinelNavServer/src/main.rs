@@ -1,6 +1,6 @@
 //! Sentinel Navigation Server - High-performance navigation server for WoW pathfinding.
 //!
-//! This server provides HTTP endpoints for pathfinding using TrinityCore
+//! This server provides HTTP endpoints for pathfinding using CMaNGOS-generated
 //! navigation mesh files (mmaps).
 
 use std::net::SocketAddr;

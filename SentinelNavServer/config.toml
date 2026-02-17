@@ -10,7 +10,7 @@ port = 47110
 max_concurrent_requests = 100
 
 [navmesh]
-# Path to TrinityCore mmap files directory
+# Path to CMaNGOS mmap files directory
 # Relative to SentinelNavServer directory or absolute path
 mmap_path = "./mmaps"
 
