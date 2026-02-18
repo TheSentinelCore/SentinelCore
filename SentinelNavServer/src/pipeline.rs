@@ -55,9 +55,10 @@ pub(crate) const SEARCH_TIERS: [(f32, f32, f32); 3] = [
 /// Max Z deviation before rejecting a snap result (prevents wrong-floor selection).
 const MAX_Z_SNAP_DELTA: f32 = 5.0;
 
-/// XY offsets (yards) to try when the start poly appears to be on a disconnected island.
-/// Cardinal + diagonal directions at ~3 yards — enough to step off most GO-induced islands.
-const ISLAND_RETRY_OFFSETS: [(f32, f32); 8] = [
+/// XY offsets (yards) to try when the start/end poly is on a disconnected island.
+/// Inner ring (~3 yd) for small GO islands; outer ring (~6 yd) for larger GO clusters.
+const ISLAND_RETRY_OFFSETS: [(f32, f32); 16] = [
+    // Inner ring: ~3 yards
     (3.0, 0.0),
     (-3.0, 0.0),
     (0.0, 3.0),
@@ -66,6 +67,15 @@ const ISLAND_RETRY_OFFSETS: [(f32, f32); 8] = [
     (-2.0, 2.0),
     (2.0, -2.0),
     (-2.0, -2.0),
+    // Outer ring: ~6 yards
+    (6.0, 0.0),
+    (-6.0, 0.0),
+    (0.0, 6.0),
+    (0.0, -6.0),
+    (4.2, 4.2),
+    (-4.2, 4.2),
+    (4.2, -4.2),
+    (-4.2, -4.2),
 ];
 
 /// NAV_GROUND flag (1 << (11-11) = 0x01).

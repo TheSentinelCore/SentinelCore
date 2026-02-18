@@ -36,7 +36,8 @@ search_extents = [6.0, 10.0, 50.0]
 # Shorter = smoother curves on ramps, higher CPU cost
 max_segment_length = 3.0
 # Island recovery retry count (cardinal + diagonal offsets)
-island_retry_count = 8
+# Island recovery retry count (inner ring at 3yd + outer ring at 6yd)
+island_retry_count = 16
 # Default area costs [ground, water, lava]
 default_area_costs = [1.0, 1.5, 100.0]
 # Maximum A* search nodes per query (higher = deeper search in dense meshes)
