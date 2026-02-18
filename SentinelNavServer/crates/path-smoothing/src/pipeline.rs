@@ -58,9 +58,22 @@ impl SmootherPipeline {
         // Stage 1: Outlier rejection (remove glitch/hairpin waypoints)
         let after_rejection = chaikin::reject_outliers(waypoints, self.config.chaikin_outlier_angle);
 
+        // Stage 1.5: Chaikin corner softening (optional)
+        let after_chaikin = if self.config.chaikin_iterations > 0 {
+            chaikin::smooth_chaikin(
+                &after_rejection,
+                self.config.chaikin_iterations as usize,
+                self.config.chaikin_ratio,
+                self.config.chaikin_angle_threshold,
+                false, // Don't keep originals, we want to replace corners
+            )
+        } else {
+            after_rejection
+        };
+
         // Stage 2: Centripetal Catmull-Rom interpolation
         let after_catmull = catmull_rom::smooth_catmull_rom_centripetal(
-            &after_rejection,
+            &after_chaikin,
             self.config.catmull_rom_alpha,
             self.config.catmull_rom_tension,
             self.config.catmull_rom_points_per_segment,

@@ -48,24 +48,24 @@ pub struct SmootherConfig {
 impl Default for SmootherConfig {
     fn default() -> Self {
         Self {
-            chaikin_iterations: 3,
-            chaikin_ratio: 0.50,
-            chaikin_angle_threshold: 90.0,
-            chaikin_outlier_angle: 90.0,
+            chaikin_iterations: 2,
+            chaikin_ratio: 0.90,
+            chaikin_angle_threshold: 45.0,
+            chaikin_outlier_angle: 15.0,
 
             catmull_rom_alpha: 0.5,
             catmull_rom_tension: 0.0,
-            catmull_rom_points_per_segment: 8,
+            catmull_rom_points_per_segment: 12,
             catmull_rom_adaptive_density: true,
 
             min_waypoint_spacing: 0.5,
 
             reprojection_extents: [2.0, 4.0, 2.0],
-            stair_detection_threshold: 0.3,
+            stair_detection_threshold: 0.2,
 
             validate_on_navmesh: true,
             fallback_on_invalid: true,
-            max_deviation_from_original: 5.0,
+            max_deviation_from_original: 6.0,
         }
     }
 }

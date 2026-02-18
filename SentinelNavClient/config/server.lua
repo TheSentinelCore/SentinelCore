@@ -5,7 +5,7 @@
 
 local ServerConfig = {
     --- Base URL for SentinelNavServer HTTP API
-    base_url = "http://78.31.71.163:47110",
+    base_url = "http://127.0.0.1:47110",
 
     --- Maximum HTTP request retries before marking as failed
     max_retries = 3,

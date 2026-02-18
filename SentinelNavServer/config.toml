@@ -20,7 +20,7 @@ mmap_path = "./mmaps"
 #   1   = Kalimdor (Durotar, Orgrimmar, etc.)
 #   530 = Outland
 #   571 = Northrend
-preload_maps = [0,1,530]
+preload_maps = [1]
 
 [pathfinding]
 # Default smoothing algorithm: "none", "chaikin", "catmull_rom", "bezier"
