@@ -109,6 +109,8 @@ pub struct PathResult {
     pub waypoints: Vec<Vec3>,
     pub distance: f32,
     pub partial: bool,
+    /// True if partial result was caused by A* node pool exhaustion.
+    pub out_of_nodes: bool,
 }
 
 /// Check if any custom filter parameters are provided.
@@ -332,6 +334,27 @@ pub fn execute_pathfind(
         }
     }
 
+    // Diagnostic logging for partial paths
+    if is_partial {
+        if was_out_of_nodes {
+            tracing::warn!(
+                "Partial path (OUT_OF_NODES): ({:.1},{:.1},{:.1}) -> ({:.1},{:.1},{:.1}), \
+                 poly_count={} — consider increasing max_query_nodes",
+                start_pos.x, start_pos.y, start_pos.z,
+                end_pos.x, end_pos.y, end_pos.z,
+                poly_path.len(),
+            );
+        } else {
+            tracing::warn!(
+                "Partial path (disconnected): ({:.1},{:.1},{:.1}) -> ({:.1},{:.1},{:.1}), \
+                 poly_count={}",
+                start_pos.x, start_pos.y, start_pos.z,
+                end_pos.x, end_pos.y, end_pos.z,
+                poly_path.len(),
+            );
+        }
+    }
+
     if poly_path.is_empty() {
         return Err(AppError::PathfindingFailed("Empty polygon path".into()));
     }
@@ -372,6 +395,7 @@ pub fn execute_pathfind(
         waypoints,
         distance,
         partial: is_partial,
+        out_of_nodes: was_out_of_nodes,
     })
 }
 
