@@ -41,12 +41,7 @@ Defaults.movement = {
     max_deviation_repaths        = { type = "int",   min = 1,    max = 10,    default = 5,     id = "snc_max_deviation_repaths" },
 
     -- Smoothing
-    smoothing               = { type = "combo", default = 2, options = { "none", "chaikin", "catmull", "bezier" }, id = "snc_smoothing" },
-    smooth_iterations       = { type = "int",   min = 1,    max = 5,     default = 3,     id = "snc_smooth_iterations" },
-    smooth_samples          = { type = "int",   min = 5,    max = 50,    default = 10,    id = "snc_smooth_samples" },
-    smooth_ratio            = { type = "int",   min = 50,   max = 95,    default = 50,    id = "snc_smooth_ratio_pct" },
-    min_corner_angle        = { type = "float", min = 0.0,  max = 120.0, default = 90.0,  id = "snc_corner_angle" },
-    keep_originals          = { type = "bool",  default = false,  id = "snc_keep_originals" },
+    smoothing               = { type = "bool", default = true, id = "snc_smoothing" },
 
     -- Optimization
     optimize                = { type = "bool",  default = true,   id = "snc_optimize" },

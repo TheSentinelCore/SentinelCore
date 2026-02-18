@@ -21,9 +21,9 @@ pub struct SmootherConfig {
     pub catmull_rom_alpha: f32,
     /// Tension. 0.0 = natural curves, 1.0 = straight lines. Default: 0.0.
     pub catmull_rom_tension: f32,
-    /// Base interpolated points per segment. Default: 8.
+    /// Base interpolated points per segment. Default: 4.
     pub catmull_rom_points_per_segment: usize,
-    /// Scale density on steep terrain (stairs, ramps). Default: true.
+    /// Scale density on steep terrain (stairs, ramps). Default: false.
     pub catmull_rom_adaptive_density: bool,
 
     // === Reprojection (Stage 3) ===
@@ -51,8 +51,8 @@ impl Default for SmootherConfig {
 
             catmull_rom_alpha: 0.5,
             catmull_rom_tension: 0.0,
-            catmull_rom_points_per_segment: 8,
-            catmull_rom_adaptive_density: true,
+            catmull_rom_points_per_segment: 4,
+            catmull_rom_adaptive_density: false,
 
             reprojection_extents: [2.0, 4.0, 2.0],
             stair_detection_threshold: 0.3,

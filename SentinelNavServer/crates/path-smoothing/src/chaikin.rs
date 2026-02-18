@@ -39,7 +39,7 @@ pub(crate) fn corner_angle(prev: Vec3, current: Vec3, next: Vec3) -> f32 {
 /// Angles < outlier_angle indicate extreme corners (data glitches or
 /// hairpin turns) that should be removed entirely, not smoothed.
 /// Start and end points are always preserved.
-fn reject_outliers(path: &[Vec3], outlier_angle: f32) -> Vec<Vec3> {
+pub fn reject_outliers(path: &[Vec3], outlier_angle: f32) -> Vec<Vec3> {
     if path.len() < 3 || outlier_angle <= 0.0 || outlier_angle >= 180.0 {
         return path.to_vec();
     }
