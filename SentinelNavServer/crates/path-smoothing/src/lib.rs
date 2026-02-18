@@ -18,6 +18,7 @@ pub mod pipeline;
 pub mod chaikin;
 pub mod catmull_rom;
 pub mod bezier;
+pub mod decimation;
 pub mod reprojection;
 pub mod validation;
 pub mod metrics;

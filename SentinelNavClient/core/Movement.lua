@@ -951,17 +951,10 @@ function Movement:_unstuck_repath()
         return
     end
 
-    -- If already on a partial path and stuck, don't re-request the same
-    -- unreachable destination — it will just produce another partial path
+    -- On partial paths, skip repath (would reset stuck counter and loop).
+    -- Let the stuck handler continue trying other recovery strategies.
     if self._partial_path then
-        core.log_warning("[Movement] Stuck on partial path — failing (destination unreachable)")
-        simple_movement:stop()
-        self._unstuck_phase = nil
-        self:_set_state(S_FAILED)
-        if self._callback then
-            self._callback(false, "Stuck on partial path")
-            self._callback = nil
-        end
+        self:_verbose("Skipping repath on partial path (trying other recovery strategies)")
         return
     end
 

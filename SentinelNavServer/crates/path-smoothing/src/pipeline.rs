@@ -13,6 +13,7 @@ use detour::types::Vec3;
 use crate::chaikin;
 use crate::catmull_rom;
 use crate::config::SmootherConfig;
+use crate::decimation;
 use crate::metrics::PathMetrics;
 use crate::reprojection;
 use crate::validation;
@@ -67,8 +68,14 @@ impl SmootherPipeline {
             self.config.stair_detection_threshold,
         );
 
+        // Stage 2.5: Decimation (remove dense clustering on stairs)
+        let after_decimation = decimation::decimate_by_distance(
+            &after_catmull,
+            self.config.min_waypoint_spacing,
+        );
+
         // Stage 3: Height reprojection
-        let mut reprojected = after_catmull;
+        let mut reprojected = after_decimation;
         reprojection::reproject_heights(
             &mut reprojected,
             query,

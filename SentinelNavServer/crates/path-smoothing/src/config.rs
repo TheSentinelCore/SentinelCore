@@ -26,6 +26,10 @@ pub struct SmootherConfig {
     /// Scale density on steep terrain (stairs, ramps). Default: false.
     pub catmull_rom_adaptive_density: bool,
 
+    // === Decimation (Stage 2.5) ===
+    /// Minimum distance (yards) between consecutive waypoints. Default: 1.0.
+    pub min_waypoint_spacing: f32,
+
     // === Reprojection (Stage 3) ===
     /// Search extents [x, y, z] for find_nearest_poly. Default: [2.0, 4.0, 2.0].
     pub reprojection_extents: [f32; 3],
@@ -44,15 +48,17 @@ pub struct SmootherConfig {
 impl Default for SmootherConfig {
     fn default() -> Self {
         Self {
-            chaikin_iterations: 2,
+            chaikin_iterations: 3,
             chaikin_ratio: 0.75,
             chaikin_angle_threshold: 30.0,
             chaikin_outlier_angle: 90.0,
 
             catmull_rom_alpha: 0.5,
             catmull_rom_tension: 0.0,
-            catmull_rom_points_per_segment: 4,
+            catmull_rom_points_per_segment: 6,
             catmull_rom_adaptive_density: false,
+
+            min_waypoint_spacing: 1.0,
 
             reprojection_extents: [2.0, 4.0, 2.0],
             stair_detection_threshold: 0.3,
@@ -101,6 +107,10 @@ impl SmootherConfig {
         self.catmull_rom_adaptive_density = enabled;
         self
     }
+    pub fn with_min_waypoint_spacing(mut self, d: f32) -> Self {
+        self.min_waypoint_spacing = d;
+        self
+    }
     pub fn with_reprojection_extents(mut self, extents: [f32; 3]) -> Self {
         self.reprojection_extents = extents;
         self
@@ -126,7 +136,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let cfg = SmootherConfig::default();
-        assert_eq!(cfg.chaikin_iterations, 2);
+        assert_eq!(cfg.chaikin_iterations, 3);
         assert!((cfg.chaikin_ratio - 0.75).abs() < f32::EPSILON);
         assert!((cfg.catmull_rom_alpha - 0.5).abs() < f32::EPSILON);
         assert!(cfg.validate_on_navmesh);
