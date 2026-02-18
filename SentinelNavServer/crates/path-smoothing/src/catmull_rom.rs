@@ -110,7 +110,7 @@ fn barry_goldman(
 
 /// Knot delta: |P_i - P_{i-1}|^alpha.
 fn knot_delta(a: Vec3, b: Vec3, alpha: f32) -> f32 {
-    let d = a.distance(&b);
+    let d = a.distance_2d(&b);
     if d < DEGENERATE_THRESHOLD {
         DEGENERATE_THRESHOLD
     } else {
