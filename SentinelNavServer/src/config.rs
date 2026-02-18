@@ -103,7 +103,7 @@ fn default_area_costs() -> [f32; 3] {
 }
 
 fn default_max_query_nodes() -> u32 {
-    65535
+    262144
 }
 
 impl Default for ServerConfig {
