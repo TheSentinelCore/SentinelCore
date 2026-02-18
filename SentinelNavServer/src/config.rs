@@ -59,6 +59,11 @@ pub struct PathfindingConfig {
     /// Default area costs [ground, water, lava].
     #[serde(default = "default_area_costs")]
     pub default_area_costs: [f32; 3],
+    /// Maximum A* search nodes per NavMeshQuery.
+    /// Higher values allow pathfinding through denser navmeshes (GO-injected areas).
+    /// Each node uses ~36 bytes. Default: 65535 (Detour maximum).
+    #[serde(default = "default_max_query_nodes")]
+    pub max_query_nodes: u32,
 }
 
 fn default_host() -> String {
@@ -97,6 +102,10 @@ fn default_area_costs() -> [f32; 3] {
     [1.0, 1.5, 100.0]
 }
 
+fn default_max_query_nodes() -> u32 {
+    65535
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -117,6 +126,7 @@ impl Default for PathfindingConfig {
             max_segment_length: default_max_segment_length(),
             island_retry_count: default_island_retry_count(),
             default_area_costs: default_area_costs(),
+            max_query_nodes: default_max_query_nodes(),
         }
     }
 }
