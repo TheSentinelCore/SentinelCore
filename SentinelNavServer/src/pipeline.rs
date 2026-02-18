@@ -242,7 +242,7 @@ pub fn execute_pathfind(
     let (end_ref, end_nearest) = find_poly_tiered(query, mesh, end_pos, filter, options.z_extent)?;
 
     // Find polygon corridor from start to end
-    let (mut poly_path, mut is_partial) = query
+    let find_result = query
         .find_path(
             start_ref,
             end_ref,
@@ -252,6 +252,10 @@ pub fn execute_pathfind(
             MAX_PATH_POLYS,
         )
         .map_err(|_| AppError::PathfindingFailed("No path found".into()))?;
+
+    let mut poly_path = find_result.path;
+    let mut is_partial = find_result.is_partial;
+    let mut was_out_of_nodes = find_result.out_of_nodes;
 
     // If partial, start may be on a disconnected navmesh island (caused by GO injection
     // fragmenting the mesh). Try nearby positions to find a polygon on the main connected mesh.
@@ -268,7 +272,7 @@ pub fn execute_pathfind(
             if alt_ref == start_ref {
                 continue; // Same polygon, skip
             }
-            let Ok((alt_path, alt_partial)) = query.find_path(
+            let Ok(alt_result) = query.find_path(
                 alt_ref,
                 end_ref,
                 alt_nearest,
@@ -279,12 +283,13 @@ pub fn execute_pathfind(
                 continue;
             };
             // Use this result if it's better (full path, or longer partial)
-            if !alt_partial || alt_path.len() > poly_path.len() {
-                poly_path = alt_path;
-                is_partial = alt_partial;
+            if !alt_result.is_partial || alt_result.path.len() > poly_path.len() {
+                poly_path = alt_result.path;
+                is_partial = alt_result.is_partial;
+                was_out_of_nodes = alt_result.out_of_nodes;
                 effective_start = alt_nearest;
                 effective_start_ref = alt_ref;
-                if !alt_partial {
+                if !is_partial {
                     break; // Found full path, stop searching
                 }
             }
@@ -305,7 +310,7 @@ pub fn execute_pathfind(
             if alt_ref == end_ref {
                 continue; // Same polygon, skip
             }
-            let Ok((alt_path, alt_partial)) = query.find_path(
+            let Ok(alt_result) = query.find_path(
                 effective_start_ref,
                 alt_ref,
                 effective_start,
@@ -315,11 +320,12 @@ pub fn execute_pathfind(
             ) else {
                 continue;
             };
-            if !alt_partial || alt_path.len() > poly_path.len() {
-                poly_path = alt_path;
-                is_partial = alt_partial;
+            if !alt_result.is_partial || alt_result.path.len() > poly_path.len() {
+                poly_path = alt_result.path;
+                is_partial = alt_result.is_partial;
+                was_out_of_nodes = alt_result.out_of_nodes;
                 effective_end = alt_nearest;
-                if !alt_partial {
+                if !is_partial {
                     break;
                 }
             }

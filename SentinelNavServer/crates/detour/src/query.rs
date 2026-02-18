@@ -26,6 +26,18 @@ pub struct NavMeshQuery {
     _mesh: Arc<NavMesh>,
 }
 
+/// Result from a polygon corridor search.
+#[derive(Debug)]
+pub struct FindPathResult {
+    /// The polygon corridor from start to end.
+    pub path: Vec<PolyRef>,
+    /// True if the path did not reach the end polygon.
+    pub is_partial: bool,
+    /// True if the A* search exhausted the node pool (DT_OUT_OF_NODES).
+    /// When true alongside is_partial, increasing max_query_nodes may help.
+    pub out_of_nodes: bool,
+}
+
 impl NavMeshQuery {
     /// Create a new NavMeshQuery for the given mesh.
     ///
@@ -108,9 +120,6 @@ impl NavMeshQuery {
     /// * `end_pos` - End position (WoW coordinates)
     /// * `filter` - Query filter
     /// * `max_path` - Maximum number of polygons in the path
-    ///
-    /// # Returns
-    /// Tuple of (polygon path, is_partial_result)
     pub fn find_path(
         &self,
         start_ref: PolyRef,
@@ -119,7 +128,7 @@ impl NavMeshQuery {
         end_pos: Vec3,
         filter: &QueryFilter,
         max_path: usize,
-    ) -> Result<(Vec<PolyRef>, bool), DetourError> {
+    ) -> Result<FindPathResult, DetourError> {
         let start_d = start_pos.to_detour();
         let end_d = end_pos.to_detour();
         let mut path = vec![0u64; max_path];
@@ -146,7 +155,12 @@ impl NavMeshQuery {
 
         path.truncate(path_count as usize);
         let is_partial = (status & detour_sys::DT_PARTIAL_RESULT) != 0;
-        Ok((path, is_partial))
+        let out_of_nodes = (status & detour_sys::DT_OUT_OF_NODES) != 0;
+        Ok(FindPathResult {
+            path,
+            is_partial,
+            out_of_nodes,
+        })
     }
 
     /// Convert a polygon path to a straight path of waypoints.
