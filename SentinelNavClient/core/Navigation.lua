@@ -334,7 +334,7 @@ end
 ---@param start_pos vec3 Starting position
 ---@param dest vec3 Destination position
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
----@param opts? table { smoothing?, optimize?, anti_detection?, max_deviation?, smooth_iterations?, smooth_samples?, smooth_ratio?, filter_ground?, filter_water?, filter_lava?, allow_partial?, z_extent?, map_id? }
+---@param opts? table { smoothing?, optimize?, anti_detection?, max_deviation?, filter_ground?, filter_water?, filter_lava?, allow_partial?, z_extent?, map_id? }
 function Navigation:find_path(start_pos, dest, callback, opts)
     if not start_pos or not dest then
         if callback then callback(false, nil, "Missing start or dest") end
@@ -350,11 +350,6 @@ function Navigation:find_path(start_pos, dest, callback, opts)
     if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
     if opts.max_deviation then params.max_deviation = opts.max_deviation end
-    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
-    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
-    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
-    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
-    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
@@ -425,11 +420,6 @@ function Navigation:find_route_tsp(nodes, callback, opts)
     end
     if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
-    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
-    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
-    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
-    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
-    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
@@ -476,11 +466,6 @@ function Navigation:find_route_multi(stops, callback, opts)
     }
     if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
-    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
-    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
-    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
-    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
-    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
@@ -537,7 +522,7 @@ end
 ---@param start_pos vec3
 ---@param dest vec3
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
----@param opts? table { map_id?, probe_distance?, smoothing?, optimize?, smooth_iterations?, smooth_samples?, smooth_ratio?, min_corner_angle?, keep_originals?, filter_ground?, filter_water?, filter_lava?, allow_partial?, z_extent? }
+---@param opts? table { map_id?, probe_distance?, smoothing?, optimize?, filter_ground?, filter_water?, filter_lava?, allow_partial?, z_extent? }
 function Navigation:find_path_corridor(start_pos, dest, callback, opts)
     if not start_pos or not dest then
         if callback then callback(false, nil, "Missing start or dest") end
@@ -552,11 +537,6 @@ function Navigation:find_path_corridor(start_pos, dest, callback, opts)
     if opts.probe_distance then params.probe_distance = opts.probe_distance end
     if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
-    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
-    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
-    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
-    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
-    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
@@ -613,11 +593,6 @@ function Navigation:find_path_avoid(start_pos, dest, avoid_zones, callback, opts
     }
     if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
-    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
-    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
-    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
-    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
-    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
@@ -774,7 +749,7 @@ end
 ---@param player_pos vec3
 ---@param threats vec3[] Threat positions
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
----@param opts? table { map_id?, flee_distance?, smoothing?, smooth_iterations?, smooth_samples?, smooth_ratio?, min_corner_angle?, keep_originals?, filter_ground?, filter_water?, filter_lava?, z_extent?, wall_clearance? }
+---@param opts? table { map_id?, flee_distance?, smoothing?, filter_ground?, filter_water?, filter_lava?, z_extent?, wall_clearance? }
 function Navigation:flee(player_pos, threats, callback, opts)
     if not player_pos or not threats or #threats == 0 then
         if callback then callback(false, nil, "Missing player_pos or threats") end
@@ -788,11 +763,6 @@ function Navigation:flee(player_pos, threats, callback, opts)
     }
     if opts.flee_distance then params.flee_distance = opts.flee_distance end
     if opts.smoothing then params.smoothing = opts.smoothing end
-    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
-    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
-    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
-    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
-    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
@@ -817,7 +787,7 @@ end
 ---@param player_pos vec3
 ---@param target_pos vec3
 ---@param callback fun(success: boolean, data: table|nil, error: string|nil)
----@param opts? table { map_id?, kite_radius?, arc_degrees?, direction?, smoothing?, smooth_iterations?, smooth_samples?, smooth_ratio?, min_corner_angle?, keep_originals?, filter_ground?, filter_water?, filter_lava?, wall_clearance? }
+---@param opts? table { map_id?, kite_radius?, arc_degrees?, direction?, smoothing?, filter_ground?, filter_water?, filter_lava?, wall_clearance? }
 function Navigation:kite(player_pos, target_pos, callback, opts)
     if not player_pos or not target_pos then
         if callback then callback(false, nil, "Missing player_pos or target_pos") end
@@ -833,11 +803,6 @@ function Navigation:kite(player_pos, target_pos, callback, opts)
     if opts.arc_degrees then params.arc_degrees = opts.arc_degrees end
     if opts.direction then params.direction = opts.direction end
     if opts.smoothing then params.smoothing = opts.smoothing end
-    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
-    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
-    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
-    if opts.min_corner_angle then params.min_corner_angle = opts.min_corner_angle end
-    if opts.keep_originals ~= nil then params.keep_originals = opts.keep_originals end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end

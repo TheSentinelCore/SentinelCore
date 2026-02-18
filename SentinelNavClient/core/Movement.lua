@@ -21,7 +21,6 @@ local BASE_RUN_SPEED = 7.0 -- yards/sec, standard run speed
 
 -- Build DEFAULT_CONFIG from single source of truth
 local DEFAULT_CONFIG = Defaults.flat(Defaults.movement)
-DEFAULT_CONFIG.smooth_ratio = DEFAULT_CONFIG.smooth_ratio / 100 -- slider is %, engine is decimal
 
 -- Class ------------------------------------------------------------------
 
@@ -180,12 +179,8 @@ function Movement:update_config(overrides)
                     self:_verbose("Config: ignoring non-number for '" .. k .. "'")
                     goto continue
                 end
-                -- Skip clamping for smooth_ratio: Defaults range is %-based (50-95)
-                -- but callers already convert to decimal (0.50-0.95) before calling.
-                if k ~= "smooth_ratio" then
-                    if def.min and v < def.min then v = def.min end
-                    if def.max and v > def.max then v = def.max end
-                end
+                if def.min and v < def.min then v = def.min end
+                if def.max and v > def.max then v = def.max end
             end
         end
         self._config[k] = v
@@ -218,16 +213,11 @@ end
 ---@return table
 function Movement:_build_path_opts(extra)
     local o = {
-        smoothing         = self._config.smoothing,
+        smoothing         = self._config.smoothing and "chaikin" or "none",
         optimize          = self._config.optimize,
         anti_detection    = self._config.anti_detection,
         max_deviation     = self._config.max_deviation,
         allow_partial     = self._config.allow_partial,
-        smooth_iterations = self._config.smooth_iterations,
-        smooth_samples    = self._config.smooth_samples,
-        smooth_ratio      = self._config.smooth_ratio,
-        min_corner_angle  = self._config.min_corner_angle,
-        keep_originals    = self._config.keep_originals,
         filter_ground     = self._config.filter_ground,
         filter_water      = self._config.filter_water,
         filter_lava       = self._config.filter_lava,
@@ -245,14 +235,9 @@ end
 ---@return table
 function Movement:_build_corridor_opts(extra)
     local o = {
-        smoothing         = self._config.smoothing,
+        smoothing         = self._config.smoothing and "chaikin" or "none",
         optimize          = self._config.optimize,
         allow_partial     = self._config.allow_partial,
-        smooth_iterations = self._config.smooth_iterations,
-        smooth_samples    = self._config.smooth_samples,
-        smooth_ratio      = self._config.smooth_ratio,
-        min_corner_angle  = self._config.min_corner_angle,
-        keep_originals    = self._config.keep_originals,
         filter_ground     = self._config.filter_ground,
         filter_water      = self._config.filter_water,
         filter_lava       = self._config.filter_lava,

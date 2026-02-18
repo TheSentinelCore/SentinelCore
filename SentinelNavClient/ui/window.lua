@@ -90,11 +90,6 @@ local function create_menu_elements()
 
         -- Smoothing (Tab 2)
         smoothing              = e(D.movement.smoothing),
-        smooth_iterations      = e(D.movement.smooth_iterations),
-        smooth_samples         = e(D.movement.smooth_samples),
-        smooth_ratio           = e(D.movement.smooth_ratio),
-        corner_angle           = e(D.movement.min_corner_angle),
-        keep_originals         = e(D.movement.keep_originals),
 
         -- Optimization (Tab 2)
         optimize               = e(D.movement.optimize),
@@ -214,9 +209,6 @@ end
 local function sync_to_client()
     if not _client then return end
 
-    -- Resolve smoothing algorithm name from combo index
-    local smoothing_id = PathfindingTab.SMOOTHING_IDS[_menu.smoothing:get()] or "chaikin"
-
     -- Wall clearance: 0 when disabled, slider value when enabled
     local wall_cl = _menu.wall_clearance_en:get_state() and _menu.wall_clearance:get() or 0
 
@@ -236,12 +228,7 @@ local function sync_to_client()
             stuck_distance_min          = _menu.stuck_distance:get(),
             max_stuck_attempts          = _menu.max_stuck:get(),
             path_check_interval         = _menu.path_check:get(),
-            smoothing                   = smoothing_id,
-            smooth_iterations           = _menu.smooth_iterations:get(),
-            smooth_samples              = _menu.smooth_samples:get(),
-            smooth_ratio                = _menu.smooth_ratio:get() / 100,
-            min_corner_angle            = _menu.corner_angle:get(),
-            keep_originals              = _menu.keep_originals:get_state(),
+            smoothing                   = _menu.smoothing:get_state(),
             optimize                    = _menu.optimize:get_state(),
             allow_partial               = _menu.allow_partial:get_state(),
             filter_ground               = _menu.filter_ground:get(),
@@ -327,11 +314,6 @@ function Window.init(client)
         },
         pathfinding = {
             { _menu.smoothing,         D.movement.smoothing },
-            { _menu.smooth_iterations, D.movement.smooth_iterations },
-            { _menu.smooth_samples,    D.movement.smooth_samples },
-            { _menu.smooth_ratio,      D.movement.smooth_ratio },
-            { _menu.corner_angle,      D.movement.min_corner_angle },
-            { _menu.keep_originals,    D.movement.keep_originals },
             { _menu.optimize,          D.movement.optimize },
             { _menu.allow_partial,     D.movement.allow_partial },
             { _menu.filter_ground,     D.movement.filter_ground },

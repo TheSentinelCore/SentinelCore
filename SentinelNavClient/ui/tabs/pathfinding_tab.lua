@@ -4,30 +4,10 @@
 
 local PathfindingTab = {}
 
--- Smoothing algorithm names (combo options) — order matches SentinelNavServer API
-local SMOOTHING_NAMES = { "None", "Chaikin", "Catmull-Rom", "Bezier" }
-local SMOOTHING_IDS   = { "none", "chaikin", "catmull", "bezier" }
-
 ---Register the pathfinding tab with the UI
 ---@param ui any RotationSettingsUI instance
 ---@param menu table Menu elements table
 function PathfindingTab.register(ui, menu)
-    -- Visibility helpers
-    local function smoothing_not_none()
-        local idx = menu.smoothing:get()
-        return idx > 1
-    end
-
-    local function smoothing_is_chaikin()
-        local idx = menu.smoothing:get()
-        return idx == 2
-    end
-
-    local function smoothing_is_spline()
-        local idx = menu.smoothing:get()
-        return idx == 3 or idx == 4
-    end
-
     local function corridor_on()
         return menu.corridor:get_state()
     end
@@ -42,31 +22,11 @@ function PathfindingTab.register(ui, menu)
 
     ui:add_tab({ id = "pathfinding", label = "Pathfinding" }, function(t)
         -- Path Smoothing
-        t:segmented_control({
-            label = "Path Smoothing",
-            element = menu.smoothing,
-            options = SMOOTHING_NAMES,
-            tooltip = "Chaikin for sharp turns, Catmull-Rom/Bezier for smooth curves",
-        })
-
-        -- Smoothing Params (conditional on algorithm)
-        t:slider_list({
-            label = "Smoothing Params",
-            visible_when = smoothing_not_none,
-            elements = {
-                { element = menu.smooth_iterations, label = "Iterations", min = 1, max = 5, visible_when = smoothing_is_chaikin, tooltip = "More iterations produce smoother paths but may overshoot corners" },
-                { element = menu.smooth_samples, label = "Samples", min = 5, max = 50, visible_when = smoothing_is_spline, tooltip = "Number of interpolation points per path segment" },
-                { element = menu.smooth_ratio, label = "Corner-Cut Ratio", suffix = "%", min = 50, max = 95, visible_when = smoothing_is_chaikin, tooltip = "How aggressively corners are cut \xe2\x80\x94 higher values cut more" },
-                { element = menu.corner_angle, label = "Min Corner Angle", suffix = "\194\176", visible_when = smoothing_is_chaikin, tooltip = "Corners sharper than this are preserved during smoothing" },
-            }
-        })
-
-        -- Keep originals (advanced, conditional on smoothing)
         t:checkbox_grid({
-            visible_when = function() return smoothing_not_none() and show_advanced() end,
+            label = "Path Smoothing",
             columns = 1,
             elements = {
-                { element = menu.keep_originals, label = "Keep Original Waypoints", tooltip = "Retains original path points alongside smoothed points" },
+                { element = menu.smoothing, label = "Enable Path Smoothing", tooltip = "Smooths navmesh paths for more natural movement" },
             }
         })
 
@@ -125,8 +85,5 @@ function PathfindingTab.register(ui, menu)
 
     end)
 end
-
---- Smoothing IDs exposed for sync
-PathfindingTab.SMOOTHING_IDS = SMOOTHING_IDS
 
 return PathfindingTab
