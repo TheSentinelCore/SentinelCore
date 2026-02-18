@@ -95,7 +95,7 @@ fn default_max_segment_length() -> f32 {
 }
 
 fn default_island_retry_count() -> usize {
-    8
+    16
 }
 
 fn default_area_costs() -> [f32; 3] {
