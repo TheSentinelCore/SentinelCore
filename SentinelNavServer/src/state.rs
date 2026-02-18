@@ -50,7 +50,13 @@ impl AppState {
         let mmap_manager = MmapManager::new(
             &config.navmesh.mmap_path,
             config.pathfinding.query_pool_size,
-            2048, // max_query_nodes - standard for WoW pathfinding
+            config.pathfinding.max_query_nodes,
+        );
+
+        tracing::info!(
+            "MmapManager created: pool_size={}, max_query_nodes={}",
+            config.pathfinding.query_pool_size,
+            config.pathfinding.max_query_nodes,
         );
 
         // Preload configured maps
