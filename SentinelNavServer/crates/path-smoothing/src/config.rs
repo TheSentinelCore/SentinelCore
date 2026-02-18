@@ -49,14 +49,14 @@ impl Default for SmootherConfig {
     fn default() -> Self {
         Self {
             chaikin_iterations: 3,
-            chaikin_ratio: 0.75,
-            chaikin_angle_threshold: 30.0,
+            chaikin_ratio: 0.50,
+            chaikin_angle_threshold: 90.0,
             chaikin_outlier_angle: 90.0,
 
             catmull_rom_alpha: 0.5,
             catmull_rom_tension: 0.0,
-            catmull_rom_points_per_segment: 6,
-            catmull_rom_adaptive_density: false,
+            catmull_rom_points_per_segment: 8,
+            catmull_rom_adaptive_density: true,
 
             min_waypoint_spacing: 0.5,
 

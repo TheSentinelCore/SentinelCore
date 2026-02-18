@@ -41,5 +41,5 @@ island_retry_count = 16
 # Default area costs [ground, water, lava]
 default_area_costs = [1.0, 1.5, 100.0]
 # Maximum A* search nodes per query (higher = deeper search in dense meshes)
-# Default: 262144. Each node uses ~36 bytes of memory (~10 MB per query pool).
-max_query_nodes = 262144
+# Default: 524288. Each node uses ~36 bytes of memory (~19 MB per query pool).
+max_query_nodes = 524288
