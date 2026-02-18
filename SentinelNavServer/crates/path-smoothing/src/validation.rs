@@ -61,9 +61,9 @@ pub fn validate_path(
                     result.push(closest);
                 }
             }
+        } else {
+            result.push(next);
         }
-
-        result.push(next);
     }
 
     result

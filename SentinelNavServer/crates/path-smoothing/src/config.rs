@@ -37,7 +37,7 @@ pub struct SmootherConfig {
     pub validate_on_navmesh: bool,
     /// Fall back to pre-smoothed segment on wall hit. Default: true.
     pub fallback_on_invalid: bool,
-    /// Max XY deviation (yards) from original path. Default: 3.0.
+    /// Max XY deviation (yards) from original path. Default: 5.0.
     pub max_deviation_from_original: f32,
 }
 
@@ -59,7 +59,7 @@ impl Default for SmootherConfig {
 
             validate_on_navmesh: true,
             fallback_on_invalid: true,
-            max_deviation_from_original: 3.0,
+            max_deviation_from_original: 5.0,
         }
     }
 }
