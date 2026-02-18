@@ -58,7 +58,7 @@ impl Default for SmootherConfig {
             catmull_rom_points_per_segment: 6,
             catmull_rom_adaptive_density: false,
 
-            min_waypoint_spacing: 1.0,
+            min_waypoint_spacing: 0.5,
 
             reprojection_extents: [2.0, 4.0, 2.0],
             stair_detection_threshold: 0.3,
