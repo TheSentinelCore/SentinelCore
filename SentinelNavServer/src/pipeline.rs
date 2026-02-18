@@ -47,10 +47,13 @@ pub const MAX_STRAIGHT_PATH: usize = 2048;
 /// Reference: CMaNGOS uses 5/10, AmeisenNavigation uses 6, BloogBot uses 3.
 /// Previous Sentinel Navigation Server XY=50 was 10x larger than all references, causing water/edge issues.
 pub(crate) const SEARCH_TIERS: [(f32, f32, f32); 3] = [
-    (6.0, 6.0, 6.0),    // Tight — matches AmeisenNavigation
-    (10.0, 10.0, 10.0),  // Medium — matches CMaNGOS far search
+    (6.0, 6.0, 3.0),    // Tight Z — correct floor in multi-level buildings
+    (10.0, 10.0, 6.0),   // Medium — still prefers correct floor
     (50.0, 50.0, 50.0),  // Fallback — imprecise coordinates
 ];
+
+/// Max Z deviation before rejecting a snap result (prevents wrong-floor selection).
+const MAX_Z_SNAP_DELTA: f32 = 5.0;
 
 /// XY offsets (yards) to try when the start poly appears to be on a disconnected island.
 /// Cardinal + diagonal directions at ~3 yards — enough to step off most GO-induced islands.
@@ -161,12 +164,29 @@ pub fn find_poly_tiered(
         return maybe_prefer_water(query, mesh, pos, result);
     }
 
-    // Tiered search: tight 3D extents first for correct floor/position selection
-    for &(x_ext, y_ext, z_ext) in &SEARCH_TIERS {
+    // Tiered search: tight Z extents first for correct floor selection.
+    // Reject results where snapped Z is too far from requested Z (wrong floor).
+    let mut best_fallback: Option<(PolyRef, Vec3)> = None;
+
+    for (i, &(x_ext, y_ext, z_ext)) in SEARCH_TIERS.iter().enumerate() {
         let extents = Vec3::new(x_ext, y_ext, z_ext);
         if let Ok(result) = query.find_nearest_poly(pos, extents, filter) {
-            return maybe_prefer_water(query, mesh, pos, result);
+            let z_delta = (result.1.z - pos.z).abs();
+            let is_last_tier = i == SEARCH_TIERS.len() - 1;
+
+            if is_last_tier || z_delta <= MAX_Z_SNAP_DELTA {
+                return maybe_prefer_water(query, mesh, pos, result);
+            }
+            // Z too far from requested — save as fallback and try next tier
+            if best_fallback.is_none() {
+                best_fallback = Some(result);
+            }
         }
+    }
+
+    // No tier passed Z check — use best available
+    if let Some(result) = best_fallback {
+        return maybe_prefer_water(query, mesh, pos, result);
     }
 
     Err(AppError::PathfindingFailed("Position not on navmesh".into()))
