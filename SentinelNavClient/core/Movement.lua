@@ -1190,8 +1190,24 @@ function Movement:_check_path_validity(player)
     local remaining = simple_movement:get_remaining_waypoints()
     if not remaining or #remaining < 3 then return end
 
+    -- Downsample to ~10 evenly-spaced waypoints for validation.
+    -- Smoothed paths have 4x density; sending every micro-segment causes
+    -- false positives where polygon snapping differs from pathfinding.
+    local sample
+    if #remaining > 12 then
+        sample = { remaining[1] }
+        local stride = (#remaining - 1) / 9
+        for i = 1, 8 do
+            local idx = math.floor(1 + i * stride + 0.5)
+            sample[#sample + 1] = remaining[idx]
+        end
+        sample[#sample + 1] = remaining[#remaining]
+    else
+        sample = remaining
+    end
+
     local pos = player:get_position()
-    self._nav_client:check_path(pos, remaining, function(ok, data, err)
+    self._nav_client:check_path(pos, sample, function(ok, data, err)
         if not ok then return end
         if data and not data.valid and self._destination then
             core.log_warning("[Movement] Path invalid at segment "
@@ -1210,7 +1226,7 @@ function Movement:_soft_repath()
         return
     end
     if self._partial_path then
-        self:_unstuck_repath()
+        self:_verbose("Skipping soft repath on partial path (still making progress)")
         return
     end
 
