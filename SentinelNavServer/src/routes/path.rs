@@ -154,6 +154,9 @@ pub struct PathResponse {
     /// Recovery suggestions when partial path detected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery_suggestions: Option<Vec<Waypoint>>,
+    /// Reason for partial path: "out_of_nodes" or "disconnected". Absent when path is complete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial_reason: Option<String>,
 }
 
 /// Validate custom filter parameters if provided.
@@ -261,6 +264,7 @@ pub async fn find_path(
             computation_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
             partial_endpoint: None,
             recovery_suggestions: None,
+            partial_reason: None,
         }));
     }
 
@@ -334,6 +338,12 @@ pub async fn find_path(
         },
     );
 
+    let partial_reason = if result.partial {
+        Some(if result.out_of_nodes { "out_of_nodes" } else { "disconnected" }.to_string())
+    } else {
+        None
+    };
+
     Ok(Json(PathResponse {
         success: true,
         path: vec3_to_waypoints(&result.waypoints),
@@ -342,6 +352,7 @@ pub async fn find_path(
         computation_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
         partial_endpoint,
         recovery_suggestions,
+        partial_reason,
     }))
 }
 
@@ -430,6 +441,12 @@ pub async fn find_path_random(
     };
     let distance = pipeline::calculate_path_distance(&waypoints);
 
+    let partial_reason = if raw_result.partial {
+        Some(if raw_result.out_of_nodes { "out_of_nodes" } else { "disconnected" }.to_string())
+    } else {
+        None
+    };
+
     Ok(Json(PathResponse {
         success: true,
         path: vec3_to_waypoints(&waypoints),
@@ -438,6 +455,7 @@ pub async fn find_path_random(
         computation_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
         partial_endpoint: None,
         recovery_suggestions: None,
+        partial_reason,
     }))
 }
 

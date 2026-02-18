@@ -646,6 +646,12 @@ pub async fn path_avoid(
         )?
     };
 
+    let partial_reason = if result.partial {
+        Some(if result.out_of_nodes { "out_of_nodes" } else { "disconnected" }.to_string())
+    } else {
+        None
+    };
+
     Ok(Json(crate::routes::path::PathResponse {
         success: true,
         path: vec3_to_waypoints(&result.waypoints),
@@ -654,6 +660,7 @@ pub async fn path_avoid(
         computation_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
         partial_endpoint: None,
         recovery_suggestions: None,
+        partial_reason,
     }))
 }
 
