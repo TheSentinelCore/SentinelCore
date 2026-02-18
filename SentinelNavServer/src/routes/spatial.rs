@@ -594,12 +594,12 @@ pub async fn get_heights(
                             filter,
                             MAX_REACHABILITY_POLYS,
                         ) {
-                            Ok((_path, false)) => true, // full path found
-                            Ok((path, true)) => {
+                            Ok(r) if !r.is_partial => true, // full path found
+                            Ok(r) => {
                                 // Partial path: if the search explored many polys,
                                 // the areas are connected (search just ran out of
                                 // budget). Very short partial = tiny disconnected island.
-                                path.len() >= MIN_PARTIAL_POLYS
+                                r.path.len() >= MIN_PARTIAL_POLYS
                             }
                             Err(_) => false, // no path at all
                         }
