@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use tower_http::timeout::TimeoutLayer;
 
+mod blackboard;
 mod cache;
 mod config;
 mod error;

@@ -3,6 +3,7 @@
 //! This library exposes the core components for building the Sentinel Navigation Server
 //! and for integration testing.
 
+pub mod blackboard;
 pub mod cache;
 pub mod config;
 pub mod error;
