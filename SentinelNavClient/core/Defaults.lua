@@ -9,7 +9,7 @@ local Defaults = {}
 --------------------------------------------------------------------------------
 Defaults.movement = {
     -- Speed
-    dynamic_speed                     = { type = "bool", default = false, id = "snc_dynamic_speed" },
+    dynamic_speed                     = { type = "bool", default = true, id = "snc_dynamic_speed" },
     dynamic_speed_max_tolerance_scale = { type = "float", min = 1.0, max = 2.0, default = 1.20, id = "snc_dyn_tol_scale" },
     dynamic_speed_max_tolerance_bonus = { type = "float", min = 0.0, max = 2.0, default = 0.75, id = "snc_dyn_tol_bonus" },
     dynamic_speed_ramp_z_delta        = { type = "float", min = 0.5, max = 5.0, default = 1.2, id = "snc_dyn_ramp_z" },
@@ -25,8 +25,8 @@ Defaults.movement = {
     max_deviation                     = { type = "float", min = 1.0, max = 20.0, default = 3.0, id = "snc_max_deviation" },
 
     -- Stuck Recovery
-    stuck_check_interval              = { type = "float", min = 0.25, max = 5.0, default = 0.25, id = "snc_stuck_interval" },
-    stuck_distance_min                = { type = "float", min = 0.1, max = 2.0, default = 0.1, id = "snc_stuck_distance_v2" },
+    stuck_check_interval              = { type = "float", min = 0.25, max = 5.0, default = 1.0, id = "snc_stuck_interval" },
+    stuck_distance_min                = { type = "float", min = 0.1, max = 2.0, default = 1.0, id = "snc_stuck_distance_v2" },
     max_stuck_attempts                = { type = "int", min = 1, max = 10, default = 6, id = "snc_max_stuck" },
 
     -- Path Validation
@@ -58,10 +58,7 @@ Defaults.movement = {
 
     -- Wall Clearance
     wall_clearance_enabled            = { type = "bool", default = true, id = "snc_wall_clearance_en" },
-    wall_clearance                    = { type = "float", min = 0.5, max = 5.0, default = 1.2, id = "snc_wall_clearance" },
-    smooth_iterations                 = { type = "int", min = 0, max = 5, default = 2, id = "snc_smooth_iterations" },
-    smooth_samples                    = { type = "int", min = 2, max = 20, default = 10, id = "snc_smooth_samples" },
-    smooth_ratio                      = { type = "float", min = 0.1, max = 1.0, default = 0.9, id = "snc_smooth_ratio" },
+    wall_clearance                    = { type = "float", min = 0.5, max = 5.0, default = 2.0, id = "snc_wall_clearance" },
 
     -- Obstacle Scanning
     proactive_obstacle_check          = { type = "bool", default = true, id = "snc_proactive_obstacle" },

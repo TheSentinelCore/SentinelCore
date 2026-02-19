@@ -96,16 +96,6 @@ pub struct PathOptions {
     pub filter_water: Option<f32>,
     /// Lava area cost multiplier.
     pub filter_lava: Option<f32>,
-    /// Chaikin iterations.
-    pub smooth_iterations: Option<u32>,
-    /// Catmull-Rom/Bezier samples per segment.
-    pub smooth_samples: Option<u32>,
-    /// Chaikin corner-cut ratio.
-    pub smooth_ratio: Option<f32>,
-    /// Minimum corner angle to smooth.
-    pub min_corner_angle: Option<f32>,
-    /// Preserve original waypoints through smoothing.
-    pub keep_originals: Option<bool>,
     /// Custom Z search extent override. When set, skips tiered fallback
     /// and uses this value directly. Useful for indoor/multi-floor scenarios.
     pub z_extent: Option<f32>,
