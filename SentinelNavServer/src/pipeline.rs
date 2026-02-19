@@ -105,6 +105,7 @@ pub struct PathOptions {
 }
 
 /// Result of a pathfinding computation.
+#[derive(Debug, Clone)]
 pub struct PathResult {
     pub waypoints: Vec<Vec3>,
     pub distance: f32,

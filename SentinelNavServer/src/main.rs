@@ -13,6 +13,7 @@ mod config;
 mod error;
 mod pipeline;
 mod routes;
+mod services;
 mod state;
 mod validation;
 
