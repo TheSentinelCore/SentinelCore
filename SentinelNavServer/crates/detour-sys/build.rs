@@ -15,11 +15,23 @@ fn main() {
     let detour_include = manifest_dir.join("recastnavigation/Detour/Include");
     let detour_source = manifest_dir.join("recastnavigation/Detour/Source");
 
-    // Tell cargo to rerun if these files change
+    // Tell cargo to rerun if these files change.
+    // NOTE: Watch individual source files, not directories — cargo only detects
+    // directory-level structural changes (add/remove), not content modifications.
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=wrapper.cpp");
-    println!("cargo:rerun-if-changed=recastnavigation/Detour/Source");
-    println!("cargo:rerun-if-changed=recastnavigation/Detour/Include");
+    for entry in std::fs::read_dir(&detour_source).expect("Failed to read Detour/Source") {
+        let path = entry.expect("Failed to read dir entry").path();
+        if path.extension().map_or(false, |ext| ext == "cpp" || ext == "h") {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+    for entry in std::fs::read_dir(&detour_include).expect("Failed to read Detour/Include") {
+        let path = entry.expect("Failed to read dir entry").path();
+        if path.extension().map_or(false, |ext| ext == "h") {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
 
     // ==========================================================================
     // Compile Detour C++ library + our wrapper

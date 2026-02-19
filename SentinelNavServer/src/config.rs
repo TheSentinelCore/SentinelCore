@@ -61,7 +61,7 @@ pub struct PathfindingConfig {
     pub default_area_costs: [f32; 3],
     /// Maximum A* search nodes per NavMeshQuery.
     /// Higher values allow pathfinding through denser navmeshes (GO-injected areas).
-    /// Each node uses ~36 bytes. Default: 65535 (Detour maximum).
+    /// Each node uses ~36 bytes. 1048576 nodes ~ 40 MB per query pool.
     #[serde(default = "default_max_query_nodes")]
     pub max_query_nodes: u32,
 }
@@ -103,7 +103,7 @@ fn default_area_costs() -> [f32; 3] {
 }
 
 fn default_max_query_nodes() -> u32 {
-    524288
+    1048576
 }
 
 impl Default for ServerConfig {
