@@ -9,7 +9,7 @@ pub struct SmootherConfig {
     // === Chaikin (Stage 1) ===
     /// Number of corner-cutting iterations (1-5). Default: 2.
     pub chaikin_iterations: u32,
-    /// Corner-cut ratio (0.5-0.95). Higher = tighter to original. Default: 0.75.
+    /// Corner-cut ratio (0.5-0.95). Higher = tighter to original. Default: 0.90.
     pub chaikin_ratio: f32,
     /// Minimum angle (degrees) to smooth. Below this, corner is preserved. Default: 30.0.
     pub chaikin_angle_threshold: f32,
@@ -136,8 +136,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let cfg = SmootherConfig::default();
-        assert_eq!(cfg.chaikin_iterations, 3);
-        assert!((cfg.chaikin_ratio - 0.75).abs() < f32::EPSILON);
+        assert_eq!(cfg.chaikin_iterations, 2);
+        assert!((cfg.chaikin_ratio - 0.90).abs() < f32::EPSILON);
         assert!((cfg.catmull_rom_alpha - 0.5).abs() < f32::EPSILON);
         assert!(cfg.validate_on_navmesh);
     }
