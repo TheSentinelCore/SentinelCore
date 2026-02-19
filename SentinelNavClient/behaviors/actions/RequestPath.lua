@@ -1,0 +1,68 @@
+-- RequestPath.lua
+-- BT Action: async HTTP path request. Returns RUNNING while waiting.
+local BT = require("lib.BehaviorTree")
+local Events = require("events.Events")
+
+---@param nav_service table NavigationService instance
+---@param event_bus table EventBus instance
+return function(nav_service, event_bus)
+    return BT.Action:new("RequestPath", function(bb, dt)
+        -- Check for pending response
+        if bb:get("request.pending") then
+            local result = bb:get("request.result")
+            local err = bb:get("request.error")
+            if result then
+                bb:set("path.waypoints", result.waypoints)
+                bb:set("path.index", 1)
+                bb:set("path.is_partial", result.partial or false)
+                bb:set("path.total_distance", result.distance or 0)
+                bb:set("path.corridor_widths", result.corridor_widths)
+                bb:set("request.pending", false)
+                bb:clear("request.result")
+                bb:clear("request.error")
+                event_bus:emit(Events.PATH_RECEIVED, {
+                    waypoint_count = #result.waypoints,
+                    distance = result.distance,
+                    partial = result.partial,
+                })
+                return BT.SUCCESS
+            elseif err then
+                bb:set("request.pending", false)
+                bb:clear("request.result")
+                bb:clear("request.error")
+                return BT.FAILURE
+            end
+            return BT.RUNNING
+        end
+
+        -- Issue new request
+        local start = bb:get("player.position")
+        local dest = bb:get("path.destination")
+        if not start or not dest then return BT.FAILURE end
+
+        bb:set("request.pending", true)
+        bb:clear("request.result")
+        bb:clear("request.error")
+
+        event_bus:emit(Events.PATH_REQUESTED, { start = start, destination = dest })
+
+        local zones = bb:get("obstacles.zones")
+        local has_zones = zones and #zones > 0
+
+        local callback = function(result, err)
+            if result and result.waypoints and #result.waypoints > 0 then
+                bb:set("request.result", result)
+            else
+                bb:set("request.error", err or "empty path")
+            end
+        end
+
+        if has_zones then
+            nav_service:find_path_avoid(start, dest, zones, callback)
+        else
+            nav_service:find_path(start, dest, callback)
+        end
+
+        return BT.RUNNING
+    end)
+end
