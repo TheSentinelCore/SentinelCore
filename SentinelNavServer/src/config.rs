@@ -53,9 +53,6 @@ pub struct PathfindingConfig {
     /// Max segment length before densification (yards).
     #[serde(default = "default_max_segment_length")]
     pub max_segment_length: f32,
-    /// Island recovery retry count.
-    #[serde(default = "default_island_retry_count")]
-    pub island_retry_count: usize,
     /// Default area costs [ground, water, lava].
     #[serde(default = "default_area_costs")]
     pub default_area_costs: [f32; 3],
@@ -94,10 +91,6 @@ fn default_max_segment_length() -> f32 {
     3.0
 }
 
-fn default_island_retry_count() -> usize {
-    16
-}
-
 fn default_area_costs() -> [f32; 3] {
     [1.0, 1.5, 100.0]
 }
@@ -124,7 +117,6 @@ impl Default for PathfindingConfig {
             query_pool_size: default_query_pool_size(),
             search_extents: default_search_extents(),
             max_segment_length: default_max_segment_length(),
-            island_retry_count: default_island_retry_count(),
             default_area_costs: default_area_costs(),
             max_query_nodes: default_max_query_nodes(),
         }
