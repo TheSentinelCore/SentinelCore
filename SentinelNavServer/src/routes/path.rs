@@ -381,11 +381,7 @@ pub async fn find_path_random(
 
     let start_time = std::time::Instant::now();
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
 
@@ -565,11 +561,7 @@ pub async fn validate_path_snap(
 
     let start_time = std::time::Instant::now();
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
     let filter = pool.filter();
@@ -606,11 +598,7 @@ pub async fn validate_path_surface(
 
     let start_time = std::time::Instant::now();
 
-    let _permit = state
-        .request_semaphore
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    let _permit = state.try_acquire_permit()?;
 
     acquire_query!(state, params.map_id, pool, query);
     let filter = pool.filter();
