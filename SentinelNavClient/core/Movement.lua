@@ -222,9 +222,6 @@ function Movement:_build_path_opts(extra)
         filter_water      = self._config.filter_water,
         filter_lava       = self._config.filter_lava,
         wall_clearance    = self._config.wall_clearance,
-        smooth_iterations = self._config.smooth_iterations,
-        smooth_samples    = self._config.smooth_samples,
-        smooth_ratio      = self._config.smooth_ratio,
     }
     if extra then
         for k, v in pairs(extra) do o[k] = v end
@@ -246,9 +243,6 @@ function Movement:_build_corridor_opts(extra)
         filter_lava       = self._config.filter_lava,
         probe_distance    = self._config.corridor_probe_dist,
         wall_clearance    = self._config.wall_clearance,
-        smooth_iterations = self._config.smooth_iterations,
-        smooth_samples    = self._config.smooth_samples,
-        smooth_ratio      = self._config.smooth_ratio,
     }
     if extra then
         for k, v in pairs(extra) do o[k] = v end

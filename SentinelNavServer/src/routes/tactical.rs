@@ -18,7 +18,7 @@ use crate::pipeline::{
     PathOptions, SEARCH_EXTENTS, HEIGHT_EXTENTS,
 };
 use crate::routes::path::{
-    acquire_query, validate_filter_params, validate_smoothing_params,
+    acquire_query, validate_filter_params,
     vec3_to_waypoints, Waypoint,
 };
 use crate::state::AppState;
@@ -51,16 +51,6 @@ pub struct FleeRequest {
     #[serde(default)]
     pub filter_lava: Option<f32>,
     #[serde(default)]
-    pub smooth_iterations: Option<u32>,
-    #[serde(default)]
-    pub smooth_samples: Option<u32>,
-    #[serde(default)]
-    pub smooth_ratio: Option<f32>,
-    #[serde(default)]
-    pub min_corner_angle: Option<f32>,
-    #[serde(default)]
-    pub keep_originals: Option<bool>,
-    #[serde(default)]
     pub z_extent: Option<f32>,
     #[serde(default)]
     pub wall_clearance: Option<f32>,
@@ -92,12 +82,6 @@ pub async fn flee(
     validate_map_id(params.map_id)?;
     validate_coordinate(params.player_x, params.player_y, params.player_z)?;
     validate_filter_params(params.filter_ground, params.filter_water, params.filter_lava)?;
-    validate_smoothing_params(
-        params.smooth_iterations,
-        params.smooth_samples,
-        params.smooth_ratio,
-        params.min_corner_angle,
-    )?;
     if let Some(z) = params.z_extent {
         validate_z_extent(z)?;
     }
@@ -149,11 +133,6 @@ pub async fn flee(
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
-        smooth_iterations: params.smooth_iterations,
-        smooth_samples: params.smooth_samples,
-        smooth_ratio: params.smooth_ratio,
-        min_corner_angle: params.min_corner_angle,
-        keep_originals: params.keep_originals,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
     };
@@ -399,16 +378,6 @@ pub struct KiteRequest {
     #[serde(default)]
     pub filter_lava: Option<f32>,
     #[serde(default)]
-    pub smooth_iterations: Option<u32>,
-    #[serde(default)]
-    pub smooth_samples: Option<u32>,
-    #[serde(default)]
-    pub smooth_ratio: Option<f32>,
-    #[serde(default)]
-    pub min_corner_angle: Option<f32>,
-    #[serde(default)]
-    pub keep_originals: Option<bool>,
-    #[serde(default)]
     pub wall_clearance: Option<f32>,
 }
 
@@ -439,12 +408,6 @@ pub async fn kite(
     validate_coordinate(params.target_x, params.target_y, params.target_z)?;
     validate_radius(params.kite_radius)?;
     validate_filter_params(params.filter_ground, params.filter_water, params.filter_lava)?;
-    validate_smoothing_params(
-        params.smooth_iterations,
-        params.smooth_samples,
-        params.smooth_ratio,
-        params.min_corner_angle,
-    )?;
     if let Some(wc) = params.wall_clearance {
         validate_wall_clearance(wc)?;
     }

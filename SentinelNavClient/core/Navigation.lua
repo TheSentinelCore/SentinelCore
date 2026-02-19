@@ -699,9 +699,6 @@ function Navigation:find_path(start_pos, dest, callback, opts)
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
-    if opts.smooth_iterations then params.smooth_iterations = opts.smooth_iterations end
-    if opts.smooth_samples then params.smooth_samples = opts.smooth_samples end
-    if opts.smooth_ratio then params.smooth_ratio = opts.smooth_ratio end
 
     self:_request(self:_build_url(endpoint, params), function(ok, data, err)
         if not ok then

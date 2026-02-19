@@ -18,8 +18,7 @@ use crate::pipeline::{
 use crate::state::AppState;
 use crate::validation::{
     validate_area_cost, validate_coordinate, validate_deviation, validate_map_id,
-    validate_min_corner_angle, validate_smooth_iterations, validate_smooth_ratio,
-    validate_smooth_samples, validate_wall_clearance, validate_z_extent,
+    validate_wall_clearance, validate_z_extent,
 };
 
 /// Path request query parameters.
@@ -46,21 +45,6 @@ pub struct PathRequest {
     /// Lava area cost multiplier (default 100.0, higher = more expensive)
     #[serde(default)]
     pub filter_lava: Option<f32>,
-    /// Number of iterations for Chaikin smoothing (1-5, default 2).
-    #[serde(default)]
-    pub smooth_iterations: Option<u32>,
-    /// Number of samples per segment for Catmull-Rom/Bezier (5-50, default 10).
-    #[serde(default)]
-    pub smooth_samples: Option<u32>,
-    /// Chaikin corner-cut ratio (0.5-0.95, default 0.75).
-    #[serde(default)]
-    pub smooth_ratio: Option<f32>,
-    /// Minimum corner angle to smooth (degrees, 0-180, default 0).
-    #[serde(default)]
-    pub min_corner_angle: Option<f32>,
-    /// If true, preserve original waypoints and only insert interpolation points.
-    #[serde(default)]
-    pub keep_originals: Option<bool>,
     /// If true, return partial paths with recovery suggestions instead of failing.
     #[serde(default)]
     pub allow_partial: Option<bool>,
@@ -99,21 +83,6 @@ pub struct RandomPathRequest {
     /// Lava area cost multiplier (default 100.0, higher = more expensive)
     #[serde(default)]
     pub filter_lava: Option<f32>,
-    /// Number of iterations for Chaikin smoothing (1-5, default 2).
-    #[serde(default)]
-    pub smooth_iterations: Option<u32>,
-    /// Number of samples per segment for Catmull-Rom/Bezier (5-50, default 10).
-    #[serde(default)]
-    pub smooth_samples: Option<u32>,
-    /// Chaikin corner-cut ratio (0.5-0.95, default 0.75).
-    #[serde(default)]
-    pub smooth_ratio: Option<f32>,
-    /// Minimum corner angle to smooth (degrees, 0-180, default 0).
-    #[serde(default)]
-    pub min_corner_angle: Option<f32>,
-    /// If true, preserve original waypoints and only insert interpolation points.
-    #[serde(default)]
-    pub keep_originals: Option<bool>,
     /// Custom Z search extent for polygon lookup (overrides tiered fallback).
     #[serde(default)]
     pub z_extent: Option<f32>,
@@ -177,28 +146,6 @@ pub fn validate_filter_params(
     Ok(())
 }
 
-/// Validate smoothing parameters if provided.
-pub fn validate_smoothing_params(
-    smooth_iterations: Option<u32>,
-    smooth_samples: Option<u32>,
-    smooth_ratio: Option<f32>,
-    min_corner_angle: Option<f32>,
-) -> Result<(), AppError> {
-    if let Some(iterations) = smooth_iterations {
-        validate_smooth_iterations(iterations)?;
-    }
-    if let Some(samples) = smooth_samples {
-        validate_smooth_samples(samples)?;
-    }
-    if let Some(ratio) = smooth_ratio {
-        validate_smooth_ratio(ratio)?;
-    }
-    if let Some(angle) = min_corner_angle {
-        validate_min_corner_angle(angle)?;
-    }
-    Ok(())
-}
-
 /// Helper: acquire map, pool, and query from state.
 /// Declares `_nb_mesh`, `_nb_pool`, and `_nb_query` in the calling scope.
 /// Use `_nb_pool.filter()` for the default filter, and `&*_nb_query` for the query ref.
@@ -237,12 +184,6 @@ pub async fn find_path(
     validate_coordinate(params.start_x, params.start_y, params.start_z)?;
     validate_coordinate(params.end_x, params.end_y, params.end_z)?;
     validate_filter_params(params.filter_ground, params.filter_water, params.filter_lava)?;
-    validate_smoothing_params(
-        params.smooth_iterations,
-        params.smooth_samples,
-        params.smooth_ratio,
-        params.min_corner_angle,
-    )?;
     if let Some(z) = params.z_extent {
         validate_z_extent(z)?;
     }
@@ -293,11 +234,6 @@ pub async fn find_path(
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
-        smooth_iterations: params.smooth_iterations,
-        smooth_samples: params.smooth_samples,
-        smooth_ratio: params.smooth_ratio,
-        min_corner_angle: params.min_corner_angle,
-        keep_originals: params.keep_originals,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
     };
@@ -366,12 +302,6 @@ pub async fn find_path_random(
     validate_coordinate(params.end_x, params.end_y, params.end_z)?;
     validate_deviation(params.max_deviation)?;
     validate_filter_params(params.filter_ground, params.filter_water, params.filter_lava)?;
-    validate_smoothing_params(
-        params.smooth_iterations,
-        params.smooth_samples,
-        params.smooth_ratio,
-        params.min_corner_angle,
-    )?;
     if let Some(z) = params.z_extent {
         validate_z_extent(z)?;
     }
@@ -408,11 +338,6 @@ pub async fn find_path_random(
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
-        smooth_iterations: params.smooth_iterations,
-        smooth_samples: params.smooth_samples,
-        smooth_ratio: params.smooth_ratio,
-        min_corner_angle: params.min_corner_angle,
-        keep_originals: params.keep_originals,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
     };

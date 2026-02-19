@@ -32,24 +32,6 @@ const MAX_MIN_DISTANCE: f32 = 1000.0;
 /// Maximum polygon vertices
 const MAX_POLYGON_VERTICES: usize = 100;
 
-/// Maximum smoothing iterations for Chaikin algorithm
-const MAX_SMOOTH_ITERATIONS: u32 = 5;
-
-/// Minimum smoothing iterations for Chaikin algorithm
-const MIN_SMOOTH_ITERATIONS: u32 = 1;
-
-/// Maximum samples per segment for Catmull-Rom/Bezier
-const MAX_SMOOTH_SAMPLES: u32 = 50;
-
-/// Minimum samples per segment for Catmull-Rom/Bezier
-const MIN_SMOOTH_SAMPLES: u32 = 5;
-
-/// Maximum Chaikin corner-cut ratio
-const MAX_SMOOTH_RATIO: f32 = 0.95;
-
-/// Minimum Chaikin corner-cut ratio
-const MIN_SMOOTH_RATIO: f32 = 0.5;
-
 /// Validate a 3D coordinate (x, y, z).
 ///
 /// Checks that all values are finite and within WoW bounds.
@@ -176,45 +158,6 @@ pub fn validate_min_distance(distance: f32) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Validate smoothing iterations for Chaikin algorithm.
-///
-/// Iterations must be within reasonable bounds (1-5).
-pub fn validate_smooth_iterations(iterations: u32) -> Result<(), AppError> {
-    if iterations < MIN_SMOOTH_ITERATIONS || iterations > MAX_SMOOTH_ITERATIONS {
-        return Err(AppError::InvalidParams(format!(
-            "smooth_iterations must be between {} and {} (got {})",
-            MIN_SMOOTH_ITERATIONS, MAX_SMOOTH_ITERATIONS, iterations
-        )));
-    }
-    Ok(())
-}
-
-/// Validate smoothing samples per segment for Catmull-Rom/Bezier.
-///
-/// Samples must be within reasonable bounds (5-50).
-pub fn validate_smooth_samples(samples: u32) -> Result<(), AppError> {
-    if samples < MIN_SMOOTH_SAMPLES || samples > MAX_SMOOTH_SAMPLES {
-        return Err(AppError::InvalidParams(format!(
-            "smooth_samples must be between {} and {} (got {})",
-            MIN_SMOOTH_SAMPLES, MAX_SMOOTH_SAMPLES, samples
-        )));
-    }
-    Ok(())
-}
-
-/// Validate Chaikin corner-cut ratio.
-///
-/// Ratio must be within reasonable bounds (0.5-0.95).
-pub fn validate_smooth_ratio(ratio: f32) -> Result<(), AppError> {
-    if !ratio.is_finite() || ratio < MIN_SMOOTH_RATIO || ratio > MAX_SMOOTH_RATIO {
-        return Err(AppError::InvalidParams(format!(
-            "smooth_ratio must be between {} and {} (got {})",
-            MIN_SMOOTH_RATIO, MAX_SMOOTH_RATIO, ratio
-        )));
-    }
-    Ok(())
-}
-
 /// Validate custom Z search extent for polygon lookup.
 ///
 /// Z extent controls the vertical search range for `findNearestPoly`.
@@ -238,22 +181,6 @@ pub fn validate_wall_clearance(clearance: f32) -> Result<(), AppError> {
         return Err(AppError::InvalidParams(format!(
             "wall_clearance must be between 0 and 5.0 (got {})",
             clearance
-        )));
-    }
-    Ok(())
-}
-
-/// Validate minimum corner angle for Chaikin smoothing.
-///
-/// Angle must be between 0 and 180 degrees.
-/// - 0 = smooth all corners (default)
-/// - 90 = only smooth corners wider than 90 degrees (skip tight turns)
-/// - 180 = don't smooth any corners
-pub fn validate_min_corner_angle(angle: f32) -> Result<(), AppError> {
-    if !angle.is_finite() || angle < 0.0 || angle > 180.0 {
-        return Err(AppError::InvalidParams(format!(
-            "min_corner_angle must be between 0 and 180 (got {})",
-            angle
         )));
     }
     Ok(())
@@ -438,56 +365,6 @@ mod tests {
         assert!(validate_min_distance(1000.0).is_ok());
     }
 
-    // Smoothing parameter validation tests
-    #[test]
-    fn test_rejects_invalid_smooth_iterations() {
-        assert!(validate_smooth_iterations(0).is_err());
-        assert!(validate_smooth_iterations(6).is_err());
-        assert!(validate_smooth_iterations(100).is_err());
-    }
-
-    #[test]
-    fn test_accepts_valid_smooth_iterations() {
-        assert!(validate_smooth_iterations(1).is_ok());
-        assert!(validate_smooth_iterations(2).is_ok());
-        assert!(validate_smooth_iterations(3).is_ok());
-        assert!(validate_smooth_iterations(5).is_ok());
-    }
-
-    #[test]
-    fn test_rejects_invalid_smooth_samples() {
-        assert!(validate_smooth_samples(0).is_err());
-        assert!(validate_smooth_samples(4).is_err());
-        assert!(validate_smooth_samples(51).is_err());
-        assert!(validate_smooth_samples(100).is_err());
-    }
-
-    #[test]
-    fn test_accepts_valid_smooth_samples() {
-        assert!(validate_smooth_samples(5).is_ok());
-        assert!(validate_smooth_samples(10).is_ok());
-        assert!(validate_smooth_samples(20).is_ok());
-        assert!(validate_smooth_samples(50).is_ok());
-    }
-
-    #[test]
-    fn test_rejects_invalid_smooth_ratio() {
-        assert!(validate_smooth_ratio(0.0).is_err());
-        assert!(validate_smooth_ratio(0.49).is_err());
-        assert!(validate_smooth_ratio(0.96).is_err());
-        assert!(validate_smooth_ratio(1.0).is_err());
-        assert!(validate_smooth_ratio(f32::NAN).is_err());
-        assert!(validate_smooth_ratio(f32::INFINITY).is_err());
-    }
-
-    #[test]
-    fn test_accepts_valid_smooth_ratio() {
-        assert!(validate_smooth_ratio(0.5).is_ok());
-        assert!(validate_smooth_ratio(0.75).is_ok());
-        assert!(validate_smooth_ratio(0.9).is_ok());
-        assert!(validate_smooth_ratio(0.95).is_ok());
-    }
-
     // Z extent validation tests
     #[test]
     fn test_rejects_invalid_z_extent() {
@@ -507,21 +384,4 @@ mod tests {
         assert!(validate_z_extent(1000.0).is_ok());
     }
 
-    // Min corner angle validation tests
-    #[test]
-    fn test_rejects_invalid_min_corner_angle() {
-        assert!(validate_min_corner_angle(-1.0).is_err());
-        assert!(validate_min_corner_angle(181.0).is_err());
-        assert!(validate_min_corner_angle(f32::NAN).is_err());
-        assert!(validate_min_corner_angle(f32::INFINITY).is_err());
-    }
-
-    #[test]
-    fn test_accepts_valid_min_corner_angle() {
-        assert!(validate_min_corner_angle(0.0).is_ok());
-        assert!(validate_min_corner_angle(45.0).is_ok());
-        assert!(validate_min_corner_angle(90.0).is_ok());
-        assert!(validate_min_corner_angle(120.0).is_ok());
-        assert!(validate_min_corner_angle(180.0).is_ok());
-    }
 }
