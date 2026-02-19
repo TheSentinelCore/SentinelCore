@@ -120,6 +120,7 @@ function Visualizer:_on_render()
 
     -- Track state transitions for animations
     local current_state = client:get_state()
+    local full_state = client.get_full_state and client:get_full_state() or current_state
     if current_state ~= self._last_state then
         if current_state == "arrived" then
             self._arrived_time = core.time()
@@ -145,7 +146,7 @@ function Visualizer:_on_render()
     end
 
     if self:_show_state() then
-        self:_render_state_indicator(client, player_pos, current_state)
+        self:_render_state_indicator(client, player_pos, current_state, full_state)
     end
 end
 
@@ -339,23 +340,28 @@ end
 
 ---@param client table
 ---@param player_pos vec3
----@param state string
-function Visualizer:_render_state_indicator(client, player_pos, state)
-    if state == "idle" or state == "moving" then return end
+---@param state string Top-level HSM state
+---@param full_state string Dot-joined full state (e.g. "navigating.recovering")
+function Visualizer:_render_state_indicator(client, player_pos, state, full_state)
+    if state == "idle" or state == "navigating" then
+        -- Check substates that need indicators
+        if full_state and full_state:find("recovering") then
+            -- Pulsing red circle around player (stuck/recovering)
+            local pulse = math.sin(core.time() * 4)
+            local alpha = math.floor(100 + 120 * ((pulse + 1) * 0.5))
+            local stuck_color = color.new(255, 69, 58, alpha)
+            core.graphics.circle_3d(player_pos, 2.5, stuck_color, 3, Z_OFFSET)
+            return
+        elseif full_state and full_state:find("awaiting_path") then
+            -- Static yellow ring while waiting for path
+            core.graphics.circle_3d(player_pos, 2.0,
+                COLORS.requesting_ring, 2, Z_OFFSET)
+            return
+        end
+        return
+    end
 
-    if state == "stuck" then
-        -- Pulsing red circle around player
-        local pulse = math.sin(core.time() * 4)
-        local alpha = math.floor(100 + 120 * ((pulse + 1) * 0.5))
-        local stuck_color = color.new(255, 69, 58, alpha)
-        core.graphics.circle_3d(player_pos, 2.5, stuck_color, 3, Z_OFFSET)
-
-    elseif state == "requesting_path" then
-        -- Static yellow ring while waiting for path
-        core.graphics.circle_3d(player_pos, 2.0,
-            COLORS.requesting_ring, 2, Z_OFFSET)
-
-    elseif state == "arrived" then
+    if state == "arrived" then
         -- Expanding green ring that fades over 2 seconds
         if self._arrived_time then
             local elapsed = core.time() - self._arrived_time
