@@ -26,7 +26,7 @@ use config::Config;
 use services::cache_impl::MokaCache;
 use services::pathfinding::DetourPathfinder;
 use services::routing::DetourRouter;
-use services::smoothing::PipelineSmoother;
+
 use services::spatial::DetourSpatial;
 use services::tactical::DetourTactical;
 use state::Metrics;
@@ -86,8 +86,6 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(DetourPathfinder::new(mmap_manager.clone()));
     let router: Arc<dyn services::RoutingService> =
         Arc::new(DetourRouter::new(mmap_manager.clone()));
-    let smoother: Arc<dyn services::SmoothingService> =
-        Arc::new(PipelineSmoother::new(mmap_manager.clone()));
     let spatial: Arc<dyn services::SpatialService> =
         Arc::new(DetourSpatial::new(mmap_manager.clone()));
     let tactical: Arc<dyn services::TacticalService> =
@@ -99,7 +97,6 @@ async fn main() -> anyhow::Result<()> {
     let blackboard = Arc::new(ServerBlackboard {
         pathfinding: pathfinder,
         routing: router,
-        smoothing: smoother,
         spatial,
         tactical,
         cache,

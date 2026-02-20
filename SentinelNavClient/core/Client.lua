@@ -13,6 +13,7 @@ local MovementService      = require("services/MovementService")
 local ObstacleService      = require("services/ObstacleService")
 local PathValidationService = require("services/PathValidationService")
 local NavigationTree       = require("behaviors/trees/NavigationTree")
+local Events               = require("events/Events")
 
 local STATES         = StateMachine.STATES
 local NAV_SUBSTATES  = StateMachine.NAV_SUBSTATES
@@ -69,7 +70,7 @@ function Client:new(config)
     -- Sync HSM state to Blackboard for BT guards
     o._blackboard:set("hsm.state", "idle")
     o._blackboard:set("hsm.substate", nil)
-    o._event_bus:on("nav.state_changed", function(data)
+    o._event_bus:on(Events.STATE_CHANGED, function(data)
         o._blackboard:set("hsm.state", data.to)
         o._blackboard:set("hsm.substate", data.substate_to)
     end)
@@ -80,6 +81,7 @@ function Client:new(config)
     -- Old-style event listeners (backward compat)
     o._listeners  = {}
     o._last_state_for_compat = "idle"
+    o._stuck_event_fired = false
 
     return o
 end
@@ -229,20 +231,15 @@ function Client:plan_route(nodes, callback, opts)
         return
     end
 
-    self.nav_client:find_route_tsp(
-        player:get_position(),
-        nodes,
-        function(result, err)
-            if callback then
-                if result then
-                    callback(true, result)
-                else
-                    callback(false, { error = err })
-                end
+    self.nav_client:find_route_tsp(nodes, function(ok, data, err)
+        if callback then
+            if ok and data then
+                callback(true, data)
+            else
+                callback(false, { error = err })
             end
-        end,
-        opts
-    )
+        end
+    end, opts)
 end
 
 ---Follow a pre-computed waypoint path (no pathfinding request).
@@ -450,13 +447,14 @@ end
 function Client:get_path_opts(extra)
     local bb = self._blackboard
     local opts = {
-        smoothing       = bb:get("config.smoothing", true),
-        optimize        = bb:get("config.optimize", true),
-        allow_partial   = bb:get("config.allow_partial", true),
-        filter_ground   = bb:get("config.filter_ground", 1.0),
-        filter_water    = bb:get("config.filter_water", 10.0),
-        filter_lava     = bb:get("config.filter_lava", 100.0),
-        wall_clearance  = bb:get("config.wall_clearance", 0),
+        optimize              = bb:get("config.optimize", true),
+        allow_partial         = bb:get("config.allow_partial", true),
+        filter_ground         = bb:get("config.filter_ground", 1.0),
+        filter_water          = bb:get("config.filter_water", 10.0),
+        filter_lava           = bb:get("config.filter_lava", 100.0),
+        wall_clearance        = bb:get("config.wall_clearance", 0),
+        string_pull_deviation = bb:get("config.string_pull_deviation"),
+        string_pull_heading   = bb:get("config.string_pull_heading"),
     }
     if extra then
         for k, v in pairs(extra) do
@@ -593,7 +591,7 @@ function Client:_check_stuck()
                 self._hsm:set_substate(NAV_SUBSTATES.RECOVERING)
             end
 
-            self._event_bus:emit("nav.stuck_detected", {
+            self._event_bus:emit(Events.STUCK_DETECTED, {
                 position = pos,
                 attempt = count,
                 max_attempts = self._blackboard:get("config.max_stuck_attempts", 6),
@@ -601,7 +599,7 @@ function Client:_check_stuck()
         else
             -- Moved enough, reset stuck count
             if self._blackboard:get("stuck.count", 0) > 0 then
-                self._event_bus:emit("nav.stuck_recovered", { position = pos })
+                self._event_bus:emit(Events.STUCK_RECOVERED, { position = pos })
                 self._blackboard:set("stuck.count", 0)
                 -- Return to following_path if currently recovering
                 local substate = self._hsm:get_substate()

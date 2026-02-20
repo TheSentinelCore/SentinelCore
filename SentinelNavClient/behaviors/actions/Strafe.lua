@@ -13,6 +13,11 @@ return function(duration, direction)
     return BT.Action:new(function(bb, dt)
         local now = bb:get("_time", 0)
 
+        -- Guard: reset stale start_time if tree was reset mid-action
+        if start_time and (now - start_time) > duration * 2 then
+            start_time = nil
+        end
+
         if not start_time then
             start_time = now
             if direction == "left" then

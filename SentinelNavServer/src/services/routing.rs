@@ -201,7 +201,6 @@ impl RoutingService for DetourRouter {
             };
 
             let no_smooth = PathOptions {
-                smoothing: Some("none".to_string()),
                 optimize: true,
                 ..Default::default()
             };

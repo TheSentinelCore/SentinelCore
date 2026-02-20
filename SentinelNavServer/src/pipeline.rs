@@ -10,7 +10,6 @@ use detour::filter::{
 use detour::mesh::NavMesh;
 use detour::query::NavMeshQuery;
 use detour::types::{PolyRef, Vec3};
-use path_smoothing::SmootherPipeline;
 
 use crate::error::AppError;
 
@@ -86,8 +85,6 @@ const NAV_FLAG_WATER: u16 = 0x04;
 /// Options controlling how a path is computed.
 #[derive(Debug, Clone, Default)]
 pub struct PathOptions {
-    /// Smoothing algorithm name.
-    pub smoothing: Option<String>,
     /// Enable string-pulling optimization.
     pub optimize: bool,
     /// Ground area cost multiplier.
@@ -102,6 +99,12 @@ pub struct PathOptions {
     /// Minimum distance to maintain from walls/obstacles (0 = disabled).
     /// Pushes waypoints away from nearby walls using Detour's findDistanceToWall.
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    /// Lower = tighter corners, higher = smoother but cuts corners more.
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    /// Lower = preserves more curves, higher = straighter paths.
+    pub string_pull_heading: Option<f32>,
 }
 
 /// Result of a pathfinding computation.
@@ -228,10 +231,12 @@ fn maybe_prefer_water(
     Ok((poly_ref, snapped))
 }
 
-/// Execute the full pathfinding pipeline: find → straight → optimize → smooth → project → validate.
+/// Execute pathfinding returning raw waypoints (find + straight path only).
 ///
-/// This is the core shared function used by all pathfinding endpoints.
-pub fn execute_pathfind(
+/// No string-pulling, no densification, no wall_clearance. Used by multi-leg
+/// endpoints that need to concatenate legs before applying post-processing
+/// to the full path.
+pub fn execute_pathfind_raw(
     query: &NavMeshQuery,
     mesh: &NavMesh,
     filter: &QueryFilter,
@@ -360,36 +365,11 @@ pub fn execute_pathfind(
         return Err(AppError::PathfindingFailed("Empty polygon path".into()));
     }
 
-    // Convert polygon corridor to straight path (waypoints)
-    let mut waypoints = query
+    // Convert polygon corridor to straight path (raw waypoints only)
+    let waypoints = query
         .find_straight_path(effective_start, effective_end, &poly_path, MAX_STRAIGHT_PATH)
         .map_err(|e| AppError::PathfindingFailed(e.to_string()))?;
 
-    // Apply string-pulling optimization if requested
-    if options.optimize {
-        waypoints = string_pull_path(&waypoints, query, filter);
-    }
-
-    // Densify long segments — insert midpoints projected to navmesh surface.
-    // On spiral ramps, this snaps chord midpoints onto the actual ramp arc.
-    waypoints = densify_segments(&waypoints, query, filter);
-
-    let mut waypoints = if options.smoothing.as_deref().unwrap_or("none") != "none" {
-        let smoother = SmootherPipeline::with_default_config();
-        smoother.smooth(&waypoints, query, filter)
-    } else {
-        waypoints
-    };
-
-    // Apply wall clearance LAST — after validation, so validation can't undo the push
-    // by inserting pre-clearance original waypoints.
-    if let Some(clearance) = options.wall_clearance {
-        if clearance > 0.0 {
-            waypoints = apply_wall_clearance(&waypoints, query, filter, clearance);
-        }
-    }
-
-    // Calculate total path distance
     let distance = calculate_path_distance(&waypoints);
 
     Ok(PathResult {
@@ -398,6 +378,57 @@ pub fn execute_pathfind(
         partial: is_partial,
         out_of_nodes: was_out_of_nodes,
     })
+}
+
+/// Apply string-pulling + densification + wall_clearance to an existing path.
+///
+/// Used by multi-leg endpoints after concatenating raw legs, and by
+/// `execute_pathfind` for single-leg paths. Ensures consistent post-processing
+/// regardless of how the raw waypoints were produced.
+pub fn post_process_path(
+    waypoints: &[Vec3],
+    query: &NavMeshQuery,
+    filter: &QueryFilter,
+    options: &PathOptions,
+) -> Vec<Vec3> {
+    let mut result = if options.optimize {
+        string_pull_path(
+            waypoints,
+            query,
+            filter,
+            options.string_pull_deviation.unwrap_or(MAX_STRING_PULL_DEVIATION),
+            options.string_pull_heading.unwrap_or(MAX_HEADING_CHANGE),
+        )
+    } else {
+        waypoints.to_vec()
+    };
+
+    result = densify_segments(&result, query, filter);
+
+    if let Some(clearance) = options.wall_clearance {
+        if clearance > 0.0 {
+            result = apply_wall_clearance(&result, query, filter, clearance);
+        }
+    }
+
+    result
+}
+
+/// Execute the full pathfinding pipeline: find → straight → optimize → densify → wall_clearance.
+///
+/// This is the core shared function used by single-path endpoints.
+pub fn execute_pathfind(
+    query: &NavMeshQuery,
+    mesh: &NavMesh,
+    filter: &QueryFilter,
+    start_pos: Vec3,
+    end_pos: Vec3,
+    options: &PathOptions,
+) -> Result<PathResult, AppError> {
+    let mut result = execute_pathfind_raw(query, mesh, filter, start_pos, end_pos, options)?;
+    result.waypoints = post_process_path(&result.waypoints, query, filter, options);
+    result.distance = calculate_path_distance(&result.waypoints);
+    Ok(result)
 }
 
 /// Max 3D deviation (yards) allowed when string-pulling skips intermediate waypoints.
@@ -480,10 +511,15 @@ fn cumulative_heading_change(waypoints: &[Vec3], from: usize, to: usize) -> f32 
 ///
 /// Uses raycast to find the furthest visible waypoint from each position,
 /// eliminating intermediate waypoints that have direct line-of-sight.
+///
+/// `max_deviation`: Max 3D deviation (yards) before refusing to skip waypoints.
+/// `max_heading`: Max cumulative heading change (radians) before refusing to skip.
 pub fn string_pull_path(
     waypoints: &[Vec3],
     query: &NavMeshQuery,
     filter: &QueryFilter,
+    max_deviation: f32,
+    max_heading: f32,
 ) -> Vec<Vec3> {
     if waypoints.len() <= 2 {
         return waypoints.to_vec();
@@ -518,14 +554,14 @@ pub fn string_pull_path(
                 Ok((hit_t, _)) => {
                     if hit_t >= 1.0 {
                         let dev = max_deviation_from_segment(waypoints, current_idx, target_idx);
-                        if dev > MAX_STRING_PULL_DEVIATION {
+                        if dev > max_deviation {
                             continue;
                         }
                         // Guard: don't skip if path curves too much in 2D (spiral ramps).
                         // The character walks a straight chord between waypoints, so a
                         // large heading change means the chord cuts through the arc interior.
                         let turn = cumulative_heading_change(waypoints, current_idx, target_idx);
-                        if turn > MAX_HEADING_CHANGE {
+                        if turn > max_heading {
                             break; // Path curves too much — stop looking further
                         }
                         furthest_visible = target_idx;
@@ -1130,6 +1166,67 @@ pub fn execute_pathfind_with_avoidance(
     execute_pathfind(query, mesh, &avoidance_filter, start_pos, end_pos, options)
 }
 
+/// Raw variant of `execute_pathfind_with_avoidance` — stamps avoidance polygons
+/// but returns raw waypoints without post-processing (no string-pull, densify, wall_clearance).
+#[allow(clippy::too_many_arguments)]
+pub fn execute_pathfind_with_avoidance_raw(
+    query: &NavMeshQuery,
+    mesh: &NavMesh,
+    base_filter: &QueryFilter,
+    start_pos: Vec3,
+    end_pos: Vec3,
+    options: &PathOptions,
+    zones: &[AvoidanceZone],
+    _avoidance_proof: &parking_lot::RwLockWriteGuard<'_, ()>,
+) -> Result<PathResult, AppError> {
+    if zones.is_empty() {
+        return execute_pathfind_raw(query, mesh, base_filter, start_pos, end_pos, options);
+    }
+
+    // Same stamping logic as execute_pathfind_with_avoidance
+    let mut guard = AreaRestoreGuard::new(mesh);
+    let avoid_cost = zones.iter().map(|z| z.cost_multiplier).fold(1.0f32, f32::max);
+    let search_filter = QueryFilter::default();
+
+    for zone in zones {
+        let half_extents = Vec3::new(zone.radius, zone.radius, 50.0);
+        let poly_refs = match query.query_polygons(zone.center, half_extents, &search_filter, MAX_QUERY_POLYS_PER_ZONE) {
+            Ok(refs) => refs,
+            Err(e) => {
+                tracing::warn!("queryPolygons failed for zone at {:?}: {e}", zone.center);
+                continue;
+            }
+        };
+
+        for poly_ref in &poly_refs {
+            let (closest, _) = match query.closest_point_on_poly(*poly_ref, zone.center) {
+                Ok(result) => result,
+                Err(_) => continue,
+            };
+            if closest.distance_2d(&zone.center) <= zone.radius {
+                let current_area = match mesh.get_poly_area(*poly_ref) {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                };
+                if current_area != NAV_AREA_AVOID {
+                    guard.stamp_polygon(*poly_ref, NAV_AREA_AVOID)?;
+                }
+            }
+        }
+    }
+
+    let avoidance_filter = QueryFilterBuilder::new()
+        .area_cost(NAV_AREA_GROUND, base_filter.area_cost(NAV_AREA_GROUND))
+        .area_cost(NAV_AREA_GROUND_STEEP, base_filter.area_cost(NAV_AREA_GROUND_STEEP))
+        .area_cost(NAV_AREA_WATER, base_filter.area_cost(NAV_AREA_WATER))
+        .area_cost(NAV_AREA_MAGMA_SLIME, base_filter.area_cost(NAV_AREA_MAGMA_SLIME))
+        .area_cost(NAV_AREA_AVOID, avoid_cost)
+        .build()
+        .map_err(|e| AppError::Internal(format!("Failed to create avoidance filter: {e}")))?;
+
+    execute_pathfind_raw(query, mesh, &avoidance_filter, start_pos, end_pos, options)
+}
+
 /// Pathfind with optional avoidance zones.
 ///
 /// If `zones` is empty, delegates to `execute_pathfind`.
@@ -1149,6 +1246,39 @@ pub fn pathfind_maybe_avoid(
     } else {
         let guard = pool.avoidance_lock();
         execute_pathfind_with_avoidance(
+            query,
+            pool.mesh(),
+            filter,
+            start_pos,
+            end_pos,
+            options,
+            zones,
+            &guard,
+        )
+    }
+}
+
+/// Pathfind returning raw waypoints (no string-pull, densify, or wall_clearance).
+///
+/// Used by multi-leg endpoints that concatenate raw legs before applying
+/// `post_process_path` to the full combined path.
+pub fn pathfind_maybe_avoid_raw(
+    query: &NavMeshQuery,
+    pool: &detour::pool::QueryPool,
+    filter: &QueryFilter,
+    start_pos: Vec3,
+    end_pos: Vec3,
+    options: &PathOptions,
+    zones: &[AvoidanceZone],
+) -> Result<PathResult, AppError> {
+    if zones.is_empty() {
+        let _pathfind_guard = pool.pathfind_lock();
+        execute_pathfind_raw(query, pool.mesh(), filter, start_pos, end_pos, options)
+    } else {
+        // Avoidance zones require stamping polygons, then pathfinding with modified costs.
+        // We use the same stamping logic but call execute_pathfind_raw instead.
+        let guard = pool.avoidance_lock();
+        execute_pathfind_with_avoidance_raw(
             query,
             pool.mesh(),
             filter,

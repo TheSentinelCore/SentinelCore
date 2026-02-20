@@ -48,7 +48,7 @@ end
 ---@param value any
 function Blackboard:set(key, value)
     local old = self._data[key]
-    if old == value then return end
+    if old == value and type(value) ~= "table" then return end
 
     self._data[key] = value
 

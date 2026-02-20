@@ -5,7 +5,6 @@
 //!
 //! - **PathfindingService**: Core A*-to-waypoint pipeline (find, avoid, corridor, check)
 //! - **RoutingService**: Multi-stop and TSP optimization
-//! - **SmoothingService**: Post-process path smoothing algorithms
 //! - **SpatialService**: Low-level navmesh queries (raycast, height, random, move)
 //! - **TacticalService**: Combat-oriented path generation (flee, cover, kite)
 //! - **CacheService**: Path result caching with spatial quantization
@@ -262,19 +261,6 @@ pub trait RoutingService: Send + Sync {
     fn tsp_optimize(&self, req: TspRequest) -> Result<MultiStopResult, AppError>;
 }
 
-/// Post-process path smoothing.
-///
-/// Implementations wrap the `path-smoothing` crate or custom algorithms.
-pub trait SmoothingService: Send + Sync {
-    /// Smooth a raw path, projecting results back to the navmesh surface.
-    fn smooth(
-        &self,
-        path: &[Vec3],
-        algorithm: &str,
-        map_id: u32,
-    ) -> Vec<Vec3>;
-}
-
 /// Low-level navmesh spatial queries.
 pub trait SpatialService: Send + Sync {
     /// Raycast between two points. Returns hit info.
@@ -323,7 +309,6 @@ pub trait CacheService: Send + Sync {
 
 pub mod pathfinding;
 pub mod routing;
-pub mod smoothing;
 pub mod spatial;
 pub mod tactical;
 pub mod cache_impl;

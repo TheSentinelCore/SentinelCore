@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
-use path_smoothing::SmootherPipeline;
 
 use crate::pipeline::{
     has_custom_filter, create_custom_filter, parse_threats,
@@ -42,8 +41,6 @@ pub struct FleeRequest {
     #[serde(default = "default_flee_distance")]
     pub flee_distance: f32,
     #[serde(default)]
-    pub smoothing: Option<String>,
-    #[serde(default)]
     pub optimize: Option<bool>,
     #[serde(default)]
     pub filter_ground: Option<f32>,
@@ -55,6 +52,12 @@ pub struct FleeRequest {
     pub z_extent: Option<f32>,
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
     /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
     #[serde(default)]
     pub avoid: Option<String>,
@@ -129,13 +132,14 @@ pub async fn flee(
     };
 
     let options = PathOptions {
-        smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(true),
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
     };
 
     // Compute threat centroid
@@ -371,8 +375,6 @@ pub struct KiteRequest {
     #[serde(default = "default_direction")]
     pub direction: String,
     #[serde(default)]
-    pub smoothing: Option<String>,
-    #[serde(default)]
     pub filter_ground: Option<f32>,
     #[serde(default)]
     pub filter_water: Option<f32>,
@@ -380,6 +382,12 @@ pub struct KiteRequest {
     pub filter_lava: Option<f32>,
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
 }
 
 fn default_arc_degrees() -> f32 {
@@ -475,13 +483,7 @@ pub async fn kite(
         }
     }
 
-    // Apply smoothing pipeline to arc waypoints
-    let mut waypoints = if params.smoothing.as_deref().unwrap_or("none") != "none" {
-        let smoother = SmootherPipeline::with_default_config();
-        smoother.smooth(&waypoints, &query, filter)
-    } else {
-        waypoints
-    };
+    let mut waypoints = waypoints;
 
     if let Some(clearance) = params.wall_clearance {
         if clearance > 0.0 {

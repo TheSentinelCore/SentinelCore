@@ -671,13 +671,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "path-smoothing"
-version = "0.1.0"
-dependencies = [
- "detour",
-]
-
-[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -894,7 +887,6 @@ dependencies = [
  "mmap-loader",
  "moka",
  "parking_lot",
- "path-smoothing",
  "polygon-sampling",
  "rand",
  "serde",

@@ -13,7 +13,7 @@ use tokio::sync::Semaphore;
 use crate::cache::PathCache;
 use crate::config::Config;
 use crate::services::{
-    CacheService, PathfindingService, RoutingService, SmoothingService, SpatialService,
+    CacheService, PathfindingService, RoutingService, SpatialService,
     TacticalService,
 };
 use crate::state::Metrics;
@@ -36,8 +36,6 @@ pub struct ServerBlackboard {
     pub pathfinding: Arc<dyn PathfindingService>,
     /// Multi-stop and TSP route optimization.
     pub routing: Arc<dyn RoutingService>,
-    /// Post-process path smoothing.
-    pub smoothing: Arc<dyn SmoothingService>,
     /// Low-level navmesh queries: raycast, height, random, move.
     pub spatial: Arc<dyn SpatialService>,
     /// Combat-oriented paths: flee, cover, kite.

@@ -4,7 +4,6 @@ members = [
     "crates/detour-sys",
     "crates/detour",
     "crates/mmap-loader",
-    "crates/path-smoothing",
     "crates/polygon-sampling",
 ]
 
@@ -60,7 +59,7 @@ edition.workspace = true
 [dependencies]
 detour = { path = "crates/detour" }
 mmap-loader = { path = "crates/mmap-loader" }
-path-smoothing = { path = "crates/path-smoothing" }
+
 polygon-sampling = { path = "crates/polygon-sampling" }
 tokio.workspace = true
 axum.workspace = true
