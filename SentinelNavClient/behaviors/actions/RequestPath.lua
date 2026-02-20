@@ -34,6 +34,11 @@ return function(nav_service, movement_service, event_bus)
                 bb:set("request.pending", false)
                 bb:clear("request.result")
                 bb:clear("request.error")
+                event_bus:emit(Events.PATH_FAILED, {
+                    error = err or "path request failed",
+                    start = bb:get("player.position"),
+                    destination = bb:get("path.destination"),
+                })
                 return BT.FAILURE
             end
             return BT.RUNNING
@@ -42,7 +47,14 @@ return function(nav_service, movement_service, event_bus)
         -- Issue new request
         local start = bb:get("player.position")
         local dest = bb:get("path.destination")
-        if not start or not dest then return BT.FAILURE end
+        if not start or not dest then
+            event_bus:emit(Events.PATH_FAILED, {
+                error = "missing start or destination",
+                start = start,
+                destination = dest,
+            })
+            return BT.FAILURE
+        end
 
         bb:set("request.pending", true)
         bb:clear("request.result")

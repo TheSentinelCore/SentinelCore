@@ -2,12 +2,16 @@
     Pathfinding Tab - String-pull tuning, optimization, terrain costs, indoor, wall clearance
 ]]
 
+local Defaults = require("core/Defaults")
+
 local PathfindingTab = {}
 
 ---Register the pathfinding tab with the UI
 ---@param ui any RotationSettingsUI instance
 ---@param menu table Menu elements table
 function PathfindingTab.register(ui, menu)
+    local M = Defaults.movement
+
     local function corridor_on()
         return menu.corridor:get_state()
     end
@@ -36,10 +40,10 @@ function PathfindingTab.register(ui, menu)
             label = "String-Pull Tuning",
             visible_when = show_advanced,
             elements = {
-                { element = menu.sp_deviation, label = "Max Deviation", suffix = " yd", tooltip = "Max 3D deviation for string-pull optimization (lower = tighter corners)" },
-                { element = menu.sp_heading, label = "Max Heading Change", suffix = "\xC2\xB0", tooltip = "Max heading change in degrees (lower = preserves more curves)" },
-                { element = menu.sp_wall_dist, label = "Min Wall Distance", suffix = " yd", tooltip = "Min wall distance for shortcuts (higher = tighter corners, 0 = disabled)" },
-                { element = menu.densify_seg, label = "Segment Length", suffix = " yd", tooltip = "Max distance between waypoints (lower = smoother curves)" },
+                { element = menu.sp_deviation, label = "Max Deviation", min = M.string_pull_deviation.min, max = M.string_pull_deviation.max, suffix = " yd", tooltip = "Max 3D deviation for string-pull optimization (lower = tighter corners)" },
+                { element = menu.sp_heading, label = "Max Heading Change", min = M.string_pull_heading.min, max = M.string_pull_heading.max, suffix = "\xC2\xB0", tooltip = "Max heading change in degrees (lower = preserves more curves)" },
+                { element = menu.sp_wall_dist, label = "Min Wall Distance", min = M.string_pull_wall_dist.min, max = M.string_pull_wall_dist.max, suffix = " yd", tooltip = "Min wall distance for shortcuts (higher = tighter corners, 0 = disabled)" },
+                { element = menu.densify_seg, label = "Segment Length", min = M.densify_segment_length.min, max = M.densify_segment_length.max, suffix = " yd", tooltip = "Max distance between waypoints (lower = smoother curves)" },
             }
         })
 
@@ -55,7 +59,7 @@ function PathfindingTab.register(ui, menu)
         t:slider_list({
             visible_when = wall_clearance_on,
             elements = {
-                { element = menu.wall_clearance, label = "Distance", suffix = " yd", tooltip = "Minimum distance to maintain from walls" },
+                { element = menu.wall_clearance, label = "Distance", min = M.wall_clearance.min, max = M.wall_clearance.max, suffix = " yd", tooltip = "Minimum distance to maintain from walls" },
             }
         })
 
@@ -71,7 +75,7 @@ function PathfindingTab.register(ui, menu)
         t:slider_list({
             visible_when = function() return corridor_on() and show_advanced() end,
             elements = {
-                { element = menu.corridor_probe, label = "Probe Distance", suffix = " yd", tooltip = "How far ahead to probe for corridor detection" },
+                { element = menu.corridor_probe, label = "Probe Distance", min = M.corridor_probe_dist.min, max = M.corridor_probe_dist.max, suffix = " yd", tooltip = "How far ahead to probe for corridor detection" },
             }
         })
 
@@ -80,9 +84,9 @@ function PathfindingTab.register(ui, menu)
             label = "Terrain Costs",
             visible_when = show_advanced,
             elements = {
-                { element = menu.filter_ground, label = "Ground", tooltip = "Pathfinding cost multiplier for ground terrain" },
-                { element = menu.filter_water, label = "Water", tooltip = "Pathfinding cost multiplier \xe2\x80\x94 higher values avoid water" },
-                { element = menu.filter_lava, label = "Lava", tooltip = "Pathfinding cost multiplier \xe2\x80\x94 higher values avoid lava" },
+                { element = menu.filter_ground, label = "Ground", min = M.filter_ground.min, max = M.filter_ground.max, tooltip = "Pathfinding cost multiplier for ground terrain" },
+                { element = menu.filter_water, label = "Water", min = M.filter_water.min, max = M.filter_water.max, tooltip = "Pathfinding cost multiplier \xe2\x80\x94 higher values avoid water" },
+                { element = menu.filter_lava, label = "Lava", min = M.filter_lava.min, max = M.filter_lava.max, tooltip = "Pathfinding cost multiplier \xe2\x80\x94 higher values avoid lava" },
             }
         })
 

@@ -17,7 +17,7 @@ Defaults.movement = {
     dynamic_speed_ramp_look_distance  = { type = "float", min = 2.0, max = 15.0, default = 6.0, id = "snc_dyn_ramp_look" },
 
     -- Tolerances
-    waypoint_tolerance                = { type = "float", min = 0.5, max = 10.0, default = 2.0, id = "snc_waypoint_tolerance" },
+    waypoint_tolerance                = { type = "float", min = 0.5, max = 10.0, default = 3.0, id = "snc_waypoint_tolerance" },
     final_tolerance                   = { type = "float", min = 0.5, max = 5.0, default = 1.5, id = "snc_final_tolerance" },
 
     -- Anti-Detection
@@ -34,9 +34,9 @@ Defaults.movement = {
 
     -- Deviation Detection
     deviation_check_interval          = { type = "float", min = 0.1, max = 5.0, default = 1.0, id = "snc_deviation_check_interval" },
-    deviation_threshold               = { type = "float", min = 1.0, max = 20.0, default = 2.0, id = "snc_deviation_threshold" },
-    deviation_vertical_threshold      = { type = "float", min = 0.5, max = 10.0, default = 2.0, id = "snc_deviation_vertical_threshold" },
-    deviation_corridor_factor         = { type = "float", min = 0.1, max = 2.0, default = 0.75, id = "snc_deviation_corridor_factor" },
+    deviation_threshold               = { type = "float", min = 1.0, max = 5.0, default = 2.0, id = "snc_deviation_threshold" },
+    deviation_vertical_threshold      = { type = "float", min = 0.5, max = 5.0, default = 2.0, id = "snc_deviation_vertical_threshold" },
+    deviation_corridor_factor         = { type = "float", min = 0.1, max = 5.0, default = 0.75, id = "snc_deviation_corridor_factor" },
     repath_cooldown                   = { type = "float", min = 0.1, max = 5.0, default = 0.1, id = "snc_repath_cooldown" },
     max_deviation_repaths             = { type = "int", min = 1, max = 10, default = 5, id = "snc_max_deviation_repaths" },
 
@@ -47,13 +47,13 @@ Defaults.movement = {
     -- String-Pull Tuning
     string_pull_deviation             = { type = "float", min = 0.5, max = 5.0, default = 1.0, id = "snc_sp_deviation" },
     string_pull_heading               = { type = "float", min = 10.0, max = 90.0, default = 30.0, id = "snc_sp_heading" },
-    string_pull_wall_dist             = { type = "float", min = 0.0, max = 3.0, default = 1.0, id = "snc_sp_wall_dist" },
+    string_pull_wall_dist             = { type = "float", min = 0.0, max = 5.0, default = 1.0, id = "snc_sp_wall_dist" },
     densify_segment_length            = { type = "float", min = 1.0, max = 10.0, default = 1.0, id = "snc_densify_seg" },
 
     -- Terrain Costs
-    filter_ground                     = { type = "float", min = 0.1, max = 10.0, default = 1.0, id = "snc_filter_ground" },
+    filter_ground                     = { type = "float", min = 0.1, max = 100.0, default = 1.0, id = "snc_filter_ground" },
     filter_water                      = { type = "float", min = 0.1, max = 100.0, default = 10.0, id = "snc_filter_water" },
-    filter_lava                       = { type = "float", min = 0.1, max = 1000.0, default = 100.0, id = "snc_filter_lava" },
+    filter_lava                       = { type = "float", min = 0.1, max = 100.0, default = 100.0, id = "snc_filter_lava" },
 
     -- Indoor / Corridor
     use_corridor_indoor               = { type = "bool", default = true, id = "snc_corridor" },
@@ -61,13 +61,14 @@ Defaults.movement = {
 
     -- Wall Clearance
     wall_clearance_enabled            = { type = "bool", default = true, id = "snc_wall_clearance_en" },
-    wall_clearance                    = { type = "float", min = 0.5, max = 5.0, default = 2.0, id = "snc_wall_clearance" },
+    wall_clearance                    = { type = "float", min = 0.0, max = 5.0, default = 2.0, id = "snc_wall_clearance" },
 
     -- Obstacle Scanning
     proactive_obstacle_check          = { type = "bool", default = true, id = "snc_proactive_obstacle" },
     proactive_obstacle_interval       = { type = "float", min = 0.5, max = 5.0, default = 1.5, id = "snc_obstacle_interval" },
 
     -- Debug
+    log_severity                      = { type = "int", min = 0, max = 3, default = 2, id = "snc_log_severity" },
     debug_verbose                     = { type = "bool", default = false, id = "snc_debug_verbose" },
 }
 

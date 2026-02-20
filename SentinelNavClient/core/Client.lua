@@ -4,6 +4,7 @@
 
 local EventBus             = require("events/EventBus")
 local Blackboard           = require("core/Blackboard")
+local ConsoleLogger        = require("core/ConsoleLogger")
 local StateMachine         = require("core/StateMachine")
 local Sensors              = require("core/Sensors")
 local Defaults             = require("core/Defaults")
@@ -39,6 +40,7 @@ function Client:new(config)
     -- Core systems
     o._event_bus  = EventBus:new()
     o._blackboard = Blackboard:new(o._event_bus)
+    o._logger     = ConsoleLogger:new(o._event_bus, o._blackboard)
     o._hsm        = StateMachine:new(o._event_bus)
     o._sensors    = Sensors:new(o._blackboard)
 
@@ -343,6 +345,10 @@ end
 function Client:destroy()
     self:stop()
     self.obstacle:clear()
+    if self._logger then
+        self._logger:destroy()
+        self._logger = nil
+    end
     self._event_bus:clear()
     self._blackboard:clear()
     self._listeners = {}
