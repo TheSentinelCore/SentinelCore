@@ -294,10 +294,10 @@ pub trait TacticalService: Send + Sync {
 /// Path result caching with spatial quantization.
 pub trait CacheService: Send + Sync {
     /// Look up a cached path. Returns None on miss.
-    fn get(&self, map_id: u32, start: &Vec3, end: &Vec3) -> Option<crate::cache::CachedPath>;
+    fn get(&self, map_id: u32, start: &Vec3, end: &Vec3, options_hash: u64) -> Option<crate::cache::CachedPath>;
 
     /// Insert a path into the cache.
-    fn put(&self, map_id: u32, start: &Vec3, end: &Vec3, path: crate::cache::CachedPath);
+    fn put(&self, map_id: u32, start: &Vec3, end: &Vec3, options_hash: u64, path: crate::cache::CachedPath);
 
     /// Get cache statistics.
     fn stats(&self) -> CacheStats;

@@ -105,6 +105,35 @@ pub struct PathOptions {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     /// Lower = preserves more curves, higher = straighter paths.
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6).
+    /// During optimization, if a proposed shortcut line passes closer to a wall
+    /// than this threshold, the shortcut is rejected and intermediate waypoints
+    /// are preserved. 0 = disabled.
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    /// Segments longer than this are split with midpoints projected to the navmesh.
+    /// Lower = more waypoints on curves, higher = fewer waypoints.
+    pub densify_segment_length: Option<f32>,
+}
+
+impl PathOptions {
+    /// Compute a hash of all options that affect path output, for use as a cache key.
+    pub fn cache_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut h = DefaultHasher::new();
+        self.optimize.hash(&mut h);
+        self.wall_clearance.map(|v| v.to_bits()).hash(&mut h);
+        self.string_pull_deviation.map(|v| v.to_bits()).hash(&mut h);
+        self.string_pull_heading.map(|v| v.to_bits()).hash(&mut h);
+        self.string_pull_wall_dist.map(|v| v.to_bits()).hash(&mut h);
+        self.densify_segment_length.map(|v| v.to_bits()).hash(&mut h);
+        self.filter_ground.map(|v| v.to_bits()).hash(&mut h);
+        self.filter_water.map(|v| v.to_bits()).hash(&mut h);
+        self.filter_lava.map(|v| v.to_bits()).hash(&mut h);
+        self.z_extent.map(|v| v.to_bits()).hash(&mut h);
+        h.finish()
+    }
 }
 
 /// Result of a pathfinding computation.
@@ -398,12 +427,18 @@ pub fn post_process_path(
             filter,
             options.string_pull_deviation.unwrap_or(MAX_STRING_PULL_DEVIATION),
             options.string_pull_heading.unwrap_or(MAX_HEADING_CHANGE),
+            options.string_pull_wall_dist.unwrap_or(0.6),
         )
     } else {
         waypoints.to_vec()
     };
 
-    result = densify_segments(&result, query, filter);
+    result = densify_segments(
+        &result,
+        query,
+        filter,
+        options.densify_segment_length.unwrap_or(MAX_SEGMENT_LENGTH),
+    );
 
     if let Some(clearance) = options.wall_clearance {
         if clearance > 0.0 {
@@ -507,6 +542,53 @@ fn cumulative_heading_change(waypoints: &[Vec3], from: usize, to: usize) -> f32 
     total
 }
 
+/// Compute Z extents for segment-based operations.
+/// Uses the Z range of the segment endpoints with a buffer,
+/// clamped to [2.0, 5.0] to stay on the correct floor in
+/// multi-level structures (towers, ramps, bridges) while still
+/// handling gentle terrain variations.
+fn segment_z_extent(a: &Vec3, b: &Vec3) -> f32 {
+    let z_range = (a.z - b.z).abs();
+    (z_range + 1.0).max(2.0).min(5.0)
+}
+
+/// Check if any point along the line from `a` to `b` is closer to a wall than `threshold`.
+/// Samples at ~1 yd intervals. Uses the same `find_distance_to_wall` API as `apply_wall_clearance`.
+fn shortcut_near_wall(
+    query: &NavMeshQuery,
+    filter: &QueryFilter,
+    a: Vec3,
+    b: Vec3,
+    threshold: f32,
+) -> bool {
+    let dist = a.distance(&b);
+    if dist < 0.5 {
+        return false;
+    }
+    let z_ext = segment_z_extent(&a, &b);
+    let extents = Vec3::new(HEIGHT_EXTENTS.x, HEIGHT_EXTENTS.y, z_ext);
+    let steps = (dist / 1.0).ceil().max(2.0) as usize;
+    for i in 1..steps {
+        let t = i as f32 / steps as f32;
+        let sample = Vec3::new(
+            a.x + (b.x - a.x) * t,
+            a.y + (b.y - a.y) * t,
+            a.z + (b.z - a.z) * t,
+        );
+        if let Ok((poly_ref, on_surface)) = query.find_nearest_poly(sample, extents, filter)
+        {
+            if let Ok((wall_dist, _, _)) =
+                query.find_distance_to_wall(poly_ref, on_surface, threshold * 2.0, filter)
+            {
+                if wall_dist < threshold {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// String-pulling optimization to reduce waypoint count while maintaining a valid path.
 ///
 /// Uses raycast to find the furthest visible waypoint from each position,
@@ -514,12 +596,15 @@ fn cumulative_heading_change(waypoints: &[Vec3], from: usize, to: usize) -> f32 
 ///
 /// `max_deviation`: Max 3D deviation (yards) before refusing to skip waypoints.
 /// `max_heading`: Max cumulative heading change (radians) before refusing to skip.
+/// `min_wall_dist`: Min wall distance (yards) for shortcuts. If any point along
+///   the shortcut line is closer to a wall than this, the shortcut is rejected. 0 = disabled.
 pub fn string_pull_path(
     waypoints: &[Vec3],
     query: &NavMeshQuery,
     filter: &QueryFilter,
     max_deviation: f32,
     max_heading: f32,
+    min_wall_dist: f32,
 ) -> Vec<Vec3> {
     if waypoints.len() <= 2 {
         return waypoints.to_vec();
@@ -564,7 +649,27 @@ pub fn string_pull_path(
                         if turn > max_heading {
                             break; // Path curves too much — stop looking further
                         }
+                        // Guard: don't shortcut if the line passes too close to a wall.
+                        // Raycast validates connectivity but not clearance — a line 0.1 yd
+                        // from a wall still passes raycast. This check catches corner-clipping.
+                        if min_wall_dist > 0.0
+                            && shortcut_near_wall(
+                                query,
+                                filter,
+                                current_pos,
+                                target_pos,
+                                min_wall_dist,
+                            )
+                        {
+                            break; // Shortcut clips a corner — keep intermediate waypoints
+                        }
                         furthest_visible = target_idx;
+                    } else {
+                        // Wall blocks LOS — stop looking past this point.
+                        // Targets are sequential path waypoints; if the direct line to
+                        // target+N hits a wall, targets past it would require going around
+                        // the corner, producing exactly the corner-clipping we want to avoid.
+                        break;
                     }
                 }
                 Err(_) => {
@@ -602,8 +707,17 @@ pub fn apply_wall_clearance(
     }
 
     let max_radius = clearance * 2.0;
-    let snap_extents = Vec3::new(clearance * 0.5, clearance * 0.5, 5.0);
     let mut result = Vec::with_capacity(waypoints.len() * 2);
+    let mut diag_samples = 0u32;
+    let mut diag_near_wall = 0u32;
+    let mut diag_pushed = 0u32;
+    let mut diag_rejected_snap = 0u32;
+    let mut diag_rejected_drift = 0u32;
+    let mut diag_rejected_raycast = 0u32;
+    let mut diag_no_wall = 0u32;
+
+    tracing::info!("[wall_clearance] START: {} waypoints, clearance={:.2}, max_radius={:.2}",
+        waypoints.len(), clearance, max_radius);
 
     // Always keep start point as-is
     result.push(waypoints[0]);
@@ -611,6 +725,11 @@ pub fn apply_wall_clearance(
     for seg_idx in 0..waypoints.len() - 1 {
         let a = waypoints[seg_idx];
         let b = waypoints[seg_idx + 1];
+
+        // Per-segment Z extents to stay on correct floor in multi-level structures
+        let seg_z_ext = segment_z_extent(&a, &b);
+        let seg_extents = Vec3::new(HEIGHT_EXTENTS.x, HEIGHT_EXTENTS.y, seg_z_ext);
+        let snap_extents = Vec3::new(clearance * 0.5, clearance * 0.5, seg_z_ext);
 
         // Sample points along this segment to detect wall proximity
         let seg_len = a.distance_2d(&b);
@@ -657,48 +776,81 @@ pub fn apply_wall_clearance(
                 // between waypoints drifts off the polygon surface, making
                 // find_distance_to_wall inaccurate.
                 let (poly_ref, on_surface) =
-                    match query.find_nearest_poly(sample, HEIGHT_EXTENTS, filter) {
+                    match query.find_nearest_poly(sample, seg_extents, filter) {
                         Ok(result) => result,
-                        Err(_) => continue,
+                        Err(_) => {
+                            tracing::info!("[wall_clearance] seg={} t={:.2}: snap FAILED at ({:.1},{:.1},{:.1})",
+                                seg_idx, t, sample.x, sample.y, sample.z);
+                            continue;
+                        }
                     };
 
-                if let Ok((hit_dist, _hit_pos, hit_normal)) =
-                    query.find_distance_to_wall(poly_ref, on_surface, max_radius, filter)
-                {
-                    if hit_dist < clearance {
-                        // Segment passes too close to a wall — insert offset waypoint
-                        let push_dist = clearance - hit_dist;
-                        let candidate = Vec3::new(
-                            on_surface.x + hit_normal.x * push_dist,
-                            on_surface.y + hit_normal.y * push_dist,
-                            on_surface.z,
-                        );
+                diag_samples += 1;
 
-                        if let Ok((snap_ref, snapped)) =
-                            query.find_nearest_poly(candidate, snap_extents, filter)
-                        {
-                            if snapped.distance_2d(&candidate) < clearance {
-                                // Verify pushed point is reachable (no wall in either direction)
-                                let forward_ok = query
-                                    .raycast(poly_ref, on_surface, snapped, filter)
-                                    .map(|(t, _)| t >= 1.0)
-                                    .unwrap_or(false);
+                match query.find_distance_to_wall(poly_ref, on_surface, max_radius, filter) {
+                    Ok((hit_dist, _hit_pos, hit_normal)) => {
+                        if hit_dist < clearance {
+                            diag_near_wall += 1;
+                            // Segment passes too close to a wall — insert offset waypoint
+                            let push_dist = clearance - hit_dist;
+                            let candidate = Vec3::new(
+                                on_surface.x + hit_normal.x * push_dist,
+                                on_surface.y + hit_normal.y * push_dist,
+                                on_surface.z,
+                            );
 
-                                // Also check reverse direction
-                                let reverse_ok = if forward_ok {
-                                    query
-                                        .raycast(snap_ref, snapped, on_surface, filter)
-                                        .map(|(t, _)| t >= 1.0)
-                                        .unwrap_or(false)
-                                } else {
-                                    false
-                                };
+                            match query.find_nearest_poly(candidate, snap_extents, filter) {
+                                Ok((snap_ref, snapped)) => {
+                                    if snapped.distance_2d(&candidate) < clearance {
+                                        // Verify pushed point is reachable (no wall in either direction)
+                                        let forward_ok = query
+                                            .raycast(poly_ref, on_surface, snapped, filter)
+                                            .map(|(t, _)| t >= 1.0)
+                                            .unwrap_or(false);
 
-                                if forward_ok && reverse_ok {
-                                    result.push(snapped);
+                                        // Also check reverse direction
+                                        let reverse_ok = if forward_ok {
+                                            query
+                                                .raycast(snap_ref, snapped, on_surface, filter)
+                                                .map(|(t, _)| t >= 1.0)
+                                                .unwrap_or(false)
+                                        } else {
+                                            false
+                                        };
+
+                                        if forward_ok && reverse_ok {
+                                            diag_pushed += 1;
+                                            tracing::info!("[wall_clearance] seg={} PUSH OK: wall_dist={:.2}, push={:.2}, normal=({:.2},{:.2}), from=({:.1},{:.1},{:.1}) to=({:.1},{:.1},{:.1})",
+                                                seg_idx, hit_dist, push_dist, hit_normal.x, hit_normal.y,
+                                                on_surface.x, on_surface.y, on_surface.z,
+                                                snapped.x, snapped.y, snapped.z);
+                                            result.push(snapped);
+                                        } else {
+                                            diag_rejected_raycast += 1;
+                                            tracing::info!("[wall_clearance] seg={} REJECT raycast: fwd={} rev={}, wall_dist={:.2}, from=({:.1},{:.1},{:.1}) to=({:.1},{:.1},{:.1})",
+                                                seg_idx, forward_ok, reverse_ok, hit_dist,
+                                                on_surface.x, on_surface.y, on_surface.z,
+                                                snapped.x, snapped.y, snapped.z);
+                                        }
+                                    } else {
+                                        diag_rejected_drift += 1;
+                                        tracing::info!("[wall_clearance] seg={} REJECT drift: snap drifted {:.2} yd (limit {:.2})",
+                                            seg_idx, snapped.distance_2d(&candidate), clearance);
+                                    }
+                                }
+                                Err(_) => {
+                                    diag_rejected_snap += 1;
+                                    tracing::info!("[wall_clearance] seg={} REJECT snap: candidate ({:.1},{:.1},{:.1}) not on navmesh",
+                                        seg_idx, candidate.x, candidate.y, candidate.z);
                                 }
                             }
+                        } else {
+                            diag_no_wall += 1;
                         }
+                    }
+                    Err(_) => {
+                        tracing::info!("[wall_clearance] seg={} find_distance_to_wall FAILED at ({:.1},{:.1},{:.1})",
+                            seg_idx, on_surface.x, on_surface.y, on_surface.z);
                     }
                 }
             }
@@ -708,13 +860,17 @@ pub fn apply_wall_clearance(
         if seg_idx + 1 < waypoints.len() - 1 {
             // Intermediate waypoint — also offset if too close to a wall
             let pushed =
-                try_push_from_wall(b, query, filter, clearance, max_radius, &snap_extents);
+                try_push_from_wall(b, query, filter, clearance, max_radius, &snap_extents, seg_z_ext);
             result.push(pushed);
         }
     }
 
     // Always keep end point as-is
     result.push(*waypoints.last().unwrap());
+
+    tracing::info!("[wall_clearance] DONE: {} in → {} out | samples={} near_wall={} pushed={} | reject: snap={} drift={} raycast={} | far_from_wall={}",
+        waypoints.len(), result.len(), diag_samples, diag_near_wall, diag_pushed,
+        diag_rejected_snap, diag_rejected_drift, diag_rejected_raycast, diag_no_wall);
 
     result
 }
@@ -728,9 +884,12 @@ fn try_push_from_wall(
     clearance: f32,
     max_radius: f32,
     snap_extents: &Vec3,
+    z_ext: f32,
 ) -> Vec3 {
-    // Snap to surface first — waypoint may be slightly off-polygon on ramps
-    let (poly_ref, on_surface) = match query.find_nearest_poly(wp, HEIGHT_EXTENTS, filter) {
+    // Snap to surface first — waypoint may be slightly off-polygon on ramps.
+    // Use segment-relative Z to stay on the correct floor in multi-level structures.
+    let extents = Vec3::new(HEIGHT_EXTENTS.x, HEIGHT_EXTENTS.y, z_ext);
+    let (poly_ref, on_surface) = match query.find_nearest_poly(wp, extents, filter) {
         Ok(result) => result,
         Err(_) => return wp,
     };
@@ -743,6 +902,9 @@ fn try_push_from_wall(
                 on_surface.y + hit_normal.y * push_dist,
                 on_surface.z,
             );
+
+            tracing::info!("[try_push] wp=({:.1},{:.1},{:.1}) wall_dist={:.2} push={:.2} normal=({:.2},{:.2})",
+                wp.x, wp.y, wp.z, hit_dist, push_dist, hit_normal.x, hit_normal.y);
 
             if let Ok((snap_ref, snapped)) =
                 query.find_nearest_poly(candidate, *snap_extents, filter)
@@ -770,14 +932,30 @@ fn try_push_from_wall(
                             .map(|(d, _, _)| d >= hit_dist)
                             .unwrap_or(false);
                         if still_ok {
+                            tracing::info!("[try_push] ACCEPTED: ({:.1},{:.1},{:.1}) → ({:.1},{:.1},{:.1})",
+                                wp.x, wp.y, wp.z, snapped.x, snapped.y, snapped.z);
                             return snapped;
+                        } else {
+                            tracing::info!("[try_push] REJECT still_ok: pushed closer to different wall");
                         }
+                    } else {
+                        tracing::info!("[try_push] REJECT raycast: fwd={} rev={}", forward_ok, reverse_ok);
                     }
+                } else {
+                    tracing::info!("[try_push] REJECT drift: {:.2} yd", snapped.distance_2d(&candidate));
                 }
             }
             wp // push failed, keep original
         }
-        _ => wp, // far enough from walls
+        Ok((hit_dist, _, _)) => {
+            tracing::info!("[try_push] wp=({:.1},{:.1},{:.1}) far_from_wall: dist={:.2} >= clearance={:.2}",
+                wp.x, wp.y, wp.z, hit_dist, clearance);
+            wp
+        }
+        Err(_) => {
+            tracing::info!("[try_push] wp=({:.1},{:.1},{:.1}) find_distance_to_wall FAILED", wp.x, wp.y, wp.z);
+            wp
+        }
     }
 }
 
@@ -805,6 +983,7 @@ pub fn densify_segments(
     waypoints: &[Vec3],
     query: &NavMeshQuery,
     filter: &QueryFilter,
+    max_segment: f32,
 ) -> Vec<Vec3> {
     if waypoints.len() < 2 {
         return waypoints.to_vec();
@@ -818,8 +997,10 @@ pub fn densify_segments(
         let b = waypoints[i + 1];
         let dist = a.distance(&b);
 
-        if dist > MAX_SEGMENT_LENGTH {
-            let splits = (dist / MAX_SEGMENT_LENGTH).ceil() as usize;
+        if dist > max_segment {
+            let z_ext = segment_z_extent(&a, &b);
+            let extents = Vec3::new(HEIGHT_EXTENTS.x, HEIGHT_EXTENTS.y, z_ext);
+            let splits = (dist / max_segment).ceil() as usize;
             for j in 1..splits {
                 let t = j as f32 / splits as f32;
                 let mid = Vec3::new(
@@ -829,7 +1010,7 @@ pub fn densify_segments(
                 );
                 // Project to navmesh — on curved surfaces this snaps
                 // from the chord onto the actual walkable surface.
-                if let Ok((poly_ref, _)) = query.find_nearest_poly(mid, HEIGHT_EXTENTS, filter) {
+                if let Ok((poly_ref, _)) = query.find_nearest_poly(mid, extents, filter) {
                     if let Ok((snapped, _)) = query.closest_point_on_poly(poly_ref, mid) {
                         result.push(snapped);
                     }

@@ -52,6 +52,7 @@ return function(nav_service, movement_service, event_bus)
 
         local zones = bb:get("obstacles.zones")
         local has_zones = zones and #zones > 0
+        local opts = bb:get("config._path_opts") or {}
 
         local callback = function(ok, data, err)
             if ok and data and data.waypoints and #data.waypoints > 0 then
@@ -62,9 +63,9 @@ return function(nav_service, movement_service, event_bus)
         end
 
         if has_zones then
-            nav_service:find_path_avoid(start, dest, zones, callback)
+            nav_service:find_path_avoid(start, dest, zones, callback, opts)
         else
-            nav_service:find_path(start, dest, callback)
+            nav_service:find_path(start, dest, callback, opts)
         end
 
         return BT.RUNNING

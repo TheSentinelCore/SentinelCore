@@ -52,6 +52,9 @@ function Client:new(config)
         o._blackboard:set("config." .. k, v)
     end
 
+    -- Pre-seed path options to avoid empty opts on first tick
+    o._blackboard:set("config._path_opts", o:get_path_opts())
+
     -- Services
     o.nav_client  = NavigationService:new(o._event_bus, o._blackboard, config.navigation)
     o.movement    = MovementService:new(o._blackboard, config.movement)
@@ -171,6 +174,8 @@ function Client:move_to(target, callback, opts)
     self._blackboard:set("path.index", 1)
     self._blackboard:set("stuck.count", 0)
     self._blackboard:set("deviation.count", 0)
+    self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_result")
     self._blackboard:clear("stuck.last_position")
     self._blackboard:clear("stuck.last_check")
     self._blackboard:clear("request.pending")
@@ -208,6 +213,8 @@ function Client:move_direct(target, callback)
     self._blackboard:set("path.index", 1)
     self._blackboard:set("stuck.count", 0)
     self._blackboard:set("deviation.count", 0)
+    self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_result")
     self._callback = callback
 
     -- Start movement immediately
@@ -259,6 +266,8 @@ function Client:follow_path(waypoints, callback)
     self._blackboard:set("path.index", 1)
     self._blackboard:set("stuck.count", 0)
     self._blackboard:set("deviation.count", 0)
+    self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_result")
     self._callback = callback
 
     self.movement:navigate(waypoints)
@@ -284,6 +293,9 @@ function Client:replan(reason)
     self._blackboard:clear("request.pending")
     self._blackboard:clear("request.result")
     self._blackboard:clear("request.error")
+
+    -- Reset BT so HandleNavigation Sequence re-evaluates EnsurePath
+    self._nav_tree:reset()
 
     self._hsm:set_substate(NAV_SUBSTATES.AWAITING_PATH)
 end
@@ -316,6 +328,8 @@ function Client:stop()
     self._blackboard:clear("pending.callback")
     self._blackboard:clear("pending.options")
     self._blackboard:set("stuck.count", 0)
+    self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_result")
     self._nav_tree:reset()
 
     if not self._hsm:is_idle() then
@@ -449,12 +463,16 @@ function Client:get_path_opts(extra)
     local opts = {
         optimize              = bb:get("config.optimize", true),
         allow_partial         = bb:get("config.allow_partial", true),
+        anti_detection        = bb:get("config.anti_detection", false),
+        max_deviation         = bb:get("config.max_deviation", 3.0),
         filter_ground         = bb:get("config.filter_ground", 1.0),
         filter_water          = bb:get("config.filter_water", 10.0),
         filter_lava           = bb:get("config.filter_lava", 100.0),
         wall_clearance        = bb:get("config.wall_clearance", 0),
         string_pull_deviation = bb:get("config.string_pull_deviation"),
         string_pull_heading   = bb:get("config.string_pull_heading"),
+        string_pull_wall_dist = bb:get("config.string_pull_wall_dist"),
+        densify_segment_length = bb:get("config.densify_segment_length"),
     }
     if extra then
         for k, v in pairs(extra) do
@@ -495,6 +513,9 @@ function Client:update_config(overrides)
             self._blackboard:set("config." .. k, v)
         end
         self.movement:update_config(overrides.movement)
+        self._validation:update_config(overrides.movement)
+        -- Pre-build path opts so BT actions can read them directly
+        self._blackboard:set("config._path_opts", self:get_path_opts())
     end
 
     -- Write obstacle config to Blackboard and update service

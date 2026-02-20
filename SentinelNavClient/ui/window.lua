@@ -91,6 +91,8 @@ local function create_menu_elements()
         -- String-Pull Tuning (Tab 2)
         sp_deviation           = e(D.movement.string_pull_deviation),
         sp_heading             = e(D.movement.string_pull_heading),
+        sp_wall_dist           = e(D.movement.string_pull_wall_dist),
+        densify_seg            = e(D.movement.densify_segment_length),
 
         -- Optimization (Tab 2)
         optimize               = e(D.movement.optimize),
@@ -232,6 +234,8 @@ local function sync_to_client()
             optimize                    = _menu.optimize:get_state(),
             string_pull_deviation       = _menu.sp_deviation:get(),
             string_pull_heading         = _menu.sp_heading:get(),
+            string_pull_wall_dist       = _menu.sp_wall_dist:get(),
+            densify_segment_length      = _menu.densify_seg:get(),
             allow_partial               = _menu.allow_partial:get_state(),
             filter_ground               = _menu.filter_ground:get(),
             filter_water                = _menu.filter_water:get(),
@@ -318,6 +322,8 @@ function Window.init(client)
             { _menu.optimize,          D.movement.optimize },
             { _menu.sp_deviation,      D.movement.string_pull_deviation },
             { _menu.sp_heading,        D.movement.string_pull_heading },
+            { _menu.sp_wall_dist,      D.movement.string_pull_wall_dist },
+            { _menu.densify_seg,       D.movement.densify_segment_length },
             { _menu.allow_partial,     D.movement.allow_partial },
             { _menu.filter_ground,     D.movement.filter_ground },
             { _menu.filter_water,      D.movement.filter_water },

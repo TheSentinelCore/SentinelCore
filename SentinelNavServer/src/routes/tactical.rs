@@ -58,6 +58,12 @@ pub struct FleeRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
     /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
     #[serde(default)]
     pub avoid: Option<String>,
@@ -140,6 +146,8 @@ pub async fn flee(
         wall_clearance: params.wall_clearance,
         string_pull_deviation: params.string_pull_deviation,
         string_pull_heading: params.string_pull_heading.map(f32::to_radians),
+        string_pull_wall_dist: params.string_pull_wall_dist,
+        densify_segment_length: params.densify_segment_length,
     };
 
     // Compute threat centroid
@@ -388,6 +396,12 @@ pub struct KiteRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
 }
 
 fn default_arc_degrees() -> f32 {
