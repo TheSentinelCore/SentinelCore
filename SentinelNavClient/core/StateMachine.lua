@@ -83,6 +83,8 @@ for _, v in pairs(NAV_SUBSTATES) do
     VALID_NAV[v] = true
 end
 
+local Events = require("events/Events")
+
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
@@ -266,7 +268,7 @@ function StateMachine:transition(new_state, substate, opts)
     end
 
     -- Fire state_changed event
-    self:_fire("nav.state_changed", {
+    self:_fire(Events.STATE_CHANGED, {
         from             = prev_state,
         to               = new_state,
         substate_from    = prev_substate,
@@ -277,9 +279,9 @@ function StateMachine:transition(new_state, substate, opts)
 
     -- Fire convenience events
     if new_state == STATES.ARRIVED then
-        self:_fire("nav.arrived", opts.event_data or {})
+        self:_fire(Events.ARRIVED, opts.event_data or {})
     elseif new_state == STATES.FAILED then
-        self:_fire("nav.failed", {
+        self:_fire(Events.FAILED, {
             reason      = self._fail_reason,
             destination = opts.destination,
         })
@@ -331,7 +333,7 @@ function StateMachine:set_substate(new_substate, opts)
     end
 
     -- Fire event
-    self:_fire("nav.state_changed", {
+    self:_fire(Events.STATE_CHANGED, {
         from             = self._state,
         to               = self._state,
         substate_from    = prev_substate,
@@ -354,7 +356,7 @@ function StateMachine:reset()
     self._fail_reason   = nil
 
     if prev_state ~= STATES.IDLE then
-        self:_fire("nav.state_changed", {
+        self:_fire(Events.STATE_CHANGED, {
             from          = prev_state,
             to            = STATES.IDLE,
             substate_from = prev_substate,
@@ -445,7 +447,7 @@ function StateMachine:_test()
     local sm5 = StateMachine:new(mock_bus)
     sm5:transition("navigating")
     results["8_event_fired"] = (#captured_events > 0)
-    results["8_event_name"] = (captured_events[1].event == "nav.state_changed")
+    results["8_event_name"] = (captured_events[1].event == Events.STATE_CHANGED)
     results["8_event_from"] = (captured_events[1].data.from == "idle")
     results["8_event_to"] = (captured_events[1].data.to == "navigating")
     results["8_event_substate_to"] = (captured_events[1].data.substate_to == "awaiting_path")
@@ -465,7 +467,7 @@ function StateMachine:_test()
     sm6:transition("arrived", nil, { event_data = { distance = 42 } })
     local found_arrived = false
     for i = 1, #arrived_events do
-        if arrived_events[i].event == "nav.arrived" then
+        if arrived_events[i].event == Events.ARRIVED then
             found_arrived = true
             results["9_arrived_data"] = (arrived_events[i].data.distance == 42)
         end

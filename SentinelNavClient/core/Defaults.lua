@@ -40,12 +40,13 @@ Defaults.movement = {
     repath_cooldown                   = { type = "float", min = 0.1, max = 5.0, default = 0.1, id = "snc_repath_cooldown" },
     max_deviation_repaths             = { type = "int", min = 1, max = 10, default = 5, id = "snc_max_deviation_repaths" },
 
-    -- Smoothing
-    smoothing                         = { type = "bool", default = true, id = "snc_smoothing" },
-
     -- Optimization
     optimize                          = { type = "bool", default = true, id = "snc_optimize" },
     allow_partial                     = { type = "bool", default = true, id = "snc_allow_partial" },
+
+    -- String-Pull Tuning
+    string_pull_deviation             = { type = "float", min = 0.5, max = 5.0, default = 1.5, id = "snc_sp_deviation" },
+    string_pull_heading               = { type = "float", min = 10.0, max = 90.0, default = 30.0, id = "snc_sp_heading" },
 
     -- Terrain Costs
     filter_ground                     = { type = "float", min = 0.1, max = 10.0, default = 1.0, id = "snc_filter_ground" },

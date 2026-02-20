@@ -5,7 +5,6 @@ use std::sync::Arc;
 use detour::types::Vec3;
 use mmap_loader::error::MmapError;
 use mmap_loader::MmapManager;
-use path_smoothing::SmootherPipeline;
 
 use crate::error::AppError;
 use crate::pipeline::{
@@ -294,13 +293,7 @@ impl TacticalService for DetourTactical {
             }
         }
 
-        // Apply smoothing pipeline to arc waypoints
-        let mut waypoints = if req.options.smoothing.as_deref().unwrap_or("none") != "none" {
-            let smoother = SmootherPipeline::with_default_config();
-            smoother.smooth(&arc_points, &query, filter)
-        } else {
-            arc_points.clone()
-        };
+        let mut waypoints = arc_points.clone();
 
         // Apply wall clearance if requested
         if let Some(clearance) = req.options.wall_clearance {

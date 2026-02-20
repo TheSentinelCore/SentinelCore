@@ -1,12 +1,14 @@
 -- IsDeviated.lua
 -- BT Condition: returns SUCCESS if player has deviated from path.
--- Requires a PathValidationService instance passed to factory.
+-- Requires a PathValidationService instance and EventBus passed to factory.
 local BT = require("lib/BehaviorTree")
+local Events = require("events/Events")
 
 --- Factory: returns a BT.Condition node that checks path deviation.
 ---@param validation_service table PathValidationService instance
+---@param event_bus table EventBus instance
 ---@return table BT.Condition node
-return function(validation_service)
+return function(validation_service, event_bus)
     return BT.Condition:new(function(bb)
         local pos = bb:get("player.position")
         local waypoints = bb:get("path.waypoints")
@@ -17,6 +19,11 @@ return function(validation_service)
         local result = validation_service:check_deviation(pos, waypoints, index, widths)
         if result.deviated then
             bb:set("deviation.last_drift", result.drift)
+            event_bus:emit(Events.DEVIATION_DETECTED, {
+                drift = result.drift,
+                position = pos,
+                path_index = index,
+            })
         end
         return result.deviated
     end, "IsDeviated")

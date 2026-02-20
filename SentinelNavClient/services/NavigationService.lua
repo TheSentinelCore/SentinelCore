@@ -693,7 +693,6 @@ function NavigationService:find_path(start_pos, dest, callback, opts)
         end_y = dest.y,
         end_z = dest.z,
     }
-    if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
     if opts.max_deviation then params.max_deviation = opts.max_deviation end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
@@ -702,6 +701,8 @@ function NavigationService:find_path(start_pos, dest, callback, opts)
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    if opts.string_pull_deviation then params.string_pull_deviation = opts.string_pull_deviation end
+    if opts.string_pull_heading then params.string_pull_heading = opts.string_pull_heading end
 
     self:_request(self:_build_url(endpoint, params), function(ok, data, err)
         if not ok then
@@ -759,7 +760,6 @@ function NavigationService:find_route_tsp(nodes, callback, opts)
             params.weights = opts.weights
         end
     end
-    if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
@@ -767,6 +767,8 @@ function NavigationService:find_route_tsp(nodes, callback, opts)
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    if opts.string_pull_deviation then params.string_pull_deviation = opts.string_pull_deviation end
+    if opts.string_pull_heading then params.string_pull_heading = opts.string_pull_heading end
     apply_avoid_zones(params, opts.avoid_zones)
 
     self:_request(self:_build_url("/api/v1/path-tsp", params), function(ok, data, err)
@@ -804,7 +806,6 @@ function NavigationService:find_route_multi(stops, callback, opts)
         map_id = opts.map_id or get_continent_id(),
         stops = format_points(stops),
     }
-    if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
@@ -812,6 +813,8 @@ function NavigationService:find_route_multi(stops, callback, opts)
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    if opts.string_pull_deviation then params.string_pull_deviation = opts.string_pull_deviation end
+    if opts.string_pull_heading then params.string_pull_heading = opts.string_pull_heading end
     apply_avoid_zones(params, opts.avoid_zones)
 
     self:_request(self:_build_url("/api/v1/path-multi", params), function(ok, data, err)
@@ -882,7 +885,6 @@ function NavigationService:find_path_corridor(start_pos, dest, callback, opts)
         end_z = dest.z,
     }
     if opts.probe_distance then params.probe_distance = opts.probe_distance end
-    if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
@@ -890,6 +892,8 @@ function NavigationService:find_path_corridor(start_pos, dest, callback, opts)
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    if opts.string_pull_deviation then params.string_pull_deviation = opts.string_pull_deviation end
+    if opts.string_pull_heading then params.string_pull_heading = opts.string_pull_heading end
     apply_avoid_zones(params, opts.avoid_zones)
 
     self:_request(self:_build_url("/api/v1/path/corridor", params), function(ok, data, err)
@@ -940,7 +944,6 @@ function NavigationService:find_path_avoid(start_pos, dest, avoid_zones, callbac
         end_y = dest.y,
         end_z = dest.z,
     }
-    if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.optimize then params.optimize = true end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
@@ -948,6 +951,8 @@ function NavigationService:find_path_avoid(start_pos, dest, avoid_zones, callbac
     if opts.allow_partial then params.allow_partial = true end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    if opts.string_pull_deviation then params.string_pull_deviation = opts.string_pull_deviation end
+    if opts.string_pull_heading then params.string_pull_heading = opts.string_pull_heading end
     apply_avoid_zones(params, avoid_zones)
 
     self:_request(self:_build_url("/api/v1/path-avoid", params), function(ok, data, err)
@@ -1113,12 +1118,13 @@ function NavigationService:flee(player_pos, threats, callback, opts)
         threats = format_points(threats),
     }
     if opts.flee_distance then params.flee_distance = opts.flee_distance end
-    if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
     if opts.z_extent then params.z_extent = opts.z_extent end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    if opts.string_pull_deviation then params.string_pull_deviation = opts.string_pull_deviation end
+    if opts.string_pull_heading then params.string_pull_heading = opts.string_pull_heading end
     apply_avoid_zones(params, opts.avoid_zones)
 
     self:_request(self:_build_url("/api/v1/tactical/flee", params), function(ok, data, err)
@@ -1157,11 +1163,12 @@ function NavigationService:kite(player_pos, target_pos, callback, opts)
     params.kite_radius = opts.kite_radius or 8.0
     if opts.arc_degrees then params.arc_degrees = opts.arc_degrees end
     if opts.direction then params.direction = opts.direction end
-    if opts.smoothing then params.smoothing = opts.smoothing end
     if opts.filter_ground then params.filter_ground = opts.filter_ground end
     if opts.filter_water then params.filter_water = opts.filter_water end
     if opts.filter_lava then params.filter_lava = opts.filter_lava end
     if opts.wall_clearance and opts.wall_clearance > 0 then params.wall_clearance = opts.wall_clearance end
+    if opts.string_pull_deviation then params.string_pull_deviation = opts.string_pull_deviation end
+    if opts.string_pull_heading then params.string_pull_heading = opts.string_pull_heading end
 
     self:_request(self:_build_url("/api/v1/tactical/kite", params), function(ok, data, err)
         if not ok then

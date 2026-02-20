@@ -10,9 +10,11 @@ use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
 use crate::pipeline::{
-    compute_corridor_widths, execute_pathfind, execute_pathfind_with_avoidance, has_custom_filter,
+    calculate_path_distance, compute_corridor_widths, execute_pathfind, execute_pathfind_raw,
+    execute_pathfind_with_avoidance, has_custom_filter,
     create_custom_filter, parse_avoidance_zones, parse_stops, parse_waypoints,
-    pathfind_maybe_avoid, PathOptions, SEARCH_EXTENTS, SEARCH_TIERS,
+    pathfind_maybe_avoid, pathfind_maybe_avoid_raw, post_process_path,
+    PathOptions, SEARCH_EXTENTS, SEARCH_TIERS,
 };
 use crate::routes::path::{
     acquire_query, validate_filter_params,
@@ -36,8 +38,6 @@ pub struct MultiPathRequest {
     #[serde(default)]
     pub avoid: Option<String>,
     #[serde(default)]
-    pub smoothing: Option<String>,
-    #[serde(default)]
     pub optimize: Option<bool>,
     #[serde(default)]
     pub filter_ground: Option<f32>,
@@ -50,6 +50,12 @@ pub struct MultiPathRequest {
     /// Minimum distance to maintain from walls/obstacles (0 = disabled, max 5.0 yards).
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
 }
 
 /// Multi-stop path response.
@@ -100,13 +106,14 @@ pub async fn path_multi(
     };
 
     let options = PathOptions {
-        smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(false),
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
     };
 
     let zones = if let Some(ref avoid_str) = params.avoid {
@@ -115,21 +122,22 @@ pub async fn path_multi(
         Vec::new()
     };
 
+    // Pathfind each leg RAW (no string-pull/densify/wall_clearance) and concatenate.
+    // Post-processing is applied to the FULL concatenated path so string-pulling
+    // can optimize across leg boundaries, eliminating jagged junctions.
     let mut all_waypoints: Vec<Vec3> = Vec::new();
     let mut leg_distances = Vec::new();
     let mut leg_boundaries = vec![0usize];
     let mut partial_legs = Vec::new();
-    let mut total_distance = 0.0f32;
 
     for i in 0..stops.len() - 1 {
-        let result = pathfind_maybe_avoid(&query, &pool, filter, stops[i], stops[i + 1], &options, &zones)?;
+        let result = pathfind_maybe_avoid_raw(&query, &pool, filter, stops[i], stops[i + 1], &options, &zones)?;
 
         if result.partial {
             partial_legs.push(i);
         }
 
         leg_distances.push(result.distance);
-        total_distance += result.distance;
 
         // Append waypoints, deduplicating shared endpoint
         if all_waypoints.is_empty() {
@@ -141,6 +149,13 @@ pub async fn path_multi(
 
         leg_boundaries.push(all_waypoints.len());
     }
+
+    // Apply string-pull + densify + wall_clearance to the FULL concatenated path
+    {
+        let _guard = pool.pathfind_lock();
+        all_waypoints = post_process_path(&all_waypoints, &query, filter, &options);
+    }
+    let total_distance = calculate_path_distance(&all_waypoints);
 
     Ok(Json(MultiPathResponse {
         success: true,
@@ -180,8 +195,6 @@ pub struct TspPathRequest {
     #[serde(default)]
     pub weights: Option<String>,
     #[serde(default)]
-    pub smoothing: Option<String>,
-    #[serde(default)]
     pub optimize: Option<bool>,
     #[serde(default)]
     pub filter_ground: Option<f32>,
@@ -194,6 +207,12 @@ pub struct TspPathRequest {
     /// Minimum distance to maintain from walls/obstacles (0 = disabled, max 5.0 yards).
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
 }
 
 /// TSP path response.
@@ -380,7 +399,6 @@ pub async fn path_tsp(
     if n <= 15 {
         // Use navmesh distances for small N
         let no_smooth_options = PathOptions {
-            smoothing: Some("none".to_string()),
             optimize: true,
             ..Default::default()
         };
@@ -426,23 +444,24 @@ pub async fn path_tsp(
 
     // Compute full paths between ordered stops
     let options = PathOptions {
-        smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(false),
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
     };
 
+    // Pathfind each leg RAW and concatenate, then post-process the full path.
     let mut all_waypoints: Vec<Vec3> = Vec::new();
     let mut leg_distances = Vec::new();
     let mut leg_boundaries = vec![0usize];
     let mut partial_legs = Vec::new();
-    let mut total_distance = 0.0f32;
 
     for i in 0..ordered_stops.len() - 1 {
-        let result = pathfind_maybe_avoid(
+        let result = pathfind_maybe_avoid_raw(
             &query,
             &pool,
             filter,
@@ -457,7 +476,6 @@ pub async fn path_tsp(
         }
 
         leg_distances.push(result.distance);
-        total_distance += result.distance;
 
         if all_waypoints.is_empty() {
             all_waypoints.extend_from_slice(&result.waypoints);
@@ -467,6 +485,13 @@ pub async fn path_tsp(
 
         leg_boundaries.push(all_waypoints.len());
     }
+
+    // Apply string-pull + densify + wall_clearance to the FULL concatenated path
+    {
+        let _guard = pool.pathfind_lock();
+        all_waypoints = post_process_path(&all_waypoints, &query, filter, &options);
+    }
+    let total_distance = calculate_path_distance(&all_waypoints);
 
     Ok(Json(TspPathResponse {
         success: true,
@@ -498,8 +523,6 @@ pub struct AvoidPathRequest {
     #[serde(default)]
     pub avoid: Option<String>,
     #[serde(default)]
-    pub smoothing: Option<String>,
-    #[serde(default)]
     pub optimize: Option<bool>,
     #[serde(default)]
     pub filter_ground: Option<f32>,
@@ -512,6 +535,12 @@ pub struct AvoidPathRequest {
     /// Minimum distance to maintain from walls/obstacles (0 = disabled, max 5.0 yards).
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
 }
 
 /// GET /api/v1/path-avoid - Path with avoidance zones.
@@ -559,13 +588,14 @@ pub async fn path_avoid(
     };
 
     let options = PathOptions {
-        smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(false),
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
     };
 
     let result = if zones.is_empty() {
@@ -733,8 +763,6 @@ pub struct CorridorPathRequest {
     #[serde(default)]
     pub avoid: Option<String>,
     #[serde(default)]
-    pub smoothing: Option<String>,
-    #[serde(default)]
     pub optimize: Option<bool>,
     #[serde(default)]
     pub filter_ground: Option<f32>,
@@ -750,6 +778,12 @@ pub struct CorridorPathRequest {
     /// Minimum distance to maintain from walls/obstacles (0 = disabled, max 5.0 yards).
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
 }
 
 fn default_probe_distance() -> f32 {
@@ -820,13 +854,14 @@ pub async fn path_corridor(
     };
 
     let options = PathOptions {
-        smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(false),
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
     };
 
     let result = pathfind_maybe_avoid(&query, &pool, filter, start_pos, end_pos, &options, &zones)?;
@@ -867,8 +902,6 @@ pub struct ExploreRouteRequest {
     #[serde(default)]
     pub start_z: Option<f32>,
     #[serde(default)]
-    pub smoothing: Option<String>,
-    #[serde(default)]
     pub optimize: Option<bool>,
     #[serde(default)]
     pub filter_ground: Option<f32>,
@@ -881,6 +914,12 @@ pub struct ExploreRouteRequest {
     /// Minimum distance to maintain from walls/obstacles (0 = disabled, max 5.0 yards).
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
 }
 
 fn default_min_distance() -> f32 {
@@ -1000,24 +1039,25 @@ pub async fn explore_route(
 
     // Compute full paths between exploration points
     let options = PathOptions {
-        smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(true), // Default optimize for exploration
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
     };
 
+    // Pathfind each leg RAW and concatenate, then post-process the full path.
     let mut all_waypoints: Vec<Vec3> = Vec::new();
     let mut leg_boundaries = vec![0usize];
-    let mut total_distance = 0.0f32;
     let point_count = valid_points.len();
 
     for i in 0..valid_points.len().saturating_sub(1) {
-        match execute_pathfind(&query, pool.mesh(), filter, valid_points[i], valid_points[i + 1], &options) {
+        let _guard = pool.pathfind_lock();
+        match execute_pathfind_raw(&query, pool.mesh(), filter, valid_points[i], valid_points[i + 1], &options) {
             Ok(result) => {
-                total_distance += result.distance;
                 if all_waypoints.is_empty() {
                     all_waypoints.extend_from_slice(&result.waypoints);
                 } else if !result.waypoints.is_empty() {
@@ -1030,6 +1070,13 @@ pub async fn explore_route(
         }
         leg_boundaries.push(all_waypoints.len());
     }
+
+    // Apply string-pull + densify + wall_clearance to the FULL concatenated path
+    {
+        let _guard = pool.pathfind_lock();
+        all_waypoints = post_process_path(&all_waypoints, &query, filter, &options);
+    }
+    let total_distance = calculate_path_distance(&all_waypoints);
 
     Ok(Json(ExploreRouteResponse {
         success: true,

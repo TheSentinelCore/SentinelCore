@@ -20,7 +20,6 @@ use sentinel_nav_server::routes::build_router;
 use sentinel_nav_server::services::cache_impl::MokaCache;
 use sentinel_nav_server::services::pathfinding::DetourPathfinder;
 use sentinel_nav_server::services::routing::DetourRouter;
-use sentinel_nav_server::services::smoothing::PipelineSmoother;
 use sentinel_nav_server::services::spatial::DetourSpatial;
 use sentinel_nav_server::services::tactical::DetourTactical;
 use sentinel_nav_server::state::Metrics;
@@ -52,7 +51,6 @@ fn create_test_app() -> axum::Router {
     let bb = Arc::new(ServerBlackboard {
         pathfinding: Arc::new(DetourPathfinder::new(mmap_manager.clone())),
         routing: Arc::new(DetourRouter::new(mmap_manager.clone())),
-        smoothing: Arc::new(PipelineSmoother::new(mmap_manager.clone())),
         spatial: Arc::new(DetourSpatial::new(mmap_manager.clone())),
         tactical: Arc::new(DetourTactical::new(mmap_manager.clone())),
         cache: Arc::new(MokaCache::new(path_cache.clone())),

@@ -38,9 +38,6 @@ pub struct NavmeshConfig {
 /// Pathfinding configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PathfindingConfig {
-    /// Default smoothing algorithm.
-    #[serde(default)]
-    pub default_smoothing: String,
     /// Maximum path length in waypoints.
     #[serde(default = "default_max_path_length")]
     pub max_path_length: usize,
@@ -112,7 +109,6 @@ impl Default for ServerConfig {
 impl Default for PathfindingConfig {
     fn default() -> Self {
         Self {
-            default_smoothing: "none".to_string(),
             max_path_length: default_max_path_length(),
             query_pool_size: default_query_pool_size(),
             search_extents: default_search_extents(),

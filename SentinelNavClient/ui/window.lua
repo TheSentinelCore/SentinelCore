@@ -88,8 +88,9 @@ local function create_menu_elements()
         repath_cooldown              = e(D.movement.repath_cooldown),
         max_deviation_repaths        = e(D.movement.max_deviation_repaths),
 
-        -- Smoothing (Tab 2)
-        smoothing              = e(D.movement.smoothing),
+        -- String-Pull Tuning (Tab 2)
+        sp_deviation           = e(D.movement.string_pull_deviation),
+        sp_heading             = e(D.movement.string_pull_heading),
 
         -- Optimization (Tab 2)
         optimize               = e(D.movement.optimize),
@@ -228,8 +229,9 @@ local function sync_to_client()
             stuck_distance_min          = _menu.stuck_distance:get(),
             max_stuck_attempts          = _menu.max_stuck:get(),
             path_check_interval         = _menu.path_check:get(),
-            smoothing                   = _menu.smoothing:get_state(),
             optimize                    = _menu.optimize:get_state(),
+            string_pull_deviation       = _menu.sp_deviation:get(),
+            string_pull_heading         = _menu.sp_heading:get(),
             allow_partial               = _menu.allow_partial:get_state(),
             filter_ground               = _menu.filter_ground:get(),
             filter_water                = _menu.filter_water:get(),
@@ -313,8 +315,9 @@ function Window.init(client)
             { _menu.max_deviation_repaths,       D.movement.max_deviation_repaths },
         },
         pathfinding = {
-            { _menu.smoothing,         D.movement.smoothing },
             { _menu.optimize,          D.movement.optimize },
+            { _menu.sp_deviation,      D.movement.string_pull_deviation },
+            { _menu.sp_heading,        D.movement.string_pull_heading },
             { _menu.allow_partial,     D.movement.allow_partial },
             { _menu.filter_ground,     D.movement.filter_ground },
             { _menu.filter_water,      D.movement.filter_water },

@@ -1,8 +1,0 @@
-[package]
-name = "path-smoothing"
-version.workspace = true
-edition.workspace = true
-description = "Path smoothing algorithms for human-like movement"
-
-[dependencies]
-detour = { path = "../detour" }

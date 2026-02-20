@@ -32,8 +32,6 @@ pub struct PathRequest {
     pub end_x: f32,
     pub end_y: f32,
     pub end_z: f32,
-    #[serde(default)]
-    pub smoothing: Option<String>,
     /// Enable string-pulling optimization to reduce waypoint count.
     #[serde(default)]
     pub optimize: Option<bool>,
@@ -56,6 +54,12 @@ pub struct PathRequest {
     /// Minimum distance to maintain from walls/obstacles (0 = disabled, max 5.0 yards).
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
 }
 
 /// Random path request (extends PathRequest).
@@ -68,8 +72,6 @@ pub struct RandomPathRequest {
     pub end_x: f32,
     pub end_y: f32,
     pub end_z: f32,
-    #[serde(default)]
-    pub smoothing: Option<String>,
     /// Enable string-pulling optimization to reduce waypoint count.
     #[serde(default)]
     pub optimize: Option<bool>,
@@ -90,6 +92,12 @@ pub struct RandomPathRequest {
     /// Minimum distance to maintain from walls/obstacles (0 = disabled, max 5.0 yards).
     #[serde(default)]
     pub wall_clearance: Option<f32>,
+    /// Max 3D deviation (yards) for string-pull optimization (default 1.5).
+    #[serde(default)]
+    pub string_pull_deviation: Option<f32>,
+    /// Max heading change (degrees) for string-pull optimization (default 30).
+    #[serde(default)]
+    pub string_pull_heading: Option<f32>,
 }
 
 fn default_max_deviation() -> f32 {
@@ -230,13 +238,14 @@ pub async fn find_path(
     };
 
     let options = PathOptions {
-        smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(false),
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
     };
 
     let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
@@ -332,35 +341,23 @@ pub async fn find_path_random(
     let start_pos = Vec3::new(params.start_x, params.start_y, params.start_z);
     let end_pos = Vec3::new(params.end_x, params.end_y, params.end_z);
 
-    // Use pipeline but with deviation inserted before smoothing
     let options = PathOptions {
-        smoothing: params.smoothing,
         optimize: params.optimize.unwrap_or(false),
         filter_ground: params.filter_ground,
         filter_water: params.filter_water,
         filter_lava: params.filter_lava,
         z_extent: params.z_extent,
         wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
     };
 
-    // For random paths, we need the raw waypoints before smoothing so we can
-    // apply deviation. Use a no-smoothing pipeline first, then apply deviation + smooth.
-    let mut raw_options = options.clone();
-    raw_options.smoothing = Some("none".to_string());
-
-    let raw_result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &raw_options)?;
+    let raw_result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
     let mut waypoints = raw_result.waypoints;
 
-    // Apply random deviation
+    // Apply random deviation to intermediate waypoints
     apply_random_deviation(&mut waypoints, &query, filter, params.max_deviation);
 
-    // Now apply smoothing manually
-    let waypoints = if options.smoothing.as_deref().unwrap_or("none") != "none" {
-        let smoother = path_smoothing::SmootherPipeline::with_default_config();
-        smoother.smooth(&waypoints, &query, filter)
-    } else {
-        waypoints
-    };
     let distance = pipeline::calculate_path_distance(&waypoints);
 
     let partial_reason = if raw_result.partial {

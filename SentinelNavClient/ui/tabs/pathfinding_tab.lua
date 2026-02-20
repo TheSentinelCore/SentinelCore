@@ -1,5 +1,5 @@
 --[[
-    Pathfinding Tab - Smoothing, optimization, terrain costs, indoor, wall clearance
+    Pathfinding Tab - String-pull tuning, optimization, terrain costs, indoor, wall clearance
 ]]
 
 local PathfindingTab = {}
@@ -21,15 +21,6 @@ function PathfindingTab.register(ui, menu)
     end
 
     ui:add_tab({ id = "pathfinding", label = "Pathfinding" }, function(t)
-        -- Path Smoothing
-        t:checkbox_grid({
-            label = "Path Smoothing",
-            columns = 1,
-            elements = {
-                { element = menu.smoothing, label = "Enable Path Smoothing", tooltip = "Smooths navmesh paths for more natural movement" },
-            }
-        })
-
         -- Optimization
         t:checkbox_grid({
             label = "Optimization",
@@ -37,6 +28,16 @@ function PathfindingTab.register(ui, menu)
             elements = {
                 { element = menu.optimize, label = "String-Pulling", tooltip = "Removes unnecessary waypoints by testing line-of-sight" },
                 { element = menu.allow_partial, label = "Allow Partial Paths", tooltip = "Accept incomplete paths when a full path is unavailable" },
+            }
+        })
+
+        -- String-Pull Tuning (advanced)
+        t:slider_list({
+            label = "String-Pull Tuning",
+            visible_when = show_advanced,
+            elements = {
+                { element = menu.sp_deviation, label = "Max Deviation", suffix = " yd", tooltip = "Max 3D deviation for string-pull optimization (lower = tighter corners)" },
+                { element = menu.sp_heading, label = "Max Heading Change", suffix = "\xC2\xB0", tooltip = "Max heading change in degrees (lower = preserves more curves)" },
             }
         })
 

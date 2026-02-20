@@ -145,9 +145,17 @@ local function dispatch_go(mode_idx, client, waypoints)
 
     elseif mode_idx == 3 then
         -- TSP Route
-        client:plan_route(waypoints, function(success)
+        client:plan_route(waypoints, function(success, data)
             if not success then
-                core.log("[SentinelNavClient Debug] TSP route failed")
+                core.log("[SentinelNavClient Debug] TSP route failed: " .. tostring(data and data.error or "unknown"))
+                _nav_active = false
+                return
+            end
+            if data and data.waypoints then
+                _last_result = string.format("TSP: %d wps, %.0f yd", #data.waypoints, data.total_distance or 0)
+                client:follow_path(data.waypoints, nav_callback)
+            else
+                core.log("[SentinelNavClient Debug] TSP returned no waypoints")
                 _nav_active = false
             end
         end)
@@ -198,8 +206,7 @@ local function dispatch_go(mode_idx, client, waypoints)
                 return
             end
             if data.hit then
-                _last_result = string.format("HIT at %.1f, %.1f, %.1f (t=%.2f)",
-                    data.hit_position.x, data.hit_position.y, data.hit_position.z, data.t)
+                _last_result = string.format("HIT (t=%.3f — ray blocked %.0f%% through)", data.t, data.t * 100)
             else
                 _last_result = "CLEAR (no obstruction)"
             end

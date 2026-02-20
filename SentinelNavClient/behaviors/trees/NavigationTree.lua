@@ -90,7 +90,7 @@ local function create(services)
     -- Normal path following (only when not stuck and not deviated)
     local normal_follow = BT.Sequence:new("NormalFollow")
     normal_follow:add(BT.Inverter:new(IsStuck(), "NotStuck"))
-    normal_follow:add(BT.Inverter:new(IsDeviated(validation_service), "NotDeviated"))
+    normal_follow:add(BT.Inverter:new(IsDeviated(validation_service, event_bus), "NotDeviated"))
     normal_follow:add(ApplyDynamicSpeed(movement_service))
     normal_follow:add(AdvanceWaypoint(movement_service, event_bus))
 
@@ -105,7 +105,7 @@ local function create(services)
 
     -- Handle deviation: soft repath if deviated and under max repaths
     local handle_deviation = BT.Sequence:new("HandleDeviation")
-    handle_deviation:add(IsDeviated(validation_service))
+    handle_deviation:add(IsDeviated(validation_service, event_bus))
     handle_deviation:add(BT.Condition:new(function(bb)
         return bb:get("deviation.count", 0) < bb:get("config.max_deviation_repaths", 5)
     end, "MaxRepathNotExceeded"))
