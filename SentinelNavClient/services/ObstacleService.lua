@@ -4,8 +4,8 @@
 local ObstacleService = {}
 ObstacleService.__index = ObstacleService
 
-local Defaults = require("core.Defaults")
-local Events = require("events.Events")
+local Defaults = require("core/Defaults")
+local Events = require("events/Events")
 
 local DEFAULT_CONFIG = Defaults.flat(Defaults.obstacles)
 DEFAULT_CONFIG.collision_flags = 0x00000001  -- DoodadCollision
@@ -315,8 +315,8 @@ end
 --------------------------------------------------------------------------------
 
 function ObstacleService:_test()
-    local EventBus = require("events.EventBus")
-    local Blackboard = require("core.Blackboard")
+    local EventBus = require("events/EventBus")
+    local Blackboard = require("core/Blackboard")
     local results = {}
 
     -- Test 1: Construction

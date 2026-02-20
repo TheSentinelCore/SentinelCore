@@ -108,9 +108,6 @@ function BotManager:initialize()
     -- Use SentinelNavClient's shared Client (SentinelNavClient plugin must load before SentinelGather)
     if _G.SentinelNavClient and _G.SentinelNavClient.client then
         self._nav_client = _G.SentinelNavClient.client
-        self._modules.Navigation = self._nav_client.nav_client
-        self._modules.Movement   = self._nav_client.movement
-        self._modules.Obstacle   = self._nav_client.obstacle
 
         self._nav_client_available = true
         if self._log then
@@ -285,10 +282,9 @@ function BotManager:stop()
         self._nav_recovery_cancel = nil
     end
 
-    -- Stop movement
-    local movement = self._modules.Movement
-    if movement then
-        movement:stop()
+    -- Stop navigation
+    if self._nav_client then
+        self._nav_client:stop()
     end
 
     -- Cancel gathering
@@ -318,10 +314,9 @@ function BotManager:pause()
 
     self._paused = true
 
-    -- Stop movement
-    local movement = self._modules.Movement
-    if movement then
-        movement:stop()
+    -- Stop navigation
+    if self._nav_client then
+        self._nav_client:stop()
     end
 
     -- Store current state
@@ -480,6 +475,7 @@ end
 ---Process traveling state
 function BotManager:_process_traveling()
     TravelingController.process({
+        client = self._nav_client,
         modules = self._modules,
         state_machine = self._state_machine,
         event_bus = self._event_bus,
@@ -521,7 +517,6 @@ end
 function BotManager:_process_scanning()
     local scanner = self._modules.NodeScanner
     local safety = self._modules.Safety
-    local movement = self._modules.Movement
 
     if scanner then
         local nodes = scanner:scan()
@@ -533,8 +528,8 @@ function BotManager:_process_scanning()
                     target_node = node
                 })
 
-                if movement then
-                    movement:move_to(node.position, nil, {
+                if self._nav_client then
+                    self._nav_client:move_to(node.position, nil, {
                         use_navmesh = true
                     })
                 end
@@ -549,10 +544,8 @@ end
 
 ---Process approaching state
 function BotManager:_process_approaching()
-    local movement = self._modules.Movement
-
     -- If movement stopped but we're still in APPROACHING, something went wrong
-    if movement and not movement:is_moving() then
+    if self._nav_client and not self._nav_client:is_moving() then
         -- Check if we've been stuck in this state too long
         local ctx = self._state_machine:get_context()
         local approach_start = ctx.data and ctx.data.approach_start_time
@@ -605,9 +598,8 @@ end
 ---Process corpse run state
 function BotManager:_process_corpse_run()
     local safety = self._modules.Safety
-    local movement = self._modules.Movement
 
-    if not safety or not movement then
+    if not safety or not self._nav_client then
         return
     end
 
@@ -622,12 +614,12 @@ function BotManager:_process_corpse_run()
     end
 
     -- Move to corpse if not moving
-    if not movement:is_moving() then
+    if not self._nav_client:is_moving() then
         local player_pos = player:get_position()
         local dist = Helpers.distance_3d(player_pos, corpse_pos)
 
         if dist > Constants.OPERATIONAL.RESURRECT_DISTANCE then
-            movement:move_to(corpse_pos, nil, {
+            self._nav_client:move_to(corpse_pos, nil, {
                 use_navmesh = true
             })
         else
@@ -639,12 +631,9 @@ end
 
 ---Process stuck state
 function BotManager:_process_stuck()
-    -- Movement module handles unstuck attempts
+    -- Client handles unstuck via BT stuck recovery
     -- After unstuck, should transition back to traveling
-    local movement = self._modules.Movement
-
-    if movement and not movement:is_moving() then
-        -- Unstuck complete, return to traveling
+    if self._nav_client and not self._nav_client:is_moving() then
         self._state_machine:transition(STATES.TRAVELING)
     end
 end
@@ -770,12 +759,9 @@ end
 function BotManager:destroy()
     self:stop()
 
-    -- Destroy SentinelGather-owned modules only.
-    -- SentinelNavClient modules (Navigation, Movement, Obstacle) are shared references
-    -- owned by SentinelNavClient's singleton — do not destroy them here.
-    local nav_client_modules = { Navigation = true, Movement = true, Obstacle = true }
-    for name, module in pairs(self._modules) do
-        if not nav_client_modules[name] and module.destroy then
+    -- Destroy all SentinelGather modules (no external service refs stored anymore)
+    for _, module in pairs(self._modules) do
+        if module.destroy then
             pcall(module.destroy, module)
         end
     end

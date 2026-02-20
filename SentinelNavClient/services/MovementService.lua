@@ -1,5 +1,5 @@
-local Defaults = require("core.Defaults")
-local Helpers = require("lib.Helpers")
+local Defaults = require("core/Defaults")
+local Helpers = require("lib/Helpers")
 
 local BASE_RUN_SPEED = 7.0  -- WoW base run speed in yd/s
 
@@ -210,7 +210,7 @@ function MovementService:get_config(key, default)
 end
 
 function MovementService:_test()
-    local Blackboard = require("core.Blackboard")
+    local Blackboard = require("core/Blackboard")
     local results = {}
 
     -- Test 1: Construction

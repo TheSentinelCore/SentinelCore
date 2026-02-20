@@ -7,27 +7,27 @@
 -- Stage 4 (count=4): Move backward + jump
 -- Stage 5 (count>=5): Add zone at position + repath
 -- Beyond max: signal failure to HSM
-local BT = require("lib.BehaviorTree")
-local IsStuck = require("behaviors.conditions.IsStuck")
-local Jump = require("behaviors.actions.Jump")
-local Strafe = require("behaviors.actions.Strafe")
-local MoveBackward = require("behaviors.actions.MoveBackward")
-local ProbeForObstacle = require("behaviors.actions.ProbeForObstacle")
-local AddAvoidanceZone = require("behaviors.actions.AddAvoidanceZone")
-local Repath = require("behaviors.actions.Repath")
+local BT = require("lib/BehaviorTree")
+local IsStuck = require("behaviors/conditions/IsStuck")
+local Jump = require("behaviors/actions/Jump")
+local Strafe = require("behaviors/actions/Strafe")
+local MoveBackward = require("behaviors/actions/MoveBackward")
+local ProbeForObstacle = require("behaviors/actions/ProbeForObstacle")
+local AddAvoidanceZone = require("behaviors/actions/AddAvoidanceZone")
+local Repath = require("behaviors/actions/Repath")
 
 --- Helper: condition that checks stuck.count == n
 local function stuck_count_eq(n)
-    return BT.Condition:new("StuckCount==" .. n, function(bb)
+    return BT.Condition:new(function(bb)
         return bb:get("stuck.count", 0) == n
-    end)
+    end, "StuckCount==" .. n)
 end
 
 --- Helper: condition that checks stuck.count >= n
 local function stuck_count_gte(n)
-    return BT.Condition:new("StuckCount>=" .. n, function(bb)
+    return BT.Condition:new(function(bb)
         return bb:get("stuck.count", 0) >= n
-    end)
+    end, "StuckCount>=" .. n)
 end
 
 --- Create the stuck recovery tree.
@@ -80,13 +80,13 @@ local function create(services)
     tree:add(try_zone)
 
     -- Final: signal max stuck exceeded
-    tree:add(BT.Action:new("MaxStuckExceeded", function(bb, dt)
+    tree:add(BT.Action:new(function(bb, dt)
         local max = bb:get("config.max_stuck_attempts", 6)
         if bb:get("stuck.count", 0) > max then
             return BT.SUCCESS -- signals HSM to transition to Failed
         end
         return BT.FAILURE
-    end))
+    end, "MaxStuckExceeded"))
 
     return tree
 end

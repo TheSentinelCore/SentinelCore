@@ -67,9 +67,9 @@ ModuleFactory.register("Statistics", function(cls, deps)
 end)
 
 ModuleFactory.register("PathVisualizer", function(cls, deps)
-    local movement = deps.modules.Movement
+    local client = _G.SentinelNavClient and _G.SentinelNavClient.client
     local profile_mgr = deps.modules.ProfileManager
-    return cls:new(movement, profile_mgr)
+    return cls:new(client, profile_mgr)
 end)
 
 return ModuleFactory

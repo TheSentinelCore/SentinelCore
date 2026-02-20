@@ -91,11 +91,11 @@ local function render_path_overlay()
         return
     end
 
-    local movement = SentinelGather:get_module("Movement")
-    if not movement then return end
+    local client = _G.SentinelNavClient and _G.SentinelNavClient.client
+    if not client then return end
 
-    local current_path = movement:get_current_path()
-    local path_index = movement:get_path_index()
+    local current_path = client:get_current_path()
+    local path_index = client:get_path_index()
 
     if not current_path or #current_path == 0 then return end
 

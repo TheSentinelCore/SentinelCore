@@ -3,9 +3,6 @@
 -- Registers engine callbacks, manages UI, exports _G.SentinelNavClient
 
 local SentinelNavClient = require("init")
-local Navigation   = require("core/Navigation")
-local Movement     = require("core/Movement")
-local Obstacle     = require("core/Obstacle")
 local JSON         = require("lib/JSON")
 local Helpers      = require("lib/Helpers")
 local UIWindow     = require("ui/window")
@@ -86,25 +83,15 @@ end)
 -- ---------------------------------------------------------------------------
 
 _G.SentinelNavClient = {
-    --- Returns the shared Client. Config param is ignored (settings owned by SentinelNavClient UI).
-    ---@param config? table Ignored — kept for backward compatibility
+    --- Returns the shared Client.
+    ---@param config? table Ignored
     ---@return Client|nil
     create = function(config)
         return SentinelNavClient:get_client()
     end,
 
-    --- No-op. UI is created automatically by SentinelNavClient.
-    create_ui = function(client_arg)
-        return UIWindow
-    end,
-
     --- UI handle
     ui = UIWindow,
-
-    --- Raw module classes (escape hatch for advanced use)
-    Navigation = Navigation,
-    Movement   = Movement,
-    Obstacle   = Obstacle,
 
     --- Utilities
     JSON    = JSON,

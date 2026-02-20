@@ -1,11 +1,11 @@
 -- ValidatePath.lua
 -- BT Action: async path validation. Returns RUNNING while checking.
-local BT = require("lib.BehaviorTree")
+local BT = require("lib/BehaviorTree")
 
 ---@param nav_service table NavigationService instance
 ---@param validation_service table PathValidationService instance
 return function(nav_service, validation_service)
-    return BT.Action:new("ValidatePath", function(bb, dt)
+    return BT.Action:new(function(bb, dt)
         -- Check for pending validation
         if bb:get("validation.pending") then
             local result = bb:get("validation.result")
@@ -38,5 +38,5 @@ return function(nav_service, validation_service)
         end)
 
         return BT.RUNNING
-    end)
+    end, "ValidatePath")
 end

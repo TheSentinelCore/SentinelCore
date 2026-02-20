@@ -1,12 +1,13 @@
 -- RequestPath.lua
 -- BT Action: async HTTP path request. Returns RUNNING while waiting.
-local BT = require("lib.BehaviorTree")
-local Events = require("events.Events")
+local BT = require("lib/BehaviorTree")
+local Events = require("events/Events")
 
 ---@param nav_service table NavigationService instance
+---@param movement_service table MovementService instance
 ---@param event_bus table EventBus instance
-return function(nav_service, event_bus)
-    return BT.Action:new("RequestPath", function(bb, dt)
+return function(nav_service, movement_service, event_bus)
+    return BT.Action:new(function(bb, dt)
         -- Check for pending response
         if bb:get("request.pending") then
             local result = bb:get("request.result")
@@ -20,6 +21,9 @@ return function(nav_service, event_bus)
                 bb:set("request.pending", false)
                 bb:clear("request.result")
                 bb:clear("request.error")
+                -- Start movement — simple_movement needs navigate() before process() works
+                movement_service:navigate(result.waypoints)
+
                 event_bus:emit(Events.PATH_RECEIVED, {
                     waypoint_count = #result.waypoints,
                     distance = result.distance,
@@ -49,9 +53,9 @@ return function(nav_service, event_bus)
         local zones = bb:get("obstacles.zones")
         local has_zones = zones and #zones > 0
 
-        local callback = function(result, err)
-            if result and result.waypoints and #result.waypoints > 0 then
-                bb:set("request.result", result)
+        local callback = function(ok, data, err)
+            if ok and data and data.waypoints and #data.waypoints > 0 then
+                bb:set("request.result", data)
             else
                 bb:set("request.error", err or "empty path")
             end
@@ -64,5 +68,5 @@ return function(nav_service, event_bus)
         end
 
         return BT.RUNNING
-    end)
+    end, "RequestPath")
 end

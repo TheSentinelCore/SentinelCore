@@ -1,5 +1,5 @@
 ---@class PathVisualizer
----@field private _movement_module Movement
+---@field private _client Client
 ---@field private _profile_manager ProfileManager
 ---@field private _enabled boolean
 ---@field private _show_profile_waypoints boolean
@@ -29,13 +29,13 @@ local function get_logger()
 end
 
 ---Create a new PathVisualizer instance
----@param movement_module Movement
+---@param client Client SentinelNavClient Client instance
 ---@param profile_manager ProfileManager
 ---@return PathVisualizer
-function PathVisualizer:new(movement_module, profile_manager)
+function PathVisualizer:new(client, profile_manager)
     local instance = setmetatable({}, PathVisualizer)
 
-    instance._movement_module = movement_module
+    instance._client = client
     instance._profile_manager = profile_manager
     instance._log = get_logger()
 
@@ -55,7 +55,6 @@ function PathVisualizer:new(movement_module, profile_manager)
         destination = color.red(255),
         destination_text = color.white(255),
         current_target = color.orange(255),
-        partial_endpoint = color.red(200),
     }
 
     -- Register render callback
@@ -191,20 +190,16 @@ end
 ---Render current navigation path
 ---@param player_pos vec3
 function PathVisualizer:_render_current_path(player_pos)
-    if not self._movement_module then
+    if not self._client then
         return
     end
 
-    local path = self._movement_module:get_current_path()
+    local path = self._client:get_current_path()
     if not path or #path == 0 then
         return
     end
 
-    -- Get current path index if available
-    local current_index = 1
-    if self._movement_module.get_path_index then
-        current_index = self._movement_module:get_path_index()
-    end
+    local current_index = self._client:get_path_index()
 
     -- Draw path waypoints and lines
     for i, wp in ipairs(path) do
@@ -245,11 +240,11 @@ end
 ---Render destination marker
 ---@param player_pos vec3
 function PathVisualizer:_render_destination(player_pos)
-    if not self._movement_module then
+    if not self._client then
         return
     end
 
-    local dest = self._movement_module:get_destination()
+    local dest = self._client:get_destination()
     if not dest then
         return
     end
@@ -265,19 +260,6 @@ function PathVisualizer:_render_destination(player_pos)
         core.graphics.text_3d(text, dest, 14, self._colors.destination_text, true)
     end
 
-    -- If in iterative mode, show final destination differently
-    if self._movement_module._iterative_mode and self._movement_module._final_destination then
-        local final_dest = self._movement_module._final_destination
-        local final_dist = Helpers.distance_3d(player_pos, final_dest)
-
-        -- Draw final destination with different style
-        core.graphics.circle_3d(final_dest, 3.0, self._colors.partial_endpoint, 2, 2.5)
-
-        if final_dist < 500 then
-            local text = string.format("Final: %.0f yds", final_dist)
-            core.graphics.text_3d(text, final_dest, 12, self._colors.partial_endpoint, true)
-        end
-    end
 end
 
 ---Clean up and unregister callbacks

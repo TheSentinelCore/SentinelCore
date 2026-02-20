@@ -1,10 +1,10 @@
 -- ProbeForObstacle.lua
 -- BT Action: probes path ahead for obstacles. SUCCESS = obstacle found, FAILURE = clear.
-local BT = require("lib.BehaviorTree")
+local BT = require("lib/BehaviorTree")
 
 ---@param obstacle_service table ObstacleService instance
 return function(obstacle_service)
-    return BT.Action:new("ProbeForObstacle", function(bb, dt)
+    return BT.Action:new(function(bb, dt)
         local pos = bb:get("player.position")
         local waypoints = bb:get("path.waypoints")
         local index = bb:get("path.index", 1)
@@ -22,5 +22,5 @@ return function(obstacle_service)
             return BT.SUCCESS -- obstacle found
         end
         return BT.FAILURE -- path is clear
-    end)
+    end, "ProbeForObstacle")
 end

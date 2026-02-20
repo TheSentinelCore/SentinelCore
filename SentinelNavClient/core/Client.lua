@@ -1,26 +1,26 @@
 -- Client.lua
 -- Single entry-point facade for SentinelNavClient.
 -- Wires HSM + BT + Blackboard + EventBus + Services.
--- Preserves full backward compatibility with old Client API.
 
-local EventBus             = require("events.EventBus")
-local Blackboard           = require("core.Blackboard")
-local StateMachine         = require("core.StateMachine")
-local Sensors              = require("core.Sensors")
-local Defaults             = require("core.Defaults")
-local Helpers              = require("lib.Helpers")
-local NavigationService    = require("services.NavigationService")
-local MovementService      = require("services.MovementService")
-local ObstacleService      = require("services.ObstacleService")
-local PathValidationService = require("services.PathValidationService")
-local NavigationTree       = require("behaviors.trees.NavigationTree")
+local EventBus             = require("events/EventBus")
+local Blackboard           = require("core/Blackboard")
+local StateMachine         = require("core/StateMachine")
+local Sensors              = require("core/Sensors")
+local Defaults             = require("core/Defaults")
+local Helpers              = require("lib/Helpers")
+local NavigationService    = require("services/NavigationService")
+local MovementService      = require("services/MovementService")
+local ObstacleService      = require("services/ObstacleService")
+local PathValidationService = require("services/PathValidationService")
+local NavigationTree       = require("behaviors/trees/NavigationTree")
 
 local STATES         = StateMachine.STATES
 local NAV_SUBSTATES  = StateMachine.NAV_SUBSTATES
 
 ---@class Client
----@field nav_client NavigationService   Escape-hatch: raw HTTP client (backward compat)
----@field obstacle ObstacleService       Escape-hatch: obstacle module (Visualizer uses this)
+---@field nav_client NavigationService   HTTP client for SentinelNavServer
+---@field movement MovementService       Movement service (simple_movement wrapper)
+---@field obstacle ObstacleService       Obstacle detection and avoidance zones
 local Client = {}
 Client.__index = Client
 
@@ -53,14 +53,14 @@ function Client:new(config)
 
     -- Services
     o.nav_client  = NavigationService:new(o._event_bus, o._blackboard, config.navigation)
-    o._movement   = MovementService:new(o._blackboard, config.movement)
+    o.movement    = MovementService:new(o._blackboard, config.movement)
     o.obstacle    = ObstacleService:new(o._event_bus, o._blackboard, config.obstacles)
     o._validation = PathValidationService:new(o._blackboard, config.movement)
 
     -- Behavior Tree
     o._nav_tree = NavigationTree.create({
         navigation = o.nav_client,
-        movement   = o._movement,
+        movement   = o.movement,
         obstacle   = o.obstacle,
         validation = o._validation,
         event_bus  = o._event_bus,
@@ -160,7 +160,7 @@ function Client:move_to(target, callback, opts)
     end
 
     -- Stop any current movement
-    self._movement:stop()
+    self.movement:stop()
     self._nav_tree:reset()
 
     -- Set up Blackboard state for new navigation
@@ -196,7 +196,7 @@ end
 ---@param target vec3
 ---@param callback? fun(success: boolean, reason: string|nil)
 function Client:move_direct(target, callback)
-    self._movement:stop()
+    self.movement:stop()
     self._nav_tree:reset()
 
     -- Set waypoints directly (single waypoint)
@@ -209,7 +209,7 @@ function Client:move_direct(target, callback)
     self._callback = callback
 
     -- Start movement immediately
-    self._movement:navigate(waypoints)
+    self.movement:navigate(waypoints)
 
     if self._hsm:is_idle() or self._hsm:is_terminal() then
         self._hsm:transition(STATES.NAVIGATING, NAV_SUBSTATES.FOLLOWING_PATH)
@@ -254,7 +254,7 @@ function Client:follow_path(waypoints, callback)
         return
     end
 
-    self._movement:stop()
+    self.movement:stop()
     self._nav_tree:reset()
 
     self._blackboard:set("path.destination", waypoints[#waypoints])
@@ -264,7 +264,7 @@ function Client:follow_path(waypoints, callback)
     self._blackboard:set("deviation.count", 0)
     self._callback = callback
 
-    self._movement:navigate(waypoints)
+    self.movement:navigate(waypoints)
 
     if self._hsm:is_idle() or self._hsm:is_terminal() then
         self._hsm:transition(STATES.NAVIGATING, NAV_SUBSTATES.FOLLOWING_PATH)
@@ -301,9 +301,9 @@ function Client:validate_destination(target, callback)
         return
     end
 
-    self.nav_client:find_path(player:get_position(), target, function(result, err)
-        if result and result.waypoints and #result.waypoints > 0 then
-            callback(true, nil, result.distance)
+    self.nav_client:find_path(player:get_position(), target, function(ok, data, err)
+        if ok and data and data.waypoints and #data.waypoints > 0 then
+            callback(true, nil, data.distance)
         else
             callback(false, err or "unreachable", nil)
         end
@@ -312,7 +312,7 @@ end
 
 ---Stop all movement and reset to idle.
 function Client:stop()
-    self._movement:stop()
+    self.movement:stop()
     self._blackboard:clear("path.destination")
     self._blackboard:clear("path.waypoints")
     self._blackboard:clear("pending.destination")
@@ -496,7 +496,7 @@ function Client:update_config(overrides)
         for k, v in pairs(overrides.movement) do
             self._blackboard:set("config." .. k, v)
         end
-        self._movement:update_config(overrides.movement)
+        self.movement:update_config(overrides.movement)
     end
 
     -- Write obstacle config to Blackboard and update service
@@ -560,6 +560,9 @@ end
 
 ---@private
 function Client:_check_stuck()
+    -- Don't check stuck if movement hasn't actually started yet
+    if not self.movement:is_moving() then return end
+
     local now = self._blackboard:get("_time", 0)
     local interval = self._blackboard:get("config.stuck_check_interval", 1.0)
     local last_check = self._blackboard:get("stuck.last_check", 0)
@@ -570,7 +573,13 @@ function Client:_check_stuck()
     local pos = self._blackboard:get("player.position")
     local last_pos = self._blackboard:get("stuck.last_position")
 
-    if last_pos and pos then
+    -- First check after movement starts — seed last_position without evaluating
+    if not last_pos or not pos then
+        self._blackboard:set("stuck.last_position", pos)
+        return
+    end
+
+    if pos then
         local dist = Helpers.distance_3d(pos, last_pos)
         local min_dist = self._blackboard:get("config.stuck_distance_min", 1.0)
 
@@ -613,7 +622,7 @@ end
 ---@private
 function Client:_on_arrival()
     local dest = self._blackboard:get("path.destination")
-    self._movement:stop()
+    self.movement:stop()
 
     self._hsm:transition(STATES.ARRIVED, nil, {
         event_data = { destination = dest },
