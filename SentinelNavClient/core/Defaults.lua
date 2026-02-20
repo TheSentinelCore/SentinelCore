@@ -17,7 +17,7 @@ Defaults.movement = {
     dynamic_speed_ramp_look_distance  = { type = "float", min = 2.0, max = 15.0, default = 6.0, id = "snc_dyn_ramp_look" },
 
     -- Tolerances
-    waypoint_tolerance                = { type = "float", min = 0.5, max = 10.0, default = 3.0, id = "snc_waypoint_tolerance" },
+    waypoint_tolerance                = { type = "float", min = 0.5, max = 10.0, default = 2.0, id = "snc_waypoint_tolerance" },
     final_tolerance                   = { type = "float", min = 0.5, max = 5.0, default = 1.5, id = "snc_final_tolerance" },
 
     -- Anti-Detection
@@ -31,6 +31,9 @@ Defaults.movement = {
 
     -- Path Validation
     path_check_interval               = { type = "float", min = 1.0, max = 30.0, default = 5.0, id = "snc_path_check" },
+    path_request_max_retries          = { type = "int", min = 0, max = 10, default = 2, id = "snc_path_req_retries" },
+    path_request_retry_base           = { type = "float", min = 0.1, max = 5.0, default = 0.5, id = "snc_path_req_backoff" },
+    max_repath_failures               = { type = "int", min = 1, max = 10, default = 3, id = "snc_max_repath_failures" },
 
     -- Deviation Detection
     deviation_check_interval          = { type = "float", min = 0.1, max = 5.0, default = 1.0, id = "snc_deviation_check_interval" },

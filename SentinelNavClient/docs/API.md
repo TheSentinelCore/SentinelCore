@@ -1,1912 +1,749 @@
-# SentinelNavClient API Reference
+# SentinelNavClient API and Architecture
 
-Complete API reference for SentinelNavClient — covers the consumer-facing Client, the Navigation HTTP client, the Movement path follower, and the Obstacle detection system.
+Last updated for `SentinelNavClient` `v0.0.6` (current `master`).
 
-**For consumers:** Start with [Client](#client) — it wraps everything and is the recommended API.
-**For internals/advanced use:** See [Navigation](#navigation), [Movement](#movement), and [Obstacle](#obstacle) for the underlying module APIs.
+This document is the canonical reference for:
 
----
+- The public consumer API (`_G.SentinelNavClient` and `Client`)
+- The current architecture (EventBus + Blackboard + HSM + BT + services)
+- Advanced escape hatches (`nav_client`, `movement`, `obstacle`, EventBus, Blackboard)
+- Migration notes from the pre-refactor architecture
 
 ## Table of Contents
 
-- [Client](#client)
-  - [Accessing the Client](#accessing-the-client)
-  - [Update Loop](#update-loop)
-  - [Movement Commands](#movement-commands)
-  - [State Queries](#state-queries)
-  - [Server Queries](#server-queries)
-  - [Opts Builders](#opts-builders)
-  - [Configuration](#client-configuration)
-  - [Events](#events)
-  - [Escape Hatch](#escape-hatch)
-  - [Complete Consumer Example](#complete-consumer-example)
-- [Navigation](#navigation)
-  - [Constructor](#navigation-constructor)
-  - [Pathfinding](#pathfinding)
-  - [Spatial Queries](#spatial-queries)
-  - [Tactical](#tactical)
-  - [Status](#navigation-status)
-  - [Navigation Configuration](#navigation-configuration)
-  - [Constants](#constants)
-  - [Error Handling](#error-handling)
-- [Movement](#movement)
-  - [Constructor](#movement-constructor)
-  - [Movement Control](#movement-control)
-  - [Route Planning](#route-planning)
-  - [Validation](#validation)
-  - [State & Progress](#state--progress)
-  - [Obstacle Integration](#obstacle-integration)
-  - [Movement Configuration](#movement-configuration)
-  - [State Machine](#state-machine)
-  - [Stuck Recovery](#stuck-recovery)
-  - [Indoor Corridor Adaptation](#indoor-corridor-adaptation)
-  - [Proactive Obstacle Detection](#proactive-obstacle-detection)
-  - [Casting Deferral](#casting-deferral)
-  - [Path Validation](#path-validation)
-- [Obstacle](#obstacle)
-  - [Constructor](#obstacle-constructor)
-  - [Probing](#probing)
-  - [Zone Management](#zone-management)
-  - [Obstacle Configuration](#obstacle-configuration)
-  - [Obstacle Update Loop](#obstacle-update-loop)
-  - [Integration with Movement](#integration-with-movement)
-  - [How Ray Probing Works](#how-ray-probing-works)
+- [1. Quick Start](#1-quick-start)
+- [2. Public Global API](#2-public-global-api)
+- [3. Client API (Stable)](#3-client-api-stable)
+- [4. Event Model](#4-event-model)
+- [5. State Model](#5-state-model)
+- [6. Architecture](#6-architecture)
+- [7. Advanced APIs (Use With Care)](#7-advanced-apis-use-with-care)
+- [8. Configuration Reference](#8-configuration-reference)
+- [9. Migration Guide](#9-migration-guide)
+- [10. Consumer Best Practices](#10-consumer-best-practices)
+- [11. Coverage Checklist](#11-coverage-checklist)
+- [12. Consumer Cookbook](#12-consumer-cookbook)
 
----
-
-# Client
-
-Single entry-point client for SentinelNavClient. Wires and drives all modules, with a built-in event system for state-change notifications.
-
-**This is the recommended way to use SentinelNavClient.** SentinelNavClient creates and owns a single shared Client instance. Consumers access it via `_G.SentinelNavClient.client`. For advanced use cases requiring direct module access, see the [escape hatch](#escape-hatch) section or the individual module sections below.
-
----
-
-## Accessing the Client
-
-SentinelNavClient creates a single shared Client at initialization. All consumers share this instance. There are three ways to access it:
-
-### `_G.SentinelNavClient.client` (Recommended)
-
-Live getter via metatable `__index`. Returns the shared Client, or `nil` if SentinelNavClient hasn't initialized yet.
+## 1. Quick Start
 
 ```lua
+-- In your plugin initialize():
+if not (_G.SentinelNavClient and _G.SentinelNavClient.client) then
+    core.log_error("SentinelNavClient not loaded")
+    return
+end
+
 local client = _G.SentinelNavClient.client
-if client then
-    client:move_to(target, callback)
+
+client:move_to({ x = -8900, y = 560, z = 94 }, function(ok, reason)
+    if ok then
+        core.log("Arrived")
+    else
+        core.log_error("Navigation failed: " .. tostring(reason))
+    end
+end)
+```
+
+Notes:
+
+- Do not call `client:update()` from consumers. SentinelNavClient drives updates.
+- Do not own navigation tuning in consumer plugins. SentinelNavClient UI owns config.
+
+## 2. Public Global API
+
+Defined in `SentinelNavClient/main.lua`.
+
+### `_G.SentinelNavClient`
+
+| Field | Type | Stability | Description |
+|---|---|---|---|
+| `client` | `Client\|nil` | Stable | Live metatable getter for the shared singleton Client |
+| `create(config?)` | `function` | Stable | Returns the shared Client. `config` is accepted but ignored |
+| `ui` | UIWindow module | Stable | UI orchestrator (`ui/window.lua`) |
+| `JSON` | module | Stable | JSON utility |
+| `Helpers` | module | Stable | General helper utility |
+| `VERSION` | string | Stable | Current plugin version |
+
+### Removed from older builds
+
+These are not exported on `_G.SentinelNavClient` anymore:
+
+- `create_ui(...)`
+- `Navigation`
+- `Movement`
+- `Obstacle`
+
+If consumers used those directly, update them to use `client` and the advanced escape hatches in this document.
+
+## 3. Client API (Stable)
+
+Defined in `SentinelNavClient/core/Client.lua`.
+
+### 3.1 Construction and lifecycle
+
+Consumers should not instantiate `Client` directly.
+
+| Method | Signature | Description |
+|---|---|---|
+| `new` | `Client:new(config?) -> Client` | Internal constructor used by plugin singleton |
+| `update` | `client:update()` | Internal frame tick (already called by plugin) |
+| `destroy` | `client:destroy()` | Cleanup and teardown |
+
+### 3.2 Movement commands
+
+| Method | Signature | Description |
+|---|---|---|
+| `move_to` | `client:move_to(target, callback?, opts?)` | Pathfinds and starts navigation |
+| `move_direct` | `client:move_direct(target, callback?)` | Follows a direct single-waypoint path |
+| `follow_path` | `client:follow_path(waypoints, callback?)` | Follow precomputed waypoints |
+| `plan_route` | `client:plan_route(nodes, callback?, opts?)` | Plans a TSP route and returns route data |
+| `start_route` | `client:start_route(nodes, callback?, opts?)` | Plans and executes a tracked route session with leg callbacks/events |
+| `replan` | `client:replan(reason?)` | Re-requests current path to current destination |
+| `validate_destination` | `client:validate_destination(target, callback)` | Reachability probe without starting movement |
+| `stop` | `client:stop()` | Stops movement and resets active nav state |
+
+#### `move_to(target, callback?, opts?)`
+
+- `target`: `{ x, y, z }`
+- `callback`: `function(success, reason)` (optional)
+- `opts`: optional per-command pathfinding overrides stored as `path.command_opts`
+
+Behavior:
+
+- Defers move while casting (enters `navigating.deferred`).
+- Otherwise transitions into `navigating.awaiting_path` and BT requests path.
+
+#### `plan_route(nodes, callback?, opts?)`
+
+Current behavior:
+
+- Calls `nav_client:find_route_tsp(...)`
+- Returns planned route data in callback
+- Does not execute multi-leg callbacks like legacy `leg_complete/route_complete`
+
+Route callback shape:
+
+```lua
+function(success, data)
+    -- success = true:
+    -- data.waypoints      vec3[]
+    -- data.visit_order    int[] (1-based)
+    -- data.leg_boundaries int[]
+    -- data.leg_distances  number[]
+    -- data.total_distance number
+
+    -- success = false:
+    -- data may be nil (for early local-player failure)
+    -- or { error = string }
 end
 ```
 
-### `_G.SentinelNavClient.create(config?)` (Backward Compatible)
+To execute a returned route immediately, call `client:follow_path(data.waypoints, ...)`.
 
-Returns the same shared Client. The `config` parameter is accepted but **ignored** — SentinelNavClient's UI owns all settings.
+#### `start_route(nodes, callback?, opts?)`
+
+- Plans via TSP and then executes the route automatically.
+- Emits `nav.leg_completed` as legs are crossed.
+- Reuses the callback for route lifecycle updates.
+
+Route execution callback shape:
 
 ```lua
-local client = _G.SentinelNavClient.create()
+function(success, data)
+    -- success=true leg event:
+    -- data.type  == "leg_complete"
+    -- data.leg   number
+    -- data.total number
+
+    -- success=true completion:
+    -- data.type           == "route_complete"
+    -- data.total_distance number
+    -- data.visit_order    int[]
+
+    -- success=false:
+    -- data.type  == "route_failed"
+    -- data.error string
+end
 ```
 
-### `Client:new(config)` (Internal Only)
+#### `replan(reason?)`
 
-Called by `SentinelNavClient/init.lua` during plugin initialization. **Consumers should NOT call this directly** — it would create an isolated Client disconnected from SentinelNavClient's update loop and settings sync.
+- Replans active destination path by clearing current path state and returning to `awaiting_path`.
+- If a tracked route session is active (`start_route`), replans from remaining nodes.
 
-### Consumer Example
+### 3.3 State and progress
+
+| Method | Signature | Returns |
+|---|---|---|
+| `get_state` | `client:get_state()` | `"idle" \| "navigating" \| "arrived" \| "failed"` |
+| `get_full_state` | `client:get_full_state()` | Dot-joined hierarchical state |
+| `is_moving` | `client:is_moving()` | `true` only while top-level state is `navigating` |
+| `get_destination` | `client:get_destination()` | `vec3\|nil` |
+| `get_current_path` | `client:get_current_path()` | `vec3[]\|nil` |
+| `get_path_index` | `client:get_path_index()` | `number` |
+| `get_progress` | `client:get_progress()` | Progress snapshot |
+| `get_route_progress` | `client:get_route_progress()` | Active route session progress, or `nil` |
+| `get_corridor_widths` | `client:get_corridor_widths()` | `number[]\|nil` |
+
+`get_progress()` shape:
 
 ```lua
--- In your plugin's initialize():
-if _G.SentinelNavClient and _G.SentinelNavClient.client then
-    local client = _G.SentinelNavClient.client
+{
+    percent = number,             -- 0..1
+    waypoints_remaining = number,
+    total_waypoints = number,
+    current_index = number,
+    route_mode = boolean|nil,
+    current_leg = number|nil,
+    total_legs = number|nil,
+}
+```
 
-    client:move_to(destination, function(ok, reason)
-        if ok then core.log("Arrived!") end
+### 3.4 Server queries
+
+| Method | Signature | Description |
+|---|---|---|
+| `is_server_available` | `client:is_server_available()` | `true` when server connection flag is up |
+| `health_check` | `client:health_check(callback)` | Server health ping |
+| `get_height` | `client:get_height(pos, callback)` | Navmesh height at pos |
+| `get_player_height` | `client:get_player_height(callback)` | Height at current player position |
+| `get_all_heights` | `client:get_all_heights(pos, callback, opts?)` | Multi-layer heights at XY |
+| `get_player_all_heights` | `client:get_player_all_heights(callback, opts?)` | Multi-layer heights at player |
+
+`is_server_available()` reflects the blackboard connection flag maintained by `NavigationService`:
+
+- Set `true` after successful responses
+- Marked disconnected after repeated failures
+- Domain/path errors returned inside HTTP 200 responses do not mark the server disconnected
+
+### 3.5 Path option builders
+
+| Method | Signature | Description |
+|---|---|---|
+| `get_path_opts` | `client:get_path_opts(extra?) -> table` | Builds path options from current config |
+| `get_corridor_opts` | `client:get_corridor_opts(extra?) -> table` | Same as above plus corridor fields |
+
+### 3.6 Runtime config
+
+| Method | Signature | Description |
+|---|---|---|
+| `update_config` | `client:update_config(overrides)` | Writes movement/obstacle/navigation config |
+
+Important:
+
+- SentinelNavClient UI calls `update_config(...)` every render frame from `ui/window.lua`.
+- Consumer-side `update_config(...)` calls are usually overwritten by UI sync.
+
+### 3.7 Event subscription
+
+| Method | Signature | Description |
+|---|---|---|
+| `on` | `client:on(event, callback)` | Legacy compatibility events |
+| `off` | `client:off(event, callback)` | Remove legacy callback |
+| `get_event_bus` | `client:get_event_bus()` | Returns EventBus instance |
+| `get_blackboard` | `client:get_blackboard()` | Returns Blackboard instance |
+
+Legacy `client:on(...)` events:
+
+- `"state_change"` with `{ from, to }`
+- `"arrived"`
+- `"stuck"` (mapped from `navigating.recovering`)
+- `"failed"`
+
+## 4. Event Model
+
+### 4.1 EventBus-based events (`events/Events.lua`)
+
+Declared event keys are:
+
+```lua
+nav.state_changed
+nav.arrived
+nav.failed
+
+nav.stuck_detected
+nav.stuck_recovered
+nav.deviation_detected
+nav.repath_started
+nav.repath_completed
+nav.obstacle_detected
+
+nav.path_requested
+nav.path_received
+nav.path_failed
+nav.waypoint_reached
+nav.leg_completed
+
+nav.server_connected
+nav.server_retry
+nav.server_disconnected
+nav.server_error
+```
+
+Currently emitted in the live pipeline:
+
+- `nav.state_changed`
+- `nav.arrived`
+- `nav.failed`
+- `nav.stuck_detected`
+- `nav.stuck_recovered`
+- `nav.deviation_detected`
+- `nav.repath_started`
+- `nav.repath_completed`
+- `nav.obstacle_detected`
+- `nav.path_requested`
+- `nav.path_received`
+- `nav.path_failed`
+- `nav.waypoint_reached`
+- `nav.leg_completed`
+- `nav.server_connected`
+- `nav.server_retry`
+- `nav.server_disconnected`
+- `nav.server_error`
+
+### 4.2 EventBus usage
+
+```lua
+local bus = client:get_event_bus()
+
+local sub_id = bus:on("nav.state_changed", function(data, event_name)
+    core.log(event_name .. ": " .. tostring(data.from) .. " -> " .. tostring(data.to))
+end, { owner = self, priority = 50 })
+
+bus:on_pattern("nav.server_*", function(data, event_name)
+    core.log("Server event: " .. event_name)
+end, { owner = self })
+
+-- Later cleanup:
+bus:off(sub_id)
+bus:off_owner(self)
+```
+
+EventBus supports:
+
+- `on`, `once`, `on_pattern`
+- `off(id)` and `off(event, callback)`
+- `off_owner(owner)`
+- `pause()` / `resume()`
+
+## 5. State Model
+
+Defined by `core/StateMachine.lua`.
+
+### Top-level states
+
+- `idle`
+- `navigating`
+- `arrived`
+- `failed`
+
+### Navigating substates
+
+- `awaiting_path`
+- `following_path`
+- `recovering`
+- `repathing`
+- `deferred`
+
+### Recovery sub-substates
+
+- `jumping`
+- `probing`
+- `strafing`
+- `backtracking`
+
+### Failure reasons
+
+- `unreachable`
+- `server_timeout`
+- `max_stuck_exceeded`
+- `max_repath_exceeded`
+
+### Full-state examples
+
+- `idle`
+- `navigating.awaiting_path`
+- `navigating.recovering.strafing`
+
+## 6. Architecture
+
+### 6.1 Runtime design
+
+```
+main.lua
+  -> init.lua singleton
+  -> shared Client
+      -> EventBus
+      -> Blackboard
+      -> ConsoleLogger
+      -> StateMachine
+      -> Sensors
+      -> Services:
+         - NavigationService
+         - MovementService
+         - ObstacleService
+         - PathValidationService
+      -> NavigationTree (Behavior Tree)
+```
+
+### 6.2 Frame flow (`client:update()`)
+
+1. Sensors write player state into blackboard.
+2. If in `navigating`, tick Behavior Tree.
+3. Resolve terminal failure policy from blackboard (`nav.fail_reason`) and transition to `failed` when set.
+4. Run stuck detection and max-stuck guard.
+5. Process deferred move when casting ends.
+6. Fire legacy compatibility events.
+
+### 6.3 Render flow (`ui/window.lua`)
+
+1. Read menu values.
+2. Clamp/sanitize values (example: log severity).
+3. Push config via `client:update_config(...)`.
+4. Update DebugTab behavior (preview generation/re-generation).
+5. Render settings UI.
+
+### 6.4 Behavior Tree responsibilities
+
+Defined in `behaviors/trees/NavigationTree.lua`:
+
+- Ensure path exists (`RequestPath`)
+- Normal follow (`AdvanceWaypoint`, dynamic speed)
+- Proactive obstacle probing + soft repath
+- Periodic path validation
+- Deviation-triggered repath (cooldown bounded)
+- Escalating stuck recovery (`StuckRecoveryTree`)
+
+## 7. Advanced APIs (Use With Care)
+
+The following are exposed as fields on the shared client:
+
+- `client.nav_client` (`NavigationService`)
+- `client.movement` (`MovementService`)
+- `client.obstacle` (`ObstacleService`)
+
+These are intentionally available for advanced consumers, but are lower-level and more likely to change than the high-level Client API.
+
+### 7.1 `NavigationService` methods
+
+Core pathing:
+
+- `find_path(start_pos, dest, callback, opts?)`
+- `find_route_tsp(nodes, callback, opts?)`
+- `find_route_multi(stops, callback, opts?)`
+- `check_path(current_pos, waypoints, callback, opts?)`
+- `find_path_corridor(start_pos, dest, callback, opts?)`
+- `find_path_avoid(start_pos, dest, avoid_zones, callback, opts?)`
+
+Spatial:
+
+- `raycast(start_pos, dest, callback, opts?)`
+- `get_height(pos, callback, opts?)`
+- `get_all_heights(pos, callback, opts?)`
+- `random_point(callback, opts?)`
+
+Tactical:
+
+- `flee(player_pos, threats, callback, opts?)`
+- `kite(player_pos, target_pos, callback, opts?)`
+
+Health/config:
+
+- `health_check(callback)`
+- `is_available()`
+- `get_consecutive_failures()`
+- `reset()`
+- `update_config(overrides)`
+
+Utilities:
+
+- `NavigationService.is_indoor()`
+- `NavigationService.get_continent_id()`
+
+### 7.2 `MovementService` methods
+
+- `navigate(waypoints)`
+- `process()`
+- `stop()`
+- `get_current_index()`
+- `get_remaining_waypoints()`
+- `is_moving()`
+- `strafe(direction)`
+- `apply_dynamic_speed(blackboard?)`
+- `update_config(overrides)`
+- `get_config(key, default?)`
+
+### 7.3 `ObstacleService` methods
+
+- `probe_forward(player_pos, target_pos)`
+- `probe_segment(pos_a, pos_b)`
+- `probe_path_ahead(waypoints, max_segments?)`
+- `add_zone(pos, radius?)`
+- `remove_zone(index)`
+- `prune(player_pos?)`
+- `get_avoidance_zones()`
+- `get_zone_count()`
+- `clear()`
+- `update_config(overrides)`
+
+## 8. Configuration Reference
+
+Source of truth: `core/Defaults.lua`.
+
+### 8.1 Movement defaults
+
+```lua
+dynamic_speed = true
+dynamic_speed_max_tolerance_scale = 1.20
+dynamic_speed_max_tolerance_bonus = 0.75
+dynamic_speed_ramp_z_delta = 1.2
+dynamic_speed_ramp_tolerance = 1.8
+dynamic_speed_ramp_look_distance = 6.0
+
+waypoint_tolerance = 3.0
+final_tolerance = 1.5
+
+anti_detection = false
+max_deviation = 3.0
+
+stuck_check_interval = 1.0
+stuck_distance_min = 1.0
+max_stuck_attempts = 6
+
+path_check_interval = 5.0
+path_request_max_retries = 2
+path_request_retry_base = 0.5
+max_repath_failures = 3
+
+deviation_check_interval = 1.0
+deviation_threshold = 2.0
+deviation_vertical_threshold = 2.0
+deviation_corridor_factor = 0.75
+repath_cooldown = 0.1
+max_deviation_repaths = 5
+
+optimize = true
+allow_partial = true
+
+string_pull_deviation = 1.0
+string_pull_heading = 30.0
+string_pull_wall_dist = 1.0
+densify_segment_length = 1.0
+
+filter_ground = 1.0
+filter_water = 10.0
+filter_lava = 100.0
+
+use_corridor_indoor = true
+corridor_probe_dist = 15.0
+
+wall_clearance_enabled = true
+wall_clearance = 2.0
+
+proactive_obstacle_check = true
+proactive_obstacle_interval = 1.5
+
+log_severity = 2   -- 0=error, 1=warn, 2=info, 3=debug
+debug_verbose = false
+```
+
+### 8.2 Obstacle defaults
+
+```lua
+avoidance_radius = 3.0
+max_zones = 5
+zone_ttl = 120.0
+avoidance_cost = 100.0
+zone_prune_dist = 100.0
+
+probe_distance = 8.0
+probe_spread_deg = 20.0
+probe_height_offset = 1.0
+
+lookahead_height_offset = 1.5
+lookahead_spread_deg = 15.0
+lookahead_segments = 3
+```
+
+### 8.3 Debug/UI defaults
+
+`Defaults.debug` and `Defaults.window` are UI controls, not direct pathfinding engine config.
+
+## 9. Migration Guide
+
+If you are migrating from pre-refactor SentinelNavClient (pre EventBus/Blackboard/HSM architecture), review these changes:
+
+1. Global exports changed
+
+- Removed: `_G.SentinelNavClient.Navigation`, `.Movement`, `.Obstacle`, `.create_ui`
+- Use: `_G.SentinelNavClient.client` and `client.nav_client` / `client.movement` / `client.obstacle` when needed
+
+2. `plan_route` behavior changed
+
+- Old: route execution callbacks (`leg_complete`, `route_complete`)
+- New: planning call only; returns route path metadata
+- New route execution API: `start_route(...)`
+
+3. `replan` behavior changed
+
+- Old: route-leg-aware replanning
+- New: destination refresh by default, and route-aware when a `start_route` session is active
+
+4. State names changed
+
+- Old examples: `requesting_path`, `moving`, `stuck`
+- New top-level: `idle`, `navigating`, `arrived`, `failed`
+- Use `get_full_state()` for substate detail
+
+5. `get_progress()` payload changed
+
+- Now returns percent + waypoint counts/index only
+
+6. Internals moved from monolith modules to service architecture
+
+- `core/Movement.lua` and `core/Obstacle.lua` removed
+- `core/Navigation.lua` replaced by `services/NavigationService.lua`
+
+## 10. Consumer Best Practices
+
+1. Resolve and store client once in plugin initialization.
+2. Treat high-level `Client` methods as the primary API.
+3. Prefer event-driven flow (`arrived`, `failed`) over polling loops.
+4. Use EventBus `owner` and `off_owner` for clean teardown.
+5. Avoid writing nav tuning from consumer plugins; use SentinelNavClient UI.
+6. If you must use escape hatches, isolate that code behind your own adapter so you can update in one place later.
+
+## 11. Coverage Checklist
+
+This document currently covers all consumer-critical contracts:
+
+- How to obtain and use the shared client (`_G.SentinelNavClient.client`, `create`)
+- Stable movement/state/query/event APIs on `Client`
+- Current state model and event model
+- Runtime config ownership and override behavior
+- Advanced escape hatches and their stability caveats
+- Default tuning values used at runtime
+- Migration deltas from the legacy architecture
+
+If you need additional guarantees for your own plugin, add a contract test against:
+
+- `core/Client.lua` public methods
+- `events/Events.lua` event keys
+- `core/StateMachine.lua` state constants
+
+## 12. Consumer Cookbook
+
+### 12.1 Safe client acquisition
+
+```lua
+local function get_nav_client()
+    if not (_G.SentinelNavClient and _G.SentinelNavClient.client) then
+        return nil, "SentinelNavClient unavailable"
+    end
+    return _G.SentinelNavClient.client, nil
+end
+```
+
+### 12.2 Validate then move
+
+```lua
+local client, err = get_nav_client()
+if not client then
+    core.log_error(err)
+    return
+end
+
+local target = { x = -8900, y = 560, z = 94 }
+client:validate_destination(target, function(reachable, reason, distance)
+    if not reachable then
+        core.log_warning("Target unreachable: " .. tostring(reason))
+        return
+    end
+
+    client:move_to(target, function(ok, fail_reason)
+        if ok then
+            core.log("Arrived (" .. string.format("%.1f", distance or 0) .. " yd)")
+        else
+            core.log_error("Move failed: " .. tostring(fail_reason))
+        end
+    end)
+end)
+```
+
+### 12.3 Plan a TSP route then execute it
+
+```lua
+local nodes = {
+    { x = -9100, y = 400, z = 93 },
+    { x = -9200, y = 500, z = 91 },
+    { x = -8900, y = 600, z = 95 },
+}
+
+client:plan_route(nodes, function(ok, data)
+    if not ok then
+        core.log_error("Route plan failed: " .. tostring(data and data.error))
+        return
+    end
+
+    client:follow_path(data.waypoints, function(success, reason)
+        if success then
+            core.log("Route execution complete")
+        else
+            core.log_error("Route execution failed: " .. tostring(reason))
+        end
+    end)
+end, {
+    return_to_start = false,
+})
+```
+
+### 12.4 Event lifecycle with owner cleanup
+
+```lua
+local bus = client:get_event_bus()
+
+bus:on("nav.state_changed", function(data)
+    core.log(string.format("State: %s -> %s", tostring(data.from), tostring(data.to)))
+end, { owner = self })
+
+bus:on("nav.failed", function(data)
+    core.log_error("Nav failed: " .. tostring(data and data.reason))
+end, { owner = self })
+
+-- In plugin teardown:
+bus:off_owner(self)
+```
+
+### 12.5 Polling guard with full-state checks
+
+```lua
+if client:is_moving() then
+    local full = client:get_full_state()
+    local p = client:get_progress()
+    core.log(string.format(
+        "[%s] %.0f%% (%d/%d)",
+        full,
+        (p.percent or 0) * 100,
+        p.current_index or 1,
+        p.total_waypoints or 0
+    ))
+end
+```
+
+### 12.6 Server readiness gate
+
+```lua
+if not client:is_server_available() then
+    client:health_check(function(ok)
+        if ok then
+            core.log("SentinelNavServer reachable")
+        else
+            core.log_warning("SentinelNavServer unavailable")
+        end
     end)
 end
 ```
 
 ---
 
-## Update Loop
-
-### update
-
-```lua
-client:update()
-```
-
-Drives all internal modules in the correct order:
-
-1. `obstacle:update()` — compatibility hook (probing is timer-driven)
-2. `movement:update()` — advances waypoints, stuck detection, obstacle scanning, path validation
-3. Detects state transitions and fires [events](#events)
-
-> **Note:** SentinelNavClient calls `client:update()` from its own `on_update` callback every frame. **Consumers do NOT need to call this.** If a consumer calls it anyway, it is harmless — Movement rate-limits internally via `_tick_interval`.
-
----
-
-## Movement Commands
-
-All movement methods delegate to the internal [Movement](#movement) module. See that section for detailed behavior (casting deferral, corridor adaptation, stuck recovery, etc.).
-
-### move_to
-
-```lua
-client:move_to(target, callback?, opts?)
-```
-
-Move to a target position using navmesh pathfinding.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `target` | vec3 | yes | Destination `{x, y, z}` |
-| `callback` | function | no | `function(success, reason)` |
-| `opts` | table | no | `{ use_navmesh = true, map_id = auto }` |
-
-```lua
-client:move_to(destination, function(ok, reason)
-    if ok then
-        core.log("Arrived!")
-    else
-        core.log_error("Failed: " .. tostring(reason))
-    end
-end)
-```
-
----
-
-### move_direct
-
-```lua
-client:move_direct(target, callback?)
-```
-
-Move directly without pathfinding. Equivalent to `move_to(target, callback, { use_navmesh = false })`.
-
----
-
-### follow_path
-
-```lua
-client:follow_path(waypoints, callback?)
-```
-
-Follow a pre-computed waypoint array without requesting a new path from SentinelNavServer. Useful when you already have waypoints (e.g., from a direct `nav_client:find_path()` call or cached path).
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `waypoints` | vec3[] | yes | Array of positions to follow |
-| `callback` | function | no | `function(success, reason)` |
-
-```lua
--- Get a path manually, then follow it
-client.nav_client:find_path(start, dest, function(ok, data)
-    if ok then
-        client:follow_path(data.waypoints, function(success, reason)
-            if success then core.log("Arrived!") end
-        end)
-    end
-end, client:get_path_opts())
-```
-
----
-
-### plan_route
-
-```lua
-client:plan_route(nodes, callback?, opts?)
-```
-
-Plan and execute a TSP-optimized route through multiple nodes.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `nodes` | vec3[] | yes | At least 2 positions to visit |
-| `callback` | function | no | Route progress callback |
-| `opts` | table | no | `{ map_id = auto, return_to_start = false }` |
-
-**Callback:** Called multiple times:
-```lua
-function(success, data)
-    if success then
-        if data.type == "leg_complete" then
-            -- data.leg, data.total
-        elseif data.type == "route_complete" then
-            -- All nodes visited
-        end
-    else
-        -- data.error: error message
-    end
-end
-```
-
----
-
-### replan
-
-```lua
-client:replan(reason?)
-```
-
-Replan the active route from the current leg. Requires an active route from `plan_route()`.
-
----
-
-### validate_destination
-
-```lua
-client:validate_destination(target, callback)
-```
-
-Check if a destination is reachable **without starting movement**.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `target` | vec3 | yes | Target position |
-| `callback` | function | yes | `function(reachable, reason, distance)` |
-
----
-
-### stop
-
-```lua
-client:stop()
-```
-
-Stop all movement and reset to idle. Clears active path, destination, callbacks, stuck counters, and route data.
-
----
-
-### destroy
-
-```lua
-client:destroy()
-```
-
-Stop movement, clear all obstacle zones, and remove event listeners. Call when permanently done with the SentinelNavClient instance.
-
----
-
-## State Queries
-
-### get_state
-
-```lua
-client:get_state() -> string
-```
-
-Returns the current movement state:
-
-| State | Description |
-|-------|-------------|
-| `"idle"` | Not moving |
-| `"requesting_path"` | Waiting for path from SentinelNavServer |
-| `"moving"` | Actively following waypoints |
-| `"stuck"` | Stuck recovery in progress |
-| `"arrived"` | Reached destination |
-| `"failed"` | Movement failed |
-
----
-
-### is_moving
-
-```lua
-client:is_moving() -> boolean
-```
-
-Returns `true` if state is `"moving"` or `"requesting_path"`.
-
----
-
-### get_destination
-
-```lua
-client:get_destination() -> vec3|nil
-```
-
-Returns the current destination, or `nil` if not moving.
-
----
-
-### get_current_path
-
-```lua
-client:get_current_path() -> vec3[]|nil
-```
-
-Returns the current waypoint array, or `nil` if no active path.
-
----
-
-### get_path_index
-
-```lua
-client:get_path_index() -> number
-```
-
-Returns the current waypoint index in the active path. Returns `1` if no path is active.
-
----
-
-### get_progress
-
-```lua
-client:get_progress() -> table
-```
-
-Detailed progress snapshot:
-
-```lua
-{
-    state = string,              -- Current state
-    destination = vec3|nil,      -- Target position
-    distance_remaining = number, -- Yards to destination (moving only)
-    path_index = number,         -- Current waypoint index (moving only)
-    path_count = number,         -- Total waypoints (moving only)
-    current_leg = number,        -- Current route leg (route mode only)
-    total_legs = number,         -- Total route legs (route mode only)
-    route_mode = boolean,        -- true if executing a route
-}
-```
-
----
-
-### get_corridor_widths
-
-```lua
-client:get_corridor_widths() -> number[]|nil
-```
-
-Returns corridor width data for the current indoor path, or `nil` if outdoors or no data.
-
----
-
-## Server Queries
-
-### is_server_available
-
-```lua
-client:is_server_available() -> boolean
-```
-
-Returns `true` if SentinelNavServer server appears connected (has had a recent successful request, fewer than 3 consecutive failures).
-
----
-
-### health_check
-
-```lua
-client:health_check(callback)
-```
-
-Check SentinelNavServer server health.
-
-```lua
-function(ok, data, err)
-    -- data.status, data.version, data.uptime_secs, data.loaded_maps
-end
-```
-
----
-
-### get_height
-
-```lua
-client:get_height(pos, callback)
-```
-
-Get the navmesh Z-coordinate at arbitrary world coordinates.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `pos` | vec3 | yes | World position `{x, y, z}` to query |
-| `callback` | function | yes | `function(ok, data, err)` — `data.height` on success |
-
----
-
-### get_player_height
-
-```lua
-client:get_player_height(callback)
-```
-
-Convenience wrapper — gets the navmesh Z-coordinate at the local player's current position.
-
----
-
-## Opts Builders
-
-### get_path_opts
-
-```lua
-client:get_path_opts(extra?) -> table
-```
-
-Build a path options table from the current Movement config. Merges all configured smoothing, filter, and wall clearance values into a table suitable for passing to Navigation methods. Optionally merge extra key-value overrides on top.
-
-```lua
-local opts = client:get_path_opts({ allow_partial = true })
-client.nav_client:find_path(start, dest, callback, opts)
-```
-
----
-
-### get_corridor_opts
-
-```lua
-client:get_corridor_opts(extra?) -> table
-```
-
-Same as `get_path_opts` but also includes `probe_distance` from the corridor config. Use with `find_path_corridor`.
-
-> **Avoidance zones with direct `nav_client` calls:** When using the escape hatch to call `nav_client` methods directly (e.g., `find_path_corridor`, `find_route_multi`), you must pass `avoid_zones` explicitly in the opts table. `client:move_to()` handles this automatically, but direct calls do not.
->
-> ```lua
-> local zones = client.obstacle:get_avoidance_zones()
-> local opts = client:get_path_opts({ avoid_zones = zones })
-> client.nav_client:find_route_multi(stops, callback, opts)
-> ```
-
----
-
-## Client Configuration
-
-### How Settings Work
-
-SentinelNavClient owns all navigation settings via its built-in UI. The settings flow is:
-
-1. ~40 menu elements in `SentinelNavClient/ui/window.lua` (persisted across sessions via `core.menu.*`)
-2. `sync_to_client()` reads all elements every render frame
-3. Calls `client:update_config()` with the resolved values
-4. Movement and Obstacle modules update their internal config
-
-**Consumers should NOT call `update_config()` directly** — their changes will be overwritten on the next render frame by SentinelNavClient's sync.
-
-To change navigation settings, use the SentinelNavClient Settings UI (toggled via the "SentinelNavClient" button in the Sylvannas menu).
-
-### Constructor Config (Internal)
-
-The Client constructor accepts sectioned config, but this is only used internally by `SentinelNavClient/init.lua`:
-
-| Section | Module | Description |
-|---------|--------|-------------|
-| `navigation` | Navigation | `base_url`, `max_retries` |
-| `movement` | Movement | All movement/pathfinding settings (see [Movement Configuration](#movement-configuration)) |
-| `obstacles` | Obstacle | All obstacle settings (see [Obstacle Configuration](#obstacle-configuration)) |
-
----
-
-### update_config (Internal)
-
-```lua
-client:update_config(overrides)
-```
-
-Distribute config updates to underlying modules at runtime. Only provided keys are changed.
-
-> **Internal:** This is called by SentinelNavClient's `sync_to_client()` every render frame. Consumer calls will be overwritten. Use SentinelNavClient's Settings UI instead.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `overrides` | table | yes | `{ movement = {...}, obstacles = {...} }` |
-
-> **Note:** `navigation` config (base_url, max_retries) cannot be updated at runtime — it is set once during construction.
-
----
-
-## Events
-
-The client fires events when the movement state changes. Use `on()` to subscribe and `off()` to unsubscribe.
-
-### on
-
-```lua
-client:on(event, callback)
-```
-
-Register a listener for an event. Multiple listeners can be registered for the same event. Listeners are called in registration order.
-
-### off
-
-```lua
-client:off(event, callback)
-```
-
-Remove a previously registered listener. Pass the **same function reference** used in `on()`.
-
-### Event Types
-
-| Event | Fired when | Callback data |
-|-------|-----------|---------------|
-| `"state_change"` | Any state transition | `{ from = string, to = string }` |
-| `"arrived"` | Reached destination | `nil` |
-| `"stuck"` | Stuck detected | `nil` |
-| `"failed"` | Movement failed | `nil` |
-
-```lua
-client:on("state_change", function(data)
-    core.log(string.format("SentinelNavClient: %s -> %s", data.from, data.to))
-end)
-
-client:on("arrived", function()
-    core.log("Destination reached!")
-end)
-
-client:on("failed", function()
-    core.log_error("Movement failed — check path or obstacles")
-end)
-```
-
-**Error handling:** Event callbacks are wrapped in `pcall`. If a handler throws, it is caught and logged but does not affect other handlers or SentinelNavClient operation.
-
----
-
-## Escape Hatch
-
-For advanced use cases, the underlying module instances are exposed as public fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `client.nav_client` | Navigation | Raw HTTP client — direct access to all 11 endpoints |
-| `client.movement` | Movement | Path follower — full state machine, stuck recovery |
-| `client.obstacle` | Obstacle | Obstacle detector — zone memory, ray probing |
-
-```lua
-local client = _G.SentinelNavClient.client
-
--- Use the client for common operations
-client:move_to(target, callback)
-
--- Drop to raw client for specialized queries
-client.nav_client:raycast(start, dest, function(ok, data)
-    if ok and not data.hit then
-        core.log("Clear line of sight!")
-    end
-end)
-
--- Access obstacle zones directly
-local zones = client.obstacle:get_avoidance_zones()
-
--- Read movement internals
-local widths = client.movement:get_corridor_widths()
-```
-
-> **Note:** The client and its modules share the same instances. Calling `movement:stop()` on the escape hatch has the same effect as `client:stop()`.
-
----
-
-## Complete Consumer Example
-
-```lua
--- Example: Using SentinelNavClient from a consumer plugin (e.g., a gathering bot)
-
--- 1. Get the shared Client (in your plugin's initialize)
-if not (_G.SentinelNavClient and _G.SentinelNavClient.client) then
-    core.log_error("SentinelNavClient not loaded — navigation unavailable")
-    return
-end
-
-local client = _G.SentinelNavClient.client
-
--- 2. Register event listeners (optional)
-client:on("arrived", function()
-    core.log("Arrived at destination!")
-end)
-
-client:on("failed", function()
-    core.log_error("Movement failed")
-end)
-
-client:on("state_change", function(data)
-    core.log("[Nav] " .. data.from .. " -> " .. data.to)
-end)
-
--- 3. Check server health
-client:health_check(function(ok, data)
-    if ok then
-        core.log("SentinelNavServer v" .. data.version .. " (" .. data.uptime_secs .. "s uptime)")
-    else
-        core.log_error("SentinelNavServer server not reachable")
-    end
-end)
-
--- 4. Validate and move to a destination
-local dest = { x = -8900, y = 560, z = 94 }
-
-client:validate_destination(dest, function(reachable, reason, distance)
-    if reachable then
-        core.log(string.format("Target reachable, %.0f yards", distance))
-        client:move_to(dest)
-    else
-        core.log_error("Unreachable: " .. tostring(reason))
-    end
-end)
-
--- 5. Plan a multi-node route
-local herb_spots = {
-    { x = -9100, y = 400, z = 93 },
-    { x = -9200, y = 500, z = 91 },
-    { x = -8900, y = 600, z = 95 },
-}
-
-client:plan_route(herb_spots, function(ok, data)
-    if ok and data.type == "route_complete" then
-        core.log("Route finished!")
-    end
-end, { return_to_start = true })
-
--- 6. Use raw modules when needed (escape hatch)
-client.nav_client:raycast(start, dest, function(ok, data)
-    if ok and not data.hit then
-        core.log("Clear line of sight!")
-    end
-end)
-
--- 7. Stop when needed
--- client:stop()
-
--- Note: No update() call needed (SentinelNavClient drives it)
--- Note: No update_config() needed (SentinelNavClient UI syncs settings)
--- Note: No destroy() needed (SentinelNavClient manages Client lifecycle)
-```
-
----
----
-
-# Navigation
-
-HTTP client for the SentinelNavServer pathfinding server. Provides async pathfinding, raycasting, height queries, and tactical movement endpoints.
-
-All pathfinding methods are **asynchronous** — they issue an HTTP GET to SentinelNavServer and invoke a callback with the result. Failed requests retry with exponential backoff.
-
-> **Note:** Consumers should access the shared Navigation client via `_G.SentinelNavClient.client.nav_client` rather than creating a new instance. The shared client is already configured by SentinelNavClient.
-
----
-
-## Navigation Constructor
-
-### `Navigation:new(config) -> Navigation`
-
-Create a new client instance.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `config.base_url` | string | `"http://78.31.71.163:47110"` | SentinelNavServer server URL |
-| `config.max_retries` | number | `3` | Max retry attempts per request |
-
-```lua
-local nav = Navigation:new({
-    base_url = "http://78.31.71.163:47110",
-    max_retries = 3,
-})
-```
-
-**Instance fields initialized:**
-- `_is_connected` = false
-- `_consecutive_failures` = 0
-- `_last_success_time` = 0
-
----
-
-## Pathfinding
-
-### find_path
-
-```lua
-nav:find_path(start_pos, dest, callback, opts?)
-```
-
-Request a navmesh path between two points.
-
-**Endpoint:** `GET /api/v1/path` (or `/api/v1/path-random` if `anti_detection = true`)
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `start_pos` | vec3 | yes | Start position `{x, y, z}` |
-| `dest` | vec3 | yes | Destination position `{x, y, z}` |
-| `callback` | function | yes | `function(success, data, error)` |
-| `opts` | table | no | Path options (see below) |
-
-**Options (opts):**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `map_id` | number | auto | Continent ID (0=EK, 1=Kalimdor, 530=Outland, 571=Northrend) |
-| `smoothing` | string | — | Algorithm: `"none"`, `"chaikin"`, `"catmull_rom"`, `"bezier"` |
-| `optimize` | boolean | — | Enable waypoint optimization |
-| `anti_detection` | boolean | — | Use randomized path endpoint |
-| `max_deviation` | number | — | Max yards waypoints can deviate during optimization |
-| `smooth_iterations` | number | — | Number of smoothing passes |
-| `smooth_samples` | number | — | Sample count per smooth pass |
-| `smooth_ratio` | number | — | Smoothing interpolation ratio (0.0-1.0) |
-| `allow_partial` | boolean | — | Return partial path if full path impossible |
-| `z_extent` | number | — | Z-axis search extent for start/end snapping |
-| `filter_ground` | number | — | Ground polygon cost filter |
-| `filter_water` | number | — | Water polygon cost filter |
-| `filter_lava` | number | — | Lava polygon cost filter |
-| `wall_clearance` | number | — | Min distance from walls (must be > 0 to take effect) |
-| `min_corner_angle` | number | — | Min angle at corners in degrees |
-| `keep_originals` | boolean | — | Keep original waypoints alongside smoothed |
-
-**Callback data (on success):**
-```lua
-{
-    waypoints = vec3[],          -- Path positions
-    distance = number,           -- Total distance in yards
-    partial = boolean,           -- true if path is incomplete
-    computation_time_ms = number -- Server computation time
-}
-```
-
-```lua
-nav:find_path(player_pos, target, function(ok, data, err)
-    if ok then
-        core.log(string.format("Path: %d waypoints, %.0f yards",
-            #data.waypoints, data.distance))
-    else
-        core.log_error("Pathfinding failed: " .. tostring(err))
-    end
-end, {
-    smoothing = "chaikin",
-    optimize = true,
-    allow_partial = true,
-})
-```
-
----
-
-### find_path_corridor
-
-```lua
-nav:find_path_corridor(start_pos, dest, callback, opts?)
-```
-
-Request a path with corridor width measurements at each waypoint. Useful for indoor navigation where knowing passage width helps avoid walls.
-
-**Endpoint:** `GET /api/v1/path/corridor`
-
-**Parameters:** Same as [find_path](#find_path) plus:
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `opts.probe_distance` | number | — | Distance to probe for corridor width measurement |
-| `opts.avoid_zones` | table[] | — | Avoidance zones (see [find_path_avoid](#find_path_avoid)) |
-
-**Callback data (on success):**
-```lua
-{
-    waypoints = vec3[],          -- Path positions
-    corridor_widths = number[],  -- Width in yards at each waypoint
-    distance = number,           -- Total distance
-    partial = boolean,           -- true if incomplete
-    computation_time_ms = number -- Server time
-}
-```
-
----
-
-### find_path_avoid
-
-```lua
-nav:find_path_avoid(start_pos, dest, avoid_zones, callback, opts?)
-```
-
-Request a navmesh path that routes around avoidance zones. Used by Movement when Obstacle has detected doodad collisions. Falls back to `find_path()` if no zones are provided or if the avoid endpoint fails.
-
-**Endpoint:** `GET /api/v1/path-avoid`
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `start_pos` | vec3 | yes | Start position |
-| `dest` | vec3 | yes | Destination position |
-| `avoid_zones` | table[] | yes | Avoidance zones to route around |
-| `callback` | function | yes | `function(success, data, error)` |
-| `opts` | table | no | Same options as [find_path](#find_path) |
-
-**Avoidance zone format:**
-```lua
-{
-    x = number,      -- Zone center X
-    y = number,      -- Zone center Y
-    z = number,      -- Zone center Z
-    radius = number, -- Avoidance radius in yards
-    cost = number,   -- Cost multiplier (higher = more strongly avoided)
-}
-```
-
-Zones are sent to SentinelNavServer as a semicolon-separated `avoid` query parameter: `x,y,z,radius,cost;x,y,z,radius,cost;...`
-
-**Fallback behavior:**
-- If `avoid_zones` is empty or nil, delegates to `find_path()` directly
-- If the `/path-avoid` endpoint returns an error, automatically falls back to `find_path()` without avoidance and logs a warning
-
----
-
-### find_route_tsp
-
-```lua
-nav:find_route_tsp(nodes, callback, opts?)
-```
-
-Plan a TSP-optimized (Traveling Salesman Problem) route through multiple nodes. SentinelNavServer computes the optimal visit order to minimize total travel distance.
-
-**Endpoint:** `GET /api/v1/path-tsp`
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `nodes` | vec3[] | yes | At least 2 positions to visit |
-| `callback` | function | yes | `function(success, data, error)` |
-| `opts` | table | no | Route options |
-
-**Options:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `map_id` | number | auto | Continent ID |
-| `start_pos` | vec3 | player pos | Starting position (auto-detected if omitted) |
-| `return_to_start` | boolean | — | Add a final leg returning to start |
-| `weights` | table | — | Custom importance weights per node |
-| `avoid_zones` | table[] | — | Avoidance zones |
-
-**Callback data (on success):**
-```lua
-{
-    waypoints = vec3[],        -- Flattened waypoints for all legs
-    visit_order = number[],    -- 1-indexed order of node visits
-    leg_boundaries = number[], -- Waypoint indices marking leg transitions
-    leg_distances = number[],  -- Distance of each leg
-    total_distance = number,   -- Total route distance
-}
-```
-
-> **Note:** `visit_order` is automatically converted from SentinelNavServer's 0-indexed format to Lua's 1-indexed format.
-
----
-
-### find_route_multi
-
-```lua
-nav:find_route_multi(stops, callback, opts?)
-```
-
-Plan an ordered multi-stop route. Unlike TSP, stops are visited in the exact order provided.
-
-**Endpoint:** `GET /api/v1/path-multi`
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `stops` | vec3[] | yes | At least 2 ordered stop positions |
-| `callback` | function | yes | `function(success, data, error)` |
-| `opts` | table | no | Same options as [find_path](#find_path) plus `avoid_zones` |
-
-**Callback data (on success):**
-```lua
-{
-    waypoints = vec3[],        -- Flattened waypoints
-    leg_boundaries = number[], -- Leg transition indices
-    leg_distances = number[],  -- Per-leg distances
-    total_distance = number,   -- Total distance
-}
-```
-
----
-
-### check_path
-
-```lua
-nav:check_path(current_pos, waypoints, callback, opts?)
-```
-
-Validate that remaining waypoints are still walkable on the navmesh. Use periodically to detect path invalidation without requesting a full repath.
-
-**Endpoint:** `GET /api/v1/path/check`
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `current_pos` | vec3 | yes | Player's current position |
-| `waypoints` | vec3[] | yes | Remaining waypoints to validate |
-| `callback` | function | yes | `function(success, data, error)` |
-| `opts` | table | no | `{ map_id = auto, max_check = number }` |
-
-**Callback data (on success):**
-```lua
-{
-    valid = boolean,                    -- Entire path is walkable
-    first_invalid_segment = number|nil, -- Index of first bad segment
-    player_on_navmesh = boolean,        -- Player position is on navmesh
-}
-```
-
----
-
-## Spatial Queries
-
-### raycast
-
-```lua
-nav:raycast(start_pos, dest, callback, opts?)
-```
-
-Cast a ray between two navmesh points to check for obstacles.
-
-**Endpoint:** `GET /api/v1/raycast`
-
-**Callback data (on success):**
-```lua
-{
-    hit = boolean,             -- true if ray hit an obstacle
-    hit_position = vec3|nil,   -- Where the ray hit
-    t = number,                -- 0-1 parameter along ray
-    normal = vec3,             -- Surface normal at hit point
-}
-```
-
-```lua
-nav:raycast(player_pos, target_pos, function(ok, data, err)
-    if ok then
-        if data.hit then
-            core.log(string.format("Obstacle at %.0f%% of path", data.t * 100))
-        else
-            core.log("Clear line of sight")
-        end
-    end
-end)
-```
-
----
-
-### get_height
-
-```lua
-nav:get_height(pos, callback, opts?)
-```
-
-Get the navmesh Z-coordinate at a position.
-
-**Endpoint:** `GET /api/v1/height`
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `pos` | vec3 | yes | World position `{x, y, z}` to query |
-| `callback` | function | yes | `function(ok, data, err)` — `data.height` on success |
-| `opts` | table | no | `{ map_id = auto }` |
-
----
-
-### random_point
-
-```lua
-nav:random_point(callback, opts?)
-```
-
-Get a random valid point on the navmesh.
-
-**Endpoint:** `GET /api/v1/random`
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `map_id` | number | auto | Continent ID |
-| `center` | vec3 | — | Center of search area (requires `radius`) |
-| `radius` | number | — | Search radius in yards (requires `center`) |
-
-> Both `center` and `radius` must be provided together. If either is missing, a random point from the entire map is returned.
-
-**Callback data:** `{ point = vec3 }`
-
----
-
-## Tactical
-
-### flee
-
-```lua
-nav:flee(player_pos, threats, callback, opts?)
-```
-
-Calculate an escape path away from one or more threats.
-
-**Endpoint:** `GET /api/v1/tactical/flee`
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `player_pos` | vec3 | yes | Current position |
-| `threats` | vec3[] | yes | Array of threat positions (at least 1) |
-| `callback` | function | yes | `function(success, data, error)` |
-| `opts` | table | no | `{ map_id, flee_distance, smoothing, smooth_*, filter_*, wall_clearance, avoid_zones }` |
-
-**Callback data (on success):**
-```lua
-{
-    waypoints = vec3[],          -- Flee path
-    distance = number,           -- Total path distance in yards
-    min_threat_distance = number,-- Min distance from threats at flee endpoint
-}
-```
-
-```lua
-nav:flee(player_pos, enemies, function(ok, data, err)
-    if ok then
-        core.log(string.format("Flee path: %d waypoints, %.0f yards from threats",
-            #data.waypoints, data.min_threat_distance))
-    end
-end, {
-    flee_distance = 40,
-    smoothing = "chaikin",
-})
-```
-
----
-
-### kite
-
-```lua
-nav:kite(player_pos, target_pos, callback, opts?)
-```
-
-Calculate a circular path around a target for kiting.
-
-**Endpoint:** `GET /api/v1/tactical/kite`
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `map_id` | number | auto | Continent ID |
-| `kite_radius` | number | — | Desired distance from target |
-| `arc_degrees` | number | — | Arc segment angle in degrees |
-| `direction` | string | — | `"cw"` (clockwise) or `"ccw"` (counter-clockwise) |
-| `smoothing` | string | — | Algorithm: `"none"`, `"chaikin"`, `"catmull_rom"`, `"bezier"` |
-| `smooth_*` | number | — | Smoothing params (iterations, samples, ratio) |
-| `filter_*` | number | — | Terrain cost filters (ground, water, lava) |
-| `wall_clearance` | number | — | Min distance from walls |
-
-> **Note:** Kite does not support `z_extent` — arc waypoints are snapped to the navmesh directly, not via A* pathfinding.
-
-**Callback data (on success):**
-```lua
-{
-    waypoints = vec3[],      -- Kite path positions
-    waypoint_count = number, -- Number of arc waypoints
-}
-```
-
----
-
-## Navigation Status
-
-### health_check
-
-```lua
-nav:health_check(callback)
-```
-
-**Endpoint:** `GET /health`
-
-```lua
-{
-    status = string,       -- "ok", "degraded", etc.
-    version = string,      -- SentinelNavServer version
-    uptime_secs = number,  -- Server uptime
-    loaded_maps = table,   -- Map/continent status
-}
-```
-
-### is_available
-
-```lua
-nav:is_available() -> boolean
-```
-
-Returns `true` after a successful request, `false` after 3+ consecutive failures.
-
-### get_consecutive_failures
-
-```lua
-nav:get_consecutive_failures() -> number
-```
-
-Number of consecutive failed requests. Resets to 0 on any successful request.
-
-### reset
-
-```lua
-nav:reset()
-```
-
-Reset connection state. Call when switching maps or after extended disconnections.
-
-### is_indoor
-
-```lua
-Navigation.is_indoor() -> boolean
-```
-
-**Static method** (no instance needed). Returns `true` if the current UiMapID is a dungeon or raid zone.
-
----
-
-## Navigation Configuration
-
-### Constructor Config
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `base_url` | string | `"http://78.31.71.163:47110"` | SentinelNavServer server URL |
-| `max_retries` | number | `3` | Max retry attempts with exponential backoff |
-
-### Map ID Auto-Detection
-
-If `opts.map_id` is not provided, Navigation automatically detects the current continent by:
-1. Calling `core.get_map_id()` to get the current UiMapID
-2. Looking up the UiMapID in `UI_MAP_TO_CONTINENT`
-3. Defaulting to `0` (Eastern Kingdoms) if the UiMapID is unmapped
-
----
-
-## Constants
-
-### UI_MAP_TO_CONTINENT
-
-Table mapping WoW UiMapIDs to SentinelNavServer continent IDs:
-
-| Continent ID | Continent | Example UiMapIDs |
-|-------------|-----------|------------------|
-| `0` | Eastern Kingdoms | 37, 42, 47, 56, 84, 87, 94, 122, 124, ... |
-| `1` | Kalimdor | 57, 62, 63, 64, 65, 69, 70, 76, 77, 80, ... |
-| `530` | Outland | 100, 104, 105, 107, 108, 109, 111, ... |
-| `571` | Northrend | 113, 114, 115, 116, 117, 118, 119, 120, 121, 123, 125, 127, ... |
-
-### INDOOR_UI_MAPS
-
-Boolean set of UiMapIDs for dungeon and raid zones. Used by `is_indoor()` and corridor pathfinding decisions. Contains all WotLK dungeons, raids, and indoor instances.
-
----
-
-## Error Handling
-
-### Retry Behavior
-
-Failed HTTP requests retry with exponential backoff:
-- Attempt 1: immediate
-- Attempt 2: 0.5s delay
-- Attempt 3: 1.0s delay
-- Attempt 4: 2.0s delay (if max_retries > 3)
-
-Retryable HTTP status codes: `0`, `500`, `502`, `503`, `504`
-
-### Connection Tracking
-
-- After a successful request: `_is_connected = true`, `_consecutive_failures = 0`
-- After all retries exhausted: `_consecutive_failures` incremented
-- After 3+ consecutive failures: `_is_connected = false`
-
-### Callback Error Patterns
-
-All callbacks follow the same signature:
-```lua
-function(success, data, error)
-    -- success: boolean
-    -- data:    table on success, nil on failure
-    -- error:   string on failure, nil on success
-end
-```
-
-Common error strings:
-- `"Missing start or dest"` — nil position parameters
-- `"Empty path"` — server returned no waypoints
-- `"Need at least 2 nodes"` — insufficient nodes for TSP/multi
-- `"HTTP error: <status>"` — server returned non-200 after retries
-- `"JSON parse error: <details>"` — malformed response
-- `"Server error: <message>"` — server returned `success: false`
-
-### Callback Safety
-
-All callbacks are wrapped in `pcall`. If your callback throws an error, it is caught and logged but does not crash SentinelNavClient.
-
----
----
-
-# Movement
-
-High-level path-following module that wraps [Navigation](#navigation). Handles waypoint traversal, stuck detection and recovery, route planning, indoor corridor adaptation, obstacle avoidance, and casting deferral.
-
-> **Note:** Consumers should access the shared Movement module via `_G.SentinelNavClient.client.movement`. The shared instance is created and configured by SentinelNavClient. `movement:update()` is called by SentinelNavClient's `on_update` callback every frame — consumers do not need to call it. `update_config()` is called by SentinelNavClient's UI sync system every render frame — consumer calls would be overwritten.
-
----
-
-## Movement Constructor
-
-### `Movement:new(nav_client, config) -> Movement`
-
-Create a new movement module instance.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `nav_client` | Navigation | yes | Navigation instance for pathfinding |
-| `config` | table | no | Configuration overrides (see [Movement Configuration](#movement-configuration)) |
-
-```lua
-local nav = _G.SentinelNavClient.Navigation:new()
-local movement = _G.SentinelNavClient.Movement:new(nav, {
-    waypoint_tolerance = 3.0,
-    smoothing = "chaikin",
-    optimize = true,
-})
-```
-
----
-
-## Movement Control
-
-### move_to
-
-```lua
-movement:move_to(target, callback?, opts?)
-```
-
-Move to a target position using navmesh pathfinding. Requests a path from Navigation, then follows it with stuck recovery.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `target` | vec3 | yes | Destination `{x, y, z}` |
-| `callback` | function | no | `function(success, reason)` |
-| `opts` | table | no | `{ use_navmesh = true, map_id = auto }` |
-
-**Behavior:**
-1. If player is casting/channeling, defers until cast ends
-2. If `use_navmesh = false`, moves directly without pathfinding
-3. Otherwise requests path from SentinelNavServer (corridor path if indoors, normal path outdoors)
-4. If an Obstacle is attached and has avoidance zones, uses `find_path_avoid()` instead of `find_path()`
-5. On path received, starts following waypoints
-6. Adjusts waypoint tolerance for narrow indoor corridors (40% of min corridor width, minimum 1.0)
-
----
-
-### move_direct
-
-```lua
-movement:move_direct(target, callback?)
-```
-
-Move directly to a target without pathfinding. Equivalent to `move_to(target, callback, { use_navmesh = false })`.
-
----
-
-### stop
-
-```lua
-movement:stop()
-```
-
-Stop all movement and reset to idle state. Clears active path, destination, pending callbacks, stuck counters, route data, and corridor widths. Resets waypoint tolerance to config defaults.
-
----
-
-### follow_path
-
-```lua
-movement:follow_path(waypoints, callback?)
-```
-
-Follow a pre-computed waypoint array without requesting a new path from SentinelNavServer. Sets state to `"moving"` and begins waypoint traversal with stuck detection.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `waypoints` | vec3[] | yes | Array of positions to follow |
-| `callback` | function | no | `function(success, reason)` |
-
----
-
-## Route Planning
-
-### plan_route
-
-```lua
-movement:plan_route(nodes, callback?, opts?)
-```
-
-Plan and execute a TSP-optimized route through multiple nodes. SentinelNavServer calculates the optimal visit order, then Movement follows each leg sequentially.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `nodes` | vec3[] | yes | At least 2 positions to visit |
-| `callback` | function | no | Route progress callback |
-| `opts` | table | no | `{ map_id = auto, return_to_start = false }` |
-
-**Callback:** Called multiple times:
-```lua
-function(success, data)
-    if success then
-        if data.type == "leg_complete" then
-            -- data.leg, data.total
-        elseif data.type == "route_complete" then
-            -- All nodes visited
-        end
-    else
-        -- data.error: error message
-    end
-end
-```
-
----
-
-### replan
-
-```lua
-movement:replan(reason?)
-```
-
-Replan the active route starting from the current leg. Requires an active route. Collects remaining unvisited nodes, stops current movement, and calls `plan_route` with remaining nodes. Fails if fewer than 2 nodes remain.
-
----
-
-## Validation
-
-### validate_destination_reachable
-
-```lua
-movement:validate_destination_reachable(target, callback)
-```
-
-Check if a destination is reachable via navmesh **without starting movement**.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `target` | vec3 | yes | Target position |
-| `callback` | function | yes | `function(reachable, reason, distance)` |
-
----
-
-## State & Progress
-
-### update
-
-```lua
-movement:update()
-```
-
-**Must be called every frame.** Drives the movement state machine: advances waypoints, checks for arrival, runs stuck detection, processes recovery actions, validates paths, scans for obstacles, and tracks route progress.
-
-> **Note:** SentinelNavClient calls this automatically from its `on_update` callback. Consumers do not need to call it.
-
----
-
-### get_state
-
-```lua
-movement:get_state() -> string
-```
-
-Returns the current state: `"idle"`, `"requesting_path"`, `"moving"`, `"stuck"`, `"arrived"`, or `"failed"`.
-
-### is_moving
-
-```lua
-movement:is_moving() -> boolean
-```
-
-Returns `true` if state is `"moving"` or `"requesting_path"`.
-
-### get_current_path
-
-```lua
-movement:get_current_path() -> vec3[]|nil
-```
-
-### get_destination
-
-```lua
-movement:get_destination() -> vec3|nil
-```
-
-### get_path_index
-
-```lua
-movement:get_path_index() -> number
-```
-
-### get_progress
-
-```lua
-movement:get_progress() -> table
-```
-
-```lua
-{
-    state = string,
-    destination = vec3|nil,
-    distance_remaining = number,
-    path_index = number,
-    path_count = number,
-    current_leg = number,     -- route mode only
-    total_legs = number,      -- route mode only
-    route_mode = boolean,
-}
-```
-
-### get_corridor_widths
-
-```lua
-movement:get_corridor_widths() -> number[]|nil
-```
-
-Returns corridor width data for the current path (indoor corridor paths only), or `nil`.
-
----
-
-## Obstacle Integration
-
-### set_obstacle_module
-
-```lua
-movement:set_obstacle_module(obstacle_module)
-```
-
-Attach an Obstacle instance for avoidance-aware pathfinding. When set:
-
-- Proactive obstacle scanning runs every `proactive_obstacle_interval` seconds during movement
-- Detected obstacle zones are passed to `find_path_avoid()` for rerouting
-- Reactive probing triggers on the 2nd stuck recovery attempt
-
-> **Note:** When using the Client, this is called automatically during construction. You only need to call this if you're wiring modules manually.
-
----
-
-## Movement Configuration
-
-### Constructor Config
-
-All config fields with their defaults:
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `dynamic_speed` | boolean | `true` | Scale look-ahead, tolerance, turn speed based on player movement speed |
-| `waypoint_tolerance` | number | `3.0` | Yards to reach a waypoint before advancing |
-| `final_tolerance` | number | `1.5` | Yards to reach final destination |
-| `stuck_check_interval` | number | `2.0` | Seconds between stuck checks |
-| `stuck_distance_min` | number | `1.0` | Min yards moved to not be "stuck" |
-| `max_stuck_attempts` | number | `5` | Max recovery attempts before failing |
-| `path_check_interval` | number | `8.0` | Seconds between path validity checks |
-| `smoothing` | string | `"chaikin"` | Path smoothing algorithm (`"none"`, `"chaikin"`, `"catmull_rom"`, `"bezier"`) |
-| `optimize` | boolean | `true` | Enable waypoint optimization |
-| `anti_detection` | boolean | `false` | Use randomized path endpoint |
-| `max_deviation` | number | `3.0` | Max yards for anti-detection deviation |
-| `allow_partial` | boolean | `true` | Accept partial paths |
-| `smooth_iterations` | number | `3` | Smoothing iterations |
-| `smooth_samples` | number | `10` | Smoothing sample count |
-| `smooth_ratio` | number | `0.50` | Smoothing interpolation ratio (0.0-1.0) |
-| `min_corner_angle` | number | `90` | Min corner angle in degrees |
-| `keep_originals` | boolean | `false` | Keep original waypoints alongside smoothed |
-| `filter_ground` | number | `1.0` | Ground polygon cost |
-| `filter_water` | number | `10.0` | Water polygon cost |
-| `filter_lava` | number | `100.0` | Lava polygon cost |
-| `use_corridor_indoor` | boolean | `true` | Use corridor pathfinding indoors |
-| `corridor_probe_dist` | number | `15.0` | Corridor probe distance in yards |
-| `wall_clearance` | number | `1.0` | Min distance from walls in yards (must be > 0 to take effect) |
-| `proactive_obstacle_check` | boolean | `true` | Enable proactive obstacle scanning on upcoming path segments |
-| `proactive_obstacle_interval` | number | `1.5` | Seconds between proactive obstacle scans |
-
----
-
-### update_config
-
-```lua
-movement:update_config(overrides)
-```
-
-Update configuration at runtime. Only provided keys are changed; others keep their current values.
-
-> **Note:** This is called by SentinelNavClient's UI sync system every render frame. Consumer calls would be overwritten. Use SentinelNavClient's Settings UI to change movement settings.
-
----
-
-## State Machine
-
-```
-                    move_to() / plan_route()
-     [IDLE] ─────────────────────────────> [REQUESTING_PATH]
-       ^                                         │
-       │                                    path received
-       │                                         │
-       │                                         v
-       │                                    [MOVING]
-       │                                     │     │
-       │         arrival                     │     │ stuck detected
-       │         ┌───────────────────────────┘     │
-       │         v                                 v
-       │    [ARRIVED]                          [STUCK]
-       │         │                               │ recovery action
-       │         │ auto-reset                    v
-       │<────────┘                          [MOVING] (retry)
-       │
-       │         max stuck attempts
-       │<────── [FAILED]
-
-     Any state ──stop()──> [IDLE]
-```
-
-**Transitions:**
-- `idle` -> `requesting_path`: `move_to()` or `plan_route()` called
-- `requesting_path` -> `moving`: Path received from SentinelNavServer
-- `requesting_path` -> `failed`: Path request failed
-- `moving` -> `arrived`: Reached destination
-- `arrived` -> `idle`: Automatic reset after callback fires
-- `moving` -> `stuck`: Stuck detected (not enough movement)
-- `stuck` -> `moving`: Recovery action taken
-- `moving` -> `failed`: Max stuck attempts exceeded
-- Any -> `idle`: `stop()` called
-
----
-
-## Stuck Recovery
-
-When the player hasn't moved far enough during a check interval, stuck recovery escalates through these strategies:
-
-| Stuck Count | Strategy | Action | Duration |
-|-------------|----------|--------|----------|
-| 1 | Jump | `core.input.jump()` | Instant |
-| 2 | Strafe + Jump | Random left/right strafe, also probes for obstacles if Obstacle attached | 0.5s then jump |
-| 3 | Backward + Jump | Move backward | 1.0s then jump |
-| 4+ | Repath | Request fresh path from current position | Async |
-| max (5) | Fail | Movement fails, callback called with error | — |
-
-**Stuck detection:**
-- Checked every `stuck_check_interval` seconds (default: 2.0s)
-- Compares distance moved since last check against `stuck_distance_min` (default: 1.0 yards)
-- **Skipped** while player is casting or channeling
-- Counter resets to 0 when sufficient movement detected
-
-**Repath behavior:**
-- Stops current path
-- Requests new path from current position to original destination
-- Uses corridor pathfinding if indoors
-- Includes avoidance zones if Obstacle has detected obstacles
-- Resets stuck counter on successful repath
-
----
-
-## Indoor Corridor Adaptation
-
-When `use_corridor_indoor = true` and the player is in a dungeon/raid zone:
-
-1. `move_to()` uses `find_path_corridor` instead of `find_path`
-2. Corridor width data is stored and accessible via `get_corridor_widths()`
-3. Waypoint tolerance is automatically reduced for narrow passages:
-   - Set to 40% of the minimum corridor width
-   - Minimum of 1.0 yards
-   - Prevents overshooting in tight corridors
-
-**Detection:** Uses `Navigation.is_indoor()` which checks the current UiMapID against a built-in table of dungeon/raid zones.
-
----
-
-## Proactive Obstacle Detection
-
-When an Obstacle is attached via `set_obstacle_module()` and `proactive_obstacle_check = true`:
-
-1. Every `proactive_obstacle_interval` seconds (default: 1.5s) during movement, scans upcoming waypoint segments for doodad collisions
-2. Uses `Obstacle:probe_path_ahead()` with `core.graphics.trace_line` to check for blocked segments
-3. If an obstacle is detected: adds an avoidance zone to the Obstacle, then triggers a repath via `find_path_avoid()` to route around it
-4. **Reactive fallback:** On the 2nd stuck recovery attempt, probes forward from the player's position. If an obstacle is found, adds a zone and repaths immediately
-
-This is fully automatic when using the Client — the Client wires the Obstacle into Movement during construction.
-
----
-
-## Casting Deferral
-
-If the player is casting or channeling a spell when `move_to()` is called:
-
-1. Movement request is stored as pending
-2. On each `update()`, checks if cast/channel ended
-3. When cast ends, automatically retries the `move_to()` call
-4. Original callback and options are preserved
-
-This prevents interrupting spell casts with movement commands.
-
----
-
-## Path Validation
-
-During movement, paths are periodically validated:
-
-- Checked every `path_check_interval` seconds (default: 8.0s)
-- Only validates if 3+ waypoints remain
-- Uses `Navigation:check_path()` to verify navmesh walkability
-- If invalid segment detected: triggers repath from current position
-- Logs the invalid segment index for debugging
-
----
----
-
-# Obstacle
-
-Doodad collision detection via `core.graphics.trace_line` ray probing, with avoidance zone memory. Detected obstacles are stored as zones and fed to [Navigation:find_path_avoid()](#find_path_avoid) for rerouting.
-
-> **Note:** Consumers should access the shared Obstacle module via `_G.SentinelNavClient.client.obstacle`. The shared instance is created and configured by SentinelNavClient. `update_config()` is called by SentinelNavClient's UI sync system every render frame — consumer calls would be overwritten.
-
-Obstacle has two probing modes, both driven by [Movement](#movement):
-
-- **Proactive:** Scans upcoming waypoint segments on a timer during movement (default every 1.5s)
-- **Reactive:** Probes forward from the player's position when stuck recovery triggers (2nd attempt)
-
----
-
-## Obstacle Constructor
-
-### `Obstacle:new(config?) -> Obstacle`
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `config` | table | no | Configuration overrides (see [Obstacle Configuration](#obstacle-configuration)) |
-
-```lua
-local obstacle = _G.SentinelNavClient.Obstacle:new({
-    avoidance_radius = 4.0,
-    max_zones = 8,
-})
-```
-
----
-
-## Probing
-
-### probe_forward
-
-```lua
-obstacle:probe_forward(player_pos, target_pos) -> vec3|nil
-```
-
-Probe forward from the player toward a target using `core.graphics.trace_line`. Casts 3 rays (center + left/right at `probe_spread_deg`) to detect doodad collisions.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `player_pos` | vec3 | yes | Current player position |
-| `target_pos` | vec3 | yes | Direction to probe toward (typically the next waypoint) |
-
-**Returns:** Approximate hit position `{x, y, z}` if any ray hits an obstacle, or `nil` if clear.
-
-**Behavior:**
-1. Computes a 2D heading from player to target (Z ignored for direction)
-2. Raises the ray origin by `probe_height_offset` yards above ground to avoid false hits
-3. Casts 3 rays of length `probe_distance`: center, left (-spread), right (+spread)
-4. If any ray is blocked, returns the midpoint along that ray as the approximate obstacle center
-
-**Used by:** Movement's reactive stuck handler (2nd stuck attempt)
-
----
-
-### probe_segment
-
-```lua
-obstacle:probe_segment(pos_a, pos_b) -> table|nil
-```
-
-Probe along a single waypoint segment A->B for doodad collisions. Casts a center ray plus two spread rays at `+/-lookahead_spread_deg`.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `pos_a` | vec3 | yes | Start of segment |
-| `pos_b` | vec3 | yes | End of segment |
-
-**Returns:** Approximate obstacle center `{x, y, z}` (midpoint of segment) if any ray is blocked, or `nil` if clear.
-
----
-
-### probe_path_ahead
-
-```lua
-obstacle:probe_path_ahead(waypoints, max_segments?) -> hit_pos, segment_index
-```
-
-Probe upcoming waypoint segments for obstacles. Iterates through the first N segments and returns the first collision found.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `waypoints` | vec3[] | yes | Remaining waypoints (at least 2) |
-| `max_segments` | number | no | Max segments to check (default: `lookahead_segments` config) |
-
-**Returns:**
-
-| Return | Type | Description |
-|--------|------|-------------|
-| `hit_pos` | table\|nil | First obstacle found `{x, y, z}`, or nil if clear |
-| `segment_index` | number\|nil | 1-based index of the segment with the hit |
-
-**Used by:** Movement's proactive obstacle check (every 1.5s during movement)
-
----
-
-## Zone Management
-
-### add_zone
-
-```lua
-obstacle:add_zone(pos, radius?)
-```
-
-Add an avoidance zone at the given position. Zones are remembered and passed to SentinelNavServer's `/path-avoid` endpoint for rerouting.
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `pos` | table | yes | Hit position `{x, y, z}` from a probe |
-| `radius` | number | no | Override avoidance radius (default: `avoidance_radius` config) |
-
-**Behavior:**
-- **Deduplication:** Won't add a zone if one already exists within `avoidance_radius` of the position
-- **Cap enforcement:** If adding exceeds `max_zones`, evicts the oldest zone first (FIFO)
-- Stores the zone with: position, radius, cost multiplier (`avoidance_cost`), and creation timestamp
-
----
-
-### remove_zone
-
-```lua
-obstacle:remove_zone(index)
-```
-
-Remove a specific avoidance zone by its 1-based index.
-
----
-
-### prune
-
-```lua
-obstacle:prune(player_pos?)
-```
-
-Remove expired or distant zones. Should be called periodically (e.g., on repath).
-
-**Removal criteria (either triggers removal):**
-- Zone age exceeds `zone_ttl` seconds (default: 120s)
-- Zone is farther than `zone_prune_dist` yards from `player_pos` (default: 100 yards)
-
----
-
-### clear
-
-```lua
-obstacle:clear()
-```
-
-Remove all remembered avoidance zones immediately.
-
----
-
-### get_avoidance_zones
-
-```lua
-obstacle:get_avoidance_zones() -> table[]
-```
-
-Returns the current avoidance zones for passing to `find_path_avoid()`.
-
-```lua
-{
-    x = number,       -- Zone center X
-    y = number,       -- Zone center Y
-    z = number,       -- Zone center Z
-    radius = number,  -- Avoidance radius in yards
-    cost = number,    -- Cost multiplier
-    created = number, -- Timestamp (core.time())
-}
-```
-
----
-
-### get_zone_count
-
-```lua
-obstacle:get_zone_count() -> number
-```
-
-Returns the number of active avoidance zones.
-
----
-
-## Obstacle Configuration
-
-### Constructor Config
-
-All config fields with their defaults:
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `avoidance_cost` | number | `5.0` | Cost multiplier for avoidance zones (higher = more strongly avoided) |
-| `avoidance_radius` | number | `5.0` | Radius in yards around each detected obstacle |
-| `zone_ttl` | number | `120.0` | Seconds before zones auto-expire |
-| `zone_prune_dist` | number | `100.0` | Yards — remove zones farther than this from player |
-| `max_zones` | number | `5` | Maximum remembered zones (SentinelNavServer supports up to 20) |
-| `collision_flags` | number | `0x00000001` | Trace line flags (`DoodadCollision`) |
-| `probe_distance` | number | `8.0` | Reactive probe distance in yards (from player position) |
-| `probe_spread_deg` | number | `20` | Reactive probe spread angle in degrees |
-| `probe_height_offset` | number | `1.0` | Yards to raise reactive probe origin above ground |
-| `lookahead_height_offset` | number | `1.5` | Yards to raise proactive look-ahead rays above waypoint Z |
-| `lookahead_spread_deg` | number | `15` | Proactive look-ahead spread angle in degrees |
-| `lookahead_segments` | number | `3` | Default number of upcoming segments to scan |
-
----
-
-### update_config
-
-```lua
-obstacle:update_config(overrides)
-```
-
-Update configuration at runtime. Only provided keys are changed.
-
-> **Note:** This is called by SentinelNavClient's UI sync system every render frame. Consumer calls would be overwritten. Use SentinelNavClient's Settings UI to change obstacle settings.
-
----
-
-## Obstacle Update Loop
-
-```lua
-obstacle:update()
-```
-
-No-op method for compatibility with module update loops. Probing is not driven by `update()` — it is triggered by Movement:
-
-- **Proactive probing** is called by `Movement:_check_proactive_obstacles()` on a timer
-- **Reactive probing** is called by `Movement:_unstuck_probe_and_repath()` during stuck recovery
-
-When using the Client, `obstacle:update()` is called automatically by `client:update()`.
-
----
-
-## Integration with Movement
-
-Obstacle is designed to work with Movement. The wiring is:
-
-```lua
--- Manual wiring
-local obstacle = Obstacle:new()
-movement:set_obstacle_module(obstacle)
-
--- Or automatic via Client
-local client = _G.SentinelNavClient.client  -- wires everything internally
-```
-
-Once wired:
-
-1. **Proactive scanning** (every 1.5s during movement):
-   - Movement calls `obstacle:probe_path_ahead(remaining_waypoints)`
-   - If hit found: calls `obstacle:add_zone(hit_pos)`, then repaths with `find_path_avoid()`
-
-2. **Reactive scanning** (on 2nd stuck attempt):
-   - Movement calls `obstacle:probe_forward(player_pos, next_waypoint)`
-   - If hit found: calls `obstacle:add_zone(hit_pos)`, then repaths with `find_path_avoid()`
-
-3. **Zone data flows to pathfinding:**
-   - `obstacle:get_avoidance_zones()` returns zones for `Navigation:find_path_avoid()`
-   - SentinelNavServer computes paths that avoid the zones with the specified cost multiplier
-
----
-
-## How Ray Probing Works
-
-Both probing methods use `core.graphics.trace_line(origin, target, flags)`:
-
-- Returns `true` if the ray is **clear** (no collision)
-- Returns `false` if the ray is **blocked** (doodad hit)
-
-**Reactive probing** (`probe_forward`):
-```
-        [Left Ray]
-       /
-Player ──── [Center Ray] ────> (probe_distance yards)
-       \
-        [Right Ray]
-
-Spread: +/-probe_spread_deg (default: 20 deg)
-Height: origin raised by probe_height_offset (default: 1.0 yd)
-```
-
-**Proactive probing** (`probe_segment`):
-```
-        [Left Ray]
-       /
-  WP_A ──── [Center Ray] ────> WP_B
-       \
-        [Right Ray]
-
-Spread: +/-lookahead_spread_deg (default: 15 deg)
-Height: both endpoints raised by lookahead_height_offset (default: 1.5 yd)
-```
-
-The narrower spread on proactive rays (15 deg vs 20 deg) reduces false positives on straight segments while still catching obstacles slightly off the direct path.
+If behavior and this document disagree, the code in `core/Client.lua`, `core/StateMachine.lua`, and `services/*.lua` is the final source of truth.

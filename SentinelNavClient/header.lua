@@ -1,6 +1,6 @@
 local plugin = {}
 plugin["name"] = "Sentinel Navigation Client"
-plugin["version"] = "0.0.5"
+plugin["version"] = "0.0.6"
 plugin["author"] = "Nasrine"
 plugin["load"] = true
 

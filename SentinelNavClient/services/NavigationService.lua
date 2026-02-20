@@ -586,7 +586,7 @@ end
 function NavigationService:_request(url, callback, attempt)
     attempt = attempt or 1
 
-    local function finalize_failure(code, err_msg, disconnect_reason)
+    local function finalize_transport_failure(code, err_msg, disconnect_reason)
         local failures = self._bb:get("server.failures", 0) + 1
         self._bb:set("server.failures", failures)
 
@@ -614,13 +614,7 @@ function NavigationService:_request(url, callback, attempt)
         if code == 200 then
             local ok, data = pcall(JSON.decode, response)
             if not ok or not data then
-                finalize_failure(code, "JSON parse error", "JSON parse error")
-                return
-            end
-
-            if data.success == false then
-                local msg = data.error or "Server returned success=false"
-                finalize_failure(code, msg, msg)
+                finalize_transport_failure(code, "JSON parse error", "JSON parse error")
                 return
             end
 
@@ -631,6 +625,19 @@ function NavigationService:_request(url, callback, attempt)
 
             if not was_connected then
                 self._event_bus:emit(Events.SERVER_CONNECTED, {})
+            end
+
+            if data.success == false then
+                local msg = data.error or "Server returned success=false"
+                self._event_bus:emit(Events.SERVER_ERROR, {
+                    error = msg,
+                    failures = 0,
+                    code = code,
+                    url = url,
+                    domain_error = true,
+                })
+                if callback then callback(false, nil, msg) end
+                return
             end
 
             if callback then callback(true, data, nil) end
@@ -664,7 +671,7 @@ function NavigationService:_request(url, callback, attempt)
                 err_msg = err_msg .. ": " .. err_data.error
             end
         end
-        finalize_failure(code, err_msg, err_msg)
+        finalize_transport_failure(code, err_msg, err_msg)
     end)
 end
 

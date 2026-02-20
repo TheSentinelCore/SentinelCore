@@ -20,7 +20,7 @@ local Client = require("core/Client")
 local SentinelNavClient = {}
 SentinelNavClient.__index = SentinelNavClient
 
-SentinelNavClient.VERSION = "0.0.5"
+SentinelNavClient.VERSION = "0.0.6"
 SentinelNavClient.NAME = "Sentinel Navigation Client"
 
 local _instance = nil
