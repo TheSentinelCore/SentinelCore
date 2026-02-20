@@ -112,7 +112,10 @@ local function create(services)
     local proactive_avoid = BT.Sequence:new("ProactiveAvoid")
     proactive_avoid:add(ProbeForObstacle(obstacle_service))
     proactive_avoid:add(AddAvoidanceZone(obstacle_service))
-    proactive_avoid:add(SoftRepath(nav_service, movement_service, obstacle_service, event_bus))
+    proactive_avoid:add(SoftRepath(nav_service, movement_service, obstacle_service, event_bus, {
+        reason = "proactive_obstacle",
+        count_deviation = false,
+    }))
 
     local proactive_guarded = BT.Sequence:new("ProactiveGuarded")
     proactive_guarded:add(BT.Condition:new(function(bb)
@@ -146,9 +149,19 @@ local function create(services)
     local handle_deviation = BT.Sequence:new("HandleDeviation")
     handle_deviation:add(IsDeviated(validation_service, event_bus))
     handle_deviation:add(BT.Condition:new(function(bb)
-        return bb:get("deviation.count", 0) < bb:get("config.max_deviation_repaths", 5)
+        local count = bb:get("deviation.count", 0)
+        local max = bb:get("config.max_deviation_repaths", 5)
+        if count >= max then
+            bb:set("nav.fail_reason", "max_repath_exceeded")
+            bb:set("nav.fail_detail", "deviation repath budget exhausted")
+            return false
+        end
+        return true
     end, "MaxRepathNotExceeded"))
-    handle_deviation:add(SoftRepath(nav_service, movement_service, obstacle_service, event_bus))
+    handle_deviation:add(SoftRepath(nav_service, movement_service, obstacle_service, event_bus, {
+        reason = "deviation",
+        count_deviation = true,
+    }))
     follow_or_recover:add(BT.Cooldown:new(handle_deviation, 0.1, "RepathCooldown", "config.repath_cooldown"))
 
     -- Stuck recovery (escalating 5-stage)

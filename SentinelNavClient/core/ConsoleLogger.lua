@@ -276,6 +276,12 @@ function ConsoleLogger:_subscribe()
 
     on(Events.SERVER_ERROR, function(data)
         data = data or {}
+        if data.domain_error then
+            if self:_is_verbose() then
+                self:_debug("Server domain error: " .. tostring(data.error or "unknown"))
+            end
+            return
+        end
         self:_error("Server error: " .. tostring(data.error or "unknown"))
     end)
 

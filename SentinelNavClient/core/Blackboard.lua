@@ -16,7 +16,7 @@ Blackboard.__index = Blackboard
 --------------------------------------------------------------------------------
 
 ---Create a new Blackboard instance.
----@param event_bus? table  EventBus with :emit(event, ...) method; optional
+---@param event_bus? table  EventBus with :emit(event, data) method; optional
 ---@return Blackboard
 function Blackboard:new(event_bus)
     local o = setmetatable({}, Blackboard)
@@ -66,7 +66,11 @@ function Blackboard:set(key, value)
 
     -- Fire EventBus event
     if self._event_bus then
-        self._event_bus:emit(BB_PREFIX .. key, key, value, old)
+        self._event_bus:emit(BB_PREFIX .. key, {
+            key = key,
+            new_value = value,
+            old_value = old,
+        })
     end
 end
 
@@ -101,7 +105,11 @@ function Blackboard:clear(key)
 
             -- Fire EventBus event
             if self._event_bus then
-                self._event_bus:emit(BB_PREFIX .. key, key, nil, old)
+                self._event_bus:emit(BB_PREFIX .. key, {
+                    key = key,
+                    new_value = nil,
+                    old_value = old,
+                })
             end
         end
     else
@@ -245,11 +253,11 @@ function Blackboard._test()
 
     local bus_calls = 0
     local bus_key, bus_new, bus_old
-    eb:on("bb.score", function(k, nv, ov)
+    eb:on("bb.score", function(data)
         bus_calls = bus_calls + 1
-        bus_key = k
-        bus_new = nv
-        bus_old = ov
+        bus_key = data and data.key
+        bus_new = data and data.new_value
+        bus_old = data and data.old_value
     end)
 
     bb2:set("score", 42)

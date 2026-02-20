@@ -23,6 +23,7 @@ function Sensors:update()
 
     -- Update time for BT Throttle/Cooldown nodes
     bb:set("_time", core.time())
+    bb:set("_tick", bb:get("_tick", 0) + 1)
 
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then return end
