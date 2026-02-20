@@ -321,9 +321,9 @@ pub trait CacheService: Send + Sync {
 // Implementations (each in its own file)
 // ---------------------------------------------------------------------------
 
-// pub mod pathfinding;
-// pub mod routing;
-// pub mod smoothing;
-// pub mod spatial;
-// pub mod tactical;
-// pub mod cache_impl;
+pub mod pathfinding;
+pub mod routing;
+pub mod smoothing;
+pub mod spatial;
+pub mod tactical;
+pub mod cache_impl;
