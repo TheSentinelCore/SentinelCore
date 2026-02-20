@@ -4,8 +4,8 @@
 local PathValidationService = {}
 PathValidationService.__index = PathValidationService
 
-local Defaults = require("core.Defaults")
-local Helpers = require("lib.Helpers")
+local Defaults = require("core/Defaults")
+local Helpers = require("lib/Helpers")
 
 --------------------------------------------------------------------------------
 -- Constructor
@@ -215,7 +215,7 @@ end
 --------------------------------------------------------------------------------
 
 function PathValidationService:_test()
-    local Blackboard = require("core.Blackboard")
+    local Blackboard = require("core/Blackboard")
     local results = {}
 
     -- Test 1: Construction

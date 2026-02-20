@@ -1,12 +1,12 @@
 -- AdvanceWaypoint.lua
 -- BT Action: processes movement, advances waypoint index, emits events.
-local BT = require("lib.BehaviorTree")
-local Events = require("events.Events")
+local BT = require("lib/BehaviorTree")
+local Events = require("events/Events")
 
 ---@param movement_service table MovementService instance
 ---@param event_bus table EventBus instance
 return function(movement_service, event_bus)
-    return BT.Action:new("AdvanceWaypoint", function(bb, dt)
+    return BT.Action:new(function(bb, dt)
         local reached_end = movement_service:process()
         if reached_end then
             return BT.SUCCESS -- all waypoints done
@@ -25,5 +25,5 @@ return function(movement_service, event_bus)
         end
 
         return BT.RUNNING -- still following
-    end)
+    end, "AdvanceWaypoint")
 end

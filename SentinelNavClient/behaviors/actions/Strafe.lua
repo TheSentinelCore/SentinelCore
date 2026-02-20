@@ -1,6 +1,6 @@
 -- Strafe.lua
 -- BT Action: strafes for a duration. Returns RUNNING while strafing.
-local BT = require("lib.BehaviorTree")
+local BT = require("lib/BehaviorTree")
 
 ---@param duration? number Strafe duration in seconds (default 0.5)
 ---@param direction? string "left" or "right" (default "left")
@@ -10,7 +10,7 @@ return function(duration, direction)
 
     local start_time = nil
 
-    return BT.Action:new("Strafe", function(bb, dt)
+    return BT.Action:new(function(bb, dt)
         local now = bb:get("_time", 0)
 
         if not start_time then
@@ -30,5 +30,5 @@ return function(duration, direction)
         end
 
         return BT.RUNNING
-    end)
+    end, "Strafe")
 end

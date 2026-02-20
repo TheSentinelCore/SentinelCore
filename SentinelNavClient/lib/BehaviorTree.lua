@@ -288,9 +288,11 @@ end
 
 function Condition:tick(bb, dt)
     local ok, result = pcall(self._check_fn, bb)
-    if ok and result then
-        return BT.SUCCESS
+    if not ok then
+        core.log_error("[BT] Condition '" .. self.name .. "' error: " .. tostring(result))
+        return BT.FAILURE
     end
+    if result then return BT.SUCCESS end
     return BT.FAILURE
 end
 
@@ -315,10 +317,11 @@ end
 
 function Action:tick(bb, dt)
     local ok, result = pcall(self._execute_fn, bb, dt)
-    if ok then
-        return result
+    if not ok then
+        core.log_error("[BT] Action '" .. self.name .. "' error: " .. tostring(result))
+        return BT.FAILURE
     end
-    return BT.FAILURE
+    return result
 end
 
 BT.Action = Action
@@ -518,7 +521,7 @@ BT.Tree = Tree
 --------------------------------------------------------------------------------
 
 function BT._test()
-    local Blackboard = require("core.Blackboard")
+    local Blackboard = require("core/Blackboard")
 
     local pass, fail = 0, 0
     local function check(name, condition)

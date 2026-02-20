@@ -1,15 +1,15 @@
 -- SoftRepath.lua
 -- BT Action: repath without stopping movement — seamlessly blends new path.
 -- Same as Repath but does NOT call movement_service:stop() first.
-local BT = require("lib.BehaviorTree")
-local Events = require("events.Events")
+local BT = require("lib/BehaviorTree")
+local Events = require("events/Events")
 
 ---@param nav_service table NavigationService instance
 ---@param movement_service table MovementService instance
 ---@param obstacle_service table ObstacleService instance
 ---@param event_bus table EventBus instance
 return function(nav_service, movement_service, obstacle_service, event_bus)
-    return BT.Action:new("SoftRepath", function(bb, dt)
+    return BT.Action:new(function(bb, dt)
         -- Check for pending response
         if bb:get("request.pending") then
             local result = bb:get("request.result")
@@ -54,9 +54,9 @@ return function(nav_service, movement_service, obstacle_service, event_bus)
         event_bus:emit(Events.REPATH_STARTED, { reason = "deviation", soft = true })
 
         local zones = obstacle_service:get_avoidance_zones()
-        local callback = function(result, err)
-            if result and result.waypoints and #result.waypoints > 0 then
-                bb:set("request.result", result)
+        local callback = function(ok, data, err)
+            if ok and data and data.waypoints and #data.waypoints > 0 then
+                bb:set("request.result", data)
             else
                 bb:set("request.error", err or "soft repath failed")
             end
@@ -69,5 +69,5 @@ return function(nav_service, movement_service, obstacle_service, event_bus)
         end
 
         return BT.RUNNING
-    end)
+    end, "SoftRepath")
 end

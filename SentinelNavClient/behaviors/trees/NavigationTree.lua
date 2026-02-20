@@ -30,25 +30,25 @@
 --          └─ Throttle "PeriodicValidation"
 --               └─ ValidatePath
 
-local BT = require("lib.BehaviorTree")
+local BT = require("lib/BehaviorTree")
 
 -- Conditions
-local IsCasting = require("behaviors.conditions.IsCasting")
-local HasPath = require("behaviors.conditions.HasPath")
-local IsStuck = require("behaviors.conditions.IsStuck")
-local IsDeviated = require("behaviors.conditions.IsDeviated")
+local IsCasting = require("behaviors/conditions/IsCasting")
+local HasPath = require("behaviors/conditions/HasPath")
+local IsStuck = require("behaviors/conditions/IsStuck")
+local IsDeviated = require("behaviors/conditions/IsDeviated")
 
 -- Actions
-local RequestPath = require("behaviors.actions.RequestPath")
-local AdvanceWaypoint = require("behaviors.actions.AdvanceWaypoint")
-local ApplyDynamicSpeed = require("behaviors.actions.ApplyDynamicSpeed")
-local ProbeForObstacle = require("behaviors.actions.ProbeForObstacle")
-local AddAvoidanceZone = require("behaviors.actions.AddAvoidanceZone")
-local SoftRepath = require("behaviors.actions.SoftRepath")
-local ValidatePath = require("behaviors.actions.ValidatePath")
+local RequestPath = require("behaviors/actions/RequestPath")
+local AdvanceWaypoint = require("behaviors/actions/AdvanceWaypoint")
+local ApplyDynamicSpeed = require("behaviors/actions/ApplyDynamicSpeed")
+local ProbeForObstacle = require("behaviors/actions/ProbeForObstacle")
+local AddAvoidanceZone = require("behaviors/actions/AddAvoidanceZone")
+local SoftRepath = require("behaviors/actions/SoftRepath")
+local ValidatePath = require("behaviors/actions/ValidatePath")
 
 -- Sub-trees
-local StuckRecoveryTree = require("behaviors.trees.StuckRecoveryTree")
+local StuckRecoveryTree = require("behaviors/trees/StuckRecoveryTree")
 
 --- Create the root navigation tree.
 ---@param services table { navigation, movement, obstacle, validation, event_bus }
@@ -63,16 +63,16 @@ local function create(services)
     local root = BT.Selector:new("NavigationRoot")
 
     -- Guard: if not navigating, succeed (skip entire tree)
-    root:add(BT.Condition:new("NotNavigating", function(bb)
+    root:add(BT.Condition:new(function(bb)
         return bb:get("hsm.state") ~= "navigating"
-    end))
+    end, "NotNavigating"))
 
     -- Handle casting deferral: pause navigation while casting
     local defer = BT.Sequence:new("HandleCastingDeferral")
     defer:add(IsCasting())
-    defer:add(BT.Action:new("DeferMovement", function(bb, dt)
+    defer:add(BT.Action:new(function(bb, dt)
         return BT.RUNNING -- just wait until cast finishes
-    end))
+    end, "DeferMovement"))
     root:add(defer)
 
     -- Main navigation sequence
@@ -81,7 +81,7 @@ local function create(services)
     -- Step 1: Ensure we have a valid path
     local ensure_path = BT.Selector:new("EnsurePath")
     ensure_path:add(HasPath())
-    ensure_path:add(RequestPath(nav_service, event_bus))
+    ensure_path:add(RequestPath(nav_service, movement_service, event_bus))
     nav:add(ensure_path)
 
     -- Step 2: Follow path or recover from issues
@@ -106,9 +106,9 @@ local function create(services)
     -- Handle deviation: soft repath if deviated and under max repaths
     local handle_deviation = BT.Sequence:new("HandleDeviation")
     handle_deviation:add(IsDeviated(validation_service))
-    handle_deviation:add(BT.Condition:new("MaxRepathNotExceeded", function(bb)
+    handle_deviation:add(BT.Condition:new(function(bb)
         return bb:get("deviation.count", 0) < bb:get("config.max_deviation_repaths", 5)
-    end))
+    end, "MaxRepathNotExceeded"))
     handle_deviation:add(SoftRepath(nav_service, movement_service, obstacle_service, event_bus))
     follow_or_recover:add(handle_deviation)
 

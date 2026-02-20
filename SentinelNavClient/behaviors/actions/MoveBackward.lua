@@ -1,6 +1,6 @@
 -- MoveBackward.lua
 -- BT Action: moves backward for a duration. Returns RUNNING while moving.
-local BT = require("lib.BehaviorTree")
+local BT = require("lib/BehaviorTree")
 
 ---@param duration? number Move duration in seconds (default 1.0)
 return function(duration)
@@ -8,7 +8,7 @@ return function(duration)
 
     local start_time = nil
 
-    return BT.Action:new("MoveBackward", function(bb, dt)
+    return BT.Action:new(function(bb, dt)
         local now = bb:get("_time", 0)
 
         if not start_time then
@@ -24,5 +24,5 @@ return function(duration)
         end
 
         return BT.RUNNING
-    end)
+    end, "MoveBackward")
 end

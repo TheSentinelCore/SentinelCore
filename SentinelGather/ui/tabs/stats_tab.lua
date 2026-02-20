@@ -85,12 +85,11 @@ function StatsTab.render(ui, y_offset)
         vec2.new(x_start, y_offset), colors.primary_accent, "Current Path")
     y_offset = y_offset + LAYOUT.element_height + 4
 
-    local bot_mgr = SentinelGather:get_bot_manager()
-    local movement = bot_mgr and bot_mgr._modules and bot_mgr._modules.Movement
+    local client = _G.SentinelNavClient and _G.SentinelNavClient.client
 
-    if movement and movement:get_current_path() then
-        local path_count = #movement:get_current_path()
-        local path_idx = movement:get_path_index()
+    if client and client:get_current_path() then
+        local path_count = #client:get_current_path()
+        local path_idx = client:get_path_index()
 
         -- Progress bar
         local window_size = window:get_size()
@@ -122,8 +121,8 @@ function StatsTab.render(ui, y_offset)
         y_offset = y_offset + bar_height + LAYOUT.element_spacing
 
         -- Target coordinates
-        if movement.get_destination and movement:get_destination() then
-            local dest = movement:get_destination()
+        if client:get_destination() then
+            local dest = client:get_destination()
             local target_text = string.format("Target: (%.0f, %.0f, %.0f)", dest.x, dest.y, dest.z)
             window:render_text(enums.window_enums.font_id.FONT_SMALL,
                 vec2.new(x_start, y_offset), colors.text_secondary, target_text)

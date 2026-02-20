@@ -24,14 +24,14 @@ function TravelingController.reset()
 end
 
 ---Process one tick of the traveling state
----@param ctx table { modules, state_machine, event_bus, log, on_nav_failure: fun(): boolean, on_nav_success: fun() }
+---@param ctx table { client, modules, state_machine, event_bus, log, on_nav_failure: fun(): boolean, on_nav_success: fun() }
 function TravelingController.process(ctx)
     local profile_mgr = ctx.modules.ProfileManager
-    local movement = ctx.modules.Movement
+    local client = ctx.client
     local scanner = ctx.modules.NodeScanner
     local safety = ctx.modules.Safety
 
-    if not profile_mgr or not movement then
+    if not profile_mgr or not client then
         return
     end
 
@@ -44,7 +44,7 @@ function TravelingController.process(ctx)
                 ctx.state_machine:transition(STATES.APPROACHING, {
                     target_node = node
                 })
-                movement:move_to(node.position, nil, { use_navmesh = true })
+                client:move_to(node.position, nil, { use_navmesh = true })
                 if ctx.log then
                     ctx.log:info("Found node: %s, approaching", node.name)
                 end
@@ -59,7 +59,7 @@ function TravelingController.process(ctx)
     end
 
     -- Continue to next waypoint if not already moving
-    if movement:is_moving() then
+    if client:is_moving() then
         return
     end
 
@@ -75,7 +75,7 @@ function TravelingController.process(ctx)
     _pending_waypoint = waypoint
     _substate = SUBSTATES.VALIDATING
 
-    movement:validate_destination_reachable(target, function(reachable, reason, distance)
+    client:validate_destination(target, function(reachable, reason, distance)
         TravelingController._on_validation_complete(ctx, reachable, reason, distance, target)
     end)
 end
@@ -88,7 +88,7 @@ end
 ---@param target table
 function TravelingController._on_validation_complete(ctx, reachable, reason, distance, target)
     local profile_mgr = ctx.modules.ProfileManager
-    local movement = ctx.modules.Movement
+    local client = ctx.client
 
     if not reachable then
         if ctx.log then
@@ -110,7 +110,7 @@ function TravelingController._on_validation_complete(ctx, reachable, reason, dis
     end
 
     _substate = SUBSTATES.MOVING
-    movement:move_to(target, function(success, move_reason)
+    client:move_to(target, function(success, move_reason)
         TravelingController._on_movement_complete(ctx, success, move_reason)
     end, { use_navmesh = true })
 end

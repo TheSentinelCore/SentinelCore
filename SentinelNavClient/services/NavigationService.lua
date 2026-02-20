@@ -10,7 +10,7 @@ NavigationService.__index = NavigationService
 
 local JSON = require("lib/JSON")
 local izi = require("common/izi_sdk")
-local Events = require("events.Events")
+local Events = require("events/Events")
 
 -- ============================================================================
 -- Lookup Tables (verbatim from Navigation.lua)

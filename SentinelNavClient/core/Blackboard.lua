@@ -239,7 +239,7 @@ function Blackboard._test()
     -- 7. EventBus integration
     --------------------------------------------------------------------------
     -- Minimal EventBus from require
-    local EventBus = require("events.EventBus")
+    local EventBus = require("events/EventBus")
     local eb = EventBus:new()
     local bb2 = Blackboard:new(eb)
 
