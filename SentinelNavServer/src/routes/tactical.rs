@@ -21,7 +21,8 @@ use crate::routes::path::{
     acquire_query, validate_filter_params,
     vec3_to_waypoints, Waypoint,
 };
-use crate::state::AppState;
+use std::sync::Arc;
+use crate::blackboard::ServerBlackboard;
 use crate::validation::{validate_coordinate, validate_map_id, validate_radius, validate_z_extent, validate_wall_clearance};
 
 // =============================================================================
@@ -76,7 +77,7 @@ pub struct FleeResponse {
 
 /// GET /api/v1/tactical/flee - Find path away from threats.
 pub async fn flee(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<FleeRequest>,
 ) -> Result<Json<FleeResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -262,7 +263,7 @@ pub struct LosCoverResponse {
 
 /// GET /api/v1/tactical/los - Find positions that break line-of-sight to threats.
 pub async fn los_cover(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<LosCoverRequest>,
 ) -> Result<Json<LosCoverResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -400,7 +401,7 @@ pub struct KiteResponse {
 
 /// GET /api/v1/tactical/kite - Generate kiting arc path around a target.
 pub async fn kite(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<KiteRequest>,
 ) -> Result<Json<KiteResponse>, AppError> {
     validate_map_id(params.map_id)?;

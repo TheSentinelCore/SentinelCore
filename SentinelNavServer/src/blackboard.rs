@@ -10,6 +10,7 @@ use std::time::Instant;
 use mmap_loader::MmapManager;
 use tokio::sync::Semaphore;
 
+use crate::cache::PathCache;
 use crate::config::Config;
 use crate::services::{
     CacheService, PathfindingService, RoutingService, SmoothingService, SpatialService,
@@ -25,6 +26,9 @@ use crate::state::Metrics;
 /// - **Services**: Trait objects for each domain (pathfinding, routing, etc.)
 /// - **Infrastructure**: Mesh manager, semaphore, cache, config
 /// - **Metrics**: Request counters and timing
+///
+/// Field names match the former `AppState` so existing `acquire_query!` macro
+/// and handler code works without modification.
 #[derive(Clone)]
 pub struct ServerBlackboard {
     // -- Services (trait objects) --
@@ -38,14 +42,16 @@ pub struct ServerBlackboard {
     pub spatial: Arc<dyn SpatialService>,
     /// Combat-oriented paths: flee, cover, kite.
     pub tactical: Arc<dyn TacticalService>,
-    /// Path result caching.
+    /// Path result caching (trait object).
     pub cache: Arc<dyn CacheService>,
 
-    // -- Infrastructure --
+    // -- Infrastructure (same field names as former AppState) --
     /// Navigation mesh manager for loading and querying maps.
-    pub mesh_manager: Arc<MmapManager>,
+    pub mmap_manager: Arc<MmapManager>,
     /// Semaphore for limiting concurrent pathfinding requests.
-    pub semaphore: Arc<Semaphore>,
+    pub request_semaphore: Arc<Semaphore>,
+    /// Path cache for fast repeated lookups (direct access for handlers).
+    pub path_cache: Arc<PathCache>,
     /// Application configuration.
     pub config: Arc<Config>,
     /// Request metrics.
@@ -59,7 +65,7 @@ impl ServerBlackboard {
     pub fn try_acquire_permit(
         &self,
     ) -> Result<tokio::sync::OwnedSemaphorePermit, crate::error::AppError> {
-        self.semaphore
+        self.request_semaphore
             .clone()
             .try_acquire_owned()
             .map_err(|_| crate::error::AppError::Overloaded)

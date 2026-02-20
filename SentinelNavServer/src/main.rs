@@ -4,8 +4,10 @@
 //! navigation mesh files (mmaps).
 
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use tokio::sync::Semaphore;
 use tower_http::timeout::TimeoutLayer;
 
 mod blackboard;
@@ -18,8 +20,16 @@ mod services;
 mod state;
 mod validation;
 
+use blackboard::ServerBlackboard;
+use cache::PathCache;
 use config::Config;
-use state::AppState;
+use services::cache_impl::MokaCache;
+use services::pathfinding::DetourPathfinder;
+use services::routing::DetourRouter;
+use services::smoothing::PipelineSmoother;
+use services::spatial::DetourSpatial;
+use services::tactical::DetourTactical;
+use state::Metrics;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -47,15 +57,67 @@ async fn main() -> anyhow::Result<()> {
         config.navmesh.mmap_path
     );
 
-    // Create application state (triggers map preloading if configured)
-    let state = AppState::new(config.clone())?;
+    // Create shared infrastructure
+    let mmap_manager = Arc::new(mmap_loader::MmapManager::new(
+        &config.navmesh.mmap_path,
+        config.pathfinding.query_pool_size,
+        config.pathfinding.max_query_nodes,
+    ));
+
     tracing::info!(
-        "Application state initialized, {} maps preloaded",
-        state.mmap_manager.loaded_map_count()
+        "MmapManager created: pool_size={}, max_query_nodes={}",
+        config.pathfinding.query_pool_size,
+        config.pathfinding.max_query_nodes,
+    );
+
+    // Preload configured maps
+    for &map_id in &config.navmesh.preload_maps {
+        tracing::info!("Preloading map {}", map_id);
+        match mmap_manager.get_or_load_mesh(map_id) {
+            Ok(_) => tracing::info!("Successfully preloaded map {}", map_id),
+            Err(e) => tracing::warn!("Failed to preload map {}: {}", map_id, e),
+        }
+    }
+
+    let path_cache = Arc::new(PathCache::new());
+
+    // Build concrete service implementations
+    let pathfinder: Arc<dyn services::PathfindingService> =
+        Arc::new(DetourPathfinder::new(mmap_manager.clone()));
+    let router: Arc<dyn services::RoutingService> =
+        Arc::new(DetourRouter::new(mmap_manager.clone()));
+    let smoother: Arc<dyn services::SmoothingService> =
+        Arc::new(PipelineSmoother::new(mmap_manager.clone()));
+    let spatial: Arc<dyn services::SpatialService> =
+        Arc::new(DetourSpatial::new(mmap_manager.clone()));
+    let tactical: Arc<dyn services::TacticalService> =
+        Arc::new(DetourTactical::new(mmap_manager.clone()));
+    let cache: Arc<dyn services::CacheService> =
+        Arc::new(MokaCache::new(path_cache.clone()));
+
+    // Assemble the ServerBlackboard
+    let blackboard = Arc::new(ServerBlackboard {
+        pathfinding: pathfinder,
+        routing: router,
+        smoothing: smoother,
+        spatial,
+        tactical,
+        cache,
+        mmap_manager: mmap_manager.clone(),
+        request_semaphore: Arc::new(Semaphore::new(config.server.max_concurrent_requests)),
+        path_cache,
+        config: Arc::new(config.clone()),
+        metrics: Arc::new(Metrics::new()),
+        start_time: Instant::now(),
+    });
+
+    tracing::info!(
+        "ServerBlackboard initialized, {} maps preloaded",
+        mmap_manager.loaded_map_count()
     );
 
     // Build router with timeout middleware
-    let app = routes::build_router(state)
+    let app = routes::build_router(blackboard)
         .layer(TimeoutLayer::new(Duration::from_secs(30)));
 
     // Start server

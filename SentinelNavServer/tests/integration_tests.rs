@@ -8,9 +8,22 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
+use std::sync::Arc;
+use std::time::Instant;
+
+use tokio::sync::Semaphore;
+
+use sentinel_nav_server::blackboard::ServerBlackboard;
+use sentinel_nav_server::cache::PathCache;
 use sentinel_nav_server::config::{Config, NavmeshConfig, PathfindingConfig, ServerConfig};
 use sentinel_nav_server::routes::build_router;
-use sentinel_nav_server::state::AppState;
+use sentinel_nav_server::services::cache_impl::MokaCache;
+use sentinel_nav_server::services::pathfinding::DetourPathfinder;
+use sentinel_nav_server::services::routing::DetourRouter;
+use sentinel_nav_server::services::smoothing::PipelineSmoother;
+use sentinel_nav_server::services::spatial::DetourSpatial;
+use sentinel_nav_server::services::tactical::DetourTactical;
+use sentinel_nav_server::state::Metrics;
 
 /// Path to mmap files for testing.
 const TEST_MMAP_PATH: &str = "./mmaps";
@@ -26,8 +39,32 @@ fn create_test_app() -> axum::Router {
         pathfinding: PathfindingConfig::default(),
     };
 
-    let state = AppState::new(config).expect("Failed to create AppState");
-    build_router(state)
+    let mmap_manager = Arc::new(mmap_loader::MmapManager::new(
+        &config.navmesh.mmap_path,
+        config.pathfinding.query_pool_size,
+        config.pathfinding.max_query_nodes,
+    ));
+    for &map_id in &config.navmesh.preload_maps {
+        mmap_manager.get_or_load_mesh(map_id).expect("Failed to preload map");
+    }
+    let path_cache = Arc::new(PathCache::new());
+
+    let bb = Arc::new(ServerBlackboard {
+        pathfinding: Arc::new(DetourPathfinder::new(mmap_manager.clone())),
+        routing: Arc::new(DetourRouter::new(mmap_manager.clone())),
+        smoothing: Arc::new(PipelineSmoother::new(mmap_manager.clone())),
+        spatial: Arc::new(DetourSpatial::new(mmap_manager.clone())),
+        tactical: Arc::new(DetourTactical::new(mmap_manager.clone())),
+        cache: Arc::new(MokaCache::new(path_cache.clone())),
+        mmap_manager,
+        request_semaphore: Arc::new(Semaphore::new(config.server.max_concurrent_requests)),
+        path_cache,
+        config: Arc::new(config),
+        metrics: Arc::new(Metrics::new()),
+        start_time: Instant::now(),
+    });
+
+    build_router(bb)
 }
 
 #[tokio::test]
