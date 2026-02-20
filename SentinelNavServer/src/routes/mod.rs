@@ -6,13 +6,15 @@ pub mod path;
 pub mod spatial;
 pub mod tactical;
 
+use std::sync::Arc;
+
 use axum::{routing::get, Router};
 use tower_http::trace::TraceLayer;
 
-use crate::state::AppState;
+use crate::blackboard::ServerBlackboard;
 
 /// Build the application router with all endpoints.
-pub fn build_router(state: AppState) -> Router {
+pub fn build_router(state: Arc<ServerBlackboard>) -> Router {
     Router::new()
         // Health check
         .route("/health", get(health::health_check))

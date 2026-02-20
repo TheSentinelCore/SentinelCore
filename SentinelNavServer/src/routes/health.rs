@@ -4,7 +4,9 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 
-use crate::state::AppState;
+use std::sync::Arc;
+
+use crate::blackboard::ServerBlackboard;
 
 /// Health check response.
 #[derive(Debug, Serialize)]
@@ -37,7 +39,7 @@ pub struct MetricsResponse {
 /// GET /health - Health check endpoint.
 ///
 /// Returns server status, version, uptime, and loaded map information.
-pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
+pub async fn health_check(State(state): State<Arc<ServerBlackboard>>) -> Json<HealthResponse> {
     let loaded_maps = state.mmap_manager.loaded_maps();
 
     Json(HealthResponse {

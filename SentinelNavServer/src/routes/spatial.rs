@@ -17,7 +17,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use mmap_loader::error::MmapError;
 
 use crate::error::AppError;
-use crate::state::AppState;
+use std::sync::Arc;
+use crate::blackboard::ServerBlackboard;
 use crate::validation::{
     validate_coordinate, validate_map_id, validate_min_distance, validate_polygon, validate_radius,
 };
@@ -59,7 +60,7 @@ pub struct MoveResponse {
 /// This performs a "sliding" movement that stays constrained to the navmesh.
 /// Useful for simulating player movement that can't pass through walls.
 pub async fn move_along_surface(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<MoveRequest>,
 ) -> Result<Json<MoveResponse>, AppError> {
     // Validate inputs
@@ -149,7 +150,7 @@ pub struct RaycastResponse {
 /// Returns where the ray hits a navmesh boundary or reaches the end point.
 /// Useful for line-of-sight checks and obstacle detection.
 pub async fn raycast(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<RaycastRequest>,
 ) -> Result<Json<RaycastResponse>, AppError> {
     // Validate inputs
@@ -251,7 +252,7 @@ pub struct RandomPointResponse {
 /// random point within that circle. Otherwise, finds a random point anywhere
 /// on the navmesh.
 pub async fn random_point(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<RandomPointRequest>,
 ) -> Result<Json<RandomPointResponse>, AppError> {
     // Validate inputs
@@ -355,7 +356,7 @@ pub struct HeightResponse {
 /// Returns the height of the navmesh surface at the given X/Y position.
 /// The provided Z is used to find the nearest polygon.
 pub async fn get_height(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<HeightRequest>,
 ) -> Result<Json<HeightResponse>, AppError> {
     // Validate inputs
@@ -462,7 +463,7 @@ pub struct HeightsResponse {
 /// detection of multi-level structures (bridges, towers, caves, etc.).
 /// Heights are sorted ascending and deduplicated within `cluster_tolerance`.
 pub async fn get_heights(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<HeightsRequest>,
 ) -> Result<Json<HeightsResponse>, AppError> {
     // Validate inputs
@@ -727,7 +728,7 @@ pub struct ExploreResponse {
 ///
 /// Example with TSP: `GET /api/v1/explore?map_id=0&polygon=...&tsp_order=true&start_x=-8960&start_y=-120&start_z=83`
 pub async fn explore_polygon(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<ExploreRequest>,
 ) -> Result<Json<ExploreResponse>, AppError> {
     let start_time = std::time::Instant::now();

@@ -15,7 +15,8 @@ use crate::pipeline::{
     self, execute_pathfind, has_custom_filter, create_custom_filter,
     PathOptions, SEARCH_EXTENTS,
 };
-use crate::state::AppState;
+use std::sync::Arc;
+use crate::blackboard::ServerBlackboard;
 use crate::validation::{
     validate_area_cost, validate_coordinate, validate_deviation, validate_map_id,
     validate_wall_clearance, validate_z_extent,
@@ -174,7 +175,7 @@ pub(crate) use acquire_query;
 
 /// GET /api/v1/path - Find path between two points.
 pub async fn find_path(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<PathRequest>,
 ) -> Result<Json<PathResponse>, AppError> {
     state.metrics.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -294,7 +295,7 @@ pub async fn find_path(
 
 /// GET /api/v1/path-random - Find path with random deviation for anti-detection.
 pub async fn find_path_random(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<RandomPathRequest>,
 ) -> Result<Json<PathResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -477,7 +478,7 @@ pub struct ValidatePathResponse {
 
 /// GET /api/v1/path/validate-snap - Validate path by snapping to nearest navmesh polygons.
 pub async fn validate_path_snap(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<ValidatePathRequest>,
 ) -> Result<Json<ValidatePathResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -514,7 +515,7 @@ pub async fn validate_path_snap(
 
 /// GET /api/v1/path/validate-surface - Validate path by moving along navmesh surface.
 pub async fn validate_path_surface(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<ValidatePathRequest>,
 ) -> Result<Json<ValidatePathResponse>, AppError> {
     validate_map_id(params.map_id)?;

@@ -18,7 +18,8 @@ use crate::routes::path::{
     acquire_query, validate_filter_params,
     vec3_to_waypoints, Waypoint,
 };
-use crate::state::AppState;
+use std::sync::Arc;
+use crate::blackboard::ServerBlackboard;
 use crate::validation::{validate_coordinate, validate_map_id, validate_wall_clearance, validate_z_extent};
 
 // =============================================================================
@@ -65,7 +66,7 @@ pub struct MultiPathResponse {
 
 /// GET /api/v1/path-multi - Multi-stop ordered route.
 pub async fn path_multi(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<MultiPathRequest>,
 ) -> Result<Json<MultiPathResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -300,7 +301,7 @@ fn solve_tsp(distances: &[Vec<f32>], start_idx: usize, weights: &[f32]) -> Vec<u
 
 /// GET /api/v1/path-tsp - TSP-optimized multi-stop route.
 pub async fn path_tsp(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<TspPathRequest>,
 ) -> Result<Json<TspPathResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -515,7 +516,7 @@ pub struct AvoidPathRequest {
 
 /// GET /api/v1/path-avoid - Path with avoidance zones.
 pub async fn path_avoid(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<AvoidPathRequest>,
 ) -> Result<Json<crate::routes::path::PathResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -636,7 +637,7 @@ pub struct PathCheckResponse {
 
 /// GET /api/v1/path/check - Check if remaining path is still valid.
 pub async fn path_check(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<PathCheckRequest>,
 ) -> Result<Json<PathCheckResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -769,7 +770,7 @@ pub struct CorridorPathResponse {
 
 /// GET /api/v1/path/corridor - Path with safe corridor widths.
 pub async fn path_corridor(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<CorridorPathRequest>,
 ) -> Result<Json<CorridorPathResponse>, AppError> {
     validate_map_id(params.map_id)?;
@@ -900,7 +901,7 @@ pub struct ExploreRouteResponse {
 
 /// GET /api/v1/explore-route - Polygon exploration with full paths between points.
 pub async fn explore_route(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<ExploreRouteRequest>,
 ) -> Result<Json<ExploreRouteResponse>, AppError> {
     validate_map_id(params.map_id)?;
