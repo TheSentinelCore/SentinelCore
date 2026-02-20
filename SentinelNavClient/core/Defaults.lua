@@ -45,10 +45,10 @@ Defaults.movement = {
     allow_partial                     = { type = "bool", default = true, id = "snc_allow_partial" },
 
     -- String-Pull Tuning
-    string_pull_deviation             = { type = "float", min = 0.5, max = 5.0, default = 1.5, id = "snc_sp_deviation" },
+    string_pull_deviation             = { type = "float", min = 0.5, max = 5.0, default = 1.0, id = "snc_sp_deviation" },
     string_pull_heading               = { type = "float", min = 10.0, max = 90.0, default = 30.0, id = "snc_sp_heading" },
     string_pull_wall_dist             = { type = "float", min = 0.0, max = 3.0, default = 1.0, id = "snc_sp_wall_dist" },
-    densify_segment_length            = { type = "float", min = 1.0, max = 10.0, default = 2.0, id = "snc_densify_seg" },
+    densify_segment_length            = { type = "float", min = 1.0, max = 10.0, default = 1.0, id = "snc_densify_seg" },
 
     -- Terrain Costs
     filter_ground                     = { type = "float", min = 0.1, max = 10.0, default = 1.0, id = "snc_filter_ground" },
