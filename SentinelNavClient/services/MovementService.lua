@@ -216,7 +216,7 @@ function MovementService:_test()
     -- Test 1: Construction
     local bb = Blackboard:new()
     local svc = MovementService:new(bb)
-    results["construction"] = (svc ~= nil and svc._config.waypoint_tolerance == 3.0)
+    results["construction"] = (svc ~= nil and svc._config.waypoint_tolerance == 2.0)
 
     -- Test 2: Config override
     svc = MovementService:new(bb, { waypoint_tolerance = 5.0 })
@@ -227,7 +227,7 @@ function MovementService:_test()
     results["runtime_config"] = (svc._config.final_tolerance == 2.0)
 
     -- Test 4: get_config
-    results["get_config"] = (svc:get_config("waypoint_tolerance") == 3.0)
+    results["get_config"] = (svc:get_config("waypoint_tolerance") == 5.0)
     results["get_config_default"] = (svc:get_config("nonexistent", 42) == 42)
 
     -- Test 5: Dynamic speed calculation (mock)

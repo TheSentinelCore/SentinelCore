@@ -17,7 +17,7 @@ Defaults.movement = {
     dynamic_speed_ramp_look_distance  = { type = "float", min = 2.0, max = 15.0, default = 6.0, id = "snc_dyn_ramp_look" },
 
     -- Tolerances
-    waypoint_tolerance                = { type = "float", min = 0.5, max = 10.0, default = 3.0, id = "snc_waypoint_tolerance" },
+    waypoint_tolerance                = { type = "float", min = 0.5, max = 10.0, default = 2.0, id = "snc_waypoint_tolerance" },
     final_tolerance                   = { type = "float", min = 0.5, max = 5.0, default = 1.5, id = "snc_final_tolerance" },
 
     -- Anti-Detection
@@ -47,6 +47,8 @@ Defaults.movement = {
     -- String-Pull Tuning
     string_pull_deviation             = { type = "float", min = 0.5, max = 5.0, default = 1.5, id = "snc_sp_deviation" },
     string_pull_heading               = { type = "float", min = 10.0, max = 90.0, default = 30.0, id = "snc_sp_heading" },
+    string_pull_wall_dist             = { type = "float", min = 0.0, max = 3.0, default = 1.0, id = "snc_sp_wall_dist" },
+    densify_segment_length            = { type = "float", min = 1.0, max = 10.0, default = 2.0, id = "snc_densify_seg" },
 
     -- Terrain Costs
     filter_ground                     = { type = "float", min = 0.1, max = 10.0, default = 1.0, id = "snc_filter_ground" },

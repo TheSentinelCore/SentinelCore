@@ -22,6 +22,8 @@ return function(nav_service, movement_service, obstacle_service, event_bus)
                 bb:set("request.pending", false)
                 bb:clear("request.result")
                 bb:clear("request.error")
+                bb:clear("deviation.last_check")
+                bb:clear("deviation.last_result")
                 -- Navigate without stopping — blend into new path
                 movement_service:navigate(result.waypoints)
                 local count = bb:get("deviation.count", 0)
@@ -54,6 +56,7 @@ return function(nav_service, movement_service, obstacle_service, event_bus)
         event_bus:emit(Events.REPATH_STARTED, { reason = "deviation", soft = true })
 
         local zones = obstacle_service:get_avoidance_zones()
+        local opts = bb:get("config._path_opts") or {}
         local callback = function(ok, data, err)
             if ok and data and data.waypoints and #data.waypoints > 0 then
                 bb:set("request.result", data)
@@ -63,9 +66,9 @@ return function(nav_service, movement_service, obstacle_service, event_bus)
         end
 
         if zones and #zones > 0 then
-            nav_service:find_path_avoid(start, dest, zones, callback)
+            nav_service:find_path_avoid(start, dest, zones, callback, opts)
         else
-            nav_service:find_path(start, dest, callback)
+            nav_service:find_path(start, dest, callback, opts)
         end
 
         return BT.RUNNING

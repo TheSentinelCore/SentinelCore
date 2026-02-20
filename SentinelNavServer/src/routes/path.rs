@@ -60,6 +60,12 @@ pub struct PathRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
 }
 
 /// Random path request (extends PathRequest).
@@ -98,6 +104,12 @@ pub struct RandomPathRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
 }
 
 fn default_max_deviation() -> f32 {
@@ -204,8 +216,23 @@ pub async fn find_path(
     let start_pos = Vec3::new(params.start_x, params.start_y, params.start_z);
     let end_pos = Vec3::new(params.end_x, params.end_y, params.end_z);
 
-    // Check path cache
-    if let Some(cached) = state.path_cache.get(params.map_id, &start_pos, &end_pos) {
+    // Build options early so cache key includes options hash
+    let options = PathOptions {
+        optimize: params.optimize.unwrap_or(false),
+        filter_ground: params.filter_ground,
+        filter_water: params.filter_water,
+        filter_lava: params.filter_lava,
+        z_extent: params.z_extent,
+        wall_clearance: params.wall_clearance,
+        string_pull_deviation: params.string_pull_deviation,
+        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
+        string_pull_wall_dist: params.string_pull_wall_dist,
+        densify_segment_length: params.densify_segment_length,
+    };
+    let opts_hash = options.cache_hash();
+
+    // Check path cache (keyed on position + options)
+    if let Some(cached) = state.path_cache.get(params.map_id, &start_pos, &end_pos, opts_hash) {
         return Ok(Json(PathResponse {
             success: true,
             path: vec3_to_waypoints(&cached.waypoints),
@@ -237,17 +264,6 @@ pub async fn find_path(
         pool.filter()
     };
 
-    let options = PathOptions {
-        optimize: params.optimize.unwrap_or(false),
-        filter_ground: params.filter_ground,
-        filter_water: params.filter_water,
-        filter_lava: params.filter_lava,
-        z_extent: params.z_extent,
-        wall_clearance: params.wall_clearance,
-        string_pull_deviation: params.string_pull_deviation,
-        string_pull_heading: params.string_pull_heading.map(f32::to_radians),
-    };
-
     let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
 
     // Handle partial paths with recovery suggestions
@@ -277,6 +293,7 @@ pub async fn find_path(
         params.map_id,
         &start_pos,
         &end_pos,
+        opts_hash,
         CachedPath {
             waypoints: result.waypoints.clone(),
             distance: result.distance,
@@ -350,6 +367,8 @@ pub async fn find_path_random(
         wall_clearance: params.wall_clearance,
         string_pull_deviation: params.string_pull_deviation,
         string_pull_heading: params.string_pull_heading.map(f32::to_radians),
+        string_pull_wall_dist: params.string_pull_wall_dist,
+        densify_segment_length: params.densify_segment_length,
     };
 
     let raw_result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;

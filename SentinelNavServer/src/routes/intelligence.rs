@@ -56,6 +56,12 @@ pub struct MultiPathRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
 }
 
 /// Multi-stop path response.
@@ -114,6 +120,8 @@ pub async fn path_multi(
         wall_clearance: params.wall_clearance,
         string_pull_deviation: params.string_pull_deviation,
         string_pull_heading: params.string_pull_heading.map(f32::to_radians),
+        string_pull_wall_dist: params.string_pull_wall_dist,
+        densify_segment_length: params.densify_segment_length,
     };
 
     let zones = if let Some(ref avoid_str) = params.avoid {
@@ -213,6 +221,12 @@ pub struct TspPathRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
 }
 
 /// TSP path response.
@@ -452,6 +466,8 @@ pub async fn path_tsp(
         wall_clearance: params.wall_clearance,
         string_pull_deviation: params.string_pull_deviation,
         string_pull_heading: params.string_pull_heading.map(f32::to_radians),
+        string_pull_wall_dist: params.string_pull_wall_dist,
+        densify_segment_length: params.densify_segment_length,
     };
 
     // Pathfind each leg RAW and concatenate, then post-process the full path.
@@ -541,6 +557,12 @@ pub struct AvoidPathRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
 }
 
 /// GET /api/v1/path-avoid - Path with avoidance zones.
@@ -596,6 +618,8 @@ pub async fn path_avoid(
         wall_clearance: params.wall_clearance,
         string_pull_deviation: params.string_pull_deviation,
         string_pull_heading: params.string_pull_heading.map(f32::to_radians),
+        string_pull_wall_dist: params.string_pull_wall_dist,
+        densify_segment_length: params.densify_segment_length,
     };
 
     let result = if zones.is_empty() {
@@ -784,6 +808,12 @@ pub struct CorridorPathRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
 }
 
 fn default_probe_distance() -> f32 {
@@ -862,6 +892,8 @@ pub async fn path_corridor(
         wall_clearance: params.wall_clearance,
         string_pull_deviation: params.string_pull_deviation,
         string_pull_heading: params.string_pull_heading.map(f32::to_radians),
+        string_pull_wall_dist: params.string_pull_wall_dist,
+        densify_segment_length: params.densify_segment_length,
     };
 
     let result = pathfind_maybe_avoid(&query, &pool, filter, start_pos, end_pos, &options, &zones)?;
@@ -920,6 +952,12 @@ pub struct ExploreRouteRequest {
     /// Max heading change (degrees) for string-pull optimization (default 30).
     #[serde(default)]
     pub string_pull_heading: Option<f32>,
+    /// Min wall distance (yards) for string-pull shortcuts (default 0.6, 0 = disabled).
+    #[serde(default)]
+    pub string_pull_wall_dist: Option<f32>,
+    /// Max segment length (yards) for densification (default 3.0).
+    #[serde(default)]
+    pub densify_segment_length: Option<f32>,
 }
 
 fn default_min_distance() -> f32 {
@@ -1047,6 +1085,8 @@ pub async fn explore_route(
         wall_clearance: params.wall_clearance,
         string_pull_deviation: params.string_pull_deviation,
         string_pull_heading: params.string_pull_heading.map(f32::to_radians),
+        string_pull_wall_dist: params.string_pull_wall_dist,
+        densify_segment_length: params.densify_segment_length,
     };
 
     // Pathfind each leg RAW and concatenate, then post-process the full path.

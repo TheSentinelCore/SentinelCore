@@ -25,12 +25,13 @@ pub struct CachedPath {
     pub partial: bool,
 }
 
-/// Cache key with spatial quantization.
+/// Cache key with spatial quantization and options hash.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 struct PathCacheKey {
     map_id: u32,
     start_cell: (i32, i32, i32),
     end_cell: (i32, i32, i32),
+    options_hash: u64,
 }
 
 /// Quantize a coordinate to a grid cell index.
@@ -64,11 +65,12 @@ impl PathCache {
     }
 
     /// Look up a cached path.
-    pub fn get(&self, map_id: u32, start: &Vec3, end: &Vec3) -> Option<CachedPath> {
+    pub fn get(&self, map_id: u32, start: &Vec3, end: &Vec3, options_hash: u64) -> Option<CachedPath> {
         let key = PathCacheKey {
             map_id,
             start_cell: quantize_vec3(start),
             end_cell: quantize_vec3(end),
+            options_hash,
         };
 
         match self.cache.get(&key) {
@@ -84,11 +86,12 @@ impl PathCache {
     }
 
     /// Insert a path into the cache.
-    pub fn insert(&self, map_id: u32, start: &Vec3, end: &Vec3, path: CachedPath) {
+    pub fn insert(&self, map_id: u32, start: &Vec3, end: &Vec3, options_hash: u64, path: CachedPath) {
         let key = PathCacheKey {
             map_id,
             start_cell: quantize_vec3(start),
             end_cell: quantize_vec3(end),
+            options_hash,
         };
         self.cache.insert(key, path);
     }
@@ -144,6 +147,7 @@ mod tests {
             0,
             &start,
             &end,
+            0,
             CachedPath {
                 waypoints: vec![start, end],
                 distance: 100.0,
@@ -151,10 +155,10 @@ mod tests {
             },
         );
 
-        // Same cell — should hit
+        // Same cell, same options — should hit
         let nearby_start = Vec3::new(2.0, 3.0, 4.0);
         let nearby_end = Vec3::new(101.0, 201.0, 51.0);
-        assert!(cache.get(0, &nearby_start, &nearby_end).is_some());
+        assert!(cache.get(0, &nearby_start, &nearby_end, 0).is_some());
         assert_eq!(cache.hit_count(), 1);
         assert_eq!(cache.miss_count(), 0);
     }
@@ -169,6 +173,7 @@ mod tests {
             0,
             &start,
             &end,
+            0,
             CachedPath {
                 waypoints: vec![start, end],
                 distance: 100.0,
@@ -178,7 +183,7 @@ mod tests {
 
         // Different cell — should miss
         let far_start = Vec3::new(50.0, 50.0, 3.0);
-        assert!(cache.get(0, &far_start, &end).is_none());
+        assert!(cache.get(0, &far_start, &end, 0).is_none());
         assert_eq!(cache.miss_count(), 1);
     }
 
@@ -192,6 +197,7 @@ mod tests {
             0,
             &start,
             &end,
+            0,
             CachedPath {
                 waypoints: vec![start, end],
                 distance: 100.0,
@@ -200,7 +206,34 @@ mod tests {
         );
 
         // Different map — should miss
-        assert!(cache.get(1, &start, &end).is_none());
+        assert!(cache.get(1, &start, &end, 0).is_none());
+    }
+
+    #[test]
+    fn test_cache_miss_different_options() {
+        let cache = PathCache::new();
+        let start = Vec3::new(1.0, 2.0, 3.0);
+        let end = Vec3::new(100.0, 200.0, 50.0);
+
+        cache.insert(
+            0,
+            &start,
+            &end,
+            42,
+            CachedPath {
+                waypoints: vec![start, end],
+                distance: 100.0,
+                partial: false,
+            },
+        );
+
+        // Same cell, different options hash — should miss
+        assert!(cache.get(0, &start, &end, 99).is_none());
+        assert_eq!(cache.miss_count(), 1);
+
+        // Same options hash — should hit
+        assert!(cache.get(0, &start, &end, 42).is_some());
+        assert_eq!(cache.hit_count(), 1);
     }
 
     #[test]
@@ -210,17 +243,17 @@ mod tests {
         let end = Vec3::new(100.0, 200.0, 50.0);
 
         // Miss
-        cache.get(0, &start, &end);
+        cache.get(0, &start, &end, 0);
         assert_eq!(cache.hit_count(), 0);
         assert_eq!(cache.miss_count(), 1);
 
         // Insert + hit
-        cache.insert(0, &start, &end, CachedPath {
+        cache.insert(0, &start, &end, 0, CachedPath {
             waypoints: vec![start, end],
             distance: 100.0,
             partial: false,
         });
-        cache.get(0, &start, &end);
+        cache.get(0, &start, &end, 0);
         assert_eq!(cache.hit_count(), 1);
         assert_eq!(cache.miss_count(), 1);
     }

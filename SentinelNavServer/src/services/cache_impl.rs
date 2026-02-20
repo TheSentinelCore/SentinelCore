@@ -16,12 +16,12 @@ impl MokaCache {
 }
 
 impl CacheService for MokaCache {
-    fn get(&self, map_id: u32, start: &Vec3, end: &Vec3) -> Option<CachedPath> {
-        self.inner.get(map_id, start, end)
+    fn get(&self, map_id: u32, start: &Vec3, end: &Vec3, options_hash: u64) -> Option<CachedPath> {
+        self.inner.get(map_id, start, end, options_hash)
     }
 
-    fn put(&self, map_id: u32, start: &Vec3, end: &Vec3, path: CachedPath) {
-        self.inner.insert(map_id, start, end, path);
+    fn put(&self, map_id: u32, start: &Vec3, end: &Vec3, options_hash: u64, path: CachedPath) {
+        self.inner.insert(map_id, start, end, options_hash, path);
     }
 
     fn stats(&self) -> CacheStats {

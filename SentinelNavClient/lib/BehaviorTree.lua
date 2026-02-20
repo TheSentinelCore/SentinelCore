@@ -23,7 +23,7 @@ Node.__index = Node
 ---@param name? string  Human-readable label for debugging
 ---@return Node
 function Node:new(name)
-    local o = setmetatable({}, self)
+    local o    = setmetatable({}, self)
     o.name     = name or "Node"
     o.children = {}
     return o
@@ -92,6 +92,53 @@ function Sequence:reset()
 end
 
 BT.Sequence = Sequence
+
+--------------------------------------------------------------------------------
+-- ReactiveSequence
+-- Like Sequence but always re-evaluates from child 1 every tick. If a guard
+-- (early child) fails, resets any previously RUNNING later child.
+-- Use this when guard conditions must be checked every frame.
+--------------------------------------------------------------------------------
+
+local ReactiveSequence = setmetatable({}, { __index = Node })
+ReactiveSequence.__index = ReactiveSequence
+
+function ReactiveSequence:new(name)
+    local o = Node.new(self, name or "ReactiveSequence")
+    o._running_index = nil
+    return o
+end
+
+function ReactiveSequence:tick(bb, dt)
+    for i = 1, #self.children do
+        local status = self.children[i]:tick(bb, dt)
+        if status == BT.RUNNING then
+            -- Preempt previously running child if a different one is now running
+            if self._running_index and self._running_index ~= i then
+                self.children[self._running_index]:reset()
+            end
+            self._running_index = i
+            return BT.RUNNING
+        elseif status == BT.FAILURE then
+            -- Reset previously running child
+            if self._running_index then
+                self.children[self._running_index]:reset()
+                self._running_index = nil
+            end
+            return BT.FAILURE
+        end
+        -- BT.SUCCESS: continue to next child
+    end
+    self._running_index = nil
+    return BT.SUCCESS
+end
+
+function ReactiveSequence:reset()
+    self._running_index = nil
+    Node.reset(self)
+end
+
+BT.ReactiveSequence = ReactiveSequence
 
 --------------------------------------------------------------------------------
 -- Selector
@@ -230,7 +277,7 @@ Repeater.__index = Repeater
 ---@param max_count number  Maximum iterations
 ---@param name? string
 function Repeater:new(child, max_count, name)
-    local o = Node.new(self, name or "Repeater")
+    local o     = Node.new(self, name or "Repeater")
     o.max_count = max_count or 1
     o._count    = 0
     if child then
@@ -330,6 +377,7 @@ BT.Action = Action
 -- Throttle (decorator)
 -- Wraps one child. Only ticks child if interval_sec has elapsed since last tick.
 -- Reads _time from blackboard. Returns SUCCESS if skipping (not time yet).
+-- IMPORTANT: Always re-ticks a RUNNING child regardless of interval.
 --------------------------------------------------------------------------------
 
 local Throttle = setmetatable({}, { __index = Node })
@@ -338,10 +386,13 @@ Throttle.__index = Throttle
 ---@param child Node
 ---@param interval_sec number  Minimum seconds between ticks
 ---@param name? string
-function Throttle:new(child, interval_sec, name)
-    local o = Node.new(self, name or "Throttle")
+---@param bb_key? string  Optional bb key to read dynamic interval
+function Throttle:new(child, interval_sec, name, bb_key)
+    local o         = Node.new(self, name or "Throttle")
     o.interval_sec  = interval_sec or 1.0
+    o._bb_key       = bb_key
     o._last_tick_at = nil
+    o._child_running = false
     if child then
         o:add(child)
     end
@@ -352,21 +403,36 @@ function Throttle:tick(bb, dt)
     local child = self.children[1]
     if not child then return BT.FAILURE end
 
+    -- Always re-tick a RUNNING child regardless of interval
+    if self._child_running then
+        local status = child:tick(bb, dt)
+        if status ~= BT.RUNNING then
+            self._child_running = false
+        end
+        return status
+    end
+
+    local interval = self._bb_key and bb:get(self._bb_key, self.interval_sec) or self.interval_sec
     local now = bb:get("_time", 0)
 
     if self._last_tick_at ~= nil then
         local elapsed = now - self._last_tick_at
-        if elapsed < self.interval_sec then
+        if elapsed < interval then
             return BT.SUCCESS
         end
     end
 
     self._last_tick_at = now
-    return child:tick(bb, dt)
+    local status = child:tick(bb, dt)
+    if status == BT.RUNNING then
+        self._child_running = true
+    end
+    return status
 end
 
 function Throttle:reset()
     self._last_tick_at = nil
+    self._child_running = false
     Node.reset(self)
 end
 
@@ -376,6 +442,7 @@ BT.Throttle = Throttle
 -- Cooldown (decorator)
 -- Wraps one child. Blocks re-execution for cooldown_sec after last run.
 -- Returns FAILURE if on cooldown. Reads _time from blackboard.
+-- IMPORTANT: Always re-ticks a RUNNING child regardless of cooldown.
 --------------------------------------------------------------------------------
 
 local Cooldown = setmetatable({}, { __index = Node })
@@ -384,10 +451,13 @@ Cooldown.__index = Cooldown
 ---@param child Node
 ---@param cooldown_sec number  Seconds to block after last execution
 ---@param name? string
-function Cooldown:new(child, cooldown_sec, name)
-    local o = Node.new(self, name or "Cooldown")
-    o.cooldown_sec  = cooldown_sec or 1.0
-    o._last_run_at  = nil
+---@param bb_key? string Optional bb key to read dynamic cooldown
+function Cooldown:new(child, cooldown_sec, name, bb_key)
+    local o        = Node.new(self, name or "Cooldown")
+    o.cooldown_sec = cooldown_sec or 1.0
+    o._bb_key      = bb_key
+    o._last_run_at = nil
+    o._child_running = false
     if child then
         o:add(child)
     end
@@ -398,21 +468,36 @@ function Cooldown:tick(bb, dt)
     local child = self.children[1]
     if not child then return BT.FAILURE end
 
+    -- Always re-tick a RUNNING child regardless of cooldown
+    if self._child_running then
+        local status = child:tick(bb, dt)
+        if status ~= BT.RUNNING then
+            self._child_running = false
+        end
+        return status
+    end
+
+    local cooldown = self._bb_key and bb:get(self._bb_key, self.cooldown_sec) or self.cooldown_sec
     local now = bb:get("_time", 0)
 
     if self._last_run_at ~= nil then
         local elapsed = now - self._last_run_at
-        if elapsed < self.cooldown_sec then
+        if elapsed < cooldown then
             return BT.FAILURE
         end
     end
 
     self._last_run_at = now
-    return child:tick(bb, dt)
+    local status = child:tick(bb, dt)
+    if status == BT.RUNNING then
+        self._child_running = true
+    end
+    return status
 end
 
 function Cooldown:reset()
     self._last_run_at = nil
+    self._child_running = false
     Node.reset(self)
 end
 
@@ -480,7 +565,7 @@ Tree.__index = Tree
 ---@param name? string    Human-readable tree name
 ---@return Tree
 function Tree:new(root, name)
-    local o = setmetatable({}, Tree)
+    local o        = setmetatable({}, Tree)
     o.root         = root
     o.name         = name or "Tree"
     o._last_status = nil
@@ -691,12 +776,96 @@ function BT._test()
     end
 
     --------------------------------------------------------------------------
+    -- 6b. Throttle continues ticking RUNNING child
+    --------------------------------------------------------------------------
+    do
+        local bb = Blackboard:new()
+        local tick_count = 0
+        local child_returns = BT.RUNNING
+
+        local child = Action:new(function()
+            tick_count = tick_count + 1
+            return child_returns
+        end, "running_action")
+
+        local throttled = Throttle:new(child, 2.0, "throttle_running")
+
+        -- Tick 1 at t=0: interval elapsed, tick child -> RUNNING
+        bb:set("_time", 0)
+        local r1 = throttled:tick(bb, 0.016)
+        check("6b1. Throttle ticks child on first tick", tick_count == 1)
+        check("6b2. Throttle returns RUNNING from child", r1 == BT.RUNNING)
+
+        -- Tick 2 at t=0.1: interval NOT elapsed, but child was RUNNING -> must re-tick
+        bb:set("_time", 0.1)
+        local r2 = throttled:tick(bb, 0.016)
+        check("6b3. Throttle re-ticks RUNNING child despite interval", tick_count == 2)
+        check("6b4. Throttle still returns RUNNING", r2 == BT.RUNNING)
+
+        -- Tick 3 at t=0.2: child completes
+        child_returns = BT.SUCCESS
+        bb:set("_time", 0.2)
+        local r3 = throttled:tick(bb, 0.016)
+        check("6b5. Throttle ticks child to completion", tick_count == 3)
+        check("6b6. Throttle returns SUCCESS when child completes", r3 == BT.SUCCESS)
+
+        -- Tick 4 at t=0.3: child done, interval not elapsed -> skip
+        tick_count = 0
+        bb:set("_time", 0.3)
+        local r4 = throttled:tick(bb, 0.016)
+        check("6b7. Throttle skips after RUNNING child completes", tick_count == 0)
+        check("6b8. Throttle returns SUCCESS when skipping", r4 == BT.SUCCESS)
+    end
+
+    --------------------------------------------------------------------------
+    -- 6c. Cooldown continues ticking RUNNING child
+    --------------------------------------------------------------------------
+    do
+        local bb = Blackboard:new()
+        local tick_count = 0
+        local child_returns = BT.RUNNING
+
+        local child = Action:new(function()
+            tick_count = tick_count + 1
+            return child_returns
+        end, "cd_running_action")
+
+        local cooled = Cooldown:new(child, 2.0, "cooldown_running")
+
+        -- Tick 1 at t=0: not on cooldown, tick child -> RUNNING
+        bb:set("_time", 0)
+        local r1 = cooled:tick(bb, 0.016)
+        check("6c1. Cooldown ticks child when not on cooldown", tick_count == 1)
+        check("6c2. Cooldown returns RUNNING from child", r1 == BT.RUNNING)
+
+        -- Tick 2 at t=0.1: on cooldown, but child was RUNNING -> must re-tick
+        bb:set("_time", 0.1)
+        local r2 = cooled:tick(bb, 0.016)
+        check("6c3. Cooldown re-ticks RUNNING child despite cooldown", tick_count == 2)
+        check("6c4. Cooldown still returns RUNNING", r2 == BT.RUNNING)
+
+        -- Tick 3 at t=0.2: child completes
+        child_returns = BT.SUCCESS
+        bb:set("_time", 0.2)
+        local r3 = cooled:tick(bb, 0.016)
+        check("6c5. Cooldown ticks child to completion", tick_count == 3)
+        check("6c6. Cooldown returns SUCCESS when child completes", r3 == BT.SUCCESS)
+
+        -- Tick 4 at t=0.3: cooldown active, child done -> block
+        tick_count = 0
+        bb:set("_time", 0.3)
+        local r4 = cooled:tick(bb, 0.016)
+        check("6c7. Cooldown blocks after child completes", tick_count == 0)
+        check("6c8. Cooldown returns FAILURE when on cooldown", r4 == BT.FAILURE)
+    end
+
+    --------------------------------------------------------------------------
     -- 7. Sequence with RUNNING resumes at correct child
     --------------------------------------------------------------------------
     do
         local bb = Blackboard:new()
         local a1_count, a2_count, a3_count = 0, 0, 0
-        local a2_returns = BT.RUNNING  -- will change between ticks
+        local a2_returns = BT.RUNNING -- will change between ticks
 
         local seq = Sequence:new("seq_running")
         seq:add(Action:new(function()
@@ -850,6 +1019,81 @@ function BT._test()
         local r4 = guarded:tick(bb_empty, 0.016)
         check("10g. GuardState nil state -> FAILURE",
             r4 == BT.FAILURE)
+    end
+
+    --------------------------------------------------------------------------
+    -- 11. ReactiveSequence re-evaluates guards every tick
+    --------------------------------------------------------------------------
+    do
+        local bb = Blackboard:new()
+        local guard_count = 0
+        local action_count = 0
+        local guard_pass = true
+        local action_returns = BT.RUNNING
+
+        local rseq = ReactiveSequence:new("rseq_test")
+        rseq:add(Action:new(function()
+            guard_count = guard_count + 1
+            return guard_pass and BT.SUCCESS or BT.FAILURE
+        end, "guard"))
+        rseq:add(Action:new(function()
+            action_count = action_count + 1
+            return action_returns
+        end, "action"))
+
+        -- Tick 1: guard passes, action RUNNING
+        local r1 = rseq:tick(bb, 0.016)
+        check("11a. ReactiveSequence returns RUNNING", r1 == BT.RUNNING)
+        check("11b. Guard ran once", guard_count == 1)
+        check("11c. Action ran once", action_count == 1)
+
+        -- Tick 2: guard STILL re-evaluated (unlike Sequence), action re-ticked
+        local r2 = rseq:tick(bb, 0.016)
+        check("11d. ReactiveSequence still RUNNING", r2 == BT.RUNNING)
+        check("11e. Guard ran AGAIN (re-evaluated)", guard_count == 2)
+        check("11f. Action ran again", action_count == 2)
+
+        -- Tick 3: guard fails -> action should be reset, sequence fails
+        guard_pass = false
+        local old_action_count = action_count
+        local r3 = rseq:tick(bb, 0.016)
+        check("11g. ReactiveSequence FAILURE when guard fails", r3 == BT.FAILURE)
+        check("11h. Guard checked (count increased)", guard_count == 3)
+        check("11i. Action NOT ticked after guard fails", action_count == old_action_count)
+    end
+
+    --------------------------------------------------------------------------
+    -- 11b. ReactiveSequence resets preempted RUNNING child
+    --------------------------------------------------------------------------
+    do
+        local bb = Blackboard:new()
+        local guard_pass = true
+        local child_was_reset = false
+
+        -- Custom action that tracks reset
+        local trackable = Action:new(function()
+            return BT.RUNNING
+        end, "trackable")
+        local orig_reset = trackable.reset
+        trackable.reset = function(self)
+            child_was_reset = true
+            orig_reset(self)
+        end
+
+        local rseq = ReactiveSequence:new("rseq_reset_test")
+        rseq:add(Action:new(function()
+            return guard_pass and BT.SUCCESS or BT.FAILURE
+        end, "guard"))
+        rseq:add(trackable)
+
+        -- Tick 1: guard passes, action RUNNING
+        rseq:tick(bb, 0.016)
+        check("11b1. Child not reset while running", child_was_reset == false)
+
+        -- Tick 2: guard fails -> should reset the RUNNING child
+        guard_pass = false
+        rseq:tick(bb, 0.016)
+        check("11b2. RUNNING child reset when guard fails", child_was_reset == true)
     end
 
     --------------------------------------------------------------------------

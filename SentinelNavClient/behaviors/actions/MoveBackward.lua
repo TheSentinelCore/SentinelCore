@@ -18,12 +18,12 @@ return function(duration)
 
         if not start_time then
             start_time = now
-            core.input.start_move_backward()
+            core.input.move_backward_start()
             return BT.RUNNING
         end
 
         if now - start_time >= duration then
-            core.input.stop_move_backward()
+            core.input.move_backward_stop()
             start_time = nil
             return BT.SUCCESS
         end

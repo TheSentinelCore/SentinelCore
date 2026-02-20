@@ -61,13 +61,22 @@ local function create(services)
     -- Stage 3: Strafe + jump
     local try_strafe = BT.Sequence:new("TryStrafeAndJump")
     try_strafe:add(stuck_count_eq(3))
-    try_strafe:add(Strafe(0.5, "left"))
+    try_strafe:add(Strafe(movement_service, 0.5, "left"))
     try_strafe:add(Jump())
     tree:add(try_strafe)
 
-    -- Stage 4: Backward + jump
+    -- Stage 4: Backward + jump (skip on ramps — walking backward downhill is counterproductive)
     local try_backward = BT.Sequence:new("TryBacktrackAndJump")
     try_backward:add(stuck_count_eq(4))
+    try_backward:add(BT.Condition:new(function(bb)
+        local pos = bb:get("player.position")
+        local wps = bb:get("path.waypoints")
+        local idx = bb:get("path.index", 1)
+        if pos and wps and wps[idx] then
+            return math.abs(wps[idx].z - pos.z) < 1.2
+        end
+        return true
+    end, "NotOnRamp"))
     try_backward:add(MoveBackward(1.0))
     try_backward:add(Jump())
     tree:add(try_backward)

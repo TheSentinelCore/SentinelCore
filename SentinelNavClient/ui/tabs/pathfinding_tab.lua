@@ -38,6 +38,8 @@ function PathfindingTab.register(ui, menu)
             elements = {
                 { element = menu.sp_deviation, label = "Max Deviation", suffix = " yd", tooltip = "Max 3D deviation for string-pull optimization (lower = tighter corners)" },
                 { element = menu.sp_heading, label = "Max Heading Change", suffix = "\xC2\xB0", tooltip = "Max heading change in degrees (lower = preserves more curves)" },
+                { element = menu.sp_wall_dist, label = "Min Wall Distance", suffix = " yd", tooltip = "Min wall distance for shortcuts (higher = tighter corners, 0 = disabled)" },
+                { element = menu.densify_seg, label = "Segment Length", suffix = " yd", tooltip = "Max distance between waypoints (lower = smoother curves)" },
             }
         })
 
