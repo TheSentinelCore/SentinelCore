@@ -3499,7 +3499,14 @@ dtStatus dtNavMeshQuery::findDistanceToWall(dtPolyRef startRef, const float* cen
 	float radiusSqr = dtSqr(maxRadius);
 	
 	dtStatus status = DT_SUCCESS;
-	
+
+	// Save the closest wall edge vertices for normal computation.
+	// When centerPos lands exactly on the wall edge, the standard
+	// (centerPos - hitPos) normal is degenerate (zero vector -> NaN).
+	// The edge perpendicular gives us the correct inward normal.
+	float closestEdgeVj[3] = {0, 0, 0};
+	float closestEdgeVi[3] = {0, 0, 0};
+
 	while (!m_openList->empty())
 	{
 		dtNode* bestNode = m_openList->pop();
@@ -3573,6 +3580,8 @@ dtStatus dtNavMeshQuery::findDistanceToWall(dtPolyRef startRef, const float* cen
 			hitPos[0] = vj[0] + (vi[0] - vj[0])*tseg;
 			hitPos[1] = vj[1] + (vi[1] - vj[1])*tseg;
 			hitPos[2] = vj[2] + (vi[2] - vj[2])*tseg;
+			dtVcopy(closestEdgeVj, vj);
+			dtVcopy(closestEdgeVi, vi);
 		}
 		
 		for (unsigned int i = bestPoly->firstLink; i != DT_NULL_LINK; i = bestTile->links[i].next)
@@ -3647,8 +3656,29 @@ dtStatus dtNavMeshQuery::findDistanceToWall(dtPolyRef startRef, const float* cen
 	
 	// Calc hit normal.
 	dtVsub(hitNormal, centerPos, hitPos);
-	dtVnormalize(hitNormal);
-	
+	const float normalLenSqr = dtVdot(hitNormal, hitNormal);
+	if (normalLenSqr > 1e-8f)
+	{
+		// Normal case: direction from wall hit toward center.
+		const float invLen = 1.0f / dtMathSqrtf(normalLenSqr);
+		hitNormal[0] *= invLen;
+		hitNormal[1] *= invLen;
+		hitNormal[2] *= invLen;
+	}
+	else
+	{
+		// Degenerate case: center is exactly on the wall edge.
+		// Compute inward perpendicular of the closest border edge.
+		// Recast polygons are wound CW in XZ plane (Y-up), so the
+		// right perpendicular of edge (vj->vi) points toward the interior.
+		const float edgeX = closestEdgeVi[0] - closestEdgeVj[0];
+		const float edgeZ = closestEdgeVi[2] - closestEdgeVj[2];
+		hitNormal[0] = edgeZ;
+		hitNormal[1] = 0.0f;
+		hitNormal[2] = -edgeX;
+		dtVnormalize(hitNormal);
+	}
+
 	*hitDist = dtMathSqrtf(radiusSqr);
 	
 	return status;
