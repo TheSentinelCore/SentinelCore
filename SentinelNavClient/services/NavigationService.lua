@@ -586,28 +586,50 @@ end
 function NavigationService:_request(url, callback, attempt)
     attempt = attempt or 1
 
+    local function finalize_failure(code, err_msg, disconnect_reason)
+        local failures = self._bb:get("server.failures", 0) + 1
+        self._bb:set("server.failures", failures)
+
+        if failures >= 3 then
+            local was_connected = self._bb:get("server.connected", false)
+            self._bb:set("server.connected", false)
+            if was_connected then
+                self._event_bus:emit(Events.SERVER_DISCONNECTED, {
+                    reason = disconnect_reason or err_msg or ("HTTP " .. tostring(code)),
+                })
+            end
+        end
+
+        self._event_bus:emit(Events.SERVER_ERROR, {
+            error = err_msg,
+            failures = failures,
+            code = code,
+            url = url,
+        })
+        if callback then callback(false, nil, err_msg) end
+    end
+
     core.http_get(url, function(code, content_type, response, headers)
         -- Success path
         if code == 200 then
-            self._bb:set("server.connected", true)
-            self._bb:set("server.failures", 0)
-            self._bb:set("server.last_success", core.time())
-
             local ok, data = pcall(JSON.decode, response)
             if not ok or not data then
-                if callback then callback(false, nil, "JSON parse error") end
+                finalize_failure(code, "JSON parse error", "JSON parse error")
                 return
             end
 
             if data.success == false then
                 local msg = data.error or "Server returned success=false"
-                if callback then callback(false, nil, msg) end
+                finalize_failure(code, msg, msg)
                 return
             end
 
-            -- Emit connected event on first success
-            if not self._bb:get("server.was_connected") then
-                self._bb:set("server.was_connected", true)
+            local was_connected = self._bb:get("server.connected", false)
+            self._bb:set("server.connected", true)
+            self._bb:set("server.failures", 0)
+            self._bb:set("server.last_success", core.time())
+
+            if not was_connected then
                 self._event_bus:emit(Events.SERVER_CONNECTED, {})
             end
 
@@ -621,21 +643,18 @@ function NavigationService:_request(url, callback, attempt)
 
         if retryable and attempt < self._max_retries then
             local delay_secs = 0.5 * (2 ^ (attempt - 1))
+            self._event_bus:emit(Events.SERVER_RETRY, {
+                code = code,
+                attempt = attempt,
+                next_attempt = attempt + 1,
+                max_retries = self._max_retries,
+                delay_secs = delay_secs,
+                url = url,
+            })
             izi.after(delay_secs, function()
                 self:_request(url, callback, attempt + 1)
             end)
             return
-        end
-
-        -- Final failure
-        local failures = self._bb:get("server.failures", 0) + 1
-        self._bb:set("server.failures", failures)
-        if failures >= 3 then
-            local was_connected = self._bb:get("server.connected", false)
-            self._bb:set("server.connected", false)
-            if was_connected then
-                self._event_bus:emit(Events.SERVER_DISCONNECTED, { reason = "HTTP " .. tostring(code) })
-            end
         end
 
         local err_msg = "HTTP " .. tostring(code)
@@ -645,8 +664,7 @@ function NavigationService:_request(url, callback, attempt)
                 err_msg = err_msg .. ": " .. err_data.error
             end
         end
-        self._event_bus:emit(Events.SERVER_ERROR, { error = err_msg, failures = failures })
-        if callback then callback(false, nil, err_msg) end
+        finalize_failure(code, err_msg, err_msg)
     end)
 end
 

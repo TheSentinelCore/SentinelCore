@@ -133,6 +133,7 @@ local function create_menu_elements()
         look_segments          = e(D.obstacles.lookahead_segments),
 
         -- Debug (Tab 4)
+        log_severity           = e(D.movement.log_severity),
         debug_verbose          = e(D.movement.debug_verbose),
         debug_mode             = e(D.debug.debug_mode),
 
@@ -214,6 +215,12 @@ local function sync_to_client()
 
     -- Wall clearance: 0 when disabled, slider value when enabled
     local wall_cl = _menu.wall_clearance_en:get_state() and _menu.wall_clearance:get() or 0
+    local log_severity = math.floor(tonumber(_menu.log_severity:get()) or 2)
+    if log_severity < 0 then log_severity = 0 end
+    if log_severity > 3 then log_severity = 3 end
+    if _menu.log_severity:get() ~= log_severity then
+        _menu.log_severity:set(log_severity)
+    end
 
     _client:update_config({
         movement = {
@@ -251,6 +258,7 @@ local function sync_to_client()
             deviation_corridor_factor    = _menu.deviation_corridor_factor:get(),
             repath_cooldown              = _menu.repath_cooldown:get(),
             max_deviation_repaths        = _menu.max_deviation_repaths:get(),
+            log_severity                = log_severity,
             debug_verbose               = _menu.debug_verbose:get_state(),
         },
         obstacles = {
@@ -349,6 +357,7 @@ function Window.init(client)
             { _menu.look_segments,      D.obstacles.lookahead_segments },
         },
         debug = {
+            { _menu.log_severity,   D.movement.log_severity },
             { _menu.debug_verbose,   D.movement.debug_verbose },
             { _menu.debug_mode,      D.debug.debug_mode },
             { _menu.viz_master,      D.debug.viz_master },
@@ -370,7 +379,9 @@ function Window.init(client)
     DebugTab.register(_ui, _menu, _client, _reset_mappings)
 
     -- Create 3D Visualizer (self-registers its own render callback)
-    _visualizer = Visualizer:new(_client, _menu)
+    _visualizer = Visualizer:new(_client, _menu, function()
+        return DebugTab.get_preview_data()
+    end)
 
     -- Always start with window closed; user opens via menu button
     _ui.menu.enable:set(false)

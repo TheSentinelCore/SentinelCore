@@ -15,11 +15,13 @@ local Events = {
     -- Path Events
     PATH_REQUESTED       = "nav.path_requested",
     PATH_RECEIVED        = "nav.path_received",
+    PATH_FAILED          = "nav.path_failed",
     WAYPOINT_REACHED     = "nav.waypoint_reached",
     LEG_COMPLETED        = "nav.leg_completed",
 
     -- Server Events
     SERVER_CONNECTED     = "nav.server_connected",
+    SERVER_RETRY         = "nav.server_retry",
     SERVER_DISCONNECTED  = "nav.server_disconnected",
     SERVER_ERROR         = "nav.server_error",
 

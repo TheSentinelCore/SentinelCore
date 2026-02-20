@@ -60,12 +60,14 @@ local ARRIVED_FLASH_DURATION = 2.0
 ---Registers its own render callback via core.register_on_render_callback.
 ---@param client table SentinelNavClient Client instance
 ---@param menu table Menu elements table (must contain viz_* checkboxes)
+---@param preview_provider? fun(): table|nil Optional provider for generated preview path data
 ---@return Visualizer
-function Visualizer:new(client, menu)
+function Visualizer:new(client, menu, preview_provider)
     local o = setmetatable({}, Visualizer)
 
     o._client       = client
     o._menu         = menu
+    o._preview_provider = preview_provider
     o._arrived_time = nil
     o._last_state   = "idle"
 
@@ -105,6 +107,34 @@ function Visualizer:_show_state()
 end
 
 --------------------------------------------------------------------------------
+-- Data resolution
+--------------------------------------------------------------------------------
+
+---@param client table
+---@return table
+function Visualizer:_resolve_nav_render_data(client)
+    local data = {
+        path = client:get_current_path(),
+        path_index = client:get_path_index(),
+        destination = client:get_destination(),
+        corridor_widths = client:get_corridor_widths(),
+    }
+
+    if (not data.path or #data.path == 0) and self._preview_provider then
+        local ok, preview = pcall(self._preview_provider)
+        if ok and preview and preview.path and #preview.path > 0 then
+            data.path = preview.path
+            data.path_index = preview.path_index or 1
+            data.destination = preview.destination or preview.path[#preview.path]
+            data.corridor_widths = preview.corridor_widths
+            data.is_preview = true
+        end
+    end
+
+    return data
+end
+
+--------------------------------------------------------------------------------
 -- Render entry point (called every frame by registered callback)
 --------------------------------------------------------------------------------
 
@@ -128,9 +158,11 @@ function Visualizer:_on_render()
         self._last_state = current_state
     end
 
+    local nav_data = self:_resolve_nav_render_data(client)
+
     -- Render layers back-to-front
     if self:_show_corridor() then
-        self:_render_corridor(client, player_pos)
+        self:_render_corridor(nav_data, player_pos)
     end
 
     if self:_show_obstacles() then
@@ -138,11 +170,11 @@ function Visualizer:_on_render()
     end
 
     if self:_show_path() then
-        self:_render_path(client, player_pos)
+        self:_render_path(nav_data, player_pos)
     end
 
     if self:_show_destination() then
-        self:_render_destination(client, player_pos)
+        self:_render_destination(nav_data, player_pos)
     end
 
     if self:_show_state() then
@@ -156,11 +188,11 @@ end
 
 ---@param client table
 ---@param player_pos vec3
-function Visualizer:_render_path(client, player_pos)
-    local path = client:get_current_path()
+function Visualizer:_render_path(nav_data, player_pos)
+    local path = nav_data.path
     if not path or #path == 0 then return end
 
-    local path_index = client:get_path_index()
+    local path_index = nav_data.path_index or 1
 
     for i = 1, #path do
         local wp = path[i]
@@ -221,8 +253,8 @@ end
 
 ---@param client table
 ---@param player_pos vec3
-function Visualizer:_render_destination(client, player_pos)
-    local dest = client:get_destination()
+function Visualizer:_render_destination(nav_data, player_pos)
+    local dest = nav_data.destination
     if not dest then return end
 
     local dist = Helpers.distance_3d(player_pos, dest)
@@ -283,14 +315,14 @@ end
 
 ---@param client table
 ---@param player_pos vec3
-function Visualizer:_render_corridor(client, player_pos)
-    local widths = client:get_corridor_widths()
+function Visualizer:_render_corridor(nav_data, player_pos)
+    local widths = nav_data.corridor_widths
     if not widths then return end
 
-    local path = client:get_current_path()
+    local path = nav_data.path
     if not path or #path < 2 then return end
 
-    local path_index = client:get_path_index()
+    local path_index = nav_data.path_index or 1
 
     for i = 1, math.min(#path - 1, #widths) do
         -- Only render current + future segments

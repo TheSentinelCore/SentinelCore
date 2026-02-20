@@ -708,16 +708,6 @@ pub fn apply_wall_clearance(
 
     let max_radius = clearance * 2.0;
     let mut result = Vec::with_capacity(waypoints.len() * 2);
-    let mut diag_samples = 0u32;
-    let mut diag_near_wall = 0u32;
-    let mut diag_pushed = 0u32;
-    let mut diag_rejected_snap = 0u32;
-    let mut diag_rejected_drift = 0u32;
-    let mut diag_rejected_raycast = 0u32;
-    let mut diag_no_wall = 0u32;
-
-    tracing::info!("[wall_clearance] START: {} waypoints, clearance={:.2}, max_radius={:.2}",
-        waypoints.len(), clearance, max_radius);
 
     // Always keep start point as-is
     result.push(waypoints[0]);
@@ -778,19 +768,12 @@ pub fn apply_wall_clearance(
                 let (poly_ref, on_surface) =
                     match query.find_nearest_poly(sample, seg_extents, filter) {
                         Ok(result) => result,
-                        Err(_) => {
-                            tracing::info!("[wall_clearance] seg={} t={:.2}: snap FAILED at ({:.1},{:.1},{:.1})",
-                                seg_idx, t, sample.x, sample.y, sample.z);
-                            continue;
-                        }
+                        Err(_) => continue,
                     };
-
-                diag_samples += 1;
 
                 match query.find_distance_to_wall(poly_ref, on_surface, max_radius, filter) {
                     Ok((hit_dist, _hit_pos, hit_normal)) => {
                         if hit_dist < clearance {
-                            diag_near_wall += 1;
                             // Segment passes too close to a wall — insert offset waypoint
                             let push_dist = clearance - hit_dist;
                             let candidate = Vec3::new(
@@ -819,39 +802,15 @@ pub fn apply_wall_clearance(
                                         };
 
                                         if forward_ok && reverse_ok {
-                                            diag_pushed += 1;
-                                            tracing::info!("[wall_clearance] seg={} PUSH OK: wall_dist={:.2}, push={:.2}, normal=({:.2},{:.2}), from=({:.1},{:.1},{:.1}) to=({:.1},{:.1},{:.1})",
-                                                seg_idx, hit_dist, push_dist, hit_normal.x, hit_normal.y,
-                                                on_surface.x, on_surface.y, on_surface.z,
-                                                snapped.x, snapped.y, snapped.z);
                                             result.push(snapped);
-                                        } else {
-                                            diag_rejected_raycast += 1;
-                                            tracing::info!("[wall_clearance] seg={} REJECT raycast: fwd={} rev={}, wall_dist={:.2}, from=({:.1},{:.1},{:.1}) to=({:.1},{:.1},{:.1})",
-                                                seg_idx, forward_ok, reverse_ok, hit_dist,
-                                                on_surface.x, on_surface.y, on_surface.z,
-                                                snapped.x, snapped.y, snapped.z);
                                         }
-                                    } else {
-                                        diag_rejected_drift += 1;
-                                        tracing::info!("[wall_clearance] seg={} REJECT drift: snap drifted {:.2} yd (limit {:.2})",
-                                            seg_idx, snapped.distance_2d(&candidate), clearance);
                                     }
                                 }
-                                Err(_) => {
-                                    diag_rejected_snap += 1;
-                                    tracing::info!("[wall_clearance] seg={} REJECT snap: candidate ({:.1},{:.1},{:.1}) not on navmesh",
-                                        seg_idx, candidate.x, candidate.y, candidate.z);
-                                }
+                                Err(_) => {}
                             }
-                        } else {
-                            diag_no_wall += 1;
                         }
                     }
-                    Err(_) => {
-                        tracing::info!("[wall_clearance] seg={} find_distance_to_wall FAILED at ({:.1},{:.1},{:.1})",
-                            seg_idx, on_surface.x, on_surface.y, on_surface.z);
-                    }
+                    Err(_) => {}
                 }
             }
         }
@@ -867,10 +826,6 @@ pub fn apply_wall_clearance(
 
     // Always keep end point as-is
     result.push(*waypoints.last().unwrap());
-
-    tracing::info!("[wall_clearance] DONE: {} in → {} out | samples={} near_wall={} pushed={} | reject: snap={} drift={} raycast={} | far_from_wall={}",
-        waypoints.len(), result.len(), diag_samples, diag_near_wall, diag_pushed,
-        diag_rejected_snap, diag_rejected_drift, diag_rejected_raycast, diag_no_wall);
 
     result
 }
@@ -903,9 +858,6 @@ fn try_push_from_wall(
                 on_surface.z,
             );
 
-            tracing::info!("[try_push] wp=({:.1},{:.1},{:.1}) wall_dist={:.2} push={:.2} normal=({:.2},{:.2})",
-                wp.x, wp.y, wp.z, hit_dist, push_dist, hit_normal.x, hit_normal.y);
-
             if let Ok((snap_ref, snapped)) =
                 query.find_nearest_poly(candidate, *snap_extents, filter)
             {
@@ -932,30 +884,15 @@ fn try_push_from_wall(
                             .map(|(d, _, _)| d >= hit_dist)
                             .unwrap_or(false);
                         if still_ok {
-                            tracing::info!("[try_push] ACCEPTED: ({:.1},{:.1},{:.1}) → ({:.1},{:.1},{:.1})",
-                                wp.x, wp.y, wp.z, snapped.x, snapped.y, snapped.z);
                             return snapped;
-                        } else {
-                            tracing::info!("[try_push] REJECT still_ok: pushed closer to different wall");
                         }
-                    } else {
-                        tracing::info!("[try_push] REJECT raycast: fwd={} rev={}", forward_ok, reverse_ok);
                     }
-                } else {
-                    tracing::info!("[try_push] REJECT drift: {:.2} yd", snapped.distance_2d(&candidate));
                 }
             }
             wp // push failed, keep original
         }
-        Ok((hit_dist, _, _)) => {
-            tracing::info!("[try_push] wp=({:.1},{:.1},{:.1}) far_from_wall: dist={:.2} >= clearance={:.2}",
-                wp.x, wp.y, wp.z, hit_dist, clearance);
-            wp
-        }
-        Err(_) => {
-            tracing::info!("[try_push] wp=({:.1},{:.1},{:.1}) find_distance_to_wall FAILED", wp.x, wp.y, wp.z);
-            wp
-        }
+        Ok(_) => wp,
+        Err(_) => wp,
     }
 }
 

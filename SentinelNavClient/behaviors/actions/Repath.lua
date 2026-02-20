@@ -32,7 +32,10 @@ return function(nav_service, movement_service, obstacle_service, event_bus)
                 bb:set("request.pending", false)
                 bb:clear("request.result")
                 bb:clear("request.error")
-                event_bus:emit(Events.REPATH_COMPLETED, { success = false })
+                event_bus:emit(Events.REPATH_COMPLETED, {
+                    success = false,
+                    error = err or "repath failed",
+                })
                 return BT.FAILURE
             end
             return BT.RUNNING
@@ -42,7 +45,13 @@ return function(nav_service, movement_service, obstacle_service, event_bus)
         obstacle_service:prune(bb:get("player.position"))
         local start = bb:get("player.position")
         local dest = bb:get("path.destination")
-        if not start or not dest then return BT.FAILURE end
+        if not start or not dest then
+            event_bus:emit(Events.REPATH_COMPLETED, {
+                success = false,
+                error = "missing start or destination",
+            })
+            return BT.FAILURE
+        end
 
         bb:set("request.pending", true)
         bb:clear("request.result")
