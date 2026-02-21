@@ -56,6 +56,32 @@ local function run()
     T.assert_true(target ~= nil and target:get_name() == "NearLowHp", "target scoring should be deterministic")
     T.assert_eq(bb:get("combat.enemy_count", 0), 1, "nearby enemy count should be populated for rotation aoe routing")
 
+    local neutral_attackable = T.mock_object({
+        name = "NeutralAttackable",
+        level = 1,
+        health = 100,
+        max_health = 100,
+        position = { x = 4, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = false,
+    })
+    local non_engageable = T.mock_object({
+        name = "NonEngageable",
+        level = 1,
+        health = 100,
+        max_health = 100,
+        position = { x = 6, y = 0, z = 0 },
+        can_attack = false,
+        is_enemy = false,
+    })
+
+    core.object_manager.get_visible_objects = function()
+        return { non_engageable, neutral_attackable }
+    end
+    local target2, err2 = targeting:acquire_target()
+    T.assert_true(target2 ~= nil and target2:get_name() == "NeutralAttackable",
+        "targeting should include neutral but attackable mobs (starter-zone compatibility)")
+
     return {
         sc007_target_scoring = true,
     }

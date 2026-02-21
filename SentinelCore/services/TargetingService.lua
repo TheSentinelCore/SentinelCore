@@ -81,6 +81,28 @@ end
 ---@param unit game_object
 ---@param player game_object
 ---@return boolean
+local function can_engage(unit, player)
+    local player_can_attack = safe_method(player, "can_attack", unit)
+    local unit_can_attack = safe_method(unit, "can_attack", player)
+    local player_enemy_with = safe_method(player, "is_enemy_with", unit)
+    local unit_enemy_with = safe_method(unit, "is_enemy_with", player)
+
+    -- Different mob families/expansions can report hostility flags inconsistently.
+    -- Allow engagement if any reliable attackability/hostility signal is positive.
+    if player_can_attack == true
+        or unit_can_attack == true
+        or player_enemy_with == true
+        or unit_enemy_with == true then
+        return true
+    end
+
+    return false
+end
+
+---@private
+---@param unit game_object
+---@param player game_object
+---@return boolean
 local function is_valid_target(unit, player)
     if not unit then
         return false
@@ -97,10 +119,7 @@ local function is_valid_target(unit, player)
     if unit == player then
         return false
     end
-    if safe_method(player, "can_attack", unit) ~= true then
-        return false
-    end
-    if safe_method(player, "is_enemy_with", unit) ~= true then
+    if not can_engage(unit, player) then
         return false
     end
     return true
