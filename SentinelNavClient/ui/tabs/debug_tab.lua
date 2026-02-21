@@ -22,6 +22,18 @@ local LAYOUT = AstroUI.LAYOUT
 
 local DebugTab = {}
 
+local TOOLTIPS = {
+    avoid_zone_add = "Adds a temporary avoidance zone at your current player position.",
+    avoid_zone_clear = "Clears all remembered avoidance zones.",
+    waypoint_add = "Appends your current player position to the waypoint list.",
+    waypoint_clear = "Stops navigation and clears all waypoints and preview state.",
+    preview_generate = "Builds a preview path for supported modes without starting movement.",
+    mode_start = "Starts the selected debug mode with current waypoint inputs.",
+    mode_stop = "Stops active debug navigation immediately.",
+    mode_selector = "Cycles the debug action mode used by Start/Query.",
+    reset_defaults = "Resets all NavClient settings in every tab back to defaults.",
+}
+
 -- Module-level state
 local _waypoints = {}
 local _nav_active = false
@@ -257,12 +269,15 @@ local function generate_preview(mode_idx, client, waypoints, signature, auto)
 end
 
 -- Helper: render a clickable button, returns (clicked, next_y)
-local function render_button(window, colors, x, y, w, h, label, enabled)
+local function render_button(window, colors, x, y, w, h, label, enabled, ui_ctx, tooltip)
     enabled = enabled ~= false
     local btn_start = vec2.new(x, y)
     local btn_end = vec2.new(x + w, y + h)
     local hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
     window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
+    if ui_ctx and tooltip and hovered then
+        ui_ctx._tooltip = tooltip
+    end
 
     local bg = enabled and (hovered and lighten_color(colors.primary_accent, 15) or colors.primary_accent) or colors.checkbox_inactive
     window:render_rect_filled(btn_start, btn_end, bg, 6)
@@ -538,6 +553,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
         t:slider_list({
             elements = {
                 { element = menu.log_severity, label = "Severity", min = M.log_severity.min, max = M.log_severity.max,
+                  step = 1, integer = true, use_stepper = true,
                   tooltip = "Minimum severity: 0=Error, 1=Warn, 2=Info, 3=Debug" },
             }
         })
@@ -616,7 +632,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
 
                 -- Button row: Add Zone Here / Clear Zones
                 local clicked_add_zone = render_button(window, colors, x, y_offset,
-                    btn_w, btn_h, "Add Zone Here")
+                    btn_w, btn_h, "Add Zone Here", true, self, TOOLTIPS.avoid_zone_add)
                 if clicked_add_zone then
                     local player = core.object_manager.get_local_player()
                     if player then
@@ -626,7 +642,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
                 end
 
                 local clicked_clear_zones = render_button(window, colors, x + btn_w + 4, y_offset,
-                    btn_w, btn_h, "Clear Zones", #zones > 0)
+                    btn_w, btn_h, "Clear Zones", #zones > 0, self, TOOLTIPS.avoid_zone_clear)
                 if clicked_clear_zones then
                     obstacle:clear()
                     core.log("[SentinelNavClient Debug] Cleared all avoid zones")
@@ -689,6 +705,9 @@ function DebugTab.register(ui, menu, client, reset_mappings)
                     menu.debug_mode:set(mode_idx % #MODES)  -- cycles 0..12
                     clear_preview()
                 end
+                if window:is_mouse_hovering_rect(box_start, box_end) then
+                    self._tooltip = TOOLTIPS.mode_selector
+                end
 
                 y_offset = y_offset + box_h + 6
 
@@ -726,7 +745,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
 
                 -- Button row 1: Add Here / Clear All
                 local clicked_add = render_button(window, colors, x, y_offset,
-                    btn_w, btn_h, "Add Here")
+                    btn_w, btn_h, "Add Here", true, self, TOOLTIPS.waypoint_add)
                 if clicked_add then
                     local player = core.object_manager.get_local_player()
                     if player then
@@ -737,7 +756,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
                 end
 
                 local clicked_clear = render_button(window, colors, x + btn_w + 4, y_offset,
-                    btn_w, btn_h, "Clear All")
+                    btn_w, btn_h, "Clear All", true, self, TOOLTIPS.waypoint_clear)
                 if clicked_clear then
                     _waypoints = {}
                     _nav_active = false
@@ -758,7 +777,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
 
                 local btn3_w = (content_width - 8) / 3
                 local clicked_generate = render_button(window, colors, x, y_offset,
-                    btn3_w, btn_h, "Generate Path", generate_enabled)
+                    btn3_w, btn_h, "Generate Path", generate_enabled, self, TOOLTIPS.preview_generate)
                 if clicked_generate and client then
                     local sig = build_preview_signature(mode_idx, client, _waypoints)
                     if sig then
@@ -768,7 +787,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
 
                 local start_label = mode.query and "Query" or "Start"
                 local clicked_start = render_button(window, colors, x + btn3_w + 4, y_offset,
-                    btn3_w, btn_h, start_label, start_enabled)
+                    btn3_w, btn_h, start_label, start_enabled, self, TOOLTIPS.mode_start)
                 if clicked_start and client then
                     if not mode.query and _preview.active and _preview.mode_idx == mode_idx and _preview.waypoints and #_preview.waypoints > 0 then
                         _nav_active = true
@@ -787,7 +806,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
                 end
 
                 local clicked_stop = render_button(window, colors, x + (btn3_w * 2) + 8, y_offset,
-                    btn3_w, btn_h, "Stop", _nav_active)
+                    btn3_w, btn_h, "Stop", _nav_active, self, TOOLTIPS.mode_stop)
                 if clicked_stop and client then
                     client:stop()
                     _nav_active = false
@@ -821,7 +840,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
                 local content_width = window_size.x - (2 * LAYOUT.padding_side)
 
                 local clicked = render_button(window, colors, x, y_offset,
-                    content_width, 26, "Reset All Defaults")
+                    content_width, 26, "Reset All Defaults", true, self, TOOLTIPS.reset_defaults)
                 if clicked then
                     for _, mappings in pairs(reset_mappings) do
                         Defaults.reset(mappings)

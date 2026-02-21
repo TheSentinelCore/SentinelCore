@@ -2,6 +2,37 @@ local Helpers = require("lib/Helpers")
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
 
+---@private
+---@param obj any
+---@param method string
+---@param ... any
+---@return any
+local function safe_method(obj, method, ...)
+    if not obj then
+        return nil
+    end
+    local fn = obj[method]
+    if type(fn) ~= "function" then
+        return nil
+    end
+    local ok, value = pcall(fn, obj, ...)
+    if not ok then
+        return nil
+    end
+    return value
+end
+
+---@private
+---@param target game_object|nil
+---@return string
+local function safe_target_name(target)
+    local name = safe_method(target, "get_name")
+    if type(name) == "string" and name ~= "" then
+        return name
+    end
+    return "unknown"
+end
+
 ---@class CombatService
 ---@field private _event_bus EventBus
 ---@field private _blackboard Blackboard
@@ -47,6 +78,50 @@ function CombatService:is_active()
     return self._state == "pull" or self._state == "combat"
 end
 
+---@return boolean
+---@return string|nil
+function CombatService:run_maintenance()
+    if self:is_active() then
+        return false, nil
+    end
+    if not self._rotation or not self._rotation.tick_maintenance_once then
+        return false, nil
+    end
+
+    local ok_tick, executed, err = pcall(self._rotation.tick_maintenance_once, self._rotation)
+    if not ok_tick then
+        return false, ErrorCodes.ROTATION_UNAVAILABLE
+    end
+    if executed == true then
+        return true, nil
+    end
+    if err == ErrorCodes.CAST_GUARD_BLOCKED or err == ErrorCodes.ROTATION_UNAVAILABLE then
+        return false, nil
+    end
+    return false, err
+end
+
+---@return boolean
+function CombatService:should_hold_for_maintenance()
+    if self:is_active() then
+        return false
+    end
+    if not self._rotation or not self._rotation.should_hold_maintenance then
+        return false
+    end
+
+    local ok, hold = pcall(self._rotation.should_hold_maintenance, self._rotation)
+    if not ok or hold ~= true then
+        return false
+    end
+
+    if self._nav and self._nav.stop then
+        pcall(self._nav.stop, self._nav)
+    end
+
+    return true
+end
+
 ---@return string
 function CombatService:get_state()
     return self._state
@@ -65,6 +140,10 @@ function CombatService:start(target)
         return false, ErrorCodes.TARGET_NOT_FOUND
     end
 
+    if not self:_target_valid(target) then
+        return false, ErrorCodes.TARGET_NOT_FOUND
+    end
+
     local now = (core and core.time and core.time()) or 0
     self._active_target = target
     self._blackboard:set("combat.target", target)
@@ -76,7 +155,7 @@ function CombatService:start(target)
 
     self._event_bus:emit(Events.PULL_STARTED, {
         timestamp = now,
-        target_name = target.get_name and target:get_name() or "unknown",
+        target_name = safe_target_name(target),
     })
 
     return true, nil
@@ -93,12 +172,25 @@ end
 ---@param target game_object
 ---@return boolean
 function CombatService:_target_valid(target)
-    if not target or not target.is_valid or not target:is_valid() then
+    if not target then
         return false
     end
-    if target:is_dead() or target:is_ghost() then
+
+    local valid = safe_method(target, "is_valid")
+    if valid ~= true then
         return false
     end
+
+    local dead = safe_method(target, "is_dead")
+    if dead == nil or dead == true then
+        return false
+    end
+
+    local ghost = safe_method(target, "is_ghost")
+    if ghost == nil or ghost == true then
+        return false
+    end
+
     return true
 end
 
@@ -107,7 +199,7 @@ end
 ---@return number
 function CombatService:_distance_to_target(target)
     local player_pos = self._blackboard:get("player.position")
-    local target_pos = target and target.get_position and target:get_position() or nil
+    local target_pos = safe_method(target, "get_position")
     return Helpers.distance_3d(player_pos, target_pos)
 end
 
@@ -122,22 +214,34 @@ function CombatService:_execute_pull(target)
         return false, ErrorCodes.PULL_FAILED
     end
 
-    local pull_profile = self._rotation:get_pull_profile()
+    local pull_profile = nil
+    local ok_profile, resolved = pcall(self._rotation.get_pull_profile, self._rotation)
+    if ok_profile and type(resolved) == "table" then
+        pull_profile = resolved
+    else
+        pull_profile = {}
+    end
     local pull_range = tonumber(pull_profile.max_pull_range) or 30
     local distance = self:_distance_to_target(target)
 
     if distance > pull_range then
-        local target_pos = target:get_position()
+        local target_pos = safe_method(target, "get_position")
+        if not target_pos then
+            return false, ErrorCodes.TARGET_LOST
+        end
         self._nav:move_to(target_pos)
         return true, nil
     end
 
     if core and core.input and core.input.set_target then
-        core.input.set_target(target)
+        pcall(core.input.set_target, target)
     end
 
     if pull_profile.pull_spell_id then
-        local ok, err = self._rotation:tick_once()
+        local ok_call, ok, err = pcall(self._rotation.tick_once, self._rotation)
+        if not ok_call then
+            return false, ErrorCodes.ROTATION_UNAVAILABLE
+        end
         if not ok and err ~= ErrorCodes.CAST_GUARD_BLOCKED then
             return false, err
         end
@@ -160,7 +264,10 @@ function CombatService:update()
 
     local target = self._active_target
     if not target then
-        target = self._targeting:get_target()
+        local ok_get, resolved = pcall(self._targeting.get_target, self._targeting)
+        if ok_get then
+            target = resolved
+        end
         self._active_target = target
     end
 
@@ -174,13 +281,25 @@ function CombatService:update()
         return false, self._last_error
     end
 
-    if target:is_dead() then
+    local target_dead = safe_method(target, "is_dead")
+    if target_dead == true then
+        self._blackboard:set("loot.pending_target", target)
         self._event_bus:emit(Events.KILL_CONFIRMED, {
             timestamp = now,
-            target_name = target:get_name(),
+            target_name = safe_target_name(target),
         })
         self:reset()
         return true, nil
+    end
+
+    if target_dead == nil then
+        self._last_error = ErrorCodes.TARGET_LOST
+        self._event_bus:emit(Events.COMBAT_FAILED, {
+            timestamp = now,
+            error_code = self._last_error,
+        })
+        self:reset()
+        return false, self._last_error
     end
 
     if not self:_target_valid(target) then
@@ -218,7 +337,16 @@ function CombatService:update()
     end
 
     if self._state == "combat" then
-        local ok, err = self._rotation:tick_once()
+        local ok_call, ok, err = pcall(self._rotation.tick_once, self._rotation)
+        if not ok_call then
+            self._last_error = ErrorCodes.ROTATION_UNAVAILABLE
+            self._event_bus:emit(Events.COMBAT_FAILED, {
+                timestamp = now,
+                error_code = self._last_error,
+            })
+            self:reset()
+            return false, self._last_error
+        end
         if not ok and err ~= ErrorCodes.CAST_GUARD_BLOCKED then
             self._last_error = err
             self._event_bus:emit(Events.COMBAT_FAILED, {

@@ -8,6 +8,25 @@ local OBJECT_UNWRAP_KEYS = {
     "game_object",
 }
 
+---@param obj any
+---@param method string
+---@param ... any
+---@return any
+local function safe_method(obj, method, ...)
+    if not obj then
+        return nil
+    end
+    local fn = obj[method]
+    if type(fn) ~= "function" then
+        return nil
+    end
+    local ok, value = pcall(fn, obj, ...)
+    if not ok then
+        return nil
+    end
+    return value
+end
+
 ---@param value any
 ---@return any
 local function unwrap_game_object(value)
@@ -63,22 +82,25 @@ end
 ---@param player game_object
 ---@return boolean
 local function is_valid_target(unit, player)
-    if not unit or not unit.is_valid or not unit:is_valid() then
+    if not unit then
         return false
     end
-    if not unit.is_unit or not unit:is_unit() then
+    if safe_method(unit, "is_valid") ~= true then
         return false
     end
-    if unit:is_dead() or unit:is_ghost() then
+    if safe_method(unit, "is_unit") ~= true then
+        return false
+    end
+    if safe_method(unit, "is_dead") == true or safe_method(unit, "is_ghost") == true then
         return false
     end
     if unit == player then
         return false
     end
-    if not player:can_attack(unit) then
+    if safe_method(player, "can_attack", unit) ~= true then
         return false
     end
-    if not player:is_enemy_with(unit) then
+    if safe_method(player, "is_enemy_with", unit) ~= true then
         return false
     end
     return true
@@ -93,18 +115,21 @@ function TargetingService:score_target(target)
     end
 
     local player_pos = self._blackboard:get("player.position")
-    local target_pos = target:get_position()
+    local target_pos = safe_method(target, "get_position")
+    if not target_pos then
+        return -math.huge
+    end
     local distance = Helpers.distance_3d(player_pos, target_pos)
 
-    local target_hp = math.max(1, tonumber(target:get_health()) or 1)
-    local target_max_hp = math.max(1, tonumber(target:get_max_health()) or target_hp)
+    local target_hp = math.max(1, tonumber(safe_method(target, "get_health")) or 1)
+    local target_max_hp = math.max(1, tonumber(safe_method(target, "get_max_health")) or target_hp)
     local hp_ratio = target_hp / target_max_hp
 
-    local player_level = tonumber(player:get_level()) or 1
-    local target_level = tonumber(target:get_level()) or player_level
+    local player_level = tonumber(safe_method(player, "get_level")) or 1
+    local target_level = tonumber(safe_method(target, "get_level")) or player_level
     local level_delta = target_level - player_level
 
-    local classification = tonumber(target.get_classification and target:get_classification() or 0) or 0
+    local classification = tonumber(safe_method(target, "get_classification")) or 0
     local elite_risk = (classification == 1 or classification == 2 or classification == 3) and 1.0 or 0.0
 
     local weights = self._cfg.score_weights or {}
@@ -121,7 +146,7 @@ function TargetingService:score_target(target)
     local score = (kill_speed * w_kill) + (loot_value * w_loot) - (travel_cost * w_travel) - (risk * w_risk)
 
     self._event_bus:emit(Events.TARGET_SCORE_DEBUG, {
-        target_id = target.get_npc_id and target:get_npc_id() or 0,
+        target_id = tonumber(safe_method(target, "get_npc_id")) or 0,
         score = score,
         kill_speed = kill_speed,
         loot_value = loot_value,
@@ -136,11 +161,17 @@ end
 ---@return string|nil
 function TargetingService:acquire_target()
     local player = unwrap_game_object(self._blackboard:get("player.object"))
-    if not player then
+    if not player or safe_method(player, "is_valid") ~= true then
         return nil, ErrorCodes.TARGET_NOT_FOUND
     end
 
-    local objects = core and core.object_manager and core.object_manager.get_visible_objects and core.object_manager.get_visible_objects() or {}
+    local objects = {}
+    if core and core.object_manager and core.object_manager.get_visible_objects then
+        local ok_objects, value = pcall(core.object_manager.get_visible_objects)
+        if ok_objects and type(value) == "table" then
+            objects = value
+        end
+    end
     local radius = self:get_adaptive_radius()
     local player_pos = self._blackboard:get("player.position")
 
@@ -151,7 +182,8 @@ function TargetingService:acquire_target()
     for i = 1, #objects do
         local candidate = unwrap_game_object(objects[i])
         if is_valid_target(candidate, player) then
-            local dist = Helpers.distance_3d(player_pos, candidate:get_position())
+            local candidate_pos = safe_method(candidate, "get_position")
+            local dist = Helpers.distance_3d(player_pos, candidate_pos)
             if dist <= radius then
                 if dist <= 10.0 then
                     nearby_combat_count = nearby_combat_count + 1
@@ -177,8 +209,8 @@ function TargetingService:acquire_target()
     self._blackboard:set("combat.enemy_count", math.max(1, nearby_combat_count))
     self._event_bus:emit(Events.TARGET_ACQUIRED, {
         timestamp = (core and core.time and core.time()) or 0,
-        target_name = best_target:get_name(),
-        target_level = best_target:get_level(),
+        target_name = tostring(safe_method(best_target, "get_name") or "unknown"),
+        target_level = tonumber(safe_method(best_target, "get_level")) or 0,
         score = best_score,
     })
 
@@ -187,8 +219,8 @@ end
 
 ---@return game_object|nil
 function TargetingService:get_target()
-    if self._current_target and self._current_target.is_valid and self._current_target:is_valid() then
-        if not self._current_target:is_dead() then
+    if self._current_target and safe_method(self._current_target, "is_valid") == true then
+        if safe_method(self._current_target, "is_dead") ~= true then
             return self._current_target
         end
     end

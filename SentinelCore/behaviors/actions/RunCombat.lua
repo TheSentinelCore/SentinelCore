@@ -19,13 +19,30 @@ return function(targeting, combat)
             end
 
             if combat:get_state() == "idle" then
-                local dead_target = bb:get("combat.target")
-                if dead_target and dead_target.is_dead and dead_target:is_dead() then
-                    bb:set("loot.pending_target", dead_target)
-                end
                 return BT.SUCCESS
             end
 
+            return BT.RUNNING
+        end
+
+        if combat.run_maintenance then
+            local maintained, maintenance_err = combat:run_maintenance()
+            if maintenance_err then
+                bb:set("core.fail_reason", maintenance_err)
+                return BT.FAILURE
+            end
+            if maintained then
+                if state_machine then
+                    state_machine:set_substate("running.grind.combat")
+                end
+                return BT.RUNNING
+            end
+        end
+
+        if combat.should_hold_for_maintenance and combat:should_hold_for_maintenance() then
+            if state_machine then
+                state_machine:set_substate("running.grind.combat")
+            end
             return BT.RUNNING
         end
 

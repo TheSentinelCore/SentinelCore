@@ -90,6 +90,7 @@ function TestUtil.install_core_stub(overrides)
         input = {
             cast_target_spell = function() return true end,
             set_target = function() return true end,
+            use_item = function() return true end,
             loot_object = function() end,
             loot_item = function() end,
             close_loot = function() end,
@@ -156,6 +157,8 @@ function TestUtil.mock_object(props)
         _level = props.level or 1,
         _health = props.health or 100,
         _max_health = props.max_health or 100,
+        _mana = props.mana or 100,
+        _max_mana = props.max_mana or 100,
         _class_id = props.class_id or 2,
         _spec_id = props.spec_id or 0,
         _faction_id = props.faction_id or 0,
@@ -184,6 +187,8 @@ function TestUtil.mock_object(props)
     function obj:get_level() return self._level end
     function obj:get_health() return self._health end
     function obj:get_max_health() return self._max_health end
+    function obj:get_power() return self._mana end
+    function obj:get_max_power() return self._max_mana end
     function obj:get_class() return self._class_id end
     function obj:get_specialization_id() return self._spec_id end
     function obj:get_faction_id() return self._faction_id end

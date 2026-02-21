@@ -1,6 +1,37 @@
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
 
+---@private
+---@param obj any
+---@param method string
+---@param ... any
+---@return any
+local function safe_method(obj, method, ...)
+    if not obj then
+        return nil
+    end
+    local fn = obj[method]
+    if type(fn) ~= "function" then
+        return nil
+    end
+    local ok, value = pcall(fn, obj, ...)
+    if not ok then
+        return nil
+    end
+    return value
+end
+
+---@private
+---@param target game_object|nil
+---@return string
+local function safe_target_name(target)
+    local name = safe_method(target, "get_name")
+    if type(name) == "string" and name ~= "" then
+        return name
+    end
+    return "unknown"
+end
+
 ---@class LootService
 ---@field private _event_bus EventBus
 ---@field private _blackboard Blackboard
@@ -51,7 +82,7 @@ end
 ---@return boolean
 ---@return string|nil
 function LootService:start(target)
-    if not target then
+    if not target or safe_method(target, "is_valid") ~= true then
         return false, ErrorCodes.LOOT_FAILED
     end
 
@@ -65,7 +96,7 @@ function LootService:start(target)
 
     self._event_bus:emit(Events.LOOT_STARTED, {
         timestamp = now,
-        target_name = target.get_name and target:get_name() or "unknown",
+        target_name = safe_target_name(target),
     })
 
     return true, nil
@@ -100,7 +131,7 @@ function LootService:update()
         return false, self._last_error
     end
 
-    if not self._target or not self._target.is_valid or not self._target:is_valid() then
+    if not self._target or safe_method(self._target, "is_valid") ~= true then
         self._state = "failed"
         self._last_error = ErrorCodes.LOOT_FAILED
         self._event_bus:emit(Events.LOOT_FAILED, {
@@ -114,7 +145,7 @@ function LootService:update()
         self._attempts = self._attempts + 1
         self._last_attempt_at = now
         if core and core.input and core.input.loot_object then
-            core.input.loot_object(self._target)
+            pcall(core.input.loot_object, self._target)
         end
     end
 
@@ -126,11 +157,11 @@ function LootService:update()
     if loot_count > 0 then
         if core and core.input and core.input.loot_item then
             for i = 1, loot_count do
-                core.input.loot_item(i)
+                pcall(core.input.loot_item, i)
             end
         end
         if core and core.input and core.input.close_loot then
-            core.input.close_loot()
+            pcall(core.input.close_loot)
         end
 
         self._state = "completed"

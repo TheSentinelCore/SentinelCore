@@ -20,3 +20,5 @@ SentinelHeightQuery
 docs/plans
 SentinelPlayground
 ext*
+SentinelGather
+SentinelFollower

@@ -1,4 +1,5 @@
 local T = require("tests/TestUtil")
+local ErrorCodes = require("events/ErrorCodes")
 
 local function run()
     local player = T.mock_object({ position = { x = 0, y = 0, z = 0 } })
@@ -45,9 +46,29 @@ local function run()
     target._dead = true
     local u2 = combat:update()
     T.assert_true(u2 == true and combat:get_state() == "idle", "combat should exit on kill")
+    T.assert_true(bb:get("loot.pending_target") == target, "combat kill should hand off loot target")
+
+    local stale_target = {
+        is_valid = function()
+            error("Invalid game object!")
+        end,
+        is_dead = function()
+            error("Invalid game object!")
+        end,
+    }
+    combat._state = "combat"
+    combat._active_target = stale_target
+    combat._started_at = (core and core.time and core.time()) or 0
+    local safe_ok, update_ok, update_err = pcall(function()
+        return combat:update()
+    end)
+    T.assert_true(safe_ok == true, "combat update must not throw on stale object")
+    T.assert_true(update_ok == false and update_err == ErrorCodes.TARGET_LOST,
+        "stale object should fail closed with TARGET_LOST")
 
     return {
         sc009_combat_loop = true,
+        sc009_combat_stale_target_guard = true,
     }
 end
 

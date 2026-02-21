@@ -30,6 +30,123 @@ local _client = nil          -- SentinelNavClient Client instance
 local _menu = nil            -- menu elements table
 local _visualizer = nil      -- Visualizer instance
 local _reset_mappings = {}   -- per-tab reset mappings keyed by tab ID
+local _health_cache = {
+    inflight = false,
+    last_check = 0,
+    server_up = true,
+    status = "ok",
+    version = "-",
+    uptime_secs = 0,
+    loaded_maps = 0,
+    last_error = nil,
+}
+
+local HEALTH_REFRESH_INTERVAL = 2.5
+
+local UI_TOOLTIPS = {
+    control_center = "Live navigation state and dependency health summary for SentinelNavClient.",
+    show_advanced = "Toggles advanced controls in Movement, Pathfinding, and Obstacles tabs.",
+    nav_server = "Periodic health check against SentinelNavServer.",
+    path_progress = "Current active path waypoint progress and destination distance.",
+    destination = "Active move target and current distance from player position.",
+}
+
+local function lighten_color(base_color, amount)
+    local r, g, b, a = base_color:get()
+    return color.new(
+        math.min(255, r + amount),
+        math.min(255, g + amount),
+        math.min(255, b + amount),
+        a
+    )
+end
+
+local function attach_tooltip(ui, window, start_pos, end_pos, hint)
+    if not hint or hint == "" then
+        return
+    end
+    if ui and window:is_mouse_hovering_rect(start_pos, end_pos) then
+        ui._tooltip = hint
+    end
+end
+
+local function render_help_badge(ui, window, colors, x, y, hint)
+    local label = "?"
+    local text_size = window:get_text_size(label)
+    local pad_x = 5
+    local pad_y = 1
+    local w = text_size.x + (pad_x * 2)
+    local h = text_size.y + (pad_y * 2)
+    local start_pos = vec2.new(x, y)
+    local end_pos = vec2.new(x + w, y + h)
+    local hovered = window:is_mouse_hovering_rect(start_pos, end_pos)
+    window:is_mouse_hovering_rect_block_movement(start_pos, end_pos)
+
+    local bg = hovered and lighten_color(colors.primary_accent, 10) or colors.section_bg
+    local fg = hovered and colors.text_primary or colors.text_secondary
+    window:render_rect_filled(start_pos, end_pos, bg, 6)
+    window:render_rect(start_pos, end_pos, colors.section_border, 6, 1)
+    window:render_text(
+        enums.window_enums.font_id.FONT_SMALL,
+        vec2.new(x + pad_x, y + pad_y),
+        fg,
+        label
+    )
+    attach_tooltip(ui, window, start_pos, end_pos, hint)
+end
+
+local function render_status_card(window, colors, x, y, width, label, value, state)
+    local h = 44
+    local bg = colors.section_bg
+    if state == "good" then
+        bg = color.new(48, 140, 88, 170)
+    elseif state == "warn" then
+        bg = color.new(170, 120, 30, 170)
+    elseif state == "bad" then
+        bg = color.new(160, 65, 65, 170)
+    end
+
+    window:render_rect_filled(vec2.new(x, y), vec2.new(x + width, y + h), bg, 6)
+    window:render_rect(vec2.new(x, y), vec2.new(x + width, y + h), colors.section_border, 6, 1)
+    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x + 8, y + 6), colors.text_secondary, label)
+    window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG, vec2.new(x + 8, y + 22), colors.text_primary, value)
+    return y + h + 6
+end
+
+local function refresh_health_if_due()
+    if not _client or not _client.health_check then
+        return
+    end
+
+    local now = (core and core.time and core.time()) or 0
+    if _health_cache.inflight then
+        return
+    end
+    if (now - (_health_cache.last_check or 0)) < HEALTH_REFRESH_INTERVAL then
+        return
+    end
+
+    _health_cache.inflight = true
+    _health_cache.last_check = now
+
+    _client:health_check(function(ok, data, err)
+        _health_cache.inflight = false
+        _health_cache.last_check = (core and core.time and core.time()) or now
+        if ok and data then
+            local loaded_maps = data.loaded_maps and #data.loaded_maps or 0
+            _health_cache.server_up = true
+            _health_cache.status = tostring(data.status or "ok")
+            _health_cache.version = tostring(data.version or "-")
+            _health_cache.uptime_secs = tonumber(data.uptime_secs) or 0
+            _health_cache.loaded_maps = loaded_maps
+            _health_cache.last_error = nil
+        else
+            _health_cache.server_up = false
+            _health_cache.status = "down"
+            _health_cache.last_error = tostring(err or "unknown")
+        end
+    end)
+end
 
 --------------------------------------------------------------------------------
 -- Menu element creation
@@ -160,51 +277,87 @@ local function render_advanced_toggle(ui, y_offset)
     local window_size = window:get_size()
     local content_width = window_size.x - (2 * LAYOUT.padding_side)
 
-    local cb_size = LAYOUT.checkbox_size
-    local cb_start = vec2.new(x_start, y_offset)
-    local cb_end   = vec2.new(x_start + cb_size, y_offset + cb_size)
+    local destination = _client and _client.get_destination and _client:get_destination() or nil
+    local path = _client and _client.get_current_path and _client:get_current_path() or nil
+    local path_index = _client and _client.get_path_index and _client:get_path_index() or 0
 
-    local is_on = _menu.show_advanced:get_state()
-
-    -- Checkbox box
-    local cb_bg = is_on and colors.checkbox_active or colors.checkbox_inactive
-    window:render_rect_filled(cb_start, cb_end, cb_bg, 4.0)
-    window:render_rect(cb_start, cb_end, colors.checkbox_border, 4.0, 1.0)
-
-    -- Checkmark
-    if is_on then
-        local pad = 4
-        window:render_rect_filled(
-            vec2.new(x_start + pad, y_offset + pad),
-            vec2.new(x_start + cb_size - pad, y_offset + cb_size - pad),
-            color.white(255), 2.0)
+    local distance_text = "-"
+    local player = core and core.object_manager and core.object_manager.get_local_player and core.object_manager.get_local_player()
+    if player and player.is_valid and player:is_valid() and destination and player.get_position then
+        local pos = player:get_position()
+        if pos and pos.dist_to then
+            distance_text = string.format("%.1f yd", tonumber(pos:dist_to(destination)) or 0)
+        end
     end
 
-    -- Click area (checkbox + label)
-    local label = "Show Advanced"
-    local label_end_x = x_start + cb_size + 8 + window:get_text_size(label).x
-    local click_start = vec2.new(x_start, y_offset)
-    local click_end   = vec2.new(label_end_x, y_offset + cb_size)
-    window:is_mouse_hovering_rect_block_movement(click_start, click_end)
+    local card_gap = 8
+    local cb_size = 14
+    local advanced_label = "Advanced"
+    local advanced_label_w = window:get_text_size(advanced_label).x
+    local advanced_w = cb_size + 6 + advanced_label_w
+    local help_w = window:get_text_size("?").x + 10
+    local control_w = advanced_w + 12 + help_w
+    local cards_width = content_width - control_w - card_gap
+    local card_w = math.floor((cards_width - (card_gap * 2)) / 3)
+    local card_h = 44
 
-    if window:is_rect_clicked(click_start, click_end) then
+    local nav_state = _health_cache.server_up and "good" or "bad"
+    local nav_value = _health_cache.server_up and "Online" or "Offline"
+
+    local path_value = "No Path"
+    local path_state = "warn"
+    if path and #path > 0 then
+        path_value = string.format("%d / %d", math.min(path_index, #path), #path)
+        path_state = "good"
+    end
+
+    local dest_value = destination and distance_text or "No Target"
+    local dest_state = destination and "good" or "warn"
+
+    render_status_card(window, colors, x_start, y_offset, card_w, "Nav Server", nav_value, nav_state)
+    render_status_card(window, colors, x_start + card_w + card_gap, y_offset, card_w, "Path", path_value, path_state)
+    render_status_card(window, colors, x_start + (card_w * 2) + (card_gap * 2), y_offset, card_w, "Destination", dest_value, dest_state)
+    attach_tooltip(ui, window, vec2.new(x_start, y_offset), vec2.new(x_start + card_w, y_offset + card_h), UI_TOOLTIPS.nav_server)
+    attach_tooltip(ui, window, vec2.new(x_start + card_w + card_gap, y_offset), vec2.new(x_start + (card_w * 2) + card_gap, y_offset + card_h), UI_TOOLTIPS.path_progress)
+    attach_tooltip(ui, window, vec2.new(x_start + (card_w * 2) + (card_gap * 2), y_offset), vec2.new(x_start + (card_w * 3) + (card_gap * 2), y_offset + card_h), UI_TOOLTIPS.destination)
+
+    local control_x = x_start + (card_w * 3) + (card_gap * 3)
+    local is_on = _menu.show_advanced:get_state()
+    local cb_y = y_offset + math.floor((card_h - cb_size) / 2)
+    local cb_start = vec2.new(control_x, cb_y)
+    local cb_end = vec2.new(control_x + cb_size, cb_y + cb_size)
+    local cb_bg = is_on and colors.checkbox_active or colors.checkbox_inactive
+    window:render_rect_filled(cb_start, cb_end, cb_bg, 3.0)
+    window:render_rect(cb_start, cb_end, colors.checkbox_border, 3.0, 1.0)
+    if is_on then
+        local pad = 3
+        window:render_rect_filled(
+            vec2.new(control_x + pad, cb_y + pad),
+            vec2.new(control_x + cb_size - pad, cb_y + cb_size - pad),
+            color.white(255),
+            2.0
+        )
+    end
+    window:render_text(
+        enums.window_enums.font_id.FONT_SMALL,
+        vec2.new(control_x + cb_size + 6, cb_y - 1),
+        is_on and colors.text_primary or colors.text_secondary,
+        advanced_label
+    )
+    local adv_click_start = vec2.new(control_x, cb_y)
+    local adv_click_end = vec2.new(control_x + advanced_w, cb_y + cb_size)
+    window:is_mouse_hovering_rect_block_movement(adv_click_start, adv_click_end)
+    attach_tooltip(ui, window, adv_click_start, adv_click_end, UI_TOOLTIPS.show_advanced)
+    if window:is_rect_clicked(adv_click_start, adv_click_end) then
         _menu.show_advanced:set(not is_on)
     end
+    render_help_badge(ui, window, colors, control_x + control_w - help_w, cb_y, UI_TOOLTIPS.control_center)
 
-    -- Label text
-    local label_y = y_offset + (cb_size - window:get_text_size(label).y) / 2
-    window:render_text(enums.window_enums.font_id.FONT_SMALL,
-        vec2.new(x_start + cb_size + 8, label_y),
-        is_on and colors.text_primary or colors.text_secondary, label)
-
-    y_offset = y_offset + cb_size + 6
-
-    -- Separator
+    y_offset = y_offset + card_h + 6
     local sep_start = vec2.new(x_start, y_offset)
-    local sep_end   = vec2.new(x_start + content_width, y_offset + LAYOUT.separator_height)
+    local sep_end = vec2.new(x_start + content_width, y_offset + LAYOUT.separator_height)
     window:render_rect_filled(sep_start, sep_end, colors.separator, 0)
     y_offset = y_offset + 6
-
     return y_offset
 end
 
@@ -296,11 +449,11 @@ function Window.init(client)
     -- Create the AstroUI window
     _ui = AstroUI.new({
         id = "sentinel_nav_client",
-        title = "Sentinel Navigation Client",
-        default_x = 550,
-        default_y = 180,
-        default_w = 480,
-        default_h = 600,
+        title = "Sentinel Navigation Control Center",
+        default_x = 560,
+        default_y = 120,
+        default_w = 760,
+        default_h = 760,
         theme = "apple",
         render_layer = 1,
     })
@@ -398,6 +551,7 @@ end
 ---Called every render frame
 function Window.on_render()
     if not _initialized or not _ui then return end
+    refresh_health_if_due()
     sync_to_client()
     DebugTab.update(_client, _menu)
     _ui:on_render()

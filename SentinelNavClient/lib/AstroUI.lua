@@ -91,6 +91,28 @@ local function lighten_color(base_color, amount)
     )
 end
 
+local function clamp_number(value, min_value, max_value)
+    if value < min_value then return min_value end
+    if value > max_value then return max_value end
+    return value
+end
+
+local function infer_decimals(step)
+    local s = tostring(step or 1)
+    local dot = s:find("%.")
+    if not dot then
+        return 0
+    end
+    local count = #s - dot
+    if count < 0 then
+        return 0
+    end
+    if count > 4 then
+        return 4
+    end
+    return count
+end
+
 -- ============================================================================
 -- COLOR THEMES
 -- ============================================================================
@@ -954,6 +976,9 @@ function RotationSettingsUI:_render_checkbox_grid(section, y_offset)
 
     local columns = section.columns or 2
     local column_width = (content_width - ((columns - 1) * LAYOUT.column_spacing)) / columns
+    local row_height = 20
+    local row_gap = 4
+    local box_size = 14
 
     y_offset = y_offset + LAYOUT.section_padding_top
 
@@ -974,47 +999,41 @@ function RotationSettingsUI:_render_checkbox_grid(section, y_offset)
 
             local x_pos = x_start + (col * (column_width + LAYOUT.column_spacing))
 
-            -- Checkbox rectangle
-            local checkbox_start = vec2.new(x_pos, y_offset)
-            local checkbox_end = vec2.new(x_pos + LAYOUT.checkbox_size, y_offset + LAYOUT.checkbox_size)
+            local row_start = vec2.new(x_pos, y_offset)
+            local row_end = vec2.new(x_pos + column_width, y_offset + row_height)
+            local hovered = self.window:is_mouse_hovering_rect(row_start, row_end)
+            self.window:is_mouse_hovering_rect_block_movement(row_start, row_end)
 
-            -- Hover state
-            local is_hovered = self.window:is_mouse_hovering_rect(checkbox_start, checkbox_end)
+            local row_bg = hovered and lighten_color(self.colors.section_bg, 8) or self.colors.section_bg
+            self.window:render_rect_filled(row_start, row_end, row_bg, 4.0)
 
-            -- Custom Rendering
+            local box_x = x_pos + 4
+            local box_y = y_offset + (row_height - box_size) / 2
+            local checkbox_start = vec2.new(box_x, box_y)
+            local checkbox_end = vec2.new(box_x + box_size, box_y + box_size)
             local checkbox_color = is_checked and self.colors.checkbox_active or self.colors.checkbox_inactive
-            if is_hovered then
-                checkbox_color = lighten_color(checkbox_color, 30)
-            end
+            self.window:render_rect_filled(checkbox_start, checkbox_end, checkbox_color, 3.0)
+            self.window:render_rect(checkbox_start, checkbox_end, self.colors.checkbox_border, 3.0, 1.0)
 
-            self.window:render_rect_filled(checkbox_start, checkbox_end, checkbox_color, 4.0)
-            local cb_border = is_hovered and lighten_color(self.colors.checkbox_border, 30) or self.colors.checkbox_border
-            self.window:render_rect(checkbox_start, checkbox_end, cb_border, 4.0, 1.0)
-
-            -- Checkmark if enabled
             if is_checked then
-                local check_padding = 4
-                local check_start = vec2.new(x_pos + check_padding, y_offset + check_padding)
-                local check_end = vec2.new(x_pos + LAYOUT.checkbox_size - check_padding, y_offset + LAYOUT.checkbox_size - check_padding)
+                local check_padding = 3
+                local check_start = vec2.new(box_x + check_padding, box_y + check_padding)
+                local check_end = vec2.new(box_x + box_size - check_padding, box_y + box_size - check_padding)
                 self.window:render_rect_filled(check_start, check_end, color.white(255), 2.0)
             end
 
-            -- Label
-            local label_x = x_pos + LAYOUT.checkbox_size + 8
-            local label_y = y_offset + (LAYOUT.checkbox_size - self.window:get_text_size(label).y) / 2
+            local label_x = box_x + box_size + 8
+            local label_y = y_offset + (row_height - self.window:get_text_size(label).y) / 2
             local label_color = is_checked and self.colors.text_primary or self.colors.text_secondary
             self.window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(label_x, label_y),
                 label_color, label)
 
             -- INPUT HANDLING
             -- Click → Toggle
-            local row_click_start = vec2.new(x_pos, y_offset)
-            local row_click_end = vec2.new(x_pos + column_width, y_offset + LAYOUT.checkbox_size)
-            self.window:is_mouse_hovering_rect_block_movement(row_click_start, row_click_end)
-            if self.window:is_mouse_hovering_rect(row_click_start, row_click_end) and item.tooltip then
+            if hovered and item.tooltip then
                 self._tooltip = item.tooltip
             end
-            if self.window:is_rect_clicked(row_click_start, row_click_end) then
+            if self.window:is_rect_clicked(row_start, row_end) then
                 pcall(function()
                     if element.set then
                         element:set(not is_checked)
@@ -1028,13 +1047,13 @@ function RotationSettingsUI:_render_checkbox_grid(section, y_offset)
             if col >= columns then
                 col = 0
                 row = row + 1
-                y_offset = y_offset + LAYOUT.element_height + LAYOUT.element_spacing
+                y_offset = y_offset + row_height + row_gap
             end
         end
     end
 
     if col > 0 then
-        y_offset = y_offset + LAYOUT.element_height + LAYOUT.element_spacing
+        y_offset = y_offset + row_height + row_gap
     end
 
     return y_offset + LAYOUT.section_padding_bottom
@@ -1299,99 +1318,185 @@ function RotationSettingsUI:_render_slider_list(section, y_offset)
                 max_value = min_value
             end
 
-            -- Define rectangles
-            local bar_x_start = x_start + label_width
-            local bar_start = vec2.new(bar_x_start, y_offset)
-            local bar_end = vec2.new(bar_x_start + bar_width, y_offset + LAYOUT.slider_bar_height)
+            if item.use_stepper == true then
+                local row_h = 20
+                local btn_w = 24
+                local gap = 4
+                local value_w = 86
+                local step = tonumber(item.step) or 1
+                local decimals = item.decimals
+                if type(decimals) ~= "number" then
+                    decimals = infer_decimals(step)
+                end
+                if decimals < 0 then decimals = 0 end
+                if decimals > 4 then decimals = 4 end
 
-            -- Hover/Press state
-            local is_hovered = self.window:is_mouse_hovering_rect(bar_start, bar_end)
-            self.window:is_mouse_hovering_rect_block_movement(bar_start, bar_end)
+                local is_integer = item.integer == true
+                    or (math.floor(min_value) == min_value and math.floor(max_value) == max_value and math.floor(step) == step and decimals == 0)
 
-            -- Tooltip on row hover
-            local row_hover_start = vec2.new(x_start, y_offset)
-            local row_hover_end = vec2.new(x_start + content_width, y_offset + LAYOUT.slider_bar_height)
-            if self.window:is_mouse_hovering_rect(row_hover_start, row_hover_end) and item.tooltip then
-                self._tooltip = item.tooltip
-            end
-
-            -- Custom Rendering - Label
-            local label_y = y_offset + (LAYOUT.slider_bar_height - self.window:get_text_size(label).y) / 2
-            self.window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x_start, label_y),
-                self.colors.text_primary, label)
-
-            -- Progress bar background
-            local bg_color = is_hovered and lighten_color(self.colors.slider_bg, 15) or self.colors.slider_bg
-            self.window:render_rect_filled(bar_start, bar_end, bg_color, 4.0)
-
-            -- Progress bar fill
-            local fill_progress = max_value > min_value and ((value - min_value) / (max_value - min_value)) or 0
-            local clamped_progress = math.max(0, math.min(1, fill_progress))
-            local fill_width = bar_width * clamped_progress
-            local fill_end = vec2.new(bar_x_start + fill_width, y_offset + LAYOUT.slider_bar_height)
-            self.window:render_rect_filled(bar_start, fill_end, self.colors.slider_fill, 4.0)
-
-            -- Progress bar border
-            local is_active_slider = self._active_slider and self._active_slider.element == element
-            local border_color = is_active_slider and self.colors.primary_accent or self.colors.section_border
-            self.window:render_rect(bar_start, bar_end, border_color, 4.0, 1.0)
-
-            -- Value text
-            local value_text = string.format("%d%s", value, suffix)
-            local value_x = bar_x_start + bar_width + 10
-            local value_y = y_offset + (LAYOUT.slider_bar_height - self.window:get_text_size(value_text).y) / 2
-            self.window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(value_x, value_y),
-                self.colors.text_secondary, value_text)
-
-            -- INPUT HANDLING
-            if is_hovered and is_mouse_clicked_left(self.window) then
-                self.window:block_input_capture()
-
-                local raw_pos = select(1, self:_get_window_local_mouse_pos("raw"))
-                local adjusted_pos = select(1, self:_get_window_local_mouse_pos("adjusted"))
-
-                local function score(pos)
-                    if not pos then
-                        return 1e30
-                    end
-                    local local_x = pos.x - bar_x_start
-                    local dx = 0
-                    if local_x < 0 then
-                        dx = -local_x
-                    elseif local_x > bar_width then
-                        dx = local_x - bar_width
-                    end
-
-                    local dy = 0
-                    if pos.y < bar_start.y then
-                        dy = bar_start.y - pos.y
-                    elseif pos.y > bar_end.y then
-                        dy = pos.y - bar_end.y
-                    end
-
-                    return (dx * dx) + (dy * dy)
+                local row_hover_start = vec2.new(x_start, y_offset)
+                local row_hover_end = vec2.new(x_start + content_width, y_offset + row_h)
+                if self.window:is_mouse_hovering_rect(row_hover_start, row_hover_end) and item.tooltip then
+                    self._tooltip = item.tooltip
                 end
 
-                local use_space = "raw"
-                local chosen_pos = raw_pos
-                if score(adjusted_pos) < score(raw_pos) then
-                    use_space = "adjusted"
-                    chosen_pos = adjusted_pos
+                self.window:render_text(
+                    enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x_start, y_offset + 2),
+                    self.colors.text_primary,
+                    label
+                )
+
+                local bx = x_start + content_width - (btn_w + gap + value_w + gap + btn_w)
+
+                local function draw_step_button(button_x, button_label)
+                    local start = vec2.new(button_x, y_offset)
+                    local finish = vec2.new(button_x + btn_w, y_offset + row_h)
+                    local hovered = self.window:is_mouse_hovering_rect(start, finish)
+                    self.window:is_mouse_hovering_rect_block_movement(start, finish)
+                    local bg = hovered and lighten_color(self.colors.primary_accent, 15) or self.colors.primary_accent
+                    self.window:render_rect_filled(start, finish, bg, 4.0)
+                    local txt = self.window:get_text_size(button_label)
+                    self.window:render_text(
+                        enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(button_x + (btn_w - txt.x) / 2, y_offset + (row_h - txt.y) / 2),
+                        self.colors.text_primary,
+                        button_label
+                    )
+                    return hovered and self.window:is_rect_clicked(start, finish)
                 end
 
-                self._active_slider = {
-                    element = element,
-                    min_value = min_value,
-                    max_value = max_value,
-                    bar_x_start = bar_x_start,
-                    bar_width = bar_width,
-                    last_mouse_pos = chosen_pos,
-                    mouse_space = use_space
-                }
-                self:_apply_active_slider_from_mouse()
-            end
+                local minus_clicked = draw_step_button(bx, "-")
 
-            y_offset = y_offset + LAYOUT.slider_bar_height + LAYOUT.element_spacing + 4
+                local value_text
+                if decimals > 0 then
+                    value_text = string.format("%." .. tostring(decimals) .. "f%s", tonumber(value) or 0, suffix)
+                else
+                    value_text = string.format("%d%s", math.floor((tonumber(value) or 0) + 0.5), suffix)
+                end
+                local tx = bx + btn_w + gap + ((value_w - self.window:get_text_size(value_text).x) / 2)
+                self.window:render_text(
+                    enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(tx, y_offset + 2),
+                    self.colors.text_secondary,
+                    value_text
+                )
+
+                local plus_x = bx + btn_w + gap + value_w + gap
+                local plus_clicked = draw_step_button(plus_x, "+")
+
+                if minus_clicked or plus_clicked then
+                    local raw_new = (tonumber(value) or 0) + (plus_clicked and step or -step)
+                    local clamped = clamp_number(raw_new, min_value, max_value)
+                    if is_integer then
+                        clamped = math.floor(clamped + 0.5)
+                    elseif decimals > 0 then
+                        local mult = 10 ^ decimals
+                        clamped = math.floor((clamped * mult) + 0.5) / mult
+                    end
+                    pcall(function()
+                        if element.set then
+                            element:set(clamped)
+                        end
+                    end)
+                end
+
+                y_offset = y_offset + row_h + 4
+            else
+                -- Define rectangles
+                local bar_x_start = x_start + label_width
+                local bar_start = vec2.new(bar_x_start, y_offset)
+                local bar_end = vec2.new(bar_x_start + bar_width, y_offset + LAYOUT.slider_bar_height)
+
+                -- Hover/Press state
+                local is_hovered = self.window:is_mouse_hovering_rect(bar_start, bar_end)
+                self.window:is_mouse_hovering_rect_block_movement(bar_start, bar_end)
+
+                -- Tooltip on row hover
+                local row_hover_start = vec2.new(x_start, y_offset)
+                local row_hover_end = vec2.new(x_start + content_width, y_offset + LAYOUT.slider_bar_height)
+                if self.window:is_mouse_hovering_rect(row_hover_start, row_hover_end) and item.tooltip then
+                    self._tooltip = item.tooltip
+                end
+
+                -- Custom Rendering - Label
+                local label_y = y_offset + (LAYOUT.slider_bar_height - self.window:get_text_size(label).y) / 2
+                self.window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x_start, label_y),
+                    self.colors.text_primary, label)
+
+                -- Progress bar background
+                local bg_color = is_hovered and lighten_color(self.colors.slider_bg, 15) or self.colors.slider_bg
+                self.window:render_rect_filled(bar_start, bar_end, bg_color, 4.0)
+
+                -- Progress bar fill
+                local fill_progress = max_value > min_value and ((value - min_value) / (max_value - min_value)) or 0
+                local clamped_progress = math.max(0, math.min(1, fill_progress))
+                local fill_width = bar_width * clamped_progress
+                local fill_end = vec2.new(bar_x_start + fill_width, y_offset + LAYOUT.slider_bar_height)
+                self.window:render_rect_filled(bar_start, fill_end, self.colors.slider_fill, 4.0)
+
+                -- Progress bar border
+                local is_active_slider = self._active_slider and self._active_slider.element == element
+                local border_color = is_active_slider and self.colors.primary_accent or self.colors.section_border
+                self.window:render_rect(bar_start, bar_end, border_color, 4.0, 1.0)
+
+                -- Value text
+                local value_text = string.format("%d%s", value, suffix)
+                local value_x = bar_x_start + bar_width + 10
+                local value_y = y_offset + (LAYOUT.slider_bar_height - self.window:get_text_size(value_text).y) / 2
+                self.window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(value_x, value_y),
+                    self.colors.text_secondary, value_text)
+
+                -- INPUT HANDLING
+                if is_hovered and is_mouse_clicked_left(self.window) then
+                    self.window:block_input_capture()
+
+                    local raw_pos = select(1, self:_get_window_local_mouse_pos("raw"))
+                    local adjusted_pos = select(1, self:_get_window_local_mouse_pos("adjusted"))
+
+                    local function score(pos)
+                        if not pos then
+                            return 1e30
+                        end
+                        local local_x = pos.x - bar_x_start
+                        local dx = 0
+                        if local_x < 0 then
+                            dx = -local_x
+                        elseif local_x > bar_width then
+                            dx = local_x - bar_width
+                        end
+
+                        local dy = 0
+                        if pos.y < bar_start.y then
+                            dy = bar_start.y - pos.y
+                        elseif pos.y > bar_end.y then
+                            dy = pos.y - bar_end.y
+                        end
+
+                        return (dx * dx) + (dy * dy)
+                    end
+
+                    local use_space = "raw"
+                    local chosen_pos = raw_pos
+                    if score(adjusted_pos) < score(raw_pos) then
+                        use_space = "adjusted"
+                        chosen_pos = adjusted_pos
+                    end
+
+                    self._active_slider = {
+                        element = element,
+                        min_value = min_value,
+                        max_value = max_value,
+                        bar_x_start = bar_x_start,
+                        bar_width = bar_width,
+                        last_mouse_pos = chosen_pos,
+                        mouse_space = use_space
+                    }
+                    self:_apply_active_slider_from_mouse()
+                end
+
+                y_offset = y_offset + LAYOUT.slider_bar_height + LAYOUT.element_spacing + 4
+            end
         end
     end
 

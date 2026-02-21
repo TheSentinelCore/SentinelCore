@@ -276,6 +276,30 @@ end
 ---@param opts? table
 function Client:move_to(target, callback, opts)
     self:_clear_route_session()
+    local destination = to_vec3(target)
+    if not destination then
+        self:_invoke_command_callback(callback, false, FAIL_REASONS.UNREACHABLE, {
+            code = FAIL_REASONS.UNREACHABLE,
+            detail = "invalid destination",
+        })
+        return
+    end
+
+    local current_dest = self._blackboard:get("path.destination")
+    local lateral_gate = math.max(2.5, (self._blackboard:get("config.waypoint_tolerance", 3.0) or 3.0) + 1.0)
+    local vertical_gate = math.max(3.0, (self._blackboard:get("config.deviation_vertical_threshold", 2.2) or 2.2) * 1.5)
+    local is_same_destination = current_dest
+        and Helpers.distance_2d(current_dest, destination) <= lateral_gate
+        and math.abs((current_dest.z or 0) - (destination.z or 0)) <= vertical_gate
+
+    -- Idempotent command behavior: if we're already moving to effectively the same
+    -- destination, keep the active request/path instead of cancel/restarting it.
+    if self._hsm:is_moving() and is_same_destination then
+        if callback then
+            self._callback = callback
+        end
+        return
+    end
 
     -- Handle casting deferral
     if self._blackboard:get("player.is_casting") then
@@ -286,7 +310,7 @@ function Client:move_to(target, callback, opts)
         self._blackboard:set("repath.failures", 0)
         self._blackboard:clear("nav.fail_reason")
         self._blackboard:clear("nav.fail_detail")
-        self._blackboard:set("pending.destination", target)
+        self._blackboard:set("pending.destination", destination)
         self._blackboard:set("pending.callback", callback)
         self._blackboard:set("pending.options", opts and Helpers.deep_copy(opts) or nil)
         if self._hsm:is_idle() or self._hsm:is_terminal() then
@@ -308,7 +332,7 @@ function Client:move_to(target, callback, opts)
     self._nav_tree:reset()
 
     -- Set up Blackboard state for new navigation
-    self._blackboard:set("path.destination", to_vec3(target))
+    self._blackboard:set("path.destination", destination)
     self._blackboard:clear("path.waypoints")
     self._blackboard:set("path.index", 1)
     self._blackboard:set("stuck.count", 0)
@@ -987,6 +1011,10 @@ end
 ---@param callback function|nil
 ---@return boolean
 function Client:_safe_set_substate(new_substate, opts, context, callback)
+    if self._hsm:get_substate() == new_substate then
+        return true
+    end
+
     local ok, err = self._hsm:set_substate(new_substate, opts)
     if not ok then
         return self:_handle_hsm_error(context, err, callback)

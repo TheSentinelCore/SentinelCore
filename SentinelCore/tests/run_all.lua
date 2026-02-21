@@ -6,6 +6,9 @@ local tests = {
     "tests/test_sc005_navigation_adapter",
     "tests/test_sc006_world_data_adapter",
     "tests/test_sc007_targeting_service",
+    "tests/test_rotation_context_normalization",
+    "tests/test_rotation_rank_policy",
+    "tests/test_rotation_retribution_regressions",
     "tests/test_sc008_rotation_engine",
     "tests/test_sc009_combat_service",
     "tests/test_sc010_loot_service",
@@ -27,6 +30,16 @@ local function create_test_spell_queue()
             priority = priority,
             owner = owner,
             allow_movement = allow_movement,
+        }
+        return true
+    end
+
+    function queue:queue_item_self(item_id, priority, owner)
+        entries[#entries + 1] = {
+            item_id = item_id,
+            priority = priority,
+            owner = owner,
+            kind = "item_self",
         }
         return true
     end

@@ -5,9 +5,15 @@ local ErrorCodes = require("events/ErrorCodes")
 ---@return table
 return function(loot_service)
     return BT.Action:new(function(bb)
-        if loot_service:get_state() == "completed" then
-            loot_service:reset()
+        local function clear_pending()
+            if loot_service and loot_service.reset then
+                loot_service:reset()
+            end
             bb:clear("loot.pending_target")
+        end
+
+        if loot_service:get_state() == "completed" then
+            clear_pending()
             return BT.SUCCESS
         end
 
@@ -16,8 +22,18 @@ return function(loot_service)
             if not loot_target then
                 return BT.FAILURE
             end
+
+            if loot_target.is_valid then
+                local ok_valid, valid = pcall(loot_target.is_valid, loot_target)
+                if not ok_valid or valid ~= true then
+                    clear_pending()
+                    return BT.FAILURE
+                end
+            end
+
             local ok, err = loot_service:start(loot_target)
             if not ok then
+                clear_pending()
                 bb:set("core.fail_reason", err or ErrorCodes.LOOT_FAILED)
                 return BT.FAILURE
             end
@@ -26,13 +42,13 @@ return function(loot_service)
 
         local ok, err = loot_service:update()
         if not ok then
+            clear_pending()
             bb:set("core.fail_reason", err or ErrorCodes.LOOT_FAILED)
             return BT.FAILURE
         end
 
         if loot_service:get_state() == "completed" then
-            loot_service:reset()
-            bb:clear("loot.pending_target")
+            clear_pending()
             return BT.SUCCESS
         end
 

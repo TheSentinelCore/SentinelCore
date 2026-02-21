@@ -52,6 +52,50 @@ local function run()
     end
     T.assert_true(renamed ~= nil and renamed.name == "Renamed Profile", "profile rename not reflected")
 
+    -- Stricter runtime rotation policy validation should fail closed.
+    local invalid_runtime = cfg:get_runtime()
+    invalid_runtime.rotation.paladin.retribution.health_potion_hp_pct = 1.25
+    local set_runtime_ok, set_runtime_err = cfg:set_runtime_value("rotation", "paladin", invalid_runtime.rotation.paladin)
+    T.assert_true(set_runtime_ok == false, "invalid runtime update should be rejected")
+    T.assert_eq(set_runtime_err, ErrorCodes.CONFIG_INVALID, "invalid runtime update should return CONFIG_INVALID")
+
+    -- set_active_profile should reject invalid runtime profile payloads.
+    cfg._profiles.profiles[#cfg._profiles.profiles + 1] = {
+        profile_id = "bad_profile",
+        name = "Bad Profile",
+        runtime = {
+            rotation = {
+                paladin = {
+                    retribution = {
+                        drink_mana_pct = 0.45,
+                        eat_health_pct = 0.80,
+                        loh_hp_pct = 0.10,
+                        divine_shield_hp_pct = 0.20,
+                        divine_protection_hp_pct = 0.35,
+                        holy_light_hp_pct = 0.35,
+                        holy_light_min_mana_pct = 0.25,
+                        flash_light_hp_pct = 0.60,
+                        heal_low_mana_threshold = 0.20,
+                        heal_critical_mana_threshold = 0.30, -- invalid: critical > low threshold
+                        health_potion_hp_pct = 0.30,
+                        mana_potion_mana_pct = 0.15,
+                        mana_potion_min_hp_pct = 0.35,
+                        consecration_st_min_mana_pct = 0.35,
+                        consecration_aoe_min_mana_pct = 0.45,
+                        holy_wrath_aoe_min_mana_pct = 0.30,
+                    },
+                },
+            },
+        },
+        policy = cfg:get_policy(),
+        updated_at_unix = 0,
+    }
+    local active_before = cfg:get_active_profile_id()
+    local activate_ok, activate_err = cfg:set_active_profile("bad_profile")
+    T.assert_true(activate_ok == false, "activating invalid profile should fail")
+    T.assert_eq(activate_err, ErrorCodes.CONFIG_INVALID, "invalid profile should return CONFIG_INVALID")
+    T.assert_eq(cfg:get_active_profile_id(), active_before, "active profile should remain unchanged on invalid activation")
+
     -- Vendor cache startup prune should keep only non-expired blacklist entries.
     env.fs[paths.vendor_cache] = [[
 {"schema_version":"vendor_runtime_cache.v1","entries":[

@@ -23,6 +23,7 @@ local _last_profile_result = nil
 local _selected_profile_index = 1
 local _show_expert_settings = false
 local _runtime_feed_filter = "all"
+local PALADIN_CLASS_ID = 2
 
 local FEED_FILTER_LABELS = {
     all = "All",
@@ -58,6 +59,44 @@ local TOOLTIPS = {
     save_settings = "Persists current runtime + policy values to the active profile JSON.",
     profile_manager = "Create, rename, switch, save, and delete profile snapshots.",
 }
+
+local CLASS_NAMES = {
+    [1] = "Warrior",
+    [2] = "Paladin",
+    [3] = "Hunter",
+    [4] = "Rogue",
+    [5] = "Priest",
+    [6] = "Death Knight",
+    [7] = "Shaman",
+    [8] = "Mage",
+    [9] = "Warlock",
+    [11] = "Druid",
+}
+
+---@param class_id number|nil
+---@return string
+local function class_label(class_id)
+    local normalized = tonumber(class_id) or 0
+    if normalized <= 0 then
+        return "Unknown"
+    end
+    return CLASS_NAMES[normalized] or ("Class " .. tostring(normalized))
+end
+
+---@param client SentinelClient|nil
+---@return number
+local function get_active_class_id(client)
+    if not client or type(client.get_blackboard) ~= "function" then
+        return 0
+    end
+
+    local ok_bb, bb = pcall(client.get_blackboard, client)
+    if not ok_bb or not bb or type(bb.get) ~= "function" then
+        return 0
+    end
+
+    return tonumber(bb:get("player.class_id", 0)) or 0
+end
 
 ---@param base_color color
 ---@param amount number
@@ -726,6 +765,7 @@ local function register_tabs(ui, client)
                 local rotation = runtime.rotation or {}
                 local paladin_rotation = rotation.paladin or {}
                 local retri_rotation = paladin_rotation.retribution or {}
+                local class_id = get_active_class_id(client)
                 local policy = client and client.get_policy_config and client:get_policy_config() or {}
                 local active_profile_id = client and client.get_active_profile_id and client:get_active_profile_id() or "default"
 
@@ -843,45 +883,56 @@ local function register_tabs(ui, client)
                 y_offset = y_offset + 8
 
                 section_y = y_offset
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Retribution Combat")
-                render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.ret_section)
-                y_offset = render_stepper(window, colors, x, y_offset, width,
-                    "Flash Heal HP", tonumber(retri_rotation.flash_light_hp_pct) or 0.60, 0.02, 0.20, 0.90, 2,
-                    function(new_value)
-                        set_retri_policy("flash_light_hp_pct", new_value)
-                    end,
-                    TOOLTIPS.ret_flash_hp, self)
-                y_offset = render_stepper(window, colors, x, y_offset, width,
-                    "Holy Light HP", tonumber(retri_rotation.holy_light_hp_pct) or 0.35, 0.02, 0.10, 0.80, 2,
-                    function(new_value)
-                        set_retri_policy("holy_light_hp_pct", new_value)
-                    end,
-                    TOOLTIPS.ret_holy_hp, self)
-                y_offset = render_stepper(window, colors, x, y_offset, width,
-                    "Low Mana Downrank", tonumber(retri_rotation.heal_low_mana_threshold) or 0.22, 0.01, 0.05, 0.60, 2,
-                    function(new_value)
-                        set_retri_policy("heal_low_mana_threshold", new_value)
-                    end,
-                    TOOLTIPS.ret_low_mana, self)
-                y_offset = render_stepper(window, colors, x, y_offset, width,
-                    "Health Potion HP", tonumber(retri_rotation.health_potion_hp_pct) or 0.30, 0.02, 0.10, 0.90, 2,
-                    function(new_value)
-                        set_retri_policy("health_potion_hp_pct", new_value)
-                    end,
-                    TOOLTIPS.ret_health_pot, self)
-                y_offset = render_stepper(window, colors, x, y_offset, width,
-                    "Mana Potion Mana", tonumber(retri_rotation.mana_potion_mana_pct) or 0.15, 0.01, 0.05, 0.80, 2,
-                    function(new_value)
-                        set_retri_policy("mana_potion_mana_pct", new_value)
-                    end,
-                    TOOLTIPS.ret_mana_pot, self)
-                y_offset = render_stepper(window, colors, x, y_offset, width,
-                    "Consecration ST Mana", tonumber(retri_rotation.consecration_st_min_mana_pct) or 0.35, 0.02, 0.10, 0.90, 2,
-                    function(new_value)
-                        set_retri_policy("consecration_st_min_mana_pct", new_value)
-                    end,
-                    TOOLTIPS.ret_consec, self)
-                y_offset = y_offset + 4
+                if class_id == PALADIN_CLASS_ID then
+                    y_offset = render_section_title(window, colors, x, y_offset, width, "Retribution Combat")
+                    render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.ret_section)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Flash Heal HP", tonumber(retri_rotation.flash_light_hp_pct) or 0.60, 0.02, 0.20, 0.90, 2,
+                        function(new_value)
+                            set_retri_policy("flash_light_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.ret_flash_hp, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Holy Light HP", tonumber(retri_rotation.holy_light_hp_pct) or 0.35, 0.02, 0.10, 0.80, 2,
+                        function(new_value)
+                            set_retri_policy("holy_light_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.ret_holy_hp, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Low Mana Downrank", tonumber(retri_rotation.heal_low_mana_threshold) or 0.22, 0.01, 0.05, 0.60, 2,
+                        function(new_value)
+                            set_retri_policy("heal_low_mana_threshold", new_value)
+                        end,
+                        TOOLTIPS.ret_low_mana, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Health Potion HP", tonumber(retri_rotation.health_potion_hp_pct) or 0.30, 0.02, 0.10, 0.90, 2,
+                        function(new_value)
+                            set_retri_policy("health_potion_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.ret_health_pot, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Mana Potion Mana", tonumber(retri_rotation.mana_potion_mana_pct) or 0.15, 0.01, 0.05, 0.80, 2,
+                        function(new_value)
+                            set_retri_policy("mana_potion_mana_pct", new_value)
+                        end,
+                        TOOLTIPS.ret_mana_pot, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Consecration ST Mana", tonumber(retri_rotation.consecration_st_min_mana_pct) or 0.35, 0.02, 0.10, 0.90, 2,
+                        function(new_value)
+                            set_retri_policy("consecration_st_min_mana_pct", new_value)
+                        end,
+                        TOOLTIPS.ret_consec, self)
+                    y_offset = y_offset + 4
+                else
+                    y_offset = render_section_title(window, colors, x, y_offset, width, "Combat Routine")
+                    y_offset = render_line(window, colors, x, y_offset, "Active Class", class_label(class_id))
+                    if class_id <= 0 then
+                        y_offset = render_line(window, colors, x, y_offset, "Routine Settings", "Waiting for class context")
+                    else
+                        y_offset = render_line(window, colors, x, y_offset, "Routine Settings", "No settings for current class")
+                    end
+                    y_offset = y_offset + 4
+                end
 
                 section_y = y_offset
                 y_offset = render_section_title(window, colors, x, y_offset, width, "Navigation & Targeting")

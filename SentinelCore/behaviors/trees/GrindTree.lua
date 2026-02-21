@@ -2,7 +2,6 @@ local BT = require("lib/BehaviorTree")
 
 local NeedsRecovery = require("behaviors/conditions/NeedsRecovery")
 local NeedsVendor = require("behaviors/conditions/NeedsVendor")
-local HasActiveLoot = require("behaviors/conditions/HasActiveLoot")
 local HasActiveCombat = require("behaviors/conditions/HasActiveCombat")
 local HasCanonicalContext = require("behaviors/conditions/HasCanonicalContext")
 
@@ -31,9 +30,7 @@ function GrindTree.create(services, command_handlers)
     vendor_branch:add(NeedsVendor(services.inventory, services.vendor))
     vendor_branch:add(RunVendor(services.vendor))
 
-    local loot_branch = BT.Sequence:new("LootBranch")
-    loot_branch:add(HasActiveLoot(services.loot))
-    loot_branch:add(RunLoot(services.loot))
+    local loot_branch = RunLoot(services.loot)
 
     local combat_active_branch = BT.Sequence:new("CombatActiveBranch")
     combat_active_branch:add(HasActiveCombat(services.combat))
