@@ -31,13 +31,18 @@ local function run()
             get_items_in_bag = function(bag_id)
                 if bag_id == 0 then
                     return {
-                        { object = item_keep, slot_id = 1 },
-                        { object = item_sell, slot_id = 2 },
-                        { object = item_rule_keep, slot_id = 3 },
-                        { object = item_rule_sell, slot_id = 4 },
-                        { object = item_white_keep, slot_id = 5 },
-                        { object = item_blue_sell, slot_id = 6 },
-                        { object = item_epic_keep, slot_id = 7 },
+                        -- Equipment items (slot_id < 24) — must be filtered out
+                        { object = T.mock_object({ item_id = 100 }), slot_id = 0 },
+                        { object = T.mock_object({ item_id = 101 }), slot_id = 5 },
+                        { object = T.mock_object({ item_id = 102 }), slot_id = 15 },
+                        -- Actual backpack items (slot_id >= 24)
+                        { object = item_keep, slot_id = 24 },
+                        { object = item_sell, slot_id = 25 },
+                        { object = item_rule_keep, slot_id = 26 },
+                        { object = item_rule_sell, slot_id = 27 },
+                        { object = item_white_keep, slot_id = 28 },
+                        { object = item_blue_sell, slot_id = 29 },
+                        { object = item_epic_keep, slot_id = 30 },
                     }
                 end
                 return {}

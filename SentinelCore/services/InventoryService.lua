@@ -13,6 +13,9 @@ InventoryService.__index = InventoryService
 
 local BACKPACK_SLOTS = 16
 local BAG_EQUIP_SLOT_BASE = 19  -- inventory slots 20-23 = bags 1-4
+-- get_items_in_bag(0) returns ALL occupied inventory slots including equipment (0-19)
+-- and bag equip slots (20-23). Only slots 24-39 are actual backpack storage.
+local BACKPACK_FIRST_SLOT = 24
 
 -- All TBC non-special bags: item_id → slot_count
 -- Source: tbcmangos.item_template WHERE class=1 AND subclass=0
@@ -68,7 +71,9 @@ local function count_items_in_bag(bag_id)
         local slot = items[i]
         local obj = slot and slot.object or nil
         if obj and obj.is_valid and obj:is_valid() then
-            count = count + 1
+            if bag_id ~= 0 or (slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT) then
+                count = count + 1
+            end
         end
     end
     return count
@@ -207,14 +212,17 @@ function InventoryService:collect_items()
             local slot = bag_items[i]
             local obj = slot and slot.object or nil
             if obj and obj.is_valid and obj:is_valid() then
-                items[#items + 1] = {
-                    object = obj,
-                    item_id = tonumber(obj:get_item_id()) or 0,
-                    stack_count = tonumber(obj.get_item_stack_count and obj:get_item_stack_count() or 1) or 1,
-                    quality = tonumber(obj.get_quality and obj:get_quality() or 0) or 0,
-                    bag_id = bag_id,
-                    slot_id = tonumber(slot.slot_id) or -1,
-                }
+                -- Bag 0: skip equipment (0-19) and bag equip slots (20-23)
+                if bag_id ~= 0 or (slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT) then
+                    items[#items + 1] = {
+                        object = obj,
+                        item_id = tonumber(obj:get_item_id()) or 0,
+                        stack_count = tonumber(obj.get_item_stack_count and obj:get_item_stack_count() or 1) or 1,
+                        quality = tonumber(obj.get_quality and obj:get_quality() or 0) or 0,
+                        bag_id = bag_id,
+                        slot_id = tonumber(slot.slot_id) or -1,
+                    }
+                end
             end
         end
     end

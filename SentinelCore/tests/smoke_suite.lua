@@ -154,12 +154,17 @@ local function scenario_inventory_threshold_triggers_vendor(env)
 
     -- Fill bags nearly full: bag 0 = 16 items, bags 1-3 = 16 each, bag 4 = 15.
     -- Total capacity = 16 + 4*16 = 80, used = 79, free = 1.
+    -- Bag 0 items need slot_id >= 24 (backpack storage range).
     env.core.inventory.get_items_in_bag = function(bag_id)
         local count = 16
         if bag_id == 4 then count = 15 end
         local out = {}
         for i = 1, count do
-            out[#out + 1] = { object = T.mock_object({ item_id = 9000 + (bag_id * 16) + i }) }
+            local slot = { object = T.mock_object({ item_id = 9000 + (bag_id * 16) + i }) }
+            if bag_id == 0 then
+                slot.slot_id = 23 + i  -- 24..39 = backpack storage
+            end
+            out[#out + 1] = slot
         end
         return out
     end
