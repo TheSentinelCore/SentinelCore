@@ -317,6 +317,9 @@ end
 
 ---@return boolean
 function InventoryService:needs_vendor_trip()
+    if self._policy.vendor_enabled == false then
+        return false
+    end
     local free = self:get_free_slots()
     if free < 0 then
         return false

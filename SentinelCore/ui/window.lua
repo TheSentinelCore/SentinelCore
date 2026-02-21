@@ -37,6 +37,7 @@ local TOOLTIPS = {
     runtime_feed = "Live event feed from SentinelCore. Use filters to reduce noise.",
     snapshot_world = "Frozen snapshot of world context, dependencies, inventory, and telemetry.",
     settings_profile = "Settings are runtime-only until saved to the active profile.",
+    vendor_enabled = "Enable or disable automatic vendoring entirely. When off, the bot will never seek a vendor.",
     min_free_slots = "Triggers vendoring when free bag slots are at or below this threshold.",
     return_to_anchor = "After vendoring, return to the last grind anchor before resuming combat logic.",
     repair_enabled = "If enabled, repair gear during vendor interaction when possible.",
@@ -44,6 +45,13 @@ local TOOLTIPS = {
     quality_preset = "One-click quality presets. You can still fine-tune individual checkboxes after.",
     search_radius = "Max radius for querying nearby vendors from SentinelQueryServer.",
     expert_panel = "Shows advanced targeting and compatibility controls.",
+    ret_section = "Retribution combat sustain settings. These values tune healing, potion, and consecration behavior.",
+    ret_flash_hp = "Cast Flash of Light when health is at or below this threshold.",
+    ret_holy_hp = "Cast Holy Light as emergency sustain at or below this threshold.",
+    ret_low_mana = "Below this mana threshold, the routine can downrank Flash of Light for efficiency.",
+    ret_health_pot = "Use best health potion when HP is at or below this threshold in combat.",
+    ret_mana_pot = "Use best mana potion when mana is at or below this threshold in combat.",
+    ret_consec = "Minimum mana required to cast Consecration in single-target combat.",
     target_base = "Preferred baseline pull radius for target selection.",
     target_max = "Hard cap for target acquisition distance.",
     legacy_quality = "Backward-compat fallback. Used only when explicit quality toggles are missing.",
@@ -715,8 +723,30 @@ local function register_tabs(ui, client)
                 local runtime = client and client.get_runtime_config and client:get_runtime_config() or {}
                 local targeting = runtime.targeting or {}
                 local vendor = runtime.vendor or {}
+                local rotation = runtime.rotation or {}
+                local paladin_rotation = rotation.paladin or {}
+                local retri_rotation = paladin_rotation.retribution or {}
                 local policy = client and client.get_policy_config and client:get_policy_config() or {}
                 local active_profile_id = client and client.get_active_profile_id and client:get_active_profile_id() or "default"
+
+                local function shallow_copy(value)
+                    local out = {}
+                    for k, v in pairs(value or {}) do
+                        out[k] = v
+                    end
+                    return out
+                end
+
+                local function set_retri_policy(key, value)
+                    local new_paladin = shallow_copy(rotation.paladin or {})
+                    local new_retri = shallow_copy(new_paladin.retribution or {})
+                    new_retri[key] = value
+                    new_paladin.retribution = new_retri
+
+                    local ok, err = client:set_runtime_setting("rotation", "paladin", new_paladin, false)
+                    _last_settings_result = ok and ("Updated retribution." .. tostring(key)) or
+                        ("Update failed: " .. tostring(err))
+                end
 
                 y_offset = render_line(window, colors, x, y_offset, "Active Profile", active_profile_id)
                 y_offset = y_offset + 4
@@ -724,6 +754,14 @@ local function register_tabs(ui, client)
                 local section_y = y_offset
                 y_offset = render_section_title(window, colors, x, y_offset, width, "Vendoring Policy")
                 render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.settings_profile)
+                y_offset = render_toggle(window, colors, x, y_offset, width, "Auto-Vendor Enabled",
+                    policy.vendor_enabled ~= false,
+                    function(new_value)
+                        local ok, err = client:set_policy_setting("vendor_enabled", new_value, false)
+                        _last_settings_result = ok and "Updated vendor_enabled" or ("Update failed: " .. tostring(err))
+                    end,
+                    TOOLTIPS.vendor_enabled, self)
+
                 y_offset = render_stepper(window, colors, x, y_offset, width,
                     "Min Free Slots", tonumber(policy.min_free_slots) or 2, 1.0, 0.0, 20.0, 0,
                     function(new_value)
@@ -803,6 +841,47 @@ local function register_tabs(ui, client)
                 y_offset = y_offset + row_h + 4
                 y_offset = render_line(window, colors, x, y_offset, "Legacy Fallback", "sell_quality_max applies only if explicit toggle missing")
                 y_offset = y_offset + 8
+
+                section_y = y_offset
+                y_offset = render_section_title(window, colors, x, y_offset, width, "Retribution Combat")
+                render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.ret_section)
+                y_offset = render_stepper(window, colors, x, y_offset, width,
+                    "Flash Heal HP", tonumber(retri_rotation.flash_light_hp_pct) or 0.60, 0.02, 0.20, 0.90, 2,
+                    function(new_value)
+                        set_retri_policy("flash_light_hp_pct", new_value)
+                    end,
+                    TOOLTIPS.ret_flash_hp, self)
+                y_offset = render_stepper(window, colors, x, y_offset, width,
+                    "Holy Light HP", tonumber(retri_rotation.holy_light_hp_pct) or 0.35, 0.02, 0.10, 0.80, 2,
+                    function(new_value)
+                        set_retri_policy("holy_light_hp_pct", new_value)
+                    end,
+                    TOOLTIPS.ret_holy_hp, self)
+                y_offset = render_stepper(window, colors, x, y_offset, width,
+                    "Low Mana Downrank", tonumber(retri_rotation.heal_low_mana_threshold) or 0.22, 0.01, 0.05, 0.60, 2,
+                    function(new_value)
+                        set_retri_policy("heal_low_mana_threshold", new_value)
+                    end,
+                    TOOLTIPS.ret_low_mana, self)
+                y_offset = render_stepper(window, colors, x, y_offset, width,
+                    "Health Potion HP", tonumber(retri_rotation.health_potion_hp_pct) or 0.30, 0.02, 0.10, 0.90, 2,
+                    function(new_value)
+                        set_retri_policy("health_potion_hp_pct", new_value)
+                    end,
+                    TOOLTIPS.ret_health_pot, self)
+                y_offset = render_stepper(window, colors, x, y_offset, width,
+                    "Mana Potion Mana", tonumber(retri_rotation.mana_potion_mana_pct) or 0.15, 0.01, 0.05, 0.80, 2,
+                    function(new_value)
+                        set_retri_policy("mana_potion_mana_pct", new_value)
+                    end,
+                    TOOLTIPS.ret_mana_pot, self)
+                y_offset = render_stepper(window, colors, x, y_offset, width,
+                    "Consecration ST Mana", tonumber(retri_rotation.consecration_st_min_mana_pct) or 0.35, 0.02, 0.10, 0.90, 2,
+                    function(new_value)
+                        set_retri_policy("consecration_st_min_mana_pct", new_value)
+                    end,
+                    TOOLTIPS.ret_consec, self)
+                y_offset = y_offset + 4
 
                 section_y = y_offset
                 y_offset = render_section_title(window, colors, x, y_offset, width, "Navigation & Targeting")

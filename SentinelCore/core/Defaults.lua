@@ -52,6 +52,29 @@ Defaults.combat = {
     aoe_enemy_threshold = 3,
 }
 
+Defaults.rotation = {
+    paladin = {
+        retribution = {
+            drink_mana_pct = 0.45,
+            eat_health_pct = 0.80,
+            loh_hp_pct = 0.10,
+            divine_shield_hp_pct = 0.20,
+            divine_protection_hp_pct = 0.35,
+            holy_light_hp_pct = 0.35,
+            holy_light_min_mana_pct = 0.25,
+            flash_light_hp_pct = 0.60,
+            heal_low_mana_threshold = 0.22,
+            heal_critical_mana_threshold = 0.08,
+            health_potion_hp_pct = 0.30,
+            mana_potion_mana_pct = 0.15,
+            mana_potion_min_hp_pct = 0.35,
+            consecration_st_min_mana_pct = 0.35,
+            consecration_aoe_min_mana_pct = 0.45,
+            holy_wrath_aoe_min_mana_pct = 0.30,
+        },
+    },
+}
+
 Defaults.loot = {
     loot_timeout = 8.0,
     interaction_retry_limit = 3,
@@ -79,6 +102,7 @@ Defaults.telemetry = {
 Defaults.policy = {
     schema_version = "vendor_inventory_policy.v1",
     updated_at_unix = 0,
+    vendor_enabled = true,
     min_free_slots = 2,
     sell_quality_max = 1,
     repair_enabled = true,
@@ -150,6 +174,7 @@ function Defaults.build_runtime(extra)
         world_data = deep_copy(Defaults.world_data),
         targeting = deep_copy(Defaults.targeting),
         combat = deep_copy(Defaults.combat),
+        rotation = deep_copy(Defaults.rotation),
         loot = deep_copy(Defaults.loot),
         inventory = deep_copy(Defaults.inventory),
         vendor = deep_copy(Defaults.vendor),
