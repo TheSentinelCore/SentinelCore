@@ -93,7 +93,7 @@ end
 -- Lookup Tables (verbatim from Navigation.lua)
 -- ============================================================================
 
---- UiMapID -> SentinelNavServer continent ID (Map.dbc MapID)
+--- UiMapID -> SentinelNavServer fallback world-map ID (Map.dbc MapID)
 --- 0 = Eastern Kingdoms, 1 = Kalimdor, 530 = Outland, 571 = Northrend
 local UI_MAP_TO_CONTINENT = {
     -- Eastern Kingdoms (0)
@@ -357,6 +357,17 @@ local UI_MAP_TO_CONTINENT = {
     [1375] = 571,
 }
 
+-- Explicit instance/BG map remaps where runtime IDs do not equal navmesh map IDs.
+-- These map IDs are passed directly to SentinelNavServer.
+local UI_MAP_TO_INSTANCE_MAP = {
+    [30] = 30,       -- Alterac Valley
+    [489] = 489,     -- Warsong Gulch
+    [529] = 529,     -- Arathi Basin
+    [566] = 566,     -- Eye of the Storm
+    [947] = 489,     -- Sylvanas runtime WSG UiMapID -> WSG navmesh
+    [1460] = 489,    -- Sylvanas runtime WSG map ID -> WSG navmesh
+}
+
 --- Indoor (dungeon/raid) UiMapIDs
 local INDOOR_UI_MAPS = {
     -- Eastern Kingdoms dungeons/raids
@@ -579,14 +590,34 @@ local function apply_avoid_zones(params, zones)
     params.avoid = table.concat(parts, ";")
 end
 
----Resolve current UiMapID to continent ID
----@return number
+---Resolve current runtime map IDs to SentinelNavServer map ID.
+---Returns explicit instance/BG map IDs when known, otherwise continent fallback.
+---@return number map_id
 local function get_continent_id()
-    local ui_map_id = core.get_map_id()
+    local map_id = core.get_map_id()
+    local ui_map_id = nil
+    if core.game_ui and core.game_ui.get_current_map_id then
+        ui_map_id = core.game_ui.get_current_map_id()
+    end
+
+    if map_id then
+        local instance_map = UI_MAP_TO_INSTANCE_MAP[map_id]
+        if instance_map then return instance_map end
+
+        local continent = UI_MAP_TO_CONTINENT[map_id]
+        if continent then return continent end
+    end
+
     if ui_map_id then
+        local instance_map = UI_MAP_TO_INSTANCE_MAP[ui_map_id]
+        if instance_map then return instance_map end
+
         local continent = UI_MAP_TO_CONTINENT[ui_map_id]
         if continent then return continent end
     end
+
+    core.log_warning("[NavClient] Unknown UiMapID: map=" .. tostring(map_id)
+        .. " ui=" .. tostring(ui_map_id) .. ", defaulting to 0")
     return 0
 end
 
