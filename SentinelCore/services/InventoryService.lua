@@ -43,43 +43,6 @@ local BAG_SIZES = {
 }
 
 ---@private
----@return game_object|nil
-local function get_local_player()
-    if not core or not core.object_manager or not core.object_manager.get_local_player then
-        return nil
-    end
-
-    local player = core.object_manager.get_local_player()
-    local wrapped = player and player.object or nil
-    if wrapped then
-        player = wrapped
-    end
-
-    if not player or not player.is_valid or not player:is_valid() then
-        return nil
-    end
-    return player
-end
-
----@private
----@param bag_id number
----@return number  item count in this bag
-local function count_items_in_bag(bag_id)
-    local items = core.inventory.get_items_in_bag(bag_id) or {}
-    local count = 0
-    for i = 1, #items do
-        local slot = items[i]
-        local obj = slot and slot.object or nil
-        if obj and obj.is_valid and obj:is_valid() then
-            if bag_id ~= 0 or (slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT) then
-                count = count + 1
-            end
-        end
-    end
-    return count
-end
-
----@private
 ---@return number total_capacity
 ---@return number used_count
 local function compute_bag_counts()
@@ -87,23 +50,56 @@ local function compute_bag_counts()
         return -1, -1
     end
 
-    local player = get_local_player()
     local total = BACKPACK_SLOTS
-    local used = count_items_in_bag(0)
+    local used = 0
 
-    -- Bags 1-4: resolve capacity from equipped bag's item_id
-    if player and player.get_item_at_inventory_slot then
-        for bag_id = 1, 4 do
-            local ok, info = pcall(player.get_item_at_inventory_slot, player, BAG_EQUIP_SLOT_BASE + bag_id)
-            local bag_obj = ok and info and info.object or nil
-            if bag_obj and bag_obj.is_valid and bag_obj:is_valid() then
-                local item_id = bag_obj.get_item_id and tonumber(bag_obj:get_item_id()) or 0
-                local capacity = BAG_SIZES[item_id] or 0
-                if capacity > 0 then
-                    total = total + capacity
-                    used = used + count_items_in_bag(bag_id)
+    -- Bag 0 (backpack): filter to slot_id >= 24 (skip equipment/bag equip slots).
+    -- Pattern matched from ext_plugin_lx_grinder/core/InventoryManager.lua:86-99.
+    local bag0_items = core.inventory.get_items_in_bag(0)
+    if bag0_items then
+        for i = 1, #bag0_items do
+            local slot = bag0_items[i]
+            if slot and slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT then
+                if slot.object and slot.object:is_valid() then
+                    local item_id = slot.object:get_item_id()
+                    if item_id and item_id > 0 then
+                        used = used + 1
+                    end
                 end
-                -- capacity==0 → special bag (soul/herb/enchanting/etc), excluded
+            end
+        end
+    end
+
+    -- Bags 1-4: get player DIRECTLY from object_manager (no .object unwrapping).
+    local player = core.object_manager and core.object_manager.get_local_player
+        and core.object_manager.get_local_player() or nil
+    if player and player.is_valid and player:is_valid() then
+        for bag_id = 1, 4 do
+            local ok, result = pcall(function()
+                return player:get_item_at_inventory_slot(BAG_EQUIP_SLOT_BASE + bag_id)
+            end)
+            local has_bag = ok and result and result.object
+                and result.object.is_valid and result.object:is_valid()
+            if has_bag then
+                local bag_item_id = result.object:get_item_id()
+                if bag_item_id and bag_item_id > 0 then
+                    local capacity = BAG_SIZES[bag_item_id] or 0
+                    if capacity > 0 then
+                        total = total + capacity
+                        local items = core.inventory.get_items_in_bag(bag_id)
+                        if items then
+                            for i = 1, #items do
+                                local slot = items[i]
+                                if slot and slot.object and slot.object:is_valid() then
+                                    local item_id = slot.object:get_item_id()
+                                    if item_id and item_id > 0 then
+                                        used = used + 1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
             end
         end
     end
@@ -210,18 +206,21 @@ function InventoryService:collect_items()
         local bag_items = core.inventory.get_items_in_bag(bag_id) or {}
         for i = 1, #bag_items do
             local slot = bag_items[i]
-            local obj = slot and slot.object or nil
-            if obj and obj.is_valid and obj:is_valid() then
-                -- Bag 0: skip equipment (0-19) and bag equip slots (20-23)
-                if bag_id ~= 0 or (slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT) then
-                    items[#items + 1] = {
-                        object = obj,
-                        item_id = tonumber(obj:get_item_id()) or 0,
-                        stack_count = tonumber(obj.get_item_stack_count and obj:get_item_stack_count() or 1) or 1,
-                        quality = tonumber(obj.get_quality and obj:get_quality() or 0) or 0,
-                        bag_id = bag_id,
-                        slot_id = tonumber(slot.slot_id) or -1,
-                    }
+            -- Bag 0: skip equipment (0-19) and bag equip slots (20-23)
+            if bag_id ~= 0 or (slot and slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT) then
+                local obj = slot and slot.object or nil
+                if obj and obj.is_valid and obj:is_valid() then
+                    local item_id = tonumber(obj:get_item_id()) or 0
+                    if item_id > 0 then
+                        items[#items + 1] = {
+                            object = obj,
+                            item_id = item_id,
+                            stack_count = tonumber(obj.get_item_stack_count and obj:get_item_stack_count() or 1) or 1,
+                            quality = tonumber(obj.get_quality and obj:get_quality() or 0) or 0,
+                            bag_id = bag_id,
+                            slot_id = tonumber(slot.slot_id) or -1,
+                        }
+                    end
                 end
             end
         end
