@@ -79,6 +79,8 @@ local function create_menu_elements()
 
         -- Path Validation (Tab 1 advanced)
         path_check             = e(D.movement.path_check_interval),
+        path_req_retries       = e(D.movement.path_request_max_retries),
+        max_repath_failures    = e(D.movement.max_repath_failures),
 
         -- Deviation Detection (Tab 1 advanced)
         deviation_check_interval     = e(D.movement.deviation_check_interval),
@@ -238,6 +240,8 @@ local function sync_to_client()
             stuck_distance_min          = _menu.stuck_distance:get(),
             max_stuck_attempts          = _menu.max_stuck:get(),
             path_check_interval         = _menu.path_check:get(),
+            path_request_max_retries    = _menu.path_req_retries:get(),
+            max_repath_failures         = _menu.max_repath_failures:get(),
             optimize                    = _menu.optimize:get_state(),
             string_pull_deviation       = _menu.sp_deviation:get(),
             string_pull_heading         = _menu.sp_heading:get(),
@@ -319,6 +323,8 @@ function Window.init(client)
             { _menu.stuck_distance,              D.movement.stuck_distance_min },
             { _menu.max_stuck,                   D.movement.max_stuck_attempts },
             { _menu.path_check,                  D.movement.path_check_interval },
+            { _menu.path_req_retries,            D.movement.path_request_max_retries },
+            { _menu.max_repath_failures,         D.movement.max_repath_failures },
             { _menu.deviation_check_interval,    D.movement.deviation_check_interval },
             { _menu.deviation_threshold,         D.movement.deviation_threshold },
             { _menu.deviation_vertical_threshold,D.movement.deviation_vertical_threshold },

@@ -3,6 +3,7 @@
 -- Same as Repath but does NOT call movement_service:stop() first.
 local BT = require("lib/BehaviorTree")
 local Events = require("events/Events")
+local SOFT_REPATH_OWNER_SEQ = 0
 
 local function merge_opts(base_opts, override_opts)
     local merged = {}
@@ -25,6 +26,33 @@ local function next_request_id(bb)
     return request_id
 end
 
+local function merge_avoid_zones(primary, secondary)
+    local merged = nil
+
+    local function append(list)
+        if not list then return end
+        for i = 1, #list do
+            local zone = list[i]
+            if zone then
+                if not merged then
+                    merged = {}
+                end
+                merged[#merged + 1] = {
+                    x = zone.x,
+                    y = zone.y,
+                    z = zone.z,
+                    radius = zone.radius,
+                    cost = zone.cost,
+                }
+            end
+        end
+    end
+
+    append(primary)
+    append(secondary)
+    return merged
+end
+
 ---@param nav_service table NavigationService instance
 ---@param movement_service table MovementService instance
 ---@param obstacle_service table ObstacleService instance
@@ -34,11 +62,16 @@ return function(nav_service, movement_service, obstacle_service, event_bus, opts
     opts = opts or {}
     local repath_reason = opts.reason or "deviation"
     local count_deviation = opts.count_deviation == true
+    SOFT_REPATH_OWNER_SEQ = SOFT_REPATH_OWNER_SEQ + 1
+    local owner_id = "soft_repath:" .. tostring(SOFT_REPATH_OWNER_SEQ)
 
     return BT.Action:new(function(bb, dt)
         -- Check for pending response
         if bb:get("request.pending") then
             if bb:get("request.active_kind") ~= "soft_repath" then
+                return BT.RUNNING
+            end
+            if bb:get("request.active_owner") ~= owner_id then
                 return BT.RUNNING
             end
 
@@ -54,16 +87,42 @@ return function(nav_service, movement_service, obstacle_service, event_bus, opts
                 bb:clear("request.error")
                 bb:clear("request.active_id")
                 bb:clear("request.active_kind")
+                bb:clear("request.active_owner")
                 bb:clear("deviation.last_check")
                 bb:clear("deviation.last_result")
+                bb:clear("deviation.last_raw_result")
                 bb:clear("deviation.needs_repath")
                 bb:clear("deviation.eval_tick")
                 bb:clear("deviation.eval_result")
+                bb:clear("deviation.consecutive_count")
+                bb:clear("deviation.confirmed_prev")
                 -- Navigate without stopping — blend into new path
-                movement_service:navigate(result.waypoints)
+                if not movement_service:navigate(result.waypoints) then
+                    bb:set("nav.fail_reason", "unreachable")
+                    bb:set("nav.fail_detail", "movement service unavailable: navigate() failed")
+                    event_bus:emit(Events.REPATH_COMPLETED, {
+                        success = false,
+                        soft = true,
+                        error = "movement service unavailable: navigate() failed",
+                        fatal = true,
+                    })
+                    return BT.FAILURE
+                end
                 if count_deviation then
                     local count = bb:get("deviation.count", 0)
                     bb:set("deviation.count", count + 1)
+                    bb:set("deviation.progress_since_repath", 0)
+                    local pos = bb:get("player.position")
+                    if pos then
+                        bb:set("deviation.last_repath_pos", { x = pos.x, y = pos.y, z = pos.z })
+                    else
+                        bb:clear("deviation.last_repath_pos")
+                    end
+                    local grace = math.max(
+                        bb:get("config.deviation_check_interval", 1.0),
+                        bb:get("config.repath_cooldown", 0.1)
+                    )
+                    bb:set("deviation.repath_grace_until", bb:get("_time", 0) + grace)
                 end
                 bb:set("repath.failures", 0)
                 bb:clear("nav.fail_reason")
@@ -80,6 +139,15 @@ return function(nav_service, movement_service, obstacle_service, event_bus, opts
                 bb:clear("request.error")
                 bb:clear("request.active_id")
                 bb:clear("request.active_kind")
+                bb:clear("request.active_owner")
+                bb:clear("deviation.needs_repath")
+                bb:set("deviation.last_result", false)
+                bb:set("deviation.last_raw_result", false)
+                bb:set("deviation.last_check", bb:get("_time", 0))
+                bb:clear("deviation.eval_tick")
+                bb:clear("deviation.eval_result")
+                bb:set("deviation.consecutive_count", 0)
+                bb:set("deviation.confirmed_prev", false)
 
                 local failures = bb:get("repath.failures", 0) + 1
                 bb:set("repath.failures", failures)
@@ -127,6 +195,7 @@ return function(nav_service, movement_service, obstacle_service, event_bus, opts
         bb:set("request.pending", true)
         bb:set("request.active_id", request_id)
         bb:set("request.active_kind", "soft_repath")
+        bb:set("request.active_owner", owner_id)
         bb:clear("request.result")
         bb:clear("request.error")
         bb:clear("deviation.needs_repath")
@@ -134,17 +203,19 @@ return function(nav_service, movement_service, obstacle_service, event_bus, opts
         bb:clear("deviation.eval_result")
         event_bus:emit(Events.REPATH_STARTED, { reason = repath_reason, soft = true })
 
-        local zones = obstacle_service:get_avoidance_zones()
         local opts = merge_opts(
             bb:get("config._path_opts") or {},
             bb:get("path.command_opts")
         )
+        local zones = merge_avoid_zones(opts.avoid_zones, obstacle_service:get_avoidance_zones())
+        local has_zones = zones and #zones > 0
+        opts.avoid_zones = nil
         local use_corridor = bb:get("config.use_corridor_indoor", true)
             and nav_service.is_indoor
             and nav_service.is_indoor()
         if use_corridor then
             opts.probe_distance = bb:get("config.corridor_probe_dist", 15.0)
-            if zones and #zones > 0 then
+            if has_zones then
                 opts.avoid_zones = zones
             end
         end
@@ -156,6 +227,9 @@ return function(nav_service, movement_service, obstacle_service, event_bus, opts
             if bb:get("request.active_id") ~= request_id then
                 return
             end
+            if bb:get("request.active_owner") ~= owner_id then
+                return
+            end
             if ok and data and data.waypoints and #data.waypoints > 0 then
                 bb:set("request.result", data)
             else
@@ -165,7 +239,7 @@ return function(nav_service, movement_service, obstacle_service, event_bus, opts
 
         if use_corridor then
             nav_service:find_path_corridor(start, dest, callback, opts)
-        elseif zones and #zones > 0 then
+        elseif has_zones then
             nav_service:find_path_avoid(start, dest, zones, callback, opts)
         else
             nav_service:find_path(start, dest, callback, opts)

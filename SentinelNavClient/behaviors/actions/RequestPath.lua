@@ -2,6 +2,7 @@
 -- BT Action: async HTTP path request. Returns RUNNING while waiting.
 local BT = require("lib/BehaviorTree")
 local Events = require("events/Events")
+local REQUEST_OWNER_SEQ = 0
 
 local function classify_failure_reason(err)
     local msg = string.lower(tostring(err or ""))
@@ -38,16 +39,49 @@ local function next_request_id(bb)
     return request_id
 end
 
+local function merge_avoid_zones(primary, secondary)
+    local merged = nil
+
+    local function append(list)
+        if not list then return end
+        for i = 1, #list do
+            local zone = list[i]
+            if zone then
+                if not merged then
+                    merged = {}
+                end
+                merged[#merged + 1] = {
+                    x = zone.x,
+                    y = zone.y,
+                    z = zone.z,
+                    radius = zone.radius,
+                    cost = zone.cost,
+                }
+            end
+        end
+    end
+
+    append(primary)
+    append(secondary)
+    return merged
+end
+
 ---@param nav_service table NavigationService instance
 ---@param movement_service table MovementService instance
 ---@param event_bus table EventBus instance
 return function(nav_service, movement_service, event_bus)
+    REQUEST_OWNER_SEQ = REQUEST_OWNER_SEQ + 1
+    local owner_id = "request_path:" .. tostring(REQUEST_OWNER_SEQ)
+
     return BT.Action:new(function(bb, dt)
         local now = bb:get("_time", 0)
 
         -- Check for pending response
         if bb:get("request.pending") then
             if bb:get("request.active_kind") ~= "path" then
+                return BT.RUNNING
+            end
+            if bb:get("request.active_owner") ~= owner_id then
                 return BT.RUNNING
             end
 
@@ -65,11 +99,30 @@ return function(nav_service, movement_service, event_bus)
                 bb:clear("request.error")
                 bb:clear("request.active_id")
                 bb:clear("request.active_kind")
+                bb:clear("request.active_owner")
                 bb:set("request.path_failures", 0)
                 bb:clear("nav.fail_reason")
                 bb:clear("nav.fail_detail")
+                bb:clear("deviation.last_repath_pos")
+                bb:set("deviation.progress_since_repath", 0)
+                bb:clear("deviation.last_check")
+                bb:clear("deviation.last_raw_result")
+                bb:clear("deviation.last_result")
+                bb:clear("deviation.consecutive_count")
+                bb:clear("deviation.confirmed_prev")
                 -- Start movement — simple_movement needs navigate() before process() works
-                movement_service:navigate(result.waypoints)
+                if not movement_service:navigate(result.waypoints) then
+                    bb:set("nav.fail_reason", "unreachable")
+                    bb:set("nav.fail_detail", "movement service unavailable: navigate() failed")
+                    event_bus:emit(Events.PATH_FAILED, {
+                        error = "movement service unavailable: navigate() failed",
+                        start = bb:get("player.position"),
+                        destination = bb:get("path.destination"),
+                        retrying = false,
+                        fatal = true,
+                    })
+                    return BT.FAILURE
+                end
 
                 event_bus:emit(Events.PATH_RECEIVED, {
                     waypoint_count = #result.waypoints,
@@ -83,6 +136,7 @@ return function(nav_service, movement_service, event_bus)
                 bb:clear("request.error")
                 bb:clear("request.active_id")
                 bb:clear("request.active_kind")
+                bb:clear("request.active_owner")
 
                 local failures = bb:get("request.path_failures", 0) + 1
                 bb:set("request.path_failures", failures)
@@ -146,6 +200,7 @@ return function(nav_service, movement_service, event_bus)
         bb:set("request.pending", true)
         bb:set("request.active_id", request_id)
         bb:set("request.active_kind", "path")
+        bb:set("request.active_owner", owner_id)
         bb:clear("request.retry_at")
         bb:clear("request.result")
         bb:clear("request.error")
@@ -156,12 +211,13 @@ return function(nav_service, movement_service, event_bus)
             request_id = request_id,
         })
 
-        local zones = bb:get("obstacles.zones")
-        local has_zones = zones and #zones > 0
         local opts = merge_opts(
             bb:get("config._path_opts") or {},
             bb:get("path.command_opts")
         )
+        local zones = merge_avoid_zones(opts.avoid_zones, bb:get("obstacles.zones"))
+        local has_zones = zones and #zones > 0
+        opts.avoid_zones = nil
         local use_corridor = bb:get("config.use_corridor_indoor", true)
             and nav_service.is_indoor
             and nav_service.is_indoor()
@@ -177,6 +233,9 @@ return function(nav_service, movement_service, event_bus)
                 return
             end
             if bb:get("request.active_id") ~= request_id then
+                return
+            end
+            if bb:get("request.active_owner") ~= owner_id then
                 return
             end
             if ok and data and data.waypoints and #data.waypoints > 0 then

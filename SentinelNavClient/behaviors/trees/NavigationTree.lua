@@ -12,6 +12,10 @@
 --          │    ├─ HasPath
 --          │    └─ RequestPath
 --          └─ Selector "FollowOrRecover"
+--               ├─ Sequence "HandleForcedRepath"
+--               │    ├─ Condition "NeedsForcedRepath"
+--               │    └─ Cooldown "ForcedRepathCooldown"
+--               │         └─ SoftRepath (path_invalid)
 --               ├─ ReactiveSequence "NormalFollow"
 --               │    ├─ Inverter(IsStuck)              ← re-evaluated EVERY tick
 --               │    ├─ Inverter(IsDeviated)            ← re-evaluated EVERY tick
@@ -53,6 +57,7 @@ local ApplyDynamicSpeed = require("behaviors/actions/ApplyDynamicSpeed")
 local ProbeForObstacle = require("behaviors/actions/ProbeForObstacle")
 local AddAvoidanceZone = require("behaviors/actions/AddAvoidanceZone")
 local SoftRepath = require("behaviors/actions/SoftRepath")
+local Repath = require("behaviors/actions/Repath")
 local ValidatePath = require("behaviors/actions/ValidatePath")
 
 -- Sub-trees
@@ -94,6 +99,23 @@ local function create(services)
 
     -- Step 2: Follow path or recover from issues
     local follow_or_recover = BT.Selector:new("FollowOrRecover")
+
+    -- Forced repath path (e.g., ValidatePath marked navmesh invalid).
+    -- This does NOT consume deviation budget.
+    local handle_forced_repath = BT.Sequence:new("HandleForcedRepath")
+    handle_forced_repath:add(BT.Condition:new(function(bb)
+        return bb:get("deviation.needs_repath", false)
+    end, "NeedsForcedRepath"))
+    handle_forced_repath:add(BT.Cooldown:new(
+        SoftRepath(nav_service, movement_service, obstacle_service, event_bus, {
+            reason = "path_invalid",
+            count_deviation = false,
+        }),
+        0.6,
+        "ForcedRepathCooldown",
+        "config.repath_cooldown"
+    ))
+    follow_or_recover:add(handle_forced_repath)
 
     -- Normal path following (reactive guards + concurrent actions)
     -- ReactiveSequence ensures IsStuck/IsDeviated guards are checked EVERY tick.
@@ -145,23 +167,62 @@ local function create(services)
     normal_follow:add(do_following)
     follow_or_recover:add(normal_follow)
 
-    -- Handle deviation: soft repath if deviated and under max repaths
+    -- Handle deviation:
+    -- - Prefer soft repath while under budget.
+    -- - If budget exhausted and hard escalation disabled, stop triggering deviation
+    --   repaths and let normal following continue (old behavior).
+    -- - If budget exhausted and hard escalation enabled, escalate to full repath.
     local handle_deviation = BT.Sequence:new("HandleDeviation")
     handle_deviation:add(IsDeviated(validation_service, event_bus))
-    handle_deviation:add(BT.Condition:new(function(bb)
-        local count = bb:get("deviation.count", 0)
-        local max = bb:get("config.max_deviation_repaths", 5)
-        if count >= max then
-            bb:set("nav.fail_reason", "max_repath_exceeded")
-            bb:set("nav.fail_detail", "deviation repath budget exhausted")
-            return false
+
+    local soft_or_hard = BT.Selector:new("DeviationRepathMode")
+
+    local soft_repath = BT.Sequence:new("DeviationSoftRepath")
+    soft_repath:add(BT.Condition:new(function(bb)
+        local count = tonumber(bb:get("deviation.count", 0)) or 0
+        local max = tonumber(bb:get("config.max_deviation_repaths", 5)) or 5
+        if max < 1 then
+            max = 1
         end
-        return true
+        return count < max
     end, "MaxRepathNotExceeded"))
-    handle_deviation:add(SoftRepath(nav_service, movement_service, obstacle_service, event_bus, {
+    soft_repath:add(SoftRepath(nav_service, movement_service, obstacle_service, event_bus, {
         reason = "deviation",
         count_deviation = true,
     }))
+    soft_or_hard:add(soft_repath)
+
+    local no_escalation = BT.Sequence:new("DeviationNoEscalation")
+    no_escalation:add(BT.Condition:new(function(bb)
+        local count = tonumber(bb:get("deviation.count", 0)) or 0
+        local max = tonumber(bb:get("config.max_deviation_repaths", 5)) or 5
+        if max < 1 then
+            max = 1
+        end
+        local hard_escalation = bb:get("config.deviation_hard_escalation_enabled", false) == true
+        return count >= max and (not hard_escalation)
+    end, "MaxRepathNoEscalation"))
+    no_escalation:add(BT.Action:new(function()
+        return BT.SUCCESS
+    end, "IgnoreDeviationAfterBudget"))
+    soft_or_hard:add(no_escalation)
+
+    local hard_repath = BT.Sequence:new("DeviationHardRepath")
+    hard_repath:add(BT.Condition:new(function(bb)
+        local count = tonumber(bb:get("deviation.count", 0)) or 0
+        local max = tonumber(bb:get("config.max_deviation_repaths", 5)) or 5
+        if max < 1 then
+            max = 1
+        end
+        local hard_escalation = bb:get("config.deviation_hard_escalation_enabled", false) == true
+        return count >= max and hard_escalation
+    end, "MaxRepathExceeded"))
+    hard_repath:add(Repath(nav_service, movement_service, obstacle_service, event_bus, {
+        reason = "deviation_escalation",
+    }))
+    soft_or_hard:add(hard_repath)
+
+    handle_deviation:add(soft_or_hard)
     follow_or_recover:add(BT.Cooldown:new(handle_deviation, 0.1, "RepathCooldown", "config.repath_cooldown"))
 
     -- Stuck recovery (escalating 5-stage)

@@ -90,6 +90,8 @@ function MovementTab.register(ui, menu)
             visible_when = show_advanced,
             elements = {
                 { element = menu.path_check, label = "Check Interval", min = M.path_check_interval.min, max = M.path_check_interval.max, suffix = " s", tooltip = "How often to revalidate the current path" },
+                { element = menu.path_req_retries, label = "Path Retries", min = M.path_request_max_retries.min, max = M.path_request_max_retries.max, tooltip = "How many times to retry failed path requests before failing navigation" },
+                { element = menu.max_repath_failures, label = "Repath Fail Budget", min = M.max_repath_failures.min, max = M.max_repath_failures.max, tooltip = "Max failed repath attempts before terminal failure" },
             }
         })
 

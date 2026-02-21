@@ -7,6 +7,48 @@ PathValidationService.__index = PathValidationService
 local Defaults = require("core/Defaults")
 local Helpers = require("lib/Helpers")
 
+-- Lateral deviation should be measured in XY only; Z is handled separately.
+local function point_to_segment_distance_2d(px, py, ax, ay, bx, by)
+    local abx, aby = bx - ax, by - ay
+    local apx, apy = px - ax, py - ay
+    local ab_sq = abx * abx + aby * aby
+
+    if ab_sq < 1e-8 then
+        local dx, dy = px - ax, py - ay
+        return math.sqrt(dx * dx + dy * dy), 0
+    end
+
+    local t = (apx * abx + apy * aby) / ab_sq
+    t = Helpers.clamp(t, 0, 1)
+
+    local cx, cy = ax + t * abx, ay + t * aby
+    local dx, dy = px - cx, py - cy
+    return math.sqrt(dx * dx + dy * dy), t
+end
+
+local function find_best_segment_2d(current_pos, path_waypoints, seg_start, seg_end)
+    local best_dist = math.huge
+    local best_t = 0
+    local best_seg = 0
+
+    for i = seg_start, seg_end do
+        local a = path_waypoints[i]
+        local b = path_waypoints[i + 1]
+        local dist, t = point_to_segment_distance_2d(
+            current_pos.x, current_pos.y,
+            a.x, a.y,
+            b.x, b.y
+        )
+        if dist < best_dist then
+            best_dist = dist
+            best_t = t
+            best_seg = i
+        end
+    end
+
+    return best_dist, best_t, best_seg
+end
+
 --------------------------------------------------------------------------------
 -- Constructor
 --------------------------------------------------------------------------------
@@ -110,31 +152,58 @@ function PathValidationService:check_deviation(current_pos, path_waypoints, path
     }
 
     if not current_pos or not path_waypoints then return result end
-    if path_index < 2 or path_index > #path_waypoints then return result end
+    if #path_waypoints == 0 then return result end
 
-    -- Search backwards from current index for closest segment
-    -- Use a 60-segment window to account for lookahead
-    local best_dist = math.huge
-    local best_t = 0
-    local best_seg = 0
-    local search_start = math.max(1, path_index - 60)
+    -- Degenerate path (single waypoint): still support wrong-floor detection
+    -- when player is under/over the target column.
+    if #path_waypoints == 1 then
+        local wp = path_waypoints[1]
+        local lateral = Helpers.distance_2d(current_pos, wp)
+        local vertical = math.abs((current_pos.z or 0) - (wp.z or 0))
+        local vert_threshold = cfg.deviation_vertical_threshold or 2.0
+        local lat_gate = math.max((cfg.deviation_threshold or 2.0) * 1.5, 3.0)
 
-    for i = search_start, math.min(path_index, #path_waypoints - 1) do
-        local a = path_waypoints[i]
-        local b = path_waypoints[i + 1]
-        local dist, t = Helpers.point_to_segment_distance(
-            current_pos.x, current_pos.y, current_pos.z,
-            a.x, a.y, a.z,
-            b.x, b.y, b.z
-        )
-        if dist < best_dist then
-            best_dist = dist
-            best_t = t
-            best_seg = i
+        result.drift = lateral
+        result.vertical_drift = vertical
+        result.threshold = vert_threshold
+
+        if vertical > vert_threshold and lateral <= lat_gate then
+            result.deviated = true
         end
+        return result
     end
 
-    if best_seg == 0 then return result end
+    if path_index > #path_waypoints then return result end
+
+    -- Robust segment matching:
+    -- 1) search a local window around path_index (back + forward),
+    -- 2) if local match is still far, fall back to full-path search.
+    local last_segment = #path_waypoints - 1
+    local idx = Helpers.clamp(path_index or 1, 1, #path_waypoints)
+    local back_window = 60
+    local forward_window = 120
+
+    local search_start = math.max(1, idx - back_window)
+    local search_end = math.min(last_segment, idx + forward_window)
+    local best_dist, best_t, best_seg = find_best_segment_2d(
+        current_pos,
+        path_waypoints,
+        search_start,
+        search_end
+    )
+
+    local fallback_threshold = math.max((cfg.deviation_threshold or 2.0) * 2.5, 6.0)
+    if best_seg == 0 or best_dist > fallback_threshold then
+        best_dist, best_t, best_seg = find_best_segment_2d(
+            current_pos,
+            path_waypoints,
+            1,
+            last_segment
+        )
+        if best_seg == 0 then
+            return result
+        end
+    end
 
     result.drift = best_dist
     result.segment_index = best_seg
@@ -151,6 +220,26 @@ function PathValidationService:check_deviation(current_pos, path_waypoints, path
         result.deviated = true
         result.threshold = vert_threshold
         return result
+    end
+
+    -- Wrong-floor near destination: if we are already under/over destination XY
+    -- column with a large Z gap, trigger deviation even if segment projection is
+    -- locally ambiguous.
+    local destination = path_waypoints[#path_waypoints]
+    if destination then
+        local dest_lateral = Helpers.distance_2d(current_pos, destination)
+        local dest_lateral_gate = cfg.deviation_destination_lateral_gate
+            or math.max((cfg.deviation_threshold or 2.0) * 2.0, 4.0)
+        local dest_vertical_drift = math.abs((current_pos.z or 0) - (destination.z or 0))
+
+        if dest_lateral <= dest_lateral_gate and dest_vertical_drift > vert_threshold then
+            result.deviated = true
+            result.threshold = vert_threshold
+            if dest_vertical_drift > result.vertical_drift then
+                result.vertical_drift = dest_vertical_drift
+            end
+            return result
+        end
     end
 
     -- Check 2: Lateral deviation
@@ -252,6 +341,10 @@ function PathValidationService:_test()
     local dev = svc:check_deviation(pos_on_path, path, 2, nil)
     results["no_deviation"] = (not dev.deviated and dev.drift < 0.01)
 
+    -- Test 4b: path_index=1 still evaluates correctly
+    dev = svc:check_deviation(pos_on_path, path, 1, nil)
+    results["no_deviation_index1"] = (not dev.deviated and dev.drift < 0.01)
+
     -- Test 5: Lateral deviation detected
     local pos_off_path = { x = 5, y = 10, z = 0 }  -- 10 units off
     dev = svc:check_deviation(pos_off_path, path, 2, nil)
@@ -270,12 +363,43 @@ function PathValidationService:_test()
     -- corridor threshold = max(2.0, 8.0 * 0.75) = 6.0, drift = 4 < 6 = not deviated
     results["corridor_adaptive"] = (not dev.deviated)
 
-    -- Test 8: should_repath
+    -- Test 8: Lookahead compatibility (closest segment can be ahead of path_index)
+    local long_path = {}
+    for i = 0, 100, 10 do
+        long_path[#long_path + 1] = { x = i, y = 0, z = 0 }
+    end
+    local pos_near_ahead = { x = 45, y = 0.2, z = 0 }
+    dev = svc:check_deviation(pos_near_ahead, long_path, 2, nil)
+    results["ahead_segment_match"] = (not dev.deviated and dev.drift < 1.0)
+
+    -- Test 8a: wrong-floor near destination should trigger even when segment
+    -- projection around current index appears valid.
+    local path_near_dest_vertical = {
+        { x = 0, y = 0, z = 0 },
+        { x = 30, y = 0, z = 0 },
+        { x = 30, y = 0, z = 15 },
+    }
+    local pos_under_dest = { x = 30, y = 0, z = 0 }
+    dev = svc:check_deviation(pos_under_dest, path_near_dest_vertical, 2, nil)
+    results["dest_column_vertical_deviation"] = dev.deviated and dev.vertical_drift > 10
+
+    -- Test 8b: single-waypoint wrong-floor detection near target column
+    local single_wp = { { x = 5, y = 5, z = 20 } }
+    local pos_below_wp = { x = 5.5, y = 5.4, z = 5 }
+    dev = svc:check_deviation(pos_below_wp, single_wp, 1, nil)
+    results["single_wp_vertical_deviation"] = dev.deviated and dev.vertical_drift > 10
+
+    -- Test 8c: single-waypoint vertical mismatch but far lateral should not trigger
+    local pos_far_xy = { x = 40, y = 40, z = 5 }
+    dev = svc:check_deviation(pos_far_xy, single_wp, 1, nil)
+    results["single_wp_far_lateral_not_deviated"] = not dev.deviated
+
+    -- Test 9: should_repath
     results["should_repath_yes"] = svc:should_repath({ deviated = true }, 5, 2)
     results["should_repath_no_deviated"] = not svc:should_repath({ deviated = false }, 5, 2)
     results["should_repath_max_reached"] = not svc:should_repath({ deviated = true }, 5, 5)
 
-    -- Test 9: Config override
+    -- Test 10: Config override
     svc = PathValidationService:new(bb, { deviation_threshold = 5.0 })
     results["config_override"] = (svc._config.deviation_threshold == 5.0)
 

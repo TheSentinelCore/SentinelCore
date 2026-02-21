@@ -20,6 +20,94 @@ local STATES         = StateMachine.STATES
 local NAV_SUBSTATES  = StateMachine.NAV_SUBSTATES
 local FAIL_REASONS   = StateMachine.FAIL_REASONS
 
+local _vec3_ctor_checked = false
+local _vec3_ctor = nil
+local _vec3_fallback_mt = nil
+
+local function resolve_vec3_ctor()
+    if _vec3_ctor_checked then
+        return _vec3_ctor
+    end
+    _vec3_ctor_checked = true
+
+    local global_vec3 = rawget(_G, "vec3")
+    if type(global_vec3) == "table" and type(global_vec3.new) == "function" then
+        _vec3_ctor = global_vec3.new
+        return _vec3_ctor
+    end
+
+    local ok, vec3_mod = pcall(require, "common/geometry/vector_3")
+    if ok and type(vec3_mod) == "table" and type(vec3_mod.new) == "function" then
+        _vec3_ctor = vec3_mod.new
+    end
+    return _vec3_ctor
+end
+
+local function fallback_vec3(x, y, z)
+    if not _vec3_fallback_mt then
+        _vec3_fallback_mt = {
+            __index = {
+                dist_to = function(self, other)
+                    local dx = (other.x or 0) - (self.x or 0)
+                    local dy = (other.y or 0) - (self.y or 0)
+                    local dz = (other.z or 0) - (self.z or 0)
+                    return math.sqrt(dx * dx + dy * dy + dz * dz)
+                end,
+                dist_to_ignore_z = function(self, other)
+                    local dx = (other.x or 0) - (self.x or 0)
+                    local dy = (other.y or 0) - (self.y or 0)
+                    return math.sqrt(dx * dx + dy * dy)
+                end,
+                clone = function(self)
+                    return fallback_vec3(self.x, self.y, self.z)
+                end,
+            },
+        }
+    end
+    return setmetatable({
+        x = tonumber(x) or 0,
+        y = tonumber(y) or 0,
+        z = tonumber(z) or 0,
+    }, _vec3_fallback_mt)
+end
+
+local function to_vec3(pos)
+    if not pos then
+        return nil
+    end
+
+    if type(pos) ~= "table" then
+        return pos
+    end
+
+    if type(pos.dist_to) == "function" then
+        return pos
+    end
+
+    local x = pos.x or pos[1]
+    local y = pos.y or pos[2]
+    local z = pos.z or pos[3]
+    local ctor = resolve_vec3_ctor()
+    if ctor then
+        local ok, out = pcall(ctor, x, y, z)
+        if ok and out then
+            return out
+        end
+    end
+    return fallback_vec3(x, y, z)
+end
+
+local function normalize_waypoints(waypoints)
+    if not waypoints or #waypoints == 0 then
+        return waypoints
+    end
+    local normalized = {}
+    for i = 1, #waypoints do
+        normalized[i] = to_vec3(waypoints[i])
+    end
+    return normalized
+end
+
 ---@class Client
 ---@field nav_client NavigationService   HTTP client for SentinelNavServer
 ---@field movement MovementService       Movement service (simple_movement wrapper)
@@ -60,8 +148,14 @@ function Client:new(config)
     o._blackboard:set("nav.session_id", 0)
     o._blackboard:set("request.next_id", 0)
     o._blackboard:set("request.pending", false)
+    o._blackboard:clear("request.active_owner")
     o._blackboard:set("request.path_failures", 0)
     o._blackboard:set("repath.failures", 0)
+    o._blackboard:set("validation.next_id", 0)
+    o._blackboard:set("validation.pending", false)
+    o._blackboard:clear("validation.result")
+    o._blackboard:clear("validation.active_id")
+    o._blackboard:clear("validation.active_session")
     o._blackboard:clear("path.command_opts")
     o._blackboard:clear("nav.fail_reason")
     o._blackboard:clear("nav.fail_detail")
@@ -117,6 +211,21 @@ function Client:update()
     -- 2. If navigating, tick the BT
     if self._hsm:is_moving() then
         self._nav_tree:tick(self._blackboard, 0)
+
+        -- Promote awaiting_path -> following_path once async path request has produced
+        -- a usable path and movement has actually started.
+        if self._hsm:get_substate() == NAV_SUBSTATES.AWAITING_PATH then
+            local waypoints = self._blackboard:get("path.waypoints")
+            if waypoints and #waypoints > 0 and self.movement:is_moving() then
+                self:_safe_set_substate(
+                    NAV_SUBSTATES.FOLLOWING_PATH,
+                    nil,
+                    "update(awaiting_path->following_path)",
+                    nil
+                )
+            end
+        end
+
         local reason = self._blackboard:get("nav.fail_reason")
         if reason then
             self:_fail_navigation(reason, self._blackboard:get("nav.fail_detail"))
@@ -163,7 +272,7 @@ end
 
 ---Move to a target position using navmesh pathfinding.
 ---@param target vec3
----@param callback? fun(success: boolean, reason: string|nil)
+---@param callback? fun(success: boolean, reason: string|nil, detail: table|nil)
 ---@param opts? table
 function Client:move_to(target, callback, opts)
     self:_clear_route_session()
@@ -181,9 +290,13 @@ function Client:move_to(target, callback, opts)
         self._blackboard:set("pending.callback", callback)
         self._blackboard:set("pending.options", opts and Helpers.deep_copy(opts) or nil)
         if self._hsm:is_idle() or self._hsm:is_terminal() then
-            self._hsm:transition(STATES.NAVIGATING, NAV_SUBSTATES.DEFERRED)
+            if not self:_safe_transition(STATES.NAVIGATING, NAV_SUBSTATES.DEFERRED, nil, "move_to(deferred)", callback) then
+                return
+            end
         else
-            self._hsm:set_substate(NAV_SUBSTATES.DEFERRED)
+            if not self:_safe_set_substate(NAV_SUBSTATES.DEFERRED, nil, "move_to(deferred)", callback) then
+                return
+            end
         end
         return
     end
@@ -195,15 +308,21 @@ function Client:move_to(target, callback, opts)
     self._nav_tree:reset()
 
     -- Set up Blackboard state for new navigation
-    self._blackboard:set("path.destination", target)
+    self._blackboard:set("path.destination", to_vec3(target))
     self._blackboard:clear("path.waypoints")
     self._blackboard:set("path.index", 1)
     self._blackboard:set("stuck.count", 0)
     self._blackboard:set("deviation.count", 0)
+    self._blackboard:set("deviation.progress_since_repath", 0)
     self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_raw_result")
     self._blackboard:clear("deviation.last_result")
+    self._blackboard:clear("deviation.consecutive_count")
+    self._blackboard:clear("deviation.confirmed_prev")
     self._blackboard:clear("stuck.last_position")
     self._blackboard:clear("stuck.last_check")
+    self._blackboard:clear("deviation.last_repath_pos")
+    self._blackboard:clear("deviation.repath_grace_until")
     self._blackboard:clear("deviation.needs_repath")
     self._blackboard:clear("deviation.eval_tick")
     self._blackboard:clear("deviation.eval_result")
@@ -216,16 +335,16 @@ function Client:move_to(target, callback, opts)
 
     -- Transition HSM
     if self._hsm:is_idle() or self._hsm:is_terminal() then
-        self._hsm:transition(STATES.NAVIGATING, NAV_SUBSTATES.AWAITING_PATH)
+        self:_safe_transition(STATES.NAVIGATING, NAV_SUBSTATES.AWAITING_PATH, nil, "move_to(awaiting_path)", callback)
     else
         -- Already navigating — repath
-        self._hsm:set_substate(NAV_SUBSTATES.AWAITING_PATH)
+        self:_safe_set_substate(NAV_SUBSTATES.AWAITING_PATH, nil, "move_to(awaiting_path)", callback)
     end
 end
 
 ---Move directly without pathfinding (short range / emergency).
 ---@param target vec3
----@param callback? fun(success: boolean, reason: string|nil)
+---@param callback? fun(success: boolean, reason: string|nil, detail: table|nil)
 function Client:move_direct(target, callback)
     self:_clear_route_session()
     self:_invalidate_active_requests()
@@ -233,14 +352,21 @@ function Client:move_direct(target, callback)
     self._nav_tree:reset()
 
     -- Set waypoints directly (single waypoint)
-    local waypoints = { target }
-    self._blackboard:set("path.destination", target)
+    local destination = to_vec3(target)
+    local waypoints = { destination }
+    self._blackboard:set("path.destination", destination)
     self._blackboard:set("path.waypoints", waypoints)
     self._blackboard:set("path.index", 1)
     self._blackboard:set("stuck.count", 0)
     self._blackboard:set("deviation.count", 0)
+    self._blackboard:set("deviation.progress_since_repath", 0)
     self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_raw_result")
     self._blackboard:clear("deviation.last_result")
+    self._blackboard:clear("deviation.consecutive_count")
+    self._blackboard:clear("deviation.confirmed_prev")
+    self._blackboard:clear("deviation.last_repath_pos")
+    self._blackboard:clear("deviation.repath_grace_until")
     self._blackboard:clear("deviation.needs_repath")
     self._blackboard:clear("deviation.eval_tick")
     self._blackboard:clear("deviation.eval_result")
@@ -249,15 +375,20 @@ function Client:move_direct(target, callback)
     self._blackboard:clear("nav.fail_reason")
     self._blackboard:clear("nav.fail_detail")
     self._blackboard:clear("path.command_opts")
+    -- Start movement immediately
+    if not self.movement:navigate(waypoints) then
+        self:_invoke_command_callback(callback, false, FAIL_REASONS.UNREACHABLE, {
+            code = FAIL_REASONS.UNREACHABLE,
+            detail = "movement service unavailable: navigate() failed",
+        })
+        return
+    end
     self._callback = callback
 
-    -- Start movement immediately
-    self.movement:navigate(waypoints)
-
     if self._hsm:is_idle() or self._hsm:is_terminal() then
-        self._hsm:transition(STATES.NAVIGATING, NAV_SUBSTATES.FOLLOWING_PATH)
+        self:_safe_transition(STATES.NAVIGATING, NAV_SUBSTATES.FOLLOWING_PATH, nil, "move_direct(following_path)", callback)
     else
-        self._hsm:set_substate(NAV_SUBSTATES.FOLLOWING_PATH)
+        self:_safe_set_substate(NAV_SUBSTATES.FOLLOWING_PATH, nil, "move_direct(following_path)", callback)
     end
 end
 
@@ -268,7 +399,9 @@ end
 function Client:plan_route(nodes, callback, opts)
     local player = core.object_manager.get_local_player()
     if not player or not player:is_valid() then
-        if callback then callback(false, nil) end
+        if callback then
+            callback(false, { type = "route_failed", error = "no local player" })
+        end
         return
     end
 
@@ -277,7 +410,7 @@ function Client:plan_route(nodes, callback, opts)
             if ok and data then
                 callback(true, data)
             else
-                callback(false, { error = err })
+                callback(false, { type = "route_failed", error = err or "route planning failed" })
             end
         end
     end, opts)
@@ -359,11 +492,14 @@ end
 
 ---Follow a pre-computed waypoint path (no pathfinding request).
 ---@param waypoints vec3[]
----@param callback? fun(success: boolean, reason: string|nil)
+---@param callback? fun(success: boolean, reason: string|nil, detail: table|nil)
 ---@param opts? table { preserve_route_session?: boolean }
 function Client:follow_path(waypoints, callback, opts)
     if not waypoints or #waypoints == 0 then
-        if callback then callback(false, "empty path") end
+        self:_invoke_command_callback(callback, false, FAIL_REASONS.UNREACHABLE, {
+            code = FAIL_REASONS.UNREACHABLE,
+            detail = "empty path",
+        })
         return
     end
 
@@ -376,13 +512,20 @@ function Client:follow_path(waypoints, callback, opts)
     self.movement:stop()
     self._nav_tree:reset()
 
-    self._blackboard:set("path.destination", waypoints[#waypoints])
-    self._blackboard:set("path.waypoints", waypoints)
+    local normalized_waypoints = normalize_waypoints(waypoints)
+    self._blackboard:set("path.destination", normalized_waypoints[#normalized_waypoints])
+    self._blackboard:set("path.waypoints", normalized_waypoints)
     self._blackboard:set("path.index", 1)
     self._blackboard:set("stuck.count", 0)
     self._blackboard:set("deviation.count", 0)
+    self._blackboard:set("deviation.progress_since_repath", 0)
     self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_raw_result")
     self._blackboard:clear("deviation.last_result")
+    self._blackboard:clear("deviation.consecutive_count")
+    self._blackboard:clear("deviation.confirmed_prev")
+    self._blackboard:clear("deviation.last_repath_pos")
+    self._blackboard:clear("deviation.repath_grace_until")
     self._blackboard:clear("deviation.needs_repath")
     self._blackboard:clear("deviation.eval_tick")
     self._blackboard:clear("deviation.eval_result")
@@ -391,14 +534,20 @@ function Client:follow_path(waypoints, callback, opts)
     self._blackboard:clear("nav.fail_reason")
     self._blackboard:clear("nav.fail_detail")
     self._blackboard:clear("path.command_opts")
+
+    if not self.movement:navigate(normalized_waypoints) then
+        self:_invoke_command_callback(callback, false, FAIL_REASONS.UNREACHABLE, {
+            code = FAIL_REASONS.UNREACHABLE,
+            detail = "movement service unavailable: navigate() failed",
+        })
+        return
+    end
     self._callback = callback
 
-    self.movement:navigate(waypoints)
-
     if self._hsm:is_idle() or self._hsm:is_terminal() then
-        self._hsm:transition(STATES.NAVIGATING, NAV_SUBSTATES.FOLLOWING_PATH)
+        self:_safe_transition(STATES.NAVIGATING, NAV_SUBSTATES.FOLLOWING_PATH, nil, "follow_path(following_path)", callback)
     else
-        self._hsm:set_substate(NAV_SUBSTATES.FOLLOWING_PATH)
+        self:_safe_set_substate(NAV_SUBSTATES.FOLLOWING_PATH, nil, "follow_path(following_path)", callback)
     end
 end
 
@@ -415,18 +564,33 @@ function Client:replan(reason)
     if not dest then return end
 
     self:_invalidate_active_requests()
+    self.movement:stop()
+    self._blackboard:set("stuck.count", 0)
+    self._blackboard:clear("stuck.last_position")
+    self._blackboard:clear("stuck.last_check")
 
     -- Clear current path to trigger RequestPath in BT
     self._blackboard:clear("path.waypoints")
     self._blackboard:set("path.index", 1)
+    self._blackboard:set("deviation.count", 0)
+    self._blackboard:set("deviation.progress_since_repath", 0)
+    self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_raw_result")
+    self._blackboard:clear("deviation.last_result")
+    self._blackboard:clear("deviation.consecutive_count")
+    self._blackboard:clear("deviation.confirmed_prev")
+    self._blackboard:clear("deviation.last_repath_pos")
+    self._blackboard:clear("deviation.repath_grace_until")
     self._blackboard:clear("deviation.needs_repath")
+    self._blackboard:clear("deviation.eval_tick")
+    self._blackboard:clear("deviation.eval_result")
     self._blackboard:clear("nav.fail_reason")
     self._blackboard:clear("nav.fail_detail")
 
     -- Reset BT so HandleNavigation Sequence re-evaluates EnsurePath
     self._nav_tree:reset()
 
-    self._hsm:set_substate(NAV_SUBSTATES.AWAITING_PATH)
+    self:_safe_set_substate(NAV_SUBSTATES.AWAITING_PATH, nil, "replan(awaiting_path)", nil)
 end
 
 ---Pre-validate whether a destination is reachable.
@@ -460,8 +624,14 @@ function Client:stop()
     self._blackboard:clear("pending.callback")
     self._blackboard:clear("pending.options")
     self._blackboard:set("stuck.count", 0)
+    self._blackboard:set("deviation.progress_since_repath", 0)
     self._blackboard:clear("deviation.last_check")
+    self._blackboard:clear("deviation.last_raw_result")
     self._blackboard:clear("deviation.last_result")
+    self._blackboard:clear("deviation.consecutive_count")
+    self._blackboard:clear("deviation.confirmed_prev")
+    self._blackboard:clear("deviation.last_repath_pos")
+    self._blackboard:clear("deviation.repath_grace_until")
     self._blackboard:clear("deviation.needs_repath")
     self._blackboard:clear("deviation.eval_tick")
     self._blackboard:clear("deviation.eval_result")
@@ -534,9 +704,10 @@ function Client:get_progress()
     if not waypoints or #waypoints == 0 then
         progress = { percent = 0, waypoints_remaining = 0, total_waypoints = 0, current_index = 1 }
     else
+        local progressed = math.max(0, index - 1)
         progress = {
-            percent = math.min(1, index / #waypoints),
-            waypoints_remaining = math.max(0, #waypoints - index),
+            percent = math.min(1, progressed / #waypoints),
+            waypoints_remaining = math.max(0, #waypoints - progressed),
             total_waypoints = #waypoints,
             current_index = index,
         }
@@ -745,6 +916,85 @@ end
 --------------------------------------------------------------------------------
 
 ---@private
+---@param callback function|nil
+---@param success boolean
+---@param reason string|nil
+---@param detail table|nil
+function Client:_invoke_command_callback(callback, success, reason, detail)
+    if not callback then
+        return
+    end
+    pcall(callback, success, reason, detail)
+end
+
+---@private
+---@param context string
+---@param err string|nil
+---@param callback function|nil
+---@return boolean
+function Client:_handle_hsm_error(context, err, callback)
+    local detail = "HSM error during " .. tostring(context) .. ": " .. tostring(err or "unknown")
+    if core and core.log_error then
+        core.log_error("[SentinelNavClient] " .. detail)
+    end
+
+    if self._hsm:is_moving() then
+        self:_fail_navigation(FAIL_REASONS.UNREACHABLE, detail)
+        return false
+    else
+        self._callback = nil
+        self.movement:stop()
+        self._nav_tree:reset()
+        self._hsm:reset()
+    end
+
+    self:_invoke_command_callback(callback, false, FAIL_REASONS.UNREACHABLE, {
+        code = FAIL_REASONS.UNREACHABLE,
+        detail = detail,
+    })
+    return false
+end
+
+---@private
+---@return boolean
+function Client:_clear_validation_request()
+    self._blackboard:set("validation.pending", false)
+    self._blackboard:clear("validation.result")
+    self._blackboard:clear("validation.active_id")
+    self._blackboard:clear("validation.active_session")
+    return true
+end
+
+---@private
+---@param new_state string
+---@param substate string|nil
+---@param opts table|nil
+---@param context string
+---@param callback function|nil
+---@return boolean
+function Client:_safe_transition(new_state, substate, opts, context, callback)
+    local ok, err = self._hsm:transition(new_state, substate, opts)
+    if not ok then
+        return self:_handle_hsm_error(context, err, callback)
+    end
+    return true
+end
+
+---@private
+---@param new_substate string
+---@param opts table|nil
+---@param context string
+---@param callback function|nil
+---@return boolean
+function Client:_safe_set_substate(new_substate, opts, context, callback)
+    local ok, err = self._hsm:set_substate(new_substate, opts)
+    if not ok then
+        return self:_handle_hsm_error(context, err, callback)
+    end
+    return true
+end
+
+---@private
 function Client:_clear_route_session()
     if self._route_session then
         self._route_session.active = false
@@ -758,8 +1008,29 @@ end
 ---@private
 ---@param data table
 function Client:_on_waypoint_reached(data)
-    -- Waypoint progress means deviation repaths were productive; reset streak budget.
-    self._blackboard:set("deviation.count", 0)
+    -- Reset deviation repath streak only after meaningful forward progress.
+    local repath_count = self._blackboard:get("deviation.count", 0)
+    if repath_count > 0 then
+        local progress_steps = (self._blackboard:get("deviation.progress_since_repath", 0) or 0) + 1
+        self._blackboard:set("deviation.progress_since_repath", progress_steps)
+
+        local pos = self._blackboard:get("player.position")
+        local anchor = self._blackboard:get("deviation.last_repath_pos")
+        local reset_dist = self._blackboard:get("config.deviation_repath_progress_reset_dist", 6.0)
+        local reset_waypoints = self._blackboard:get("config.deviation_repath_progress_reset_waypoints", 4)
+
+        local moved_enough = false
+        if pos and anchor then
+            moved_enough = Helpers.distance_2d(pos, anchor) >= reset_dist
+        end
+        local waypoint_progress_enough = progress_steps >= reset_waypoints
+
+        if moved_enough or waypoint_progress_enough then
+            self._blackboard:set("deviation.count", 0)
+            self._blackboard:set("deviation.progress_since_repath", 0)
+            self._blackboard:clear("deviation.last_repath_pos")
+        end
+    end
 
     local rs = self._route_session
     if not rs or not rs.active then
@@ -852,7 +1123,17 @@ function Client:_invalidate_active_requests()
     self._blackboard:clear("request.error")
     self._blackboard:clear("request.active_id")
     self._blackboard:clear("request.active_kind")
+    self._blackboard:clear("request.active_owner")
     self._blackboard:clear("request.retry_at")
+    self._blackboard:clear("repath.retry_at")
+    self._blackboard:clear("repath.retry_owner")
+    self._blackboard:clear("deviation.repath_grace_until")
+    self._blackboard:clear("deviation.last_repath_pos")
+    self._blackboard:clear("deviation.progress_since_repath")
+    self._blackboard:clear("deviation.last_raw_result")
+    self._blackboard:clear("deviation.consecutive_count")
+    self._blackboard:clear("deviation.confirmed_prev")
+    self:_clear_validation_request()
 end
 
 ---@private
@@ -887,16 +1168,23 @@ function Client:_fail_navigation(reason, detail)
     self.movement:stop()
 
     if self._hsm:get_state() ~= STATES.FAILED then
-        self._hsm:transition(STATES.FAILED, nil, {
+        local ok, err = self._hsm:transition(STATES.FAILED, nil, {
             fail_reason = normalized,
             destination = self._blackboard:get("path.destination"),
         })
+        if not ok and core and core.log_error then
+            core.log_error("[SentinelNavClient] HSM transition to failed rejected: " .. tostring(err))
+            self._hsm:reset()
+        end
     end
 
     if self._callback then
         local cb = self._callback
         self._callback = nil
-        pcall(cb, false, detail or normalized)
+        self:_invoke_command_callback(cb, false, detail or normalized, {
+            code = normalized,
+            detail = detail or normalized,
+        })
     end
 
     if self._route_session and self._route_session.active then
@@ -910,8 +1198,24 @@ end
 
 ---@private
 function Client:_check_stuck()
-    -- Don't check stuck if movement hasn't actually started yet
-    if not self.movement:is_moving() then return end
+    local substate = self._hsm:get_substate()
+    local tracking_enabled = (substate == NAV_SUBSTATES.FOLLOWING_PATH or substate == NAV_SUBSTATES.RECOVERING)
+    if not tracking_enabled then
+        self._blackboard:set("stuck.count", 0)
+        self._blackboard:clear("stuck.last_position")
+        self._blackboard:clear("stuck.last_check")
+        return
+    end
+
+    -- If movement backend reports idle but we still have an active path, continue
+    -- evaluating stuck to catch backend stalls.
+    if not self.movement:is_moving() then
+        local waypoints = self._blackboard:get("path.waypoints")
+        local index = self._blackboard:get("path.index", 1)
+        if not waypoints or #waypoints == 0 or index > #waypoints then
+            return
+        end
+    end
 
     local now = self._blackboard:get("_time", 0)
     local interval = self._blackboard:get("config.stuck_check_interval", 1.0)
@@ -938,9 +1242,9 @@ function Client:_check_stuck()
             self._blackboard:set("stuck.count", count)
 
             -- Transition to recovering if not already
-            local substate = self._hsm:get_substate()
-            if substate ~= NAV_SUBSTATES.RECOVERING then
-                self._hsm:set_substate(NAV_SUBSTATES.RECOVERING)
+            local current_substate = self._hsm:get_substate()
+            if current_substate == NAV_SUBSTATES.FOLLOWING_PATH then
+                self:_safe_set_substate(NAV_SUBSTATES.RECOVERING, nil, "_check_stuck(recovering)", nil)
             end
 
             self._event_bus:emit(Events.STUCK_DETECTED, {
@@ -954,9 +1258,9 @@ function Client:_check_stuck()
                 self._event_bus:emit(Events.STUCK_RECOVERED, { position = pos })
                 self._blackboard:set("stuck.count", 0)
                 -- Return to following_path if currently recovering
-                local substate = self._hsm:get_substate()
-                if substate == NAV_SUBSTATES.RECOVERING then
-                    self._hsm:set_substate(NAV_SUBSTATES.FOLLOWING_PATH)
+                local current_substate = self._hsm:get_substate()
+                if current_substate == NAV_SUBSTATES.RECOVERING then
+                    self:_safe_set_substate(NAV_SUBSTATES.FOLLOWING_PATH, nil, "_check_stuck(following_path)", nil)
                 end
             end
         end
@@ -974,12 +1278,17 @@ function Client:_on_arrival()
     local dest = self._blackboard:get("path.destination")
     self.movement:stop()
 
-    self._hsm:transition(STATES.ARRIVED, nil, {
+    if not self:_safe_transition(STATES.ARRIVED, nil, {
         event_data = { destination = dest },
-    })
+    }, "_on_arrival(arrived)", nil) then
+        return
+    end
 
     if self._callback then
-        pcall(self._callback, true)
+        self:_invoke_command_callback(self._callback, true, nil, {
+            code = "arrived",
+            destination = dest,
+        })
         self._callback = nil
     end
 end

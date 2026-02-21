@@ -201,11 +201,22 @@ function ConsoleLogger:_subscribe()
     on(Events.DEVIATION_DETECTED, function(data)
         if not self:_is_verbose() then return end
         data = data or {}
-        self:_debug(string.format(
-            "Deviation detected: drift=%.2f yd at %s",
-            tonumber(data.drift) or 0,
-            format_pos(data.position)
-        ))
+        local drift = tonumber(data.drift) or 0
+        local vertical = tonumber(data.vertical_drift) or 0
+        if vertical > 0 then
+            self:_debug(string.format(
+                "Deviation detected: drift=%.2f yd, vertical=%.2f yd at %s",
+                drift,
+                vertical,
+                format_pos(data.position)
+            ))
+        else
+            self:_debug(string.format(
+                "Deviation detected: drift=%.2f yd at %s",
+                drift,
+                format_pos(data.position)
+            ))
+        end
     end)
 
     on(Events.REPATH_STARTED, function(data)
@@ -227,11 +238,21 @@ function ConsoleLogger:_subscribe()
         local mode = soft and "Soft repath" or "Repath"
 
         if data.success then
-            if self:_is_verbose() then
+            if soft then
+                if not self:_is_verbose() then
+                    return
+                end
                 self:_debug(string.format(
                     "%s completed (%d waypoints)",
                     mode,
                     tonumber(data.waypoint_count) or 0
+                ))
+            else
+                self:_info(string.format(
+                    "%s completed (%d waypoints)%s",
+                    mode,
+                    tonumber(data.waypoint_count) or 0,
+                    data.reason and (" [" .. tostring(data.reason) .. "]") or ""
                 ))
             end
             return

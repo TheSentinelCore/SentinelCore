@@ -47,7 +47,12 @@ local function create(services)
     -- Stage 1: Jump
     local try_jump = BT.Sequence:new("TryJump")
     try_jump:add(stuck_count_eq(1))
-    try_jump:add(Jump())
+    try_jump:add(BT.Cooldown:new(
+        Jump(),
+        0.6,
+        "StuckJumpCooldown",
+        "config.stuck_recovery_action_cooldown"
+    ))
     tree:add(try_jump)
 
     -- Stage 2: Probe + avoidance zone + repath
@@ -55,7 +60,9 @@ local function create(services)
     try_probe:add(stuck_count_eq(2))
     try_probe:add(ProbeForObstacle(obstacle_service))
     try_probe:add(AddAvoidanceZone(obstacle_service))
-    try_probe:add(Repath(nav_service, movement_service, obstacle_service, event_bus))
+    try_probe:add(Repath(nav_service, movement_service, obstacle_service, event_bus, {
+        reason = "stuck_recovery",
+    }))
     tree:add(try_probe)
 
     -- Stage 3: Strafe + jump
@@ -85,7 +92,9 @@ local function create(services)
     local try_zone = BT.Sequence:new("TryZoneAndRepath")
     try_zone:add(stuck_count_gte(5))
     try_zone:add(AddAvoidanceZone(obstacle_service))
-    try_zone:add(Repath(nav_service, movement_service, obstacle_service, event_bus))
+    try_zone:add(Repath(nav_service, movement_service, obstacle_service, event_bus, {
+        reason = "stuck_recovery",
+    }))
     tree:add(try_zone)
 
     -- Final: signal max stuck exceeded

@@ -9,6 +9,10 @@ return function(movement_service, event_bus)
     return BT.Action:new(function(bb, dt)
         local reached_end = movement_service:process()
         if reached_end then
+            local waypoints = bb:get("path.waypoints")
+            if waypoints then
+                bb:set("path.index", #waypoints + 1)
+            end
             return BT.SUCCESS -- all waypoints done
         end
 

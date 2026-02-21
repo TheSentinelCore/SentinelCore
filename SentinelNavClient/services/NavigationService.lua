@@ -12,6 +12,83 @@ local JSON = require("lib/JSON")
 local izi = require("common/izi_sdk")
 local Events = require("events/Events")
 
+local _vec3_ctor_checked = false
+local _vec3_ctor = nil
+local _vec3_fallback_mt = nil
+
+local function resolve_vec3_ctor()
+    if _vec3_ctor_checked then
+        return _vec3_ctor
+    end
+    _vec3_ctor_checked = true
+
+    local global_vec3 = rawget(_G, "vec3")
+    if type(global_vec3) == "table" and type(global_vec3.new) == "function" then
+        _vec3_ctor = global_vec3.new
+        return _vec3_ctor
+    end
+
+    local ok, vec3_mod = pcall(require, "common/geometry/vector_3")
+    if ok and type(vec3_mod) == "table" and type(vec3_mod.new) == "function" then
+        _vec3_ctor = vec3_mod.new
+    end
+    return _vec3_ctor
+end
+
+local function fallback_vec3(x, y, z)
+    if not _vec3_fallback_mt then
+        _vec3_fallback_mt = {
+            __index = {
+                dist_to = function(self, other)
+                    local dx = (other.x or 0) - (self.x or 0)
+                    local dy = (other.y or 0) - (self.y or 0)
+                    local dz = (other.z or 0) - (self.z or 0)
+                    return math.sqrt(dx * dx + dy * dy + dz * dz)
+                end,
+                dist_to_ignore_z = function(self, other)
+                    local dx = (other.x or 0) - (self.x or 0)
+                    local dy = (other.y or 0) - (self.y or 0)
+                    return math.sqrt(dx * dx + dy * dy)
+                end,
+                clone = function(self)
+                    return fallback_vec3(self.x, self.y, self.z)
+                end,
+            },
+        }
+    end
+    return setmetatable({
+        x = tonumber(x) or 0,
+        y = tonumber(y) or 0,
+        z = tonumber(z) or 0,
+    }, _vec3_fallback_mt)
+end
+
+local function to_vec3(pos)
+    if not pos then
+        return nil
+    end
+
+    if type(pos) ~= "table" then
+        return pos
+    end
+
+    if type(pos.dist_to) == "function" then
+        return pos
+    end
+
+    local x = pos.x or pos[1]
+    local y = pos.y or pos[2]
+    local z = pos.z or pos[3]
+    local ctor = resolve_vec3_ctor()
+    if ctor then
+        local ok, out = pcall(ctor, x, y, z)
+        if ok and out then
+            return out
+        end
+    end
+    return fallback_vec3(x, y, z)
+end
+
 -- ============================================================================
 -- Lookup Tables (verbatim from Navigation.lua)
 -- ============================================================================
@@ -463,7 +540,7 @@ local INDOOR_UI_MAPS = {
 -- Helper Functions
 -- ============================================================================
 
----Convert response path array to {x,y,z} tables
+---Convert response path array to vec3-compatible points.
 ---@param data table Response data with optional .path field
 ---@return table[]
 local function extract_waypoints(data)
@@ -471,7 +548,7 @@ local function extract_waypoints(data)
     if data.path then
         for i = 1, #data.path do
             local pt = data.path[i]
-            waypoints[#waypoints + 1] = { x = pt.x, y = pt.y, z = pt.z }
+            waypoints[#waypoints + 1] = to_vec3(pt)
         end
     end
     return waypoints
@@ -1126,7 +1203,7 @@ function NavigationService:random_point(callback, opts)
             if callback then callback(false, nil, err) end
             return
         end
-        callback(true, { point = { x = data.x, y = data.y, z = data.z } }, nil)
+        callback(true, { point = to_vec3({ x = data.x, y = data.y, z = data.z }) }, nil)
     end)
 end
 
@@ -1279,6 +1356,7 @@ function NavigationService._test()
     results["extract_valid_count"] = (#data_valid == 2)
     results["extract_valid_x"] = (data_valid[1].x == 1)
     results["extract_valid_z"] = (data_valid[2].z == 6)
+    results["extract_vec3_compat"] = (type(data_valid[1].dist_to) == "function")
 
     -- Test format_points
     local fmt = format_points({ { x = 1.5, y = 2.5, z = 3.5 } })
