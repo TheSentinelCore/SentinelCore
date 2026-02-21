@@ -95,7 +95,7 @@ Consumers should not instantiate `Client` directly.
 |---|---|---|
 | `move_to` | `client:move_to(target, callback?, opts?)` | Pathfinds and starts navigation |
 | `move_direct` | `client:move_direct(target, callback?)` | Follows a direct single-waypoint path |
-| `follow_path` | `client:follow_path(waypoints, callback?)` | Follow precomputed waypoints |
+| `follow_path` | `client:follow_path(waypoints, callback?, opts?)` | Follow precomputed waypoints |
 | `plan_route` | `client:plan_route(nodes, callback?, opts?)` | Plans a TSP route and returns route data |
 | `start_route` | `client:start_route(nodes, callback?, opts?)` | Plans and executes a tracked route session with leg callbacks/events |
 | `replan` | `client:replan(reason?)` | Re-requests current path to current destination |
@@ -105,8 +105,18 @@ Consumers should not instantiate `Client` directly.
 #### `move_to(target, callback?, opts?)`
 
 - `target`: `{ x, y, z }`
-- `callback`: `function(success, reason)` (optional)
+- `callback`: `function(success, reason, detail?)` (optional)
 - `opts`: optional per-command pathfinding overrides stored as `path.command_opts`
+
+`detail` (when provided) is a structured payload:
+
+```lua
+{
+    code = string,        -- normalized error code (for failures) or lifecycle code ("arrived")
+    detail = string|nil,  -- human-readable reason
+    destination = vec3|nil,
+}
+```
 
 Behavior:
 
@@ -133,12 +143,17 @@ function(success, data)
     -- data.total_distance number
 
     -- success = false:
-    -- data may be nil (for early local-player failure)
-    -- or { error = string }
+    -- data = { type = "route_failed", error = string }
 end
 ```
 
 To execute a returned route immediately, call `client:follow_path(data.waypoints, ...)`.
+
+#### `follow_path(waypoints, callback?, opts?)`
+
+- `waypoints`: `vec3[]` (must be non-empty)
+- `callback`: `function(success, reason, detail?)` (optional)
+- `opts.preserve_route_session`: `boolean` (default `false`)
 
 #### `start_route(nodes, callback?, opts?)`
 

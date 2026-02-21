@@ -6,6 +6,10 @@ local BT = require("lib/BehaviorTree")
 ---@return table BT.Condition node
 return function()
     return BT.Condition:new(function(bb)
+        local substate = bb:get("hsm.substate")
+        if substate ~= "following_path" and substate ~= "recovering" then
+            return false
+        end
         return bb:get("stuck.count", 0) > 0
     end, "IsStuck")
 end

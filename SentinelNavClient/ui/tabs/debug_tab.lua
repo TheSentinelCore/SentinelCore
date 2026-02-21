@@ -304,6 +304,11 @@ local function dispatch_go(mode_idx, client, waypoints)
         if not success then
             core.log("[SentinelNavClient Debug] " .. mode.name .. " failed: " .. tostring(reason))
             _nav_active = false
+            return
+        end
+
+        if not mode.sequential then
+            _nav_active = false
         end
     end
 
@@ -864,7 +869,18 @@ function DebugTab.update(client, menu)
     end
 
     if not _nav_active or not client or not menu then return end
-    if not mode.sequential then return end
+    if not mode.sequential then
+        local state = client:get_state()
+        if state == "arrived" then
+            _nav_active = false
+        elseif state == "failed" then
+            core.log("[SentinelNavClient Debug] Navigation failed")
+            _nav_active = false
+        elseif state == "idle" then
+            _nav_active = false
+        end
+        return
+    end
 
     local state = client:get_state()
     if state == "arrived" and _nav_index < #_waypoints then
