@@ -757,7 +757,7 @@ local function register_tabs(ui, client)
                 y_offset = render_toggle(window, colors, x, y_offset, width, "Auto-Vendor Enabled",
                     policy.vendor_enabled ~= false,
                     function(new_value)
-                        local ok, err = client:set_policy_setting("vendor_enabled", new_value, false)
+                        local ok, err = client:set_policy_setting("vendor_enabled", new_value, true)
                         _last_settings_result = ok and "Updated vendor_enabled" or ("Update failed: " .. tostring(err))
                     end,
                     TOOLTIPS.vendor_enabled, self)
