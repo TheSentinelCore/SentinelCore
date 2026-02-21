@@ -47,7 +47,27 @@ function rogue_policy:score_adjustment(enemy, world_model, _intent_context)
 end
 
 function rogue_policy:get_next_action(target, world_model, intent_context)
-    return self.generic:get_next_action(target, world_model, intent_context)
+    local cmd = self.generic:get_next_action(target, world_model, intent_context)
+    if not cmd then return nil end
+
+    local self_state = world_model and world_model:get_self() or nil
+    if not self_state or not self_state.position or not target or not target.position then
+        return cmd
+    end
+
+    local dist = utils.distance_3d(self_state.position, target.position)
+    if dist < 8.0 then
+        -- Strafe behind target
+        local rot = target.rotation or 0
+        local behind_dist = 2.0
+        cmd.movement_override = {
+            x = target.position.x - math.cos(rot) * behind_dist,
+            y = target.position.y - math.sin(rot) * behind_dist,
+            z = target.position.z
+        }
+    end
+
+    return cmd
 end
 
 return rogue_policy

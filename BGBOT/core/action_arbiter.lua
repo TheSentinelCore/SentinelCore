@@ -4,6 +4,57 @@
 local action_arbiter = {}
 action_arbiter.__index = action_arbiter
 
+local constants = require("shared/constants")
+
+local MAX_OVERRIDE_DISTANCE = math.max(
+    tonumber(constants.COMBAT.INTERCEPT_CHASE_RANGE) or 50,
+    tonumber(constants.COMBAT.DEFAULT_CHASE_RANGE) or 30
+)
+
+local function is_finite_number(v)
+    return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge
+end
+
+local function to_vec3(input)
+    if type(input) ~= "table" then
+        return nil
+    end
+
+    local x = tonumber(input.x)
+    local y = tonumber(input.y)
+    local z = tonumber(input.z)
+    if not is_finite_number(x) or not is_finite_number(y) or not is_finite_number(z) then
+        return nil
+    end
+
+    return { x = x, y = y, z = z }
+end
+
+local function distance_2d(a, b)
+    local dx = a.x - b.x
+    local dy = a.y - b.y
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+local function sanitize_movement_override(override, world_model)
+    local move_goal = to_vec3(override)
+    if not move_goal then
+        return nil
+    end
+
+    local self_state = world_model and world_model:get_self() or nil
+    local self_pos = to_vec3(self_state and self_state.position or nil)
+    if not self_pos then
+        return move_goal
+    end
+
+    if distance_2d(self_pos, move_goal) > MAX_OVERRIDE_DISTANCE then
+        return nil
+    end
+
+    return move_goal
+end
+
 local function safe_copy(output)
     if type(output) ~= "table" then
         return {
@@ -32,9 +83,9 @@ end
 ---4) Intent movement/face fallback
 ---@param intent_output IntentOutput|nil
 ---@param combat_command table|nil
----@param _world_model WorldModel|nil
+---@param world_model WorldModel|nil
 ---@return table
-function action_arbiter:resolve(intent_output, combat_command, _world_model)
+function action_arbiter:resolve(intent_output, combat_command, world_model)
     local out = safe_copy(intent_output)
 
     if not combat_command then
@@ -58,6 +109,15 @@ function action_arbiter:resolve(intent_output, combat_command, _world_model)
             out.combat_target = combat_command.target
             -- Use combat target for facing when not interacting.
             out.face_target = combat_command.target
+        end
+    end
+
+    if combat_command.halt_movement then
+        out.nav_goal = nil
+    elseif combat_command.movement_override then
+        local safe_override = sanitize_movement_override(combat_command.movement_override, world_model)
+        if safe_override then
+            out.nav_goal = safe_override
         end
     end
 

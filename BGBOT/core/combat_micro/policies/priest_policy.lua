@@ -67,7 +67,49 @@ function priest_policy:score_adjustment(enemy, world_model, _intent_context)
 end
 
 function priest_policy:get_next_action(target, world_model, intent_context)
-    return self.generic:get_next_action(target, world_model, intent_context)
+    local cmd = self.generic:get_next_action(target, world_model, intent_context)
+    if not cmd then return nil end
+
+    local self_state = world_model and world_model:get_self() or nil
+    if not self_state or not self_state.position or not target or not target.position then
+        return cmd
+    end
+
+    local dist = utils.distance_3d(self_state.position, target.position)
+    if self.mode == "shadow" then
+        if dist < 15.0 then
+            local dx = self_state.position.x - target.position.x
+            local dy = self_state.position.y - target.position.y
+            local len = math.sqrt(dx*dx + dy*dy)
+            if len > 0.1 then
+                cmd.movement_override = {
+                    x = self_state.position.x + (dx / len) * 10.0,
+                    y = self_state.position.y + (dy / len) * 10.0,
+                    z = self_state.position.z
+                }
+            end
+        elseif dist >= 15.0 and dist <= 30.0 then
+            cmd.halt_movement = true
+        end
+    else
+        -- Support: stay further back
+        if dist < 20.0 then
+            local dx = self_state.position.x - target.position.x
+            local dy = self_state.position.y - target.position.y
+            local len = math.sqrt(dx*dx + dy*dy)
+            if len > 0.1 then
+                cmd.movement_override = {
+                    x = self_state.position.x + (dx / len) * 15.0,
+                    y = self_state.position.y + (dy / len) * 15.0,
+                    z = self_state.position.z
+                }
+            end
+        elseif dist >= 25.0 and dist <= 35.0 then
+            cmd.halt_movement = true
+        end
+    end
+
+    return cmd
 end
 
 return priest_policy

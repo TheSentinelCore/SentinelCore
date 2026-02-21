@@ -8,6 +8,8 @@ local Generic   = require("core/combat_micro/generic_combat")
 local MagePolicy = require("core/combat_micro/policies/mage_policy")
 local RoguePolicy = require("core/combat_micro/policies/rogue_policy")
 local PriestPolicy = require("core/combat_micro/policies/priest_policy")
+local WarriorPolicy = require("core/combat_micro/policies/warrior_policy")
+local HunterPolicy = require("core/combat_micro/policies/hunter_policy")
 
 local combat_micro = {}
 combat_micro.__index = combat_micro
@@ -21,6 +23,8 @@ function combat_micro.new()
         rogue = RoguePolicy.new(self.generic_policy),
         priest_support = PriestPolicy.new(self.generic_policy, "support"),
         priest_shadow = PriestPolicy.new(self.generic_policy, "shadow"),
+        warrior = WarriorPolicy.new(self.generic_policy),
+        hunter = HunterPolicy.new(self.generic_policy),
     }
     self._active_policy = self.generic_policy
     self._active_policy_id = "generic"
@@ -39,6 +43,14 @@ local function resolve_policy_id(self_state)
 
     if class_id == constants.CLASS.ROGUE then
         return "rogue"
+    end
+
+    if class_id == constants.CLASS.WARRIOR then
+        return "warrior"
+    end
+
+    if class_id == constants.CLASS.HUNTER then
+        return "hunter"
     end
 
     if class_id == constants.CLASS.PRIEST then

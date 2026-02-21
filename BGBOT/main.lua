@@ -205,6 +205,46 @@ local menu_elements = {
 
 local emit_telemetry_event
 
+-- Runtime API guard: some private servers expose partial core.input surfaces.
+-- Keep execution alive by skipping missing methods instead of hard-crashing.
+local missing_input_method_logged = {}
+
+local function get_core_input_method(method_name)
+    local input = core and core.input or nil
+    if type(input) ~= "table" then
+        return nil
+    end
+
+    local fn = input[method_name]
+    if type(fn) ~= "function" then
+        return nil
+    end
+
+    return fn
+end
+
+local function log_missing_input_method(method_name)
+    local key = tostring(method_name or "")
+    if key == "" or missing_input_method_logged[key] then
+        return
+    end
+
+    missing_input_method_logged[key] = true
+    if core and core.log then
+        core.log(string.format("[BGBOT][API] Missing core.input.%s; skipping call.", key))
+    end
+end
+
+local function safe_core_input_call(method_name, ...)
+    local fn = get_core_input_method(method_name)
+    if not fn then
+        log_missing_input_method(method_name)
+        return false, "missing_method"
+    end
+
+    return pcall(fn, ...)
+end
+
 local function goals_equal(a, b)
     if a == nil and b == nil then return true end
     if a == nil or b == nil then return false end
@@ -975,8 +1015,8 @@ core.register_on_update_callback(function()
         end
 
         if is_waiting_resurrect and now >= death_release_at and self_state.is_dead then
-            core.input.release_spirit()
-            if config.debug.log_intent then
+            local released = safe_core_input_call("release_spirit")
+            if released and config.debug.log_intent then
                 core.log("[BGBOT] Released spirit.")
             end
         end
@@ -1088,15 +1128,11 @@ core.register_on_update_callback(function()
     -- 7. Execution (throttled, goal-change gated)
     ----------------------------------------------------------------
     if final_output and final_output.stop_attack then
-        pcall(function()
-            core.input.stop_attack()
-        end)
+        safe_core_input_call("stop_attack")
     end
 
     if final_output and final_output.combat_target then
-        pcall(function()
-            core.input.set_target(final_output.combat_target)
-        end)
+        safe_core_input_call("set_target", final_output.combat_target)
     end
 
     if final_output and final_output.face_target then
@@ -1111,15 +1147,15 @@ core.register_on_update_callback(function()
         end
 
         if face_valid then
-            core.input.set_target(face_target)
+            safe_core_input_call("set_target", face_target)
             local ok_pos, fp = pcall(function()
                 return face_target:get_position()
             end)
             if ok_pos and fp then
-                core.input.look_at({ x = fp.x, y = fp.y, z = fp.z })
+                safe_core_input_call("look_at", { x = fp.x, y = fp.y, z = fp.z })
             end
         elseif face_type == "table" and face_target.x and face_target.y and face_target.z then
-            core.input.look_at(face_target)
+            safe_core_input_call("look_at", face_target)
         end
     end
 
@@ -1164,16 +1200,16 @@ core.register_on_update_callback(function()
             if can_interact then
                 -- Avoid dual-fire on objective objects; some servers/client builds
                 -- are unstable when both interact APIs are called back-to-back.
-                local ok, err = pcall(function()
-                    core.input.interact_with_object(it)
-                end)
+                local ok, err = safe_core_input_call("interact_with_object", it)
 
-                if not ok and core.input.use_object then
-                    pcall(function()
-                        core.input.use_object(it)
-                    end)
+                if not ok then
+                    local used = safe_core_input_call("use_object", it)
                     if config.debug.log_intent then
-                        core.log("[BGBOT][Intent] interact_with_object failed: " .. tostring(err))
+                        if used then
+                            core.log("[BGBOT][Intent] interact_with_object failed; used fallback use_object.")
+                        else
+                            core.log("[BGBOT][Intent] interact_with_object failed: " .. tostring(err))
+                        end
                     end
                 end
 
