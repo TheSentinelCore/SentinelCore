@@ -24,6 +24,7 @@ local _selected_profile_index = 1
 local _show_expert_settings = false
 local _runtime_feed_filter = "all"
 local PALADIN_CLASS_ID = 2
+local WARLOCK_CLASS_ID = 9
 
 local FEED_FILTER_LABELS = {
     all = "All",
@@ -53,6 +54,19 @@ local TOOLTIPS = {
     ret_health_pot = "Use best health potion when HP is at or below this threshold in combat.",
     ret_mana_pot = "Use best mana potion when mana is at or below this threshold in combat.",
     ret_consec = "Minimum mana required to cast Consecration in single-target combat.",
+    wl_section = "Affliction sustain and survivability settings for Life Tap, Drain Life, pet funneling, and consumables.",
+    wl_drink = "Out-of-combat drink threshold for Warlock.",
+    wl_eat = "Out-of-combat eat threshold for Warlock.",
+    wl_lifetap_min_hp = "Minimum HP required before Life Tap is allowed.",
+    wl_lifetap_max_mana = "In-combat mana cap up to which Life Tap is used.",
+    wl_lifetap_ooc_max_mana = "Out-of-combat mana cap up to which Life Tap is used.",
+    wl_death_coil_hp = "Emergency HP threshold for Death Coil.",
+    wl_drain_life_hp = "HP threshold for defensive Drain Life usage.",
+    wl_funnel_pet_hp = "Pet HP threshold for Health Funnel.",
+    wl_health_pot = "Combat HP threshold for health potion usage.",
+    wl_mana_pot = "Combat mana threshold for mana potion usage.",
+    wl_mana_pot_min_hp = "Minimum HP required to allow mana potion usage.",
+    wl_wand_mana = "Mana floor before wand fallback is preferred.",
     target_base = "Preferred baseline pull radius for target selection.",
     target_max = "Hard cap for target acquisition distance.",
     legacy_quality = "Backward-compat fallback. Used only when explicit quality toggles are missing.",
@@ -765,6 +779,8 @@ local function register_tabs(ui, client)
                 local rotation = runtime.rotation or {}
                 local paladin_rotation = rotation.paladin or {}
                 local retri_rotation = paladin_rotation.retribution or {}
+                local warlock_rotation = rotation.warlock or {}
+                local affli_rotation = warlock_rotation.affliction or {}
                 local class_id = get_active_class_id(client)
                 local policy = client and client.get_policy_config and client:get_policy_config() or {}
                 local active_profile_id = client and client.get_active_profile_id and client:get_active_profile_id() or "default"
@@ -785,6 +801,17 @@ local function register_tabs(ui, client)
 
                     local ok, err = client:set_runtime_setting("rotation", "paladin", new_paladin, false)
                     _last_settings_result = ok and ("Updated retribution." .. tostring(key)) or
+                        ("Update failed: " .. tostring(err))
+                end
+
+                local function set_affliction_policy(key, value)
+                    local new_warlock = shallow_copy(rotation.warlock or {})
+                    local new_affli = shallow_copy(new_warlock.affliction or {})
+                    new_affli[key] = value
+                    new_warlock.affliction = new_affli
+
+                    local ok, err = client:set_runtime_setting("rotation", "warlock", new_warlock, false)
+                    _last_settings_result = ok and ("Updated affliction." .. tostring(key)) or
                         ("Update failed: " .. tostring(err))
                 end
 
@@ -922,6 +949,82 @@ local function register_tabs(ui, client)
                             set_retri_policy("consecration_st_min_mana_pct", new_value)
                         end,
                         TOOLTIPS.ret_consec, self)
+                    y_offset = y_offset + 4
+                elseif class_id == WARLOCK_CLASS_ID then
+                    y_offset = render_section_title(window, colors, x, y_offset, width, "Affliction Combat")
+                    render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.wl_section)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Drink Mana", tonumber(affli_rotation.drink_mana_pct) or 0.40, 0.01, 0.05, 0.95, 2,
+                        function(new_value)
+                            set_affliction_policy("drink_mana_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_drink, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Eat Health", tonumber(affli_rotation.eat_health_pct) or 0.65, 0.01, 0.10, 0.95, 2,
+                        function(new_value)
+                            set_affliction_policy("eat_health_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_eat, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Life Tap Min HP", tonumber(affli_rotation.life_tap_min_health_pct) or 0.50, 0.01, 0.10, 0.95, 2,
+                        function(new_value)
+                            set_affliction_policy("life_tap_min_health_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_lifetap_min_hp, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Life Tap Max Mana", tonumber(affli_rotation.life_tap_max_mana_pct) or 0.60, 0.01, 0.05, 0.95, 2,
+                        function(new_value)
+                            set_affliction_policy("life_tap_max_mana_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_lifetap_max_mana, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Life Tap OOC Mana", tonumber(affli_rotation.life_tap_ooc_max_mana_pct) or 0.85, 0.01, 0.10, 0.99, 2,
+                        function(new_value)
+                            set_affliction_policy("life_tap_ooc_max_mana_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_lifetap_ooc_max_mana, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Death Coil HP", tonumber(affli_rotation.death_coil_hp_pct) or 0.25, 0.01, 0.05, 0.80, 2,
+                        function(new_value)
+                            set_affliction_policy("death_coil_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_death_coil_hp, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Drain Life HP", tonumber(affli_rotation.drain_life_hp_pct) or 0.45, 0.01, 0.10, 0.90, 2,
+                        function(new_value)
+                            set_affliction_policy("drain_life_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_drain_life_hp, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Health Funnel Pet HP", tonumber(affli_rotation.health_funnel_pet_hp_pct) or 0.30, 0.01, 0.05, 0.90, 2,
+                        function(new_value)
+                            set_affliction_policy("health_funnel_pet_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_funnel_pet_hp, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Health Potion HP", tonumber(affli_rotation.health_potion_hp_pct) or 0.25, 0.01, 0.05, 0.90, 2,
+                        function(new_value)
+                            set_affliction_policy("health_potion_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_health_pot, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Mana Potion Mana", tonumber(affli_rotation.mana_potion_mana_pct) or 0.15, 0.01, 0.05, 0.80, 2,
+                        function(new_value)
+                            set_affliction_policy("mana_potion_mana_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_mana_pot, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Mana Potion Min HP", tonumber(affli_rotation.mana_potion_min_hp_pct) or 0.35, 0.01, 0.05, 0.90, 2,
+                        function(new_value)
+                            set_affliction_policy("mana_potion_min_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_mana_pot_min_hp, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Wand Mana Floor", tonumber(affli_rotation.wand_mana_pct) or 0.08, 0.01, 0.00, 0.50, 2,
+                        function(new_value)
+                            set_affliction_policy("wand_mana_pct", new_value)
+                        end,
+                        TOOLTIPS.wl_wand_mana, self)
                     y_offset = y_offset + 4
                 else
                     y_offset = render_section_title(window, colors, x, y_offset, width, "Combat Routine")

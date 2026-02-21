@@ -19,7 +19,6 @@ Scope: SentinelCore rotation framework; TBC Classic Warlock Affliction provider;
 
 ### 1.2 Non-Goals (v1)
 - No engine-level action type additions (for example, no new `cast_spell_position` action in `ActionBuilder`).
-- No UI editor panel additions for Warlock policy values in `SentinelCore/ui/window.lua` (defaults + runtime policy plumbing already support zero-manual-config operation).
 - No pet spell micromanagement (for example, Felhunter Spell Lock AI) in v1.
 
 ### 1.3 Exit Criteria
@@ -140,6 +139,29 @@ Add direct provider regression tests similar to Retribution tests:
 
 ### 4.10 Modify: `SentinelCore/tests/run_all.lua`
 Include new Warlock regression suite.
+
+### 4.11 Modify: `SentinelCore/ui/window.lua`
+Add class-scoped Warlock Affliction controls in the Settings tab, mirroring the existing Retribution UI pattern.
+
+Scope:
+- Add class constant for Warlock (`class_id == 9`) routing.
+- Add tooltips for Affliction policy controls.
+- Bind runtime settings reads from `rotation.warlock.affliction`.
+- Add `set_affliction_policy(key, value)` helper to write back via:
+  - `client:set_runtime_setting("rotation", "warlock", new_warlock, false)`
+- Add steppers for all Affliction policy thresholds:
+  - `drink_mana_pct`
+  - `eat_health_pct`
+  - `life_tap_min_health_pct`
+  - `life_tap_max_mana_pct`
+  - `life_tap_ooc_max_mana_pct`
+  - `death_coil_hp_pct`
+  - `drain_life_hp_pct`
+  - `health_funnel_pet_hp_pct`
+  - `health_potion_hp_pct`
+  - `mana_potion_mana_pct`
+  - `mana_potion_min_hp_pct`
+  - `wand_mana_pct`
 
 ## 5. Spell Registry (Final Planned Contents)
 
