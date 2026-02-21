@@ -124,10 +124,10 @@ local nav_failure_tracker = {}     -- { [intent_id] = { first_at, count } }
 local DIAG_DIR = "BGBOT/data/debug"
 local DIAG_INTERVAL = 1.0
 local diag = {
-    enabled = true,
-    external_enabled = true,
-    tick_enabled = true,
-    console_events = true,
+    enabled = false,
+    external_enabled = false,
+    tick_enabled = false,
+    console_events = false,
     snapshot_requested = false,
     snapshot_reason = "manual",
     file_name = nil,
@@ -650,6 +650,15 @@ local function append_diag_record(record)
 
     record.time = record.time or core.time()
     diag.buffer = diag.buffer .. json_encode_flat(record) .. "\n"
+    
+    -- Prevent O(N) memory and disk write scaling by capping buffer
+    if string.len(diag.buffer) > 250000 then
+        diag.buffer = string.sub(diag.buffer, -100000)
+        local first_nl = string.find(diag.buffer, "\n")
+        if first_nl then
+            diag.buffer = string.sub(diag.buffer, first_nl + 1)
+        end
+    end
 
     local ok, err = pcall(core.write_data_file, diag.file_name, diag.buffer)
     if not ok then

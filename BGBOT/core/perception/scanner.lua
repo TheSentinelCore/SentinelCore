@@ -201,7 +201,7 @@ end
 
 function scanner:update_self(player, pos, now)
     self:resolve_faction(player)
-    local spec_id = tonumber(select(1, safe_call_method(player, "get_specialization_id"))) or 0
+    local spec_id = tonumber((safe_call_method(player, "get_specialization_id"))) or 0
     local in_combat = player:is_in_combat()
 
     local self_state = {
@@ -407,10 +407,10 @@ function scanner:scan_visible(local_player, self_pos, now)
         if obj ~= local_player and safe_is_valid(obj) then
             local is_player_like = filters.is_player_like(obj)
             local is_bg_object = false
-            local is_basic = select(1, safe_call_method(obj, "is_basic_object")) == true
+            local is_basic = (safe_call_method(obj, "is_basic_object")) == true
             if is_basic then
-                local npc_id = select(1, safe_call_method(obj, "get_npc_id"))
-                is_bg_object = npc_id and (constants.BG_OBJECT_IDS[npc_id] ~= nil or constants.WSG_OBJECT_IDS[npc_id] ~= nil)
+                local npc_id = (safe_call_method(obj, "get_npc_id"))
+                is_bg_object = (npc_id and (constants.BG_OBJECT_IDS[npc_id] ~= nil or constants.WSG_OBJECT_IDS[npc_id] ~= nil)) == true
             end
 
             if is_player_like then
@@ -483,7 +483,7 @@ function scanner:detect_preparation_aura(player)
             distance = 0,
             is_in_combat = false,
         })),
-        select(1, safe_call_method(player, "get_buffs")),
+        (safe_call_method(player, "get_buffs")),
     }
 
     for _, list in ipairs(aura_lists) do
@@ -619,10 +619,10 @@ function scanner:scan_full(local_player, self_pos, now)
         if obj ~= local_player and safe_is_valid(obj) then
             local is_player_like = filters.is_player_like(obj)
             local is_bg_object = false
-            local is_basic = select(1, safe_call_method(obj, "is_basic_object")) == true
+            local is_basic = (safe_call_method(obj, "is_basic_object")) == true
             if is_basic then
-                local npc_id = select(1, safe_call_method(obj, "get_npc_id"))
-                is_bg_object = npc_id and (constants.BG_OBJECT_IDS[npc_id] ~= nil or constants.WSG_OBJECT_IDS[npc_id] ~= nil)
+                local npc_id = (safe_call_method(obj, "get_npc_id"))
+                is_bg_object = (npc_id and (constants.BG_OBJECT_IDS[npc_id] ~= nil or constants.WSG_OBJECT_IDS[npc_id] ~= nil)) == true
             end
 
             if is_player_like then
@@ -724,7 +724,7 @@ function scanner:build_entity_record(obj, local_player, pos, distance, ring, now
 
     local is_player_like = filters.is_player_like(obj)
     local is_enemy_with_local = obj:is_enemy_with(local_player)
-    local spec_id = tonumber(select(1, safe_call_method(obj, "get_specialization_id"))) or 0
+    local spec_id = tonumber((safe_call_method(obj, "get_specialization_id"))) or 0
     local is_in_combat = obj:is_in_combat()
 
     local record = {
@@ -818,7 +818,7 @@ function scanner:resolve_faction(player)
         return
     end
 
-    local faction_id = tonumber(select(1, safe_call_method(player, "get_faction_id"))) or 0
+    local faction_id = tonumber((safe_call_method(player, "get_faction_id"))) or 0
     local mapped = constants.FACTION_BY_ID[faction_id]
     if mapped then
         self:set_faction(mapped, "faction_id:" .. tostring(faction_id))

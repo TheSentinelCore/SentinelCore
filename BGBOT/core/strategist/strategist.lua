@@ -276,9 +276,6 @@ function strategist:evaluate(world_model)
 
     for intent_id, score in pairs(scores) do
         if score > best_score and self.intent_registry[intent_id] then
-
-    for intent_id, score in pairs(scores) do
-        if score > best_score and self.intent_registry[intent_id] then
             best_id    = intent_id
             best_score = score
         end

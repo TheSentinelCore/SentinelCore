@@ -124,6 +124,16 @@ function logger:append(record)
     end
 
     self.buffer = self.buffer .. json_encode_flat(row) .. "\n"
+    
+    -- Prevent O(N) memory and disk write scaling by capping buffer
+    if string.len(self.buffer) > 250000 then
+        self.buffer = string.sub(self.buffer, -100000)
+        local first_nl = string.find(self.buffer, "\n")
+        if first_nl then
+            self.buffer = string.sub(self.buffer, first_nl + 1)
+        end
+    end
+    
     local ok, err = pcall(core.write_data_file, self.path, self.buffer)
     if not ok then
         self.last_error = tostring(err)

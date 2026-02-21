@@ -47,17 +47,17 @@ function filters.is_player_like(obj)
         return false
     end
 
-    local npc_id = tonumber(select(1, safe_call_method(obj, "get_npc_id"))) or 0
+    local npc_id = tonumber((safe_call_method(obj, "get_npc_id"))) or 0
     if npc_id ~= 0 then
         return false
     end
 
-    local class_id = tonumber(select(1, safe_call_method(obj, "get_class"))) or 0
+    local class_id = tonumber((safe_call_method(obj, "get_class"))) or 0
     if class_id <= 0 then
         return false
     end
 
-    local name = select(1, safe_call_method(obj, "get_name"))
+    local name = (safe_call_method(obj, "get_name"))
     if not name or name == "" then
         return false
     end
@@ -84,7 +84,7 @@ function filters.is_trackable(obj)
 
     -- BG-specific basic objects (flags, buffs, banners, cap points)
     if safe_bool(obj, "is_basic_object") then
-        local npc_id = select(1, safe_call_method(obj, "get_npc_id"))
+        local npc_id = (safe_call_method(obj, "get_npc_id"))
         -- Check unified cross-BG table first, then legacy WSG table for compat
         if npc_id and (constants.BG_OBJECT_IDS[npc_id] or constants.WSG_OBJECT_IDS[npc_id]) then
             return true
@@ -130,7 +130,7 @@ function filters.scan_priority(obj, local_player)
     local score = 0
 
     -- Flag carriers are critical
-    local auras = select(1, safe_call_method(obj, "get_auras"))
+    local auras = (safe_call_method(obj, "get_auras"))
     if auras then
         for _, aura in pairs(auras) do
             local id = aura.buff_id or 0
@@ -143,7 +143,7 @@ function filters.scan_priority(obj, local_player)
     end
 
     -- Enemies targeting us
-    local target = select(1, safe_call_method(obj, "get_target"))
+    local target = (safe_call_method(obj, "get_target"))
     if target and target == local_player then
         score = score + 200
     end

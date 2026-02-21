@@ -8,6 +8,20 @@ This document outlines the current architectural state, baseline capabilities, a
 
 ---
 
+Alpha Release Status
+
+BGBOT is currently in Early Alpha.
+Expect rapid logic changes, unhandled BG phase states, and incomplete combat rotation modules. 
+
+Diagnostics & Telemetry
+If you encounter stuck states, thrashing, or errors, please provide the diagnostic logs.
+Diagnostics and telemetry files are automatically saved to scripts_data data directory.
+
+You can force an immediate diagnostic snapshot in-game by using the BGBOT menu:
+BGBOT Menu -> Diagnostics Capture -> Snapshot Now.
+
+---
+
 ## 1. System Architecture
 
 BGBOT executes a synchronized tick loop (`main.lua`) routing through five core subsystems:

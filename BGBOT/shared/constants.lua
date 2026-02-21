@@ -64,6 +64,7 @@ constants.FACTION_BY_ID = {
 constants.WSG_MAP_IDS = {
     489,   -- Warsong Gulch (instance map id)
     1460,  -- Private-server/client variant observed from core.get_map_id() in WSG
+    443,   -- User-provided client variant
 }
 
 -- UiMap IDs (core.game_ui.get_current_map_id) kept for diagnostics/calibration only.
@@ -75,14 +76,18 @@ constants.WSG_UI_MAP_IDS = {
 
 constants.AB_MAP_IDS = {
     529,   -- Arathi Basin (instance map id)
+    461,   -- User-provided client variant
 }
 
 constants.EOTS_MAP_IDS = {
     566,   -- Eye of the Storm (instance map id)
+    482,   -- User-provided client variant
 }
 
 constants.AV_MAP_IDS = {
     30,    -- Alterac Valley (instance map id)
+    401,   -- User-provided client variant
+    1459,  -- Client map ID observed from screenshot
 }
 
 -- Ordered registry for BG detection. Scanner checks top-down, first match wins.
@@ -318,6 +323,10 @@ constants.AV_POSITIONS = {
     stormpike_gy   = { x = 63.27,    y = 5.84,     z = -4.10 },  -- Stormpike Banner
     frostwolf_gy   = { x = -1551.88, y = -364.19,  z = 65.59 },  -- Frostwolf Banner
     snowfall_gy    = { x = -202.58,  y = -112.73,  z = 78.49 },  -- Neutral Snowfall
+    dun_baldar     = { x = 638.59,   y = -32.42,   z = 46.06 },
+    icewing        = { x = 77.80,    y = -404.70,  z = 46.75 },
+    iceblood       = { x = -571.88,  y = -262.78,  z = 75.01 },
+    tower_point    = { x = -768.91,  y = -363.71,  z = 90.89 },
     -- Safe roam anchors
     alliance_start = { x = 873.0,    y = -489.0,   z = 96.5 },   -- UNCALIBRATED
     horde_start    = { x = -1370.0,  y = -219.0,   z = 98.5 },   -- UNCALIBRATED
@@ -349,9 +358,11 @@ constants.BG_SAFE_ANCHORS = {
         constants.EOTS_POSITIONS.mid_flag,
     },
     av   = {
-        constants.AV_POSITIONS.snowfall_gy,
-        constants.AV_POSITIONS.stormpike_gy,
-        constants.AV_POSITIONS.frostwolf_gy,
+        constants.AV_POSITIONS.dun_baldar,
+        constants.AV_POSITIONS.icewing,
+        constants.AV_POSITIONS.iceblood,
+        constants.AV_POSITIONS.tower_point,
+        constants.AV_POSITIONS.midfield,
     },
 }
 
