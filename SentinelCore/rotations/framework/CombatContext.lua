@@ -251,6 +251,18 @@ function CombatContext:build(deps)
         return unit_has_aura(player, spec)
     end
 
+    local function target_has_aura(spec)
+        return unit_has_aura(target, spec)
+    end
+
+    local pet = safe_unit_call(player, "get_pet")
+    local pet_valid = safe_unit_call(pet, "is_valid") == true
+        and safe_unit_call(pet, "is_dead") ~= true
+    if not pet_valid then
+        pet = nil
+    end
+    local pet_health_pct = resolve_health_pct(pet, unit_helper)
+
     local function resolve_spell_id(name, fallback_ids)
         if spellbook and spellbook.best_rank then
             return spellbook:best_rank(name, fallback_ids)
@@ -277,6 +289,9 @@ function CombatContext:build(deps)
         eating_or_drinking = eating_or_drinking,
         routine_policy = bb:get("rotation.policy"),
         player_has_aura = player_has_aura,
+        target_has_aura = target_has_aura,
+        pet = pet,
+        pet_health_pct = pet_health_pct,
         resolve_spell_id = resolve_spell_id,
     }
 end

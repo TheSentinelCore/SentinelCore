@@ -116,6 +116,21 @@ local RETRIBUTION_POLICY_BOUNDS = {
     holy_wrath_aoe_min_mana_pct = { 0.0, 1.0 },
 }
 
+local AFFLICTION_POLICY_BOUNDS = {
+    drink_mana_pct = { 0.0, 1.0 },
+    eat_health_pct = { 0.0, 1.0 },
+    life_tap_min_health_pct = { 0.0, 1.0 },
+    life_tap_max_mana_pct = { 0.0, 1.0 },
+    life_tap_ooc_max_mana_pct = { 0.0, 1.0 },
+    death_coil_hp_pct = { 0.0, 1.0 },
+    drain_life_hp_pct = { 0.0, 1.0 },
+    health_funnel_pet_hp_pct = { 0.0, 1.0 },
+    health_potion_hp_pct = { 0.0, 1.0 },
+    mana_potion_mana_pct = { 0.0, 1.0 },
+    mana_potion_min_hp_pct = { 0.0, 1.0 },
+    wand_mana_pct = { 0.0, 1.0 },
+}
+
 ---@private
 ---@param rotation_cfg any
 ---@return boolean
@@ -129,6 +144,12 @@ local function validate_rotation_policy(rotation_cfg)
     if type(rotation_cfg.paladin.retribution) ~= "table" then
         return false
     end
+    if type(rotation_cfg.warlock) ~= "table" then
+        return false
+    end
+    if type(rotation_cfg.warlock.affliction) ~= "table" then
+        return false
+    end
 
     local ret = rotation_cfg.paladin.retribution
     for key, bounds in pairs(RETRIBUTION_POLICY_BOUNDS) do
@@ -139,6 +160,13 @@ local function validate_rotation_policy(rotation_cfg)
 
     if ret.heal_critical_mana_threshold > ret.heal_low_mana_threshold then
         return false
+    end
+
+    local aff = rotation_cfg.warlock.affliction
+    for key, bounds in pairs(AFFLICTION_POLICY_BOUNDS) do
+        if not in_range(aff[key], bounds[1], bounds[2]) then
+            return false
+        end
     end
 
     return true

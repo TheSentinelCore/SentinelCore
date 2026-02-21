@@ -9,6 +9,7 @@ local tests = {
     "tests/test_rotation_context_normalization",
     "tests/test_rotation_rank_policy",
     "tests/test_rotation_retribution_regressions",
+    "tests/test_rotation_warlock_affliction_regressions",
     "tests/test_sc008_rotation_engine",
     "tests/test_sc009_combat_service",
     "tests/test_sc010_loot_service",

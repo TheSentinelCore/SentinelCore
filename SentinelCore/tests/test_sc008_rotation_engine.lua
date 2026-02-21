@@ -85,7 +85,7 @@ local function run()
     player._mana = 100
     T.assert_true(rotation:should_hold_maintenance() == false, "rotation hold should clear after resources recover")
 
-    bb:set("player.class_id", 9)
+    bb:set("player.class_id", 1)
     local unsupported_plan, unsupported_err = rotation:generate_plan()
     T.assert_true(unsupported_plan == nil, "unsupported class should not resolve a combat plan")
     T.assert_eq(unsupported_err, ErrorCodes.ROTATION_UNAVAILABLE, "unsupported class should return rotation unavailable")

@@ -5,6 +5,9 @@ local CATALOG = {
     [2] = {
         "rotations/paladin/Retribution",
     },
+    [9] = {
+        "rotations/warlock/Affliction",
+    },
 }
 
 local _loaded = {}

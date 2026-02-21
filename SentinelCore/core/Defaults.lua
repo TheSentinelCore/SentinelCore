@@ -73,6 +73,22 @@ Defaults.rotation = {
             holy_wrath_aoe_min_mana_pct = 0.30,
         },
     },
+    warlock = {
+        affliction = {
+            drink_mana_pct = 0.40,
+            eat_health_pct = 0.65,
+            life_tap_min_health_pct = 0.50,
+            life_tap_max_mana_pct = 0.60,
+            life_tap_ooc_max_mana_pct = 0.85,
+            death_coil_hp_pct = 0.25,
+            drain_life_hp_pct = 0.45,
+            health_funnel_pet_hp_pct = 0.30,
+            health_potion_hp_pct = 0.25,
+            mana_potion_mana_pct = 0.15,
+            mana_potion_min_hp_pct = 0.35,
+            wand_mana_pct = 0.08,
+        },
+    },
 }
 
 Defaults.loot = {
