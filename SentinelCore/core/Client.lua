@@ -1,0 +1,920 @@
+local EventBus = require("events/EventBus")
+local Events = require("events/Events")
+local ErrorCodes = require("events/ErrorCodes")
+local Defaults = require("core/Defaults")
+
+local Blackboard = require("core/Blackboard")
+local StateMachine = require("core/StateMachine")
+local Config = require("core/Config")
+local Sensors = require("core/Sensors")
+local Telemetry = require("core/Telemetry")
+local ConsoleLogger = require("core/ConsoleLogger")
+
+local NavigationAdapter = require("services/NavigationAdapter")
+local WorldDataAdapter = require("services/WorldDataAdapter")
+local TargetingService = require("services/TargetingService")
+local RotationEngine = require("services/RotationEngine")
+local CombatService = require("services/CombatService")
+local LootService = require("services/LootService")
+local InventoryService = require("services/InventoryService")
+local VendorService = require("services/VendorService")
+local RecoveryService = require("services/RecoveryService")
+
+local GrindMode = require("modes/GrindMode")
+local QuestMode = require("modes/QuestMode")
+local GatherMode = require("modes/GatherMode")
+local BgMode = require("modes/BgMode")
+
+---@class SentinelClient
+---@field private _event_bus EventBus
+---@field private _blackboard Blackboard
+---@field private _state_machine SentinelStateMachine
+---@field private _config SentinelConfig
+---@field private _sensors SentinelSensors
+---@field private _telemetry SentinelTelemetry
+---@field private _logger SentinelConsoleLogger
+---@field private _services table
+---@field private _modes table<string, table>
+---@field private _active_mode table|nil
+---@field private _active_tree table|nil
+---@field private _started boolean
+---@field private _context_pending boolean
+---@field private _context_last_attempt number
+---@field private _dependency_pending boolean
+---@field private _last_dependency_check number
+---@field private _last_runtime_state_write number
+local Client = {}
+Client.__index = Client
+
+---@param config? table
+---@return SentinelClient
+function Client:new(config)
+    config = config or {}
+
+    local o = setmetatable({}, Client)
+    o._event_bus = EventBus:new()
+    o._blackboard = Blackboard:new(o._event_bus)
+    o._state_machine = StateMachine:new(o._event_bus)
+    o._config = Config:new(config.runtime_overrides, config.persistence)
+    o._sensors = Sensors:new(o._blackboard)
+    o._telemetry = Telemetry:new(o._event_bus, o._blackboard, o._config:get_runtime_value("telemetry", "flush_interval", 1.0))
+    o._logger = ConsoleLogger:new(o._event_bus, o._blackboard)
+
+    -- Enrich non-blackboard domain events with common context fields so
+    -- payload contracts stay consistent across services.
+    local raw_emit = o._event_bus.emit
+    o._event_bus.emit = function(bus, event, data)
+        local payload = data
+        local event_name = tostring(event or "")
+        if event_name:sub(1, 3) ~= "bb." then
+            if payload == nil then
+                payload = {}
+            end
+            if type(payload) == "table" then
+                if payload.timestamp == nil then
+                    payload.timestamp = (core and core.time and core.time()) or 0
+                end
+                if payload.session_id == nil then
+                    payload.session_id = o._telemetry:get_session_id()
+                end
+                if payload.state == nil then
+                    payload.state = o._state_machine:get_full_state()
+                end
+                local canonical = o._blackboard:get("context.canonical")
+                if payload.map_id == nil then
+                    payload.map_id = canonical and canonical.map_id or nil
+                end
+                if payload.zone_id == nil then
+                    payload.zone_id = canonical and canonical.zone_id or nil
+                end
+                if payload.area_id == nil then
+                    payload.area_id = canonical and canonical.area_id or nil
+                end
+            end
+        end
+        return raw_emit(bus, event, payload)
+    end
+
+    o._started = false
+    o._context_pending = false
+    o._context_last_attempt = 0
+    o._dependency_pending = false
+    o._last_dependency_check = 0
+    o._last_runtime_state_write = 0
+
+    o._blackboard:set("core.state_machine", o._state_machine)
+    o._blackboard:set("core.session_id", o._telemetry:get_session_id())
+
+    local runtime_cfg = o._config:get_runtime()
+
+    local navigation = config.navigation_adapter or NavigationAdapter:new(o._event_bus, o._blackboard)
+    local world_data = config.world_data_adapter or WorldDataAdapter:new(o._event_bus, o._blackboard, runtime_cfg.world_data)
+    local targeting = config.targeting_service or TargetingService:new(o._event_bus, o._blackboard, runtime_cfg.targeting)
+    local rotation = config.rotation_engine or RotationEngine:new(o._event_bus, o._blackboard, runtime_cfg.combat)
+    local combat = config.combat_service or CombatService:new(o._event_bus, o._blackboard, navigation, targeting, rotation, runtime_cfg.combat)
+    local loot = config.loot_service or LootService:new(o._event_bus, o._blackboard, runtime_cfg.loot)
+
+    -- Policy/cache are loaded during start; seed with defaults for construction.
+    local inventory = config.inventory_service or InventoryService:new(o._event_bus, o._blackboard, runtime_cfg.inventory, o._config:get_policy())
+    local vendor = config.vendor_service or VendorService:new(o._event_bus, o._blackboard, navigation, world_data, inventory, runtime_cfg.vendor, o._config:get_vendor_cache())
+    local recovery = config.recovery_service or RecoveryService:new(o._event_bus, o._blackboard, runtime_cfg.recovery)
+
+    o._services = {
+        blackboard = o._blackboard,
+        navigation = navigation,
+        world_data = world_data,
+        targeting = targeting,
+        rotation = rotation,
+        combat = combat,
+        loot = loot,
+        inventory = inventory,
+        vendor = vendor,
+        recovery = recovery,
+    }
+
+    o._service_update_order = {
+        "targeting",
+        "combat",
+        "loot",
+        "inventory",
+        "vendor",
+    }
+
+    o._modes = {
+        grind = GrindMode:new(),
+        quest = QuestMode:new(),
+        gather = GatherMode:new(),
+        bg = BgMode:new(),
+    }
+    o._active_mode = nil
+    o._active_tree = nil
+
+    return o
+end
+
+---@private
+---@return boolean
+function Client:_is_tbc_runtime()
+    if not core or not core.get_game_version then
+        return false
+    end
+    local version = tostring(core.get_game_version() or "")
+    version = version:lower()
+    return version:find("tbc", 1, true) ~= nil
+end
+
+---@private
+---@param mode_id string
+---@return table|nil
+function Client:_get_mode(mode_id)
+    return self._modes[mode_id]
+end
+
+---@private
+---@param error_code string
+---@param detail? table
+function Client:_report_critical(error_code, detail)
+    self._blackboard:set("core.fail_reason", error_code)
+    self._blackboard:set("core.fail_detail", detail)
+
+    local runtime_state = self._config:get_runtime_state()
+    runtime_state.last_error_code = error_code
+    runtime_state.last_state = self._state_machine:get_full_state()
+    runtime_state.last_session_id = self._telemetry:get_session_id()
+    self._config:set_runtime_state(runtime_state)
+
+    self._services.recovery:report_critical(error_code, detail)
+end
+
+---@private
+function Client:_refresh_policy_cache_bindings()
+    local policy = self._config:get_policy()
+    local vendor_cache = self._config:get_vendor_cache()
+
+    self._services.inventory:set_policy(policy)
+    self._services.vendor:set_cache(vendor_cache)
+end
+
+---@private
+function Client:_apply_runtime_bindings()
+    local runtime_cfg = self._config:get_runtime()
+
+    if self._services.world_data then
+        self._services.world_data._cfg = Defaults.copy(runtime_cfg.world_data or {})
+    end
+    if self._services.targeting then
+        self._services.targeting._cfg = Defaults.copy(runtime_cfg.targeting or {})
+    end
+    if self._services.rotation then
+        self._services.rotation._cfg = Defaults.copy(runtime_cfg.combat or {})
+    end
+    if self._services.combat then
+        self._services.combat._cfg = Defaults.copy(runtime_cfg.combat or {})
+    end
+    if self._services.loot then
+        self._services.loot._cfg = Defaults.copy(runtime_cfg.loot or {})
+    end
+    if self._services.inventory then
+        self._services.inventory._cfg = Defaults.copy(runtime_cfg.inventory or {})
+    end
+    if self._services.vendor then
+        self._services.vendor._cfg = Defaults.copy(runtime_cfg.vendor or {})
+    end
+    if self._services.recovery then
+        self._services.recovery._cfg = Defaults.copy(runtime_cfg.recovery or {})
+    end
+
+    if self._telemetry then
+        self._telemetry._flush_interval = tonumber(runtime_cfg.telemetry and runtime_cfg.telemetry.flush_interval) or 1.0
+    end
+end
+
+---@private
+function Client:_write_runtime_state(force)
+    local now = (core and core.time and core.time()) or 0
+    if not force and now - self._last_runtime_state_write < 1.0 then
+        return
+    end
+    self._last_runtime_state_write = now
+
+    local runtime_state = self._config:get_runtime_state()
+    runtime_state.last_state = self._state_machine:get_full_state()
+    runtime_state.last_session_id = self._telemetry:get_session_id()
+    runtime_state.auto_restart_attempts_used = self._services.recovery:get_attempts_used()
+
+    local canonical = self._blackboard:get("context.canonical")
+    if canonical then
+        local pos = self._blackboard:get("player.position") or {}
+        runtime_state.last_known_context = {
+            canonical_map_id = canonical.map_id,
+            zone_id = canonical.zone_id,
+            area_id = canonical.area_id,
+            x = pos.x or 0,
+            y = pos.y or 0,
+            z = pos.z or 0,
+        }
+    end
+
+    local anchor = self._blackboard:get("grind.anchor")
+    if anchor then
+        runtime_state.last_grind_anchor = {
+            x = anchor.x or 0,
+            y = anchor.y or 0,
+            z = anchor.z or 0,
+        }
+    end
+
+    self._config:set_runtime_state(runtime_state)
+    self._config:save_runtime_state()
+
+    self._config:set_vendor_cache(self._services.vendor:get_cache())
+    self._config:save_vendor_cache()
+end
+
+---@private
+function Client:_resolve_context_if_due(force)
+    if self._context_pending then
+        return
+    end
+
+    local now = (core and core.time and core.time()) or 0
+    local interval = self._config:get_runtime_value("runtime", "context_resolve_interval", 10.0)
+    if not force and (now - self._context_last_attempt) < interval then
+        return
+    end
+
+    local runtime_ctx = {
+        ui_map_id = self._blackboard:get("context.ui_map_id"),
+        instance_type = self._blackboard:get("context.instance_type"),
+        position = self._blackboard:get("context.position"),
+    }
+
+    self._context_pending = true
+    self._context_last_attempt = now
+    self._services.world_data:resolve_context(runtime_ctx, function(ok, canonical_ctx, error_code)
+        self._context_pending = false
+        if not ok then
+            self._blackboard:clear("context.canonical")
+            self:_report_critical(error_code or ErrorCodes.CTX_UNRESOLVED, {
+                stage = "context_resolve",
+            })
+            return
+        end
+
+        self._blackboard:set("context.canonical", canonical_ctx)
+    end)
+end
+
+---@private
+---@param force boolean
+function Client:_dependency_health_check(force)
+    local now = (core and core.time and core.time()) or 0
+    local interval = self._config:get_runtime_value("runtime", "dependency_health_interval", 5.0)
+
+    if not force and (now - self._last_dependency_check) < interval then
+        return
+    end
+
+    self._last_dependency_check = now
+
+    self._services.navigation:update()
+    self._services.world_data:update(now)
+
+    local nav_ok, nav_err = self._services.navigation:is_available()
+    local world_ok = self._blackboard:get("deps.world_data.healthy", true)
+    local dataset_ok = self._blackboard:get("deps.world_data.dataset_ok", true)
+
+    self._event_bus:emit(Events.DEPENDENCY_HEALTH, {
+        timestamp = now,
+        nav_ok = nav_ok,
+        world_ok = world_ok,
+        dataset_ok = dataset_ok,
+    })
+
+    if not nav_ok then
+        self:_report_critical(nav_err or ErrorCodes.DEP_NAVCLIENT_MISSING, { stage = "dependency" })
+        return
+    end
+
+    if world_ok == false then
+        self:_report_critical(ErrorCodes.DEP_WORLDDATA_UNAVAILABLE, { stage = "dependency" })
+        return
+    end
+
+    if dataset_ok == false then
+        local dataset_error = self._blackboard:get("deps.world_data.dataset_error")
+        self:_report_critical(dataset_error or ErrorCodes.DEP_WORLDDATA_DATASET_MISMATCH, { stage = "dependency" })
+        return
+    end
+end
+
+---@private
+function Client:_service_updates()
+    for i = 1, #self._service_update_order do
+        local key = self._service_update_order[i]
+        local service = self._services[key]
+        if service and service.update then
+            local ok, err = service:update()
+            if ok == false and err then
+                self:_report_critical(err, { stage = "service_update", service = key })
+                return
+            end
+        end
+    end
+end
+
+---@private
+---@param command table
+function Client:_apply_recovery_command(command)
+    if not command then
+        return
+    end
+
+    if command.action == "pause" then
+        self:pause(command.error_code)
+        return
+    end
+
+    if command.action == "restart" then
+        local ok = self:resume()
+        self._services.recovery:complete_restart_attempt(ok)
+        return
+    end
+
+    if command.action == "fail" then
+        self._services.navigation:stop()
+        self._state_machine:transition("failed", {
+            failure_code = command.error_code,
+            failure_detail = { stage = command.stage },
+        })
+        return
+    end
+end
+
+---@private
+---@param mode table
+function Client:_bind_mode_tree(mode)
+    self._active_mode = mode
+    self._active_tree = mode:build_tree(self._services, {
+        pause = function(reason)
+            self:pause(reason)
+        end,
+        restart = function()
+            return self:resume()
+        end,
+        fail = function(error_code)
+            self._services.navigation:stop()
+            self._state_machine:transition("failed", { failure_code = error_code })
+        end,
+    })
+end
+
+---@param mode_id string
+---@param opts? table
+---@return boolean
+---@return string|nil
+function Client:start(mode_id, opts)
+    opts = opts or {}
+    mode_id = mode_id or "grind"
+
+    if self._state_machine:get_state() == "running" then
+        return true, nil
+    end
+
+    if not self:_is_tbc_runtime() then
+        self._state_machine:transition("failed", {
+            failure_code = ErrorCodes.GAME_VERSION_UNSUPPORTED,
+        })
+        return false, ErrorCodes.GAME_VERSION_UNSUPPORTED
+    end
+
+    local valid_cfg, cfg_err = self._config:validate_runtime()
+    if not valid_cfg then
+        self._state_machine:transition("failed", {
+            failure_code = cfg_err or ErrorCodes.CONFIG_INVALID,
+        })
+        return false, cfg_err or ErrorCodes.CONFIG_INVALID
+    end
+
+    local ok_load, load_err = self._config:load_persistence()
+    if not ok_load then
+        self._state_machine:transition("failed", {
+            failure_code = load_err or ErrorCodes.PERSISTENCE_CORRUPTED,
+        })
+        return false, load_err or ErrorCodes.PERSISTENCE_CORRUPTED
+    end
+    self:_apply_runtime_bindings()
+    self:_refresh_policy_cache_bindings()
+
+    local mode = self:_get_mode(mode_id)
+    if not mode then
+        self._state_machine:transition("failed", {
+            failure_code = ErrorCodes.MODE_NOT_AVAILABLE,
+        })
+        return false, ErrorCodes.MODE_NOT_AVAILABLE
+    end
+
+    if self._state_machine:get_state() == "failed" then
+        self._state_machine:reset()
+    end
+
+    local transitioned, transition_err = self._state_machine:transition("running", {
+        substate = "running.grind.scout",
+    })
+    if not transitioned then
+        return false, ErrorCodes.STATE_TRANSITION_INVALID .. ":" .. tostring(transition_err)
+    end
+
+    self:_bind_mode_tree(mode)
+    self._active_mode:on_enter({})
+
+    self._started = true
+    self._blackboard:set("core.mode", mode_id)
+    self._event_bus:emit(Events.STARTED, {
+        timestamp = (core and core.time and core.time()) or 0,
+        mode = mode_id,
+        session_id = self._telemetry:get_session_id(),
+    })
+
+    self:_dependency_health_check(true)
+    self:_resolve_context_if_due(true)
+    self:_write_runtime_state(true)
+
+    return true, nil
+end
+
+---@param reason? string
+---@return boolean
+function Client:stop(reason)
+    local state = self._state_machine:get_state()
+    if state == "idle" then
+        return true
+    end
+
+    if self._active_mode then
+        self._active_mode:on_exit({}, reason)
+    end
+
+    self._services.navigation:stop()
+    self._services.combat:reset()
+    self._services.loot:reset()
+    self._services.vendor:reset()
+    self._services.recovery:reset()
+    self._services.targeting:clear_target("stop")
+
+    self._context_pending = false
+    self._active_tree = nil
+    self._active_mode = nil
+    self._blackboard:clear("core.fail_reason")
+    self._blackboard:clear("core.fail_detail")
+
+    self._state_machine:reset()
+
+    self._event_bus:emit(Events.STOPPED, {
+        timestamp = (core and core.time and core.time()) or 0,
+        reason = reason,
+    })
+
+    self:_write_runtime_state(true)
+    return true
+end
+
+---@param reason? string
+---@return boolean
+function Client:pause(reason)
+    local state = self._state_machine:get_state()
+    if state == "paused" then
+        return true
+    end
+
+    if state ~= "running" then
+        return false
+    end
+
+    local ok = self._state_machine:transition("paused")
+    if not ok then
+        return false
+    end
+
+    self._services.navigation:stop()
+    self._event_bus:emit(Events.PAUSED, {
+        timestamp = (core and core.time and core.time()) or 0,
+        reason = reason,
+    })
+
+    self:_write_runtime_state(true)
+    return true
+end
+
+---@return boolean
+function Client:resume()
+    local state = self._state_machine:get_state()
+    if state == "running" then
+        return true
+    end
+
+    if state ~= "paused" then
+        return false
+    end
+
+    local ok = self._state_machine:transition("running", {
+        substate = "running.grind.scout",
+    })
+    if not ok then
+        return false
+    end
+
+    self._event_bus:emit(Events.RESUMED, {
+        timestamp = (core and core.time and core.time()) or 0,
+    })
+
+    self:_resolve_context_if_due(true)
+    self:_write_runtime_state(true)
+    return true
+end
+
+function Client:update()
+    -- 1) Sensors
+    self._sensors:update()
+
+    local state = self._state_machine:get_state()
+    local now = self._blackboard:get("_time", 0)
+
+    if state == "running" then
+        -- 2) Dependency health checks.
+        self:_dependency_health_check(false)
+
+        -- 3) Mode controller tick.
+        self:_resolve_context_if_due(false)
+        if self._active_mode and self._active_tree and self._blackboard:has("context.canonical") then
+            local can_enter = self._active_mode:can_enter({
+                dependencies_ok = true,
+                canonical_context = self._blackboard:get("context.canonical"),
+            })
+            if not can_enter then
+                self:_report_critical(ErrorCodes.MODE_CAN_ENTER_FAILED, { stage = "mode_tick" })
+            else
+                self._active_mode:tick({})
+            end
+        end
+
+        -- 4) Service updates.
+        self:_service_updates()
+
+        -- 5) Recovery supervisor.
+        local recovery_command = self._services.recovery:update(now)
+        self:_apply_recovery_command(recovery_command)
+    elseif state == "paused" then
+        local recovery_command = self._services.recovery:update(now)
+        self:_apply_recovery_command(recovery_command)
+    end
+
+    -- 6) Telemetry + snapshot.
+    self._telemetry:update(now)
+    local snapshot = self:get_snapshot()
+    self._event_bus:emit(Events.SNAPSHOT_UPDATED, snapshot)
+
+    self:_write_runtime_state(false)
+end
+
+---@return string
+function Client:get_state()
+    return self._state_machine:get_state()
+end
+
+---@return string
+function Client:get_full_state()
+    return self._state_machine:get_full_state()
+end
+
+---@return table
+function Client:get_snapshot()
+    local canonical = self._blackboard:get("context.canonical") or {}
+    local telemetry = self._telemetry:get_snapshot()
+
+    return {
+        timestamp = self._blackboard:get("_time", 0),
+        session_id = telemetry.session_id,
+        state = self._state_machine:get_state(),
+        substate = self._state_machine:get_substate(),
+        full_state = self._state_machine:get_full_state(),
+        fail_reason = self._blackboard:get("core.fail_reason"),
+        context = {
+            ui_map_id = self._blackboard:get("context.ui_map_id"),
+            map_id = canonical.map_id,
+            zone_id = canonical.zone_id,
+            area_id = canonical.area_id,
+            position = self._blackboard:get("player.position"),
+        },
+        dependencies = {
+            nav_available = self._blackboard:get("deps.nav.available", false),
+            nav_server_available = self._blackboard:get("deps.nav.server_available", false),
+            world_data_healthy = self._blackboard:get("deps.world_data.healthy", false),
+            world_dataset_ok = self._blackboard:get("deps.world_data.dataset_ok", false),
+        },
+        inventory = {
+            free_slots = self._blackboard:get("inventory.free_slots", 0),
+            needs_vendor = self._blackboard:get("inventory.needs_vendor", false),
+        },
+        telemetry = telemetry,
+    }
+end
+
+---@return table
+function Client:get_runtime_config()
+    return self._config:get_runtime()
+end
+
+---@return table
+function Client:get_policy_config()
+    return self._config:get_policy()
+end
+
+---@param section string
+---@param key string
+---@param value any
+---@param persist? boolean
+---@return boolean
+---@return string|nil
+function Client:set_runtime_setting(section, key, value, persist)
+    self._config:set_runtime_value(section, key, value)
+    self:_apply_runtime_bindings()
+
+    if persist == true then
+        local ok_profile, profile_err = self._config:save_current_profile()
+        if not ok_profile then
+            return false, profile_err
+        end
+        local ok_save, save_err = self._config:save_profiles()
+        if not ok_save then
+            return false, save_err
+        end
+    end
+    return true, nil
+end
+
+---@param key string
+---@param value any
+---@param persist? boolean
+---@return boolean
+---@return string|nil
+function Client:set_policy_setting(key, value, persist)
+    local policy = self._config:get_policy()
+    policy[key] = value
+    self._config:set_policy(policy)
+    self:_apply_runtime_bindings()
+    self:_refresh_policy_cache_bindings()
+
+    if persist == true then
+        local ok_policy, policy_err = self._config:save_policy()
+        if not ok_policy then
+            return false, policy_err
+        end
+
+        local ok_profile, profile_err = self._config:save_current_profile()
+        if not ok_profile then
+            return false, profile_err
+        end
+        local ok_save, save_err = self._config:save_profiles()
+        if not ok_save then
+            return false, save_err
+        end
+    end
+
+    return true, nil
+end
+
+---@return table[]
+function Client:list_profiles()
+    return self._config:list_profiles()
+end
+
+---@return string
+function Client:get_active_profile_id()
+    return self._config:get_active_profile_id()
+end
+
+---@param profile_id string
+---@return boolean
+---@return string|nil
+function Client:load_profile(profile_id)
+    local ok, err = self._config:set_active_profile(profile_id)
+    if not ok then
+        return false, err
+    end
+
+    self:_apply_runtime_bindings()
+    self:_refresh_policy_cache_bindings()
+
+    local ok_save, save_err = self._config:save_profiles()
+    if not ok_save then
+        return false, save_err
+    end
+
+    local ok_policy, policy_err = self._config:save_policy()
+    if not ok_policy then
+        return false, policy_err
+    end
+
+    return true, nil
+end
+
+---@param profile_name string
+---@return boolean
+---@return string|nil
+---@return string|nil
+function Client:create_profile(profile_name)
+    local name = tostring(profile_name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then
+        name = "Profile"
+    end
+
+    local base_id = name:lower():gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
+    if base_id == "" then
+        base_id = "profile"
+    end
+
+    local existing = self._config:list_profiles()
+    local used = {}
+    for i = 1, #existing do
+        used[tostring(existing[i].profile_id)] = true
+    end
+
+    local candidate = base_id
+    local suffix = 1
+    while used[candidate] do
+        suffix = suffix + 1
+        candidate = string.format("%s_%d", base_id, suffix)
+    end
+
+    local ok, err = self._config:save_as_profile(candidate, name)
+    if not ok then
+        return false, err, nil
+    end
+
+    local ok_save, save_err = self._config:save_profiles()
+    if not ok_save then
+        return false, save_err, nil
+    end
+
+    local ok_policy, policy_err = self._config:save_policy()
+    if not ok_policy then
+        return false, policy_err, nil
+    end
+
+    return true, nil, candidate
+end
+
+---@param profile_id string
+---@param profile_name? string
+---@return boolean
+---@return string|nil
+function Client:save_profile(profile_id, profile_name)
+    local id = tostring(profile_id or "")
+    if id == "" then
+        id = self._config:get_active_profile_id()
+    end
+
+    local list = self._config:list_profiles()
+    local resolved_name = profile_name
+    if not resolved_name or resolved_name == "" then
+        for i = 1, #list do
+            if tostring(list[i].profile_id) == id then
+                resolved_name = list[i].name
+                break
+            end
+        end
+        if not resolved_name or resolved_name == "" then
+            resolved_name = id
+        end
+    end
+
+    local ok, err = self._config:save_as_profile(id, resolved_name)
+    if not ok then
+        return false, err
+    end
+
+    local ok_policy, policy_err = self._config:save_policy()
+    if not ok_policy then
+        return false, policy_err
+    end
+
+    local ok_profiles, profiles_err = self._config:save_profiles()
+    if not ok_profiles then
+        return false, profiles_err
+    end
+
+    return true, nil
+end
+
+---@param profile_id string
+---@return boolean
+---@return string|nil
+function Client:delete_profile(profile_id)
+    local ok, err = self._config:delete_profile(profile_id)
+    if not ok then
+        return false, err
+    end
+
+    self:_apply_runtime_bindings()
+    self:_refresh_policy_cache_bindings()
+
+    local ok_save, save_err = self._config:save_profiles()
+    if not ok_save then
+        return false, save_err
+    end
+
+    return true, nil
+end
+
+---@param profile_id string
+---@param new_name string
+---@return boolean
+---@return string|nil
+function Client:rename_profile(profile_id, new_name)
+    local ok, err = self._config:rename_profile(profile_id, new_name)
+    if not ok then
+        return false, err
+    end
+
+    local ok_save, save_err = self._config:save_profiles()
+    if not ok_save then
+        return false, save_err
+    end
+    return true, nil
+end
+
+---@return EventBus
+function Client:get_event_bus()
+    return self._event_bus
+end
+
+---@return Blackboard
+function Client:get_blackboard()
+    return self._blackboard
+end
+
+---@param limit? number
+---@return table[]
+function Client:get_log_feed(limit)
+    if not self._logger or not self._logger.get_history then
+        return {}
+    end
+    return self._logger:get_history(limit)
+end
+
+function Client:clear_log_feed()
+    if self._logger and self._logger.clear_history then
+        self._logger:clear_history()
+    end
+end
+
+function Client:destroy()
+    self:stop("destroy")
+    self._telemetry:destroy()
+    self._logger:destroy()
+    self._event_bus:clear()
+    self._blackboard:clear()
+end
+
+return Client
