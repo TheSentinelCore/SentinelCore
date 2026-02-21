@@ -247,6 +247,18 @@ function CombatService:_execute_pull(target)
         end
     end
 
+    local player = self._blackboard:get("player.object")
+    local player_in_combat = safe_method(player, "is_in_combat") == true
+        or self._blackboard:get("player.in_combat", false) == true
+    local target_in_combat = safe_method(target, "is_in_combat") == true
+
+    if pull_profile.pull_spell_id then
+        -- Do not advance to combat state until pull has actually engaged combat.
+        if not player_in_combat and not target_in_combat then
+            return true, nil
+        end
+    end
+
     self._pull_sent = true
     self._state = "combat"
     return true, nil

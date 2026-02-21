@@ -19,6 +19,26 @@ local ITEM_UNWRAP_KEYS = {
     "raw_object",
     "game_object",
 }
+
+---@private
+---@param action_priority any
+---@return number
+local function queue_priority(action_priority)
+    -- Spell queue API uses 1..9, with 9 reserved for explicit manual overrides.
+    local p = tonumber(action_priority) or 1
+    if p <= 1 then
+        return 1
+    end
+
+    -- Framework priorities are larger (for deterministic sorting), so compress to queue scale.
+    local normalized = math.floor((p / 100))
+    if normalized < 1 then
+        normalized = 1
+    elseif normalized > 8 then
+        normalized = 8
+    end
+    return normalized
+end
 ---@private
 ---@param registry RotationRegistry
 ---@param provider table|nil
@@ -524,12 +544,13 @@ function RotationEngine:_execute_queue_first(action, ctx)
     local cast_self = unwrap_game_object(ctx.player)
     local spell_id = tonumber(action._resolved_spell_id or action.spell_id) or 0
     local item_id = tonumber(action._resolved_item_id) or 0
+    local qp = queue_priority(action.priority)
 
     if action.action_type == "cast_spell_target" and self._queue.queue_spell_target then
         if not is_native_game_object(cast_target) then
             return false, ErrorCodes.CAST_INVALID_TARGET
         end
-        local ok = pcall(self._queue.queue_spell_target, self._queue, spell_id, cast_target, action.priority or 1,
+        local ok = pcall(self._queue.queue_spell_target, self._queue, spell_id, cast_target, qp,
             "SentinelCore", action.allow_movement)
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
@@ -541,7 +562,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if not is_native_game_object(cast_self) then
             return false, ErrorCodes.CAST_INVALID_TARGET
         end
-        local ok = pcall(self._queue.queue_spell_target, self._queue, spell_id, cast_self, action.priority or 1,
+        local ok = pcall(self._queue.queue_spell_target, self._queue, spell_id, cast_self, qp,
             "SentinelCore", true)
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
@@ -554,7 +575,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if cast_position == nil then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
-        local ok = pcall(self._queue.queue_spell_position, self._queue, spell_id, cast_position, action.priority or 1,
+        local ok = pcall(self._queue.queue_spell_position, self._queue, spell_id, cast_position, qp,
             "SentinelCore", action.allow_movement)
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
@@ -566,7 +587,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if item_id <= 0 then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
-        local ok = pcall(self._queue.queue_item_self, self._queue, item_id, action.priority or 1, "SentinelCore")
+        local ok = pcall(self._queue.queue_item_self, self._queue, item_id, qp, "SentinelCore")
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
@@ -578,7 +599,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if item_id <= 0 then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
-        local ok = pcall(self._queue.queue_item_self, self._queue, item_id, action.priority or 1, "SentinelCore")
+        local ok = pcall(self._queue.queue_item_self, self._queue, item_id, qp, "SentinelCore")
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end

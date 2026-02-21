@@ -109,6 +109,14 @@ local function run()
     T.assert_true(exec_err == nil or exec_err == ErrorCodes.CAST_GUARD_BLOCKED or exec_err == ErrorCodes.CAST_INVALID_TARGET,
         "rotation tick error should be explicit guard/cast code")
 
+    local queue = require("common/modules/spell_queue")
+    local entries = queue and queue.get_entries and queue:get_entries() or {}
+    if type(entries) == "table" and #entries > 0 then
+        local last = entries[#entries]
+        local qp = tonumber(last.priority) or 0
+        T.assert_true(qp >= 1 and qp <= 8, "queue priority should be normalized to API-supported range 1..8")
+    end
+
     return {
         sc008_rotation_contract = true,
     }

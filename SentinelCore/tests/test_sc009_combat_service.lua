@@ -42,6 +42,12 @@ local function run()
 
     local u1 = combat:update()
     T.assert_true(u1 == true, "combat update should run")
+    T.assert_eq(combat:get_state(), "pull", "combat service should remain in pull state until pull actually engages combat")
+
+    target._in_combat = true
+    local u1b = combat:update()
+    T.assert_true(u1b == true, "combat update should transition after pull engages")
+    T.assert_eq(combat:get_state(), "combat", "combat service should switch to combat state once target enters combat")
 
     target._dead = true
     local u2 = combat:update()

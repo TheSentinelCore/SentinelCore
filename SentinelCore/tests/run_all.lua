@@ -32,7 +32,7 @@ local function create_test_spell_queue()
             owner = owner,
             allow_movement = allow_movement,
         }
-        return true
+        return nil
     end
 
     function queue:queue_spell_position(spell_id, position, priority, owner, allow_movement)
@@ -44,7 +44,7 @@ local function create_test_spell_queue()
             allow_movement = allow_movement,
             kind = "spell_position",
         }
-        return true
+        return nil
     end
 
     function queue:queue_item_self(item_id, priority, owner)
@@ -54,7 +54,7 @@ local function create_test_spell_queue()
             owner = owner,
             kind = "item_self",
         }
-        return true
+        return nil
     end
 
     function queue:get_entries()
