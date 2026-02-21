@@ -18,8 +18,7 @@ Scope: SentinelCore rotation framework; TBC Classic Warlock Affliction provider;
   - Proc handling (Nightfall/Backlash)
 
 ### 1.2 Non-Goals (v1)
-- No engine-level action type additions (for example, no new `cast_spell_position` action in `ActionBuilder`).
-- No pet spell micromanagement (for example, Felhunter Spell Lock AI) in v1.
+- No full pet stance/ability scheduler beyond reactive Felhunter Spell Lock casting.
 
 ### 1.3 Exit Criteria
 - Warlock class (ID 9) resolves a provider and generates valid plans.
@@ -42,10 +41,10 @@ Confirmed: **Yes**.
 - Include `Drain Soul` in spell catalog and provider logic.
 - Use shard-count-based condition for execute/replenishment window.
 
-### 2.3 Decision 10: Rain of Fire framework compromise
+### 2.3 Decision 10: Rain of Fire position casting
 Confirmed: **Yes**.
-- Use current framework constraints (`self_spell` + `max_target_distance`) as interim behavior.
-- Defer true position-cast implementation to a future engine enhancement.
+- Add `cast_spell_position` support to the framework (`ActionBuilder` + `RotationEngine`).
+- Use true position casting for Rain of Fire with target-position resolution.
 
 ## 3. Architectural Constraints and Conformance
 
@@ -62,6 +61,11 @@ Conformance points:
 Only documented APIs are used:
 - `player:get_pet()`
 - `core.input.pet_attack(target)`
+- `core.spell_book.get_pet_spells()`
+- `core.input.pet_cast_target_spell(spell_id, target)`
+- `target:is_active_spell_interruptable()`
+- `spell_queue:queue_spell_position(spell_id, position, priority, message)`
+- `core.input.cast_position_spell(spell_id, position)`
 - existing spell/inventory/unit APIs already used by SentinelCore modules
 
 ### 3.3 No hardcoded level checks
@@ -163,6 +167,27 @@ Scope:
   - `mana_potion_min_hp_pct`
   - `wand_mana_pct`
 
+### 4.12 Modify: `SentinelCore/rotations/framework/ActionBuilder.lua`
+Add position-cast action constructor:
+- `position_spell(spell_id, priority, opts?)`
+- New normalized action type: `cast_spell_position`
+
+### 4.13 Modify: `SentinelCore/services/RotationEngine.lua`
+Add end-to-end execution support for `cast_spell_position`:
+- guard/resolve path for position resolver
+- queue execution via `queue_spell_position(...)`
+- fallback execution via `core.input.cast_position_spell(...)`
+- castable-check target handling for position actions
+
+### 4.14 Modify: `SentinelCore/rotations/warlock/Affliction.lua`
+Add reactive pet micromanagement:
+- resolve Felhunter Spell Lock from `core.spell_book.get_pet_spells()`
+- cast Spell Lock via `core.input.pet_cast_target_spell(...)` when target is casting and interruptible
+- anti-spam attempt throttle in runtime cache
+
+### 4.15 Modify: `SentinelCore/rotations/framework/README.md`
+Document `position_spell(...)` in framework action schema.
+
 ## 5. Spell Registry (Final Planned Contents)
 
 ## 5.1 SpellCatalog entries (`WARLOCK.AFFLICTION`)
@@ -187,6 +212,7 @@ Defensive/Utility:
 - LIFE_TAP
 - DARK_PACT
 - HEALTH_FUNNEL
+- SPELL_LOCK (pet spell)
 
 Armor:
 - DEMON_SKIN

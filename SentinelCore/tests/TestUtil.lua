@@ -89,8 +89,11 @@ function TestUtil.install_core_stub(overrides)
         },
         input = {
             cast_target_spell = function() return true end,
+            cast_position_spell = function() return true end,
             set_target = function() return true end,
             use_item = function() return true end,
+            pet_cast_target_spell = function() return true end,
+            pet_attack = function() return true end,
             loot_object = function() end,
             loot_item = function() end,
             close_loot = function() end,

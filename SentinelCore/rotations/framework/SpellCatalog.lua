@@ -149,6 +149,10 @@ SpellCatalog.WARLOCK = {
             name = "health funnel",
             ids = { 27259, 11695, 11694, 11693, 3700, 3699, 3698, 755 },
         },
+        SPELL_LOCK = {
+            name = "spell lock",
+            ids = { 19647, 19244 },
+        },
 
         -- Armor Buffs
         DEMON_SKIN = {

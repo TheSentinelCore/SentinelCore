@@ -19,6 +19,7 @@ Use `ActionBuilder` to emit normalized action tables:
 
 - `target_spell(spell_id, priority, opts?)`
 - `self_spell(spell_id, priority, opts?)`
+- `position_spell(spell_id, priority, opts?)`
 - `item_self(item_id|item_ids, priority, opts?)`
 - `best_health_potion(priority, opts?)`
 - `best_mana_potion(priority, opts?)`

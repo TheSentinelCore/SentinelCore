@@ -8,11 +8,18 @@ local ActionBuilder = {}
 ---@return table
 local function build_action(action_type, priority, opts)
     opts = opts or {}
+    local target = "target"
+    if action_type == "cast_spell_self" then
+        target = "self"
+    elseif action_type == "cast_spell_position" then
+        target = "position"
+    end
+
     return {
         action_type = action_type,
         priority = priority,
         allow_movement = opts.allow_movement == true,
-        target = action_type == "cast_spell_self" and "self" or "target",
+        target = target,
         requires_castable_check = opts.requires_castable_check ~= false and action_type ~= "use_item_self" and
             action_type ~= "use_best_health_potion" and action_type ~= "use_best_mana_potion",
         skip_facing = opts.skip_facing == true,
@@ -51,6 +58,20 @@ function ActionBuilder.self_spell(spell_id, priority, opts)
     opts.allow_movement = true
     local action = build_action("cast_spell_self", priority, opts)
     action.spell_id = spell_id
+    return action
+end
+
+---@param spell_id number|fun(ctx: table, action: table): number|nil
+---@param priority number
+---@param opts? table
+---@return table
+function ActionBuilder.position_spell(spell_id, priority, opts)
+    opts = opts or {}
+    opts.skip_facing = true
+    opts.skip_range = true
+    local action = build_action("cast_spell_position", priority, opts)
+    action.spell_id = spell_id
+    action.position = opts.position
     return action
 end
 

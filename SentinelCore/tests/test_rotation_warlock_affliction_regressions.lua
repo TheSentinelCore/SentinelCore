@@ -16,6 +16,9 @@ local function run()
     }
 
     local shard_item = T.mock_object({ item_id = 6265, stack_count = 3 })
+    local pet_spell_lock_calls = 0
+    local last_pet_spell_id = 0
+    local pet_has_spell_lock = false
 
     local include_shards = false
     T.install_core_stub({
@@ -29,6 +32,14 @@ local function run()
             is_usable_spell = function()
                 return true
             end,
+            get_pet_spells = function()
+                if pet_has_spell_lock then
+                    return {
+                        [19647] = "Spell Lock",
+                    }
+                end
+                return {}
+            end,
         },
         inventory = {
             get_items_in_bag = function(bag_id)
@@ -40,12 +51,28 @@ local function run()
                 return {}
             end,
         },
+        input = {
+            pet_attack = function()
+                return true
+            end,
+            pet_cast_target_spell = function(spell_id)
+                pet_spell_lock_calls = pet_spell_lock_calls + 1
+                last_pet_spell_id = tonumber(spell_id) or 0
+                return true
+            end,
+        },
     })
 
     local provider = require("rotations/warlock/Affliction")
 
     local function resolve_from_fallback(_, fallback_ids)
         if type(fallback_ids) == "table" and #fallback_ids > 0 then
+            for i = 1, #fallback_ids do
+                local id = tonumber(fallback_ids[i]) or 0
+                if learned[id] == true then
+                    return id
+                end
+            end
             return fallback_ids[1]
         end
         return nil
@@ -102,6 +129,19 @@ local function run()
     T.assert_true(type(proc_action) == "table", "combat plan should include Nightfall proc action")
     T.assert_true(type(drain_soul_action) == "table", "combat plan should include Drain Soul replenish action")
 
+    local aoe = provider:aoe(base_ctx)
+    local rain_action = nil
+    for i = 1, #aoe do
+        local action = aoe[i]
+        if tonumber(action.priority) == 560 then
+            rain_action = action
+            break
+        end
+    end
+    T.assert_true(type(rain_action) == "table", "aoe plan should include Rain of Fire action")
+    T.assert_eq(rain_action.action_type, "cast_spell_position", "rain of fire should use position-cast action type")
+    T.assert_true(type(rain_action.position) == "function", "rain of fire action should provide position resolver")
+
     local proc_ctx = {
         class_id = 9,
         in_combat = true,
@@ -115,6 +155,40 @@ local function run()
         resolve_spell_id = resolve_from_fallback,
     }
     T.assert_true(proc_action.condition(proc_ctx, proc_action) == true, "nightfall proc action should pass when aura is up")
+
+    local interrupt_target = T.mock_object({ casting = true })
+    interrupt_target.is_active_spell_interruptable = function()
+        return true
+    end
+    local interrupt_ctx = {
+        class_id = 9,
+        in_combat = true,
+        target = interrupt_target,
+        pet = T.mock_object({ name = "Felhunter" }),
+        target_is_casting = true,
+        target_distance = 20.0,
+        now = 2000.0,
+        resolve_spell_id = resolve_from_fallback,
+    }
+
+    pet_has_spell_lock = true
+    provider:interrupt(interrupt_ctx)
+    T.assert_eq(pet_spell_lock_calls, 1, "interrupt phase should trigger Felhunter Spell Lock when target is casting")
+    T.assert_eq(last_pet_spell_id, 19647, "pet spell lock should resolve to the best available pet rank")
+
+    provider:interrupt(interrupt_ctx)
+    T.assert_eq(pet_spell_lock_calls, 1, "pet spell lock should be throttled to avoid repeat spam within same tick window")
+
+    interrupt_ctx.now = 2001.0
+    provider:interrupt(interrupt_ctx)
+    T.assert_eq(pet_spell_lock_calls, 2, "pet spell lock should retry after throttle window expires")
+
+    interrupt_target.is_active_spell_interruptable = function()
+        return false
+    end
+    interrupt_ctx.now = 2002.0
+    provider:interrupt(interrupt_ctx)
+    T.assert_eq(pet_spell_lock_calls, 2, "pet spell lock should skip non-interruptible casts")
 
     local low_mana_ctx = {
         class_id = 9,

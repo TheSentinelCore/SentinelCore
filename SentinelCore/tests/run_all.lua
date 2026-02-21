@@ -35,6 +35,18 @@ local function create_test_spell_queue()
         return true
     end
 
+    function queue:queue_spell_position(spell_id, position, priority, owner, allow_movement)
+        entries[#entries + 1] = {
+            spell_id = spell_id,
+            position = position,
+            priority = priority,
+            owner = owner,
+            allow_movement = allow_movement,
+            kind = "spell_position",
+        }
+        return true
+    end
+
     function queue:queue_item_self(item_id, priority, owner)
         entries[#entries + 1] = {
             item_id = item_id,

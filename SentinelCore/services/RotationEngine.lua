@@ -441,7 +441,9 @@ end
 ---@return number|nil
 ---@return string|nil
 function RotationEngine:_resolve_action_spell_id(action, ctx)
-    if action.action_type ~= "cast_spell_target" and action.action_type ~= "cast_spell_self" then
+    if action.action_type ~= "cast_spell_target"
+        and action.action_type ~= "cast_spell_self"
+        and action.action_type ~= "cast_spell_position" then
         return nil, nil
     end
 
@@ -461,6 +463,37 @@ function RotationEngine:_resolve_action_spell_id(action, ctx)
 
     action._resolved_spell_id = spell_id
     return spell_id, nil
+end
+
+---@private
+---@param action table
+---@param ctx table
+---@return any|nil
+---@return string|nil
+function RotationEngine:_resolve_action_position(action, ctx)
+    if action.action_type ~= "cast_spell_position" then
+        return nil, nil
+    end
+
+    local raw = action.position
+    if type(raw) == "function" then
+        local ok, dynamic_position = pcall(raw, ctx, action)
+        if not ok then
+            return nil, ErrorCodes.CAST_GUARD_BLOCKED
+        end
+        raw = dynamic_position
+    end
+
+    if raw == nil then
+        raw = ctx and ctx.target_position or nil
+    end
+
+    if raw == nil then
+        return nil, ErrorCodes.CAST_GUARD_BLOCKED
+    end
+
+    action._resolved_position = raw
+    return raw, nil
 end
 
 ---@private
@@ -516,6 +549,19 @@ function RotationEngine:_execute_queue_first(action, ctx)
         return true, nil
     end
 
+    if action.action_type == "cast_spell_position" and self._queue.queue_spell_position then
+        local cast_position = action._resolved_position
+        if cast_position == nil then
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end
+        local ok = pcall(self._queue.queue_spell_position, self._queue, spell_id, cast_position, action.priority or 1,
+            "SentinelCore", action.allow_movement)
+        if not ok then
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end
+        return true, nil
+    end
+
     if action.action_type == "use_item_self" and self._queue.queue_item_self then
         if item_id <= 0 then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
@@ -561,7 +607,9 @@ function RotationEngine:_execute_guarded_fallback(action, ctx)
     local spell_id = tonumber(action._resolved_spell_id or action.spell_id) or 0
     local item_id = tonumber(action._resolved_item_id) or 0
 
-    if action.action_type == "cast_spell_target" or action.action_type == "cast_spell_self" then
+    if action.action_type == "cast_spell_target"
+        or action.action_type == "cast_spell_self"
+        or action.action_type == "cast_spell_position" then
         if core and core.spell_book and core.spell_book.is_usable_spell then
             local usable = core.spell_book.is_usable_spell(spell_id)
             if usable == false then
@@ -595,6 +643,21 @@ function RotationEngine:_execute_guarded_fallback(action, ctx)
         end
         if core and core.input and core.input.cast_target_spell then
             local ok = core.input.cast_target_spell(spell_id, cast_self)
+            if ok then
+                self._last_cast_at = now
+                return true, nil
+            end
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end
+    end
+
+    if action.action_type == "cast_spell_position" then
+        local cast_position = action._resolved_position
+        if cast_position == nil then
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end
+        if core and core.input and core.input.cast_position_spell then
+            local ok = core.input.cast_position_spell(spell_id, cast_position)
             if ok then
                 self._last_cast_at = now
                 return true, nil
@@ -704,6 +767,11 @@ function RotationEngine:_action_allowed(action, ctx)
         return false, spell_err
     end
 
+    local _, pos_err = self:_resolve_action_position(action, ctx)
+    if pos_err then
+        return false, pos_err
+    end
+
     if action.action_type == "use_item_self"
         or action.action_type == "use_best_health_potion"
         or action.action_type == "use_best_mana_potion" then
@@ -721,7 +789,14 @@ function RotationEngine:_action_allowed(action, ctx)
 
     if action.requires_castable_check == true and self._spell_helper and self._spell_helper.is_spell_castable then
         local caster = unwrap_game_object(ctx.player)
-        local target = action.action_type == "cast_spell_self" and caster or unwrap_game_object(ctx.target)
+        local target = nil
+        if action.action_type == "cast_spell_self" then
+            target = caster
+        elseif action.action_type == "cast_spell_position" then
+            target = unwrap_game_object(ctx.target) or caster
+        else
+            target = unwrap_game_object(ctx.target)
+        end
         if not is_native_game_object(caster) or not is_native_game_object(target) then
             return false, ErrorCodes.CAST_INVALID_TARGET
         end

@@ -40,6 +40,24 @@ local function is_spell_learned(spell_id)
         end
     end
 
+    if core and core.spell_book and core.spell_book.get_spells then
+        local ok, spells = pcall(core.spell_book.get_spells)
+        if ok and type(spells) == "table" then
+            if spells[id] ~= nil then
+                return true
+            end
+            for raw_id, raw_name in pairs(spells) do
+                local known_id = tonumber(raw_id)
+                if type(raw_name) == "table" then
+                    known_id = tonumber(raw_name.spell_id or raw_name.id or raw_id)
+                end
+                if known_id == id then
+                    return true
+                end
+            end
+        end
+    end
+
     return false
 end
 

@@ -34,6 +34,7 @@ local SPELLS = {
     LIFE_TAP = WL_SPELLS.LIFE_TAP,
     DARK_PACT = WL_SPELLS.DARK_PACT,
     HEALTH_FUNNEL = WL_SPELLS.HEALTH_FUNNEL,
+    SPELL_LOCK = WL_SPELLS.SPELL_LOCK,
 
     DEMON_SKIN = WL_SPELLS.DEMON_SKIN,
     DEMON_ARMOR = WL_SPELLS.DEMON_ARMOR,
@@ -50,6 +51,43 @@ local SPELLS = {
 }
 
 local SHARD_ITEM_ID = 6265
+local PET_SPELL_LOCK_THROTTLE = 0.40
+local SPELLBOOK_CACHE_TTL = 0.50
+local _spellbook_cache = {
+    at = 0,
+    ids = {},
+}
+
+---@private
+local function refresh_spellbook_cache()
+    if not core or not core.spell_book or type(core.spell_book.get_spells) ~= "function" then
+        _spellbook_cache.ids = {}
+        _spellbook_cache.at = 0
+        return
+    end
+
+    local now = (core and core.time and core.time()) or 0
+    if now - (_spellbook_cache.at or 0) < SPELLBOOK_CACHE_TTL then
+        return
+    end
+
+    local ids = {}
+    local ok, spells = pcall(core.spell_book.get_spells)
+    if ok and type(spells) == "table" then
+        for raw_id, raw_name in pairs(spells) do
+            local id = tonumber(raw_id)
+            if type(raw_name) == "table" then
+                id = tonumber(raw_name.spell_id or raw_name.id or raw_id)
+            end
+            if id and id > 0 then
+                ids[id] = true
+            end
+        end
+    end
+
+    _spellbook_cache.ids = ids
+    _spellbook_cache.at = now
+end
 
 local DEFAULT_POLICY = {
     drink_mana_pct = 0.40,
@@ -117,6 +155,11 @@ local function learned_spell(raw)
         end
     end
 
+    refresh_spellbook_cache()
+    if _spellbook_cache.ids[id] == true then
+        return true
+    end
+
     return false
 end
 
@@ -151,7 +194,7 @@ local function resolve_spell(ctx, spec, fallback)
     local resolved = nil
     if ctx and type(ctx.resolve_spell_id) == "function" and type(spell_name) == "string" and spell_name ~= "" then
         local id = spell_id(ctx.resolve_spell_id(spell_name, spell_fallback))
-        if id and learned_spell(id) then
+        if id then
             resolved = id
         end
     end
@@ -230,6 +273,102 @@ local function self_spell(spec, priority, opts)
     return ActionBuilder.self_spell(function(ctx)
         return resolve_spell(ctx, spec)
     end, priority, opts)
+end
+
+---@private
+---@param spec table|string|number|function
+---@param priority number
+---@param opts? table
+---@return table
+local function position_spell(spec, priority, opts)
+    if type(spec) == "number" or type(spec) == "function" then
+        return ActionBuilder.position_spell(spec, priority, opts)
+    end
+
+    return ActionBuilder.position_spell(function(ctx)
+        return resolve_spell(ctx, spec)
+    end, priority, opts)
+end
+
+---@private
+---@param value any
+---@return string
+local function normalize_text(value)
+    return tostring(value or ""):lower()
+end
+
+---@private
+---@param ctx table
+---@param spec table|string|number
+---@return number|nil
+local function resolve_pet_spell(ctx, spec)
+    if type(spec) == "number" then
+        return spell_id(spec)
+    end
+
+    local spell_name = spec
+    local spell_fallback = nil
+    if type(spec) == "table" then
+        spell_name = SpellCatalog.name(spec)
+        spell_fallback = SpellCatalog.ids(spec)
+    end
+    local wanted = normalize_text(spell_name)
+
+    local cache = runtime_cache(ctx)
+    local key = "pet#" .. tostring(wanted) .. "#" .. tostring(type(spell_fallback) == "table" and spell_fallback[1] or 0)
+    local cached = cache[key]
+    if cached ~= nil then
+        return cached or nil
+    end
+
+    local resolved = nil
+    local saw_pet_list = false
+    if core and core.spell_book and type(core.spell_book.get_pet_spells) == "function" then
+        local ok, pet_spells = pcall(core.spell_book.get_pet_spells)
+        if ok and type(pet_spells) == "table" then
+            saw_pet_list = true
+
+            local fallback_rank_idx = {}
+            if type(spell_fallback) == "table" then
+                for i = 1, #spell_fallback do
+                    local id = spell_id(spell_fallback[i])
+                    if id then
+                        fallback_rank_idx[id] = i
+                    end
+                end
+            end
+
+            local best_rank_idx = nil
+            for raw_id, raw_name in pairs(pet_spells) do
+                local id = tonumber(raw_id)
+                local name = normalize_text(raw_name)
+
+                if type(raw_name) == "table" then
+                    id = tonumber(raw_name.spell_id or raw_name.id or raw_id)
+                    name = normalize_text(raw_name.spell_name or raw_name.name or "")
+                end
+
+                if id and id > 0 then
+                    local idx = fallback_rank_idx[id]
+                    if idx then
+                        if best_rank_idx == nil or idx < best_rank_idx then
+                            best_rank_idx = idx
+                            resolved = id
+                        end
+                    elseif best_rank_idx == nil and wanted ~= "" and name ~= "" and name:find(wanted, 1, true) then
+                        resolved = id
+                    end
+                end
+            end
+        end
+    end
+
+    if resolved == nil and not saw_pet_list and type(spell_fallback) == "table" and #spell_fallback > 0 then
+        resolved = spell_id(spell_fallback[1])
+    end
+
+    cache[key] = resolved or false
+    return resolved
 end
 
 ---@private
@@ -438,6 +577,57 @@ local function ensure_pet_attack(ctx)
 end
 
 ---@private
+---@param target any
+---@return boolean
+local function target_spell_interruptable(target)
+    if not target then
+        return false
+    end
+    if type(target.is_active_spell_interruptable) == "function" then
+        local ok, interruptable = pcall(target.is_active_spell_interruptable, target)
+        if ok and interruptable ~= nil then
+            return interruptable == true
+        end
+    end
+    return true
+end
+
+---@private
+---@param ctx table
+local function try_pet_spell_lock(ctx)
+    if not ctx or ctx.in_combat ~= true or not ctx.target or not ctx.pet then
+        return
+    end
+    if ctx.target_is_casting ~= true then
+        return
+    end
+    if (tonumber(ctx.target_distance) or 999) > 30.0 then
+        return
+    end
+    if not target_spell_interruptable(ctx.target) then
+        return
+    end
+    if not core or not core.input or type(core.input.pet_cast_target_spell) ~= "function" then
+        return
+    end
+
+    local lock_id = resolve_pet_spell(ctx, SPELLS.SPELL_LOCK)
+    if not lock_id then
+        return
+    end
+
+    local cache = runtime_cache(ctx)
+    local now = tonumber(ctx.now) or ((core and core.time and core.time()) or 0)
+    local last_attempt = tonumber(cache.last_pet_spell_lock_attempt_at) or 0
+    if now - last_attempt < PET_SPELL_LOCK_THROTTLE then
+        return
+    end
+    cache.last_pet_spell_lock_attempt_at = now
+
+    pcall(core.input.pet_cast_target_spell, lock_id, ctx.target)
+end
+
+---@private
 ---@param ctx table
 ---@return boolean
 local function player_is_busy(ctx)
@@ -601,6 +791,8 @@ end
 ---@param ctx table
 ---@return table[]
 function Affliction:interrupt(ctx)
+    try_pet_spell_lock(ctx)
+
     return {
         target_spell(SPELLS.DEATH_COIL, 760, {
             target_must_be_casting = true,
@@ -751,12 +943,16 @@ function Affliction:aoe(ctx)
                     and not player_is_busy(local_ctx)
             end,
         }),
-        self_spell(SPELLS.RAIN_OF_FIRE, 560, {
+        position_spell(SPELLS.RAIN_OF_FIRE, 560, {
+            position = function(local_ctx)
+                return local_ctx.target_position
+            end,
             max_target_distance = 30.0,
             requires_castable_check = false,
             condition = function(local_ctx)
                 return resolve_spell(local_ctx, SPELLS.RAIN_OF_FIRE) ~= nil
                     and local_ctx.in_combat == true
+                    and local_ctx.target_position ~= nil
                     and not player_is_busy(local_ctx)
             end,
         }),

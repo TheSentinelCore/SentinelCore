@@ -95,6 +95,15 @@ local function run()
     local restored_plan, restored_err = rotation:generate_plan()
     T.assert_true(type(restored_plan) == "table" and #restored_plan > 0, "paladin plan should recover after class switch")
 
+    bb:set("player.class_id", 9)
+    bb:set("player.spec_id", 0)
+    local warlock_plan, warlock_err = rotation:generate_plan()
+    T.assert_true(type(warlock_plan) == "table" and #warlock_plan > 0,
+        "warlock class should resolve a combat plan even when spec is unset (0)")
+
+    bb:set("player.class_id", 2)
+    bb:set("player.spec_id", 0)
+
     local executed, exec_err = rotation:tick_once()
     T.assert_true(executed == true or exec_err ~= nil, "rotation tick should execute or return guarded reason")
     T.assert_true(exec_err == nil or exec_err == ErrorCodes.CAST_GUARD_BLOCKED or exec_err == ErrorCodes.CAST_INVALID_TARGET,
