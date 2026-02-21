@@ -695,6 +695,7 @@ local function build_diag_snapshot(reason, recommendation, intent_output)
         intent = tostring(controller:get_current_id() or "none"),
         rec_intent = recommendation and tostring(recommendation.intent_id or "none") or "",
         rec_score = recommendation and (tonumber(recommendation.score) or 0) or 0,
+        all_scores = recommendation and recommendation.all_scores and json_encode_flat(recommendation.all_scores) or "{}",
         allies = counts.allies or 0,
         enemies = counts.enemies or 0,
         entities = counts.total or 0,
@@ -750,6 +751,24 @@ local function build_diag_snapshot(reason, recommendation, intent_output)
     if intent_output then
         snapshot.out_has_interact = intent_output.interact_target ~= nil
         snapshot.out_has_face = intent_output.face_target ~= nil
+
+        -- Deep combat micro context
+        if intent_output.combat_target and intent_output.combat_target.position and self_state and self_state.position then
+            snapshot.active_target_id = tostring(intent_output.combat_target.guid or "unknown")
+            snapshot.active_target_dist = utils.distance_3d(self_state.position, intent_output.combat_target.position)
+            snapshot.active_target_hp_pct = intent_output.combat_target.health_pct or 0
+            snapshot.active_target_class = intent_output.combat_target.class_id or 0
+        end
+
+        -- Surrounding context
+        local nearby_enemies = 0
+        local enemies = world_model:get_enemies() or {}
+        for _, enemy in ipairs(enemies) do
+             if enemy.position and self_state and self_state.position and utils.distance_3d(self_state.position, enemy.position) <= 30.0 then
+                 nearby_enemies = nearby_enemies + 1
+             end
+        end
+        snapshot.enemies_in_30yd = nearby_enemies
     end
 
     return snapshot
