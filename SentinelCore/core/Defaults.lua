@@ -58,9 +58,7 @@ Defaults.loot = {
     interaction_retry_delay = 0.6,
 }
 
-Defaults.inventory = {
-    total_bag_slots = 0,  -- User must configure: backpack (16) + equipped bag slots
-}
+Defaults.inventory = {}  -- bag capacity computed dynamically from equipped bags
 
 Defaults.vendor = {
     search_radius = 250.0,

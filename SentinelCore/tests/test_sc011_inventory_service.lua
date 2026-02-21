@@ -9,12 +9,15 @@ local function run()
     local item_blue_sell = T.mock_object({ item_id = 5001, stack_count = 1, quality = 3 })
     local item_epic_keep = T.mock_object({ item_id = 5002, stack_count = 1, quality = 4 })
 
+    -- Mock bag: 21841 = Netherweave Bag (16 slots) in BAG_SIZES
+    local bag_netherweave = T.mock_object({ item_id = 21841 })
+
     local player = {
         is_valid = function() return true end,
         get_item_at_inventory_slot = function(_, slot_id)
-            if slot_id == 16 then
-                -- Equipped item must not count toward bag occupancy.
-                return { object = item_keep }
+            -- Bag equip slots: 20=bag1, 21=bag2, 22=bag3, 23=bag4
+            if slot_id == 20 then
+                return { object = bag_netherweave }
             end
             return nil
         end,
@@ -44,23 +47,8 @@ local function run()
 
     local EventBus = require("events/EventBus")
     local Blackboard = require("core/Blackboard")
-    local helper_module_key = "common/utility/inventory_helper"
     local inventory_service_key = "services/InventoryService"
-    local previous_helper_module = package.loaded[helper_module_key]
     local previous_inventory_service = package.loaded[inventory_service_key]
-    package.loaded[helper_module_key] = {
-        get_character_bag_slots = function()
-            return {
-                { item = item_keep, bag_id = 0, bag_slot = 0 },
-                { item = item_sell, bag_id = 0, bag_slot = 1 },
-                { item = item_rule_keep, bag_id = 0, bag_slot = 2 },
-                { item = item_rule_sell, bag_id = 0, bag_slot = 3 },
-                { item = item_white_keep, bag_id = 0, bag_slot = 4 },
-                { item = item_blue_sell, bag_id = 0, bag_slot = 5 },
-                { item = item_epic_keep, bag_id = 0, bag_slot = 6 },
-            }
-        end,
-    }
 
     local result = nil
     local ok, run_err = xpcall(function()
@@ -70,7 +58,7 @@ local function run()
         local bus = EventBus:new()
         local bb = Blackboard:new(bus)
 
-        local service = InventoryService:new(bus, bb, { total_bag_slots = 9 }, {
+        local service = InventoryService:new(bus, bb, {}, {
             min_free_slots = 2,
             never_sell = { 6948 },
             always_sell = { 1179 },
@@ -102,8 +90,9 @@ local function run()
             },
         })
 
+        -- Backpack(16) + 1x Netherweave(16) = 32 total, 7 items in bag 0 → 25 free
         local free = service:get_free_slots()
-        T.assert_eq(free, 3, "free slot accounting: total_bag_slots(9) - 6 items (1 equipped filtered) = 3 free")
+        T.assert_eq(free, 25, "free slot accounting: backpack(16) + netherweave(16) - 7 items = 25 free")
 
         local items = service:collect_items()
         local keep_decision = service:should_sell_item(items[1])
@@ -122,21 +111,22 @@ local function run()
         T.assert_true(blue_sell_decision == true, "blue quality toggle should sell")
         T.assert_true(epic_keep_decision == false, "epic quality toggle should keep when disabled")
 
-        T.assert_true(service:needs_vendor_trip() == false, "vendor trigger should not fire at 3 free (> min 2)")
+        T.assert_true(service:needs_vendor_trip() == false, "vendor trigger should not fire at 25 free (> min 2)")
 
-        -- No fallback path: missing inventory_helper must fail closed.
-        package.loaded[helper_module_key] = nil
+        -- Missing core.inventory must fail closed → returns -1.
+        local saved_inventory = core.inventory
+        core.inventory = nil
         package.loaded[inventory_service_key] = nil
-        local InventoryServiceNoHelper = require(inventory_service_key)
-        local service_no_helper = InventoryServiceNoHelper:new(bus, bb, { total_bag_slots = 9 }, service:get_policy())
-        T.assert_eq(service_no_helper:get_free_slots(), -1, "missing inventory_helper returns unknown (-1)")
+        local InventoryService2 = require(inventory_service_key)
+        local service2 = InventoryService2:new(bus, bb, {}, service:get_policy())
+        T.assert_eq(service2:get_free_slots(), -1, "missing core.inventory returns unknown (-1)")
+        core.inventory = saved_inventory
 
         result = {
             sc011_inventory_policy = true,
         }
     end, function(err) return tostring(err) end)
 
-    package.loaded[helper_module_key] = previous_helper_module
     package.loaded[inventory_service_key] = previous_inventory_service
 
     if not ok then

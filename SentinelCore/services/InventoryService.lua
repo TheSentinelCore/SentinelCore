@@ -11,25 +11,33 @@ local ErrorCodes = require("events/ErrorCodes")
 local InventoryService = {}
 InventoryService.__index = InventoryService
 
-local EQUIP_SLOT_MIN = 0
-local EQUIP_SLOT_MAX = 23
-local _inventory_helper_loaded = false
-local _inventory_helper = nil
+local BACKPACK_SLOTS = 16
+local BAG_EQUIP_SLOT_BASE = 19  -- inventory slots 20-23 = bags 1-4
 
----@private
----@return table|nil
-local function get_inventory_helper()
-    if _inventory_helper_loaded then
-        return _inventory_helper
-    end
-    _inventory_helper_loaded = true
-
-    local ok, mod = pcall(require, "common/utility/inventory_helper")
-    if ok and mod then
-        _inventory_helper = mod
-    end
-    return _inventory_helper
-end
+-- All TBC non-special bags: item_id → slot_count
+-- Source: tbcmangos.item_template WHERE class=1 AND subclass=0
+local BAG_SIZES = {
+    [20474]=4,[22976]=4,[23389]=4,
+    [805]=6,[828]=6,[2082]=6,[4238]=6,[4496]=6,[4930]=6,
+    [4957]=6,[5081]=6,[5571]=6,[5572]=6,[5762]=6,[6756]=6,[22571]=6,
+    [856]=8,[1537]=8,[2657]=8,[3233]=8,[3343]=8,[4240]=8,
+    [4241]=8,[4498]=8,[5573]=8,[5574]=8,[5603]=8,[5763]=8,
+    [6754]=8,[11845]=8,[23852]=8,
+    [804]=10,[857]=10,[918]=10,[932]=10,[933]=10,[1470]=10,
+    [1729]=10,[3352]=10,[4245]=10,[4497]=10,[5575]=10,[5576]=10,
+    [5764]=10,[5765]=10,[6446]=10,
+    [1652]=12,[1725]=12,[3762]=12,[4499]=12,[4981]=12,
+    [10050]=12,[10051]=12,[16057]=12,
+    [1685]=14,[3914]=14,[9587]=14,[11324]=14,[14046]=14,
+    [19291]=14,[30744]=14,
+    [4500]=16,[10683]=16,[10959]=16,[11742]=16,[14155]=16,
+    [20400]=16,[21841]=16,
+    [14156]=18,[17966]=18,[19914]=18,[21843]=18,[22679]=18,
+    [27680]=18,[33117]=18,
+    [21876]=20,[34067]=20,[34845]=20,[35516]=20,
+    [38082]=22,
+    [23162]=36,
+}
 
 ---@private
 ---@return game_object|nil
@@ -51,52 +59,51 @@ local function get_local_player()
 end
 
 ---@private
----@param player game_object
----@return table
-local function build_equipped_item_set(player)
-    local set = {}
-    if not player or not player.get_item_at_inventory_slot then
-        return set
-    end
-
-    for slot_id = EQUIP_SLOT_MIN, EQUIP_SLOT_MAX do
-        local info = player:get_item_at_inventory_slot(slot_id)
-        local obj = info and info.object or nil
-        if obj and obj.is_valid and obj:is_valid() then
-            set[obj] = true
-        end
-    end
-    return set
-end
-
----@private
----@return number|nil  Count of items in character bags (excluding equipped gear)
-local function count_bag_items()
-    local inventory_helper = get_inventory_helper()
-    if not inventory_helper or type(inventory_helper.get_character_bag_slots) ~= "function" then
-        return nil
-    end
-
-    local player = get_local_player()
-    if not player then
-        return nil
-    end
-
-    local slots = inventory_helper:get_character_bag_slots()
-    if type(slots) ~= "table" then
-        return nil
-    end
-
-    local equipped_set = build_equipped_item_set(player)
+---@param bag_id number
+---@return number  item count in this bag
+local function count_items_in_bag(bag_id)
+    local items = core.inventory.get_items_in_bag(bag_id) or {}
     local count = 0
-    for i = 1, #slots do
-        local slot = slots[i]
-        local obj = (slot and slot.item) or (slot and slot.object) or nil
-        if obj and obj.is_valid and obj:is_valid() and not equipped_set[obj] then
+    for i = 1, #items do
+        local slot = items[i]
+        local obj = slot and slot.object or nil
+        if obj and obj.is_valid and obj:is_valid() then
             count = count + 1
         end
     end
     return count
+end
+
+---@private
+---@return number total_capacity
+---@return number used_count
+local function compute_bag_counts()
+    if not core or not core.inventory or not core.inventory.get_items_in_bag then
+        return -1, -1
+    end
+
+    local player = get_local_player()
+    local total = BACKPACK_SLOTS
+    local used = count_items_in_bag(0)
+
+    -- Bags 1-4: resolve capacity from equipped bag's item_id
+    if player and player.get_item_at_inventory_slot then
+        for bag_id = 1, 4 do
+            local ok, info = pcall(player.get_item_at_inventory_slot, player, BAG_EQUIP_SLOT_BASE + bag_id)
+            local bag_obj = ok and info and info.object or nil
+            if bag_obj and bag_obj.is_valid and bag_obj:is_valid() then
+                local item_id = bag_obj.get_item_id and tonumber(bag_obj:get_item_id()) or 0
+                local capacity = BAG_SIZES[item_id] or 0
+                if capacity > 0 then
+                    total = total + capacity
+                    used = used + count_items_in_bag(bag_id)
+                end
+                -- capacity==0 → special bag (soul/herb/enchanting/etc), excluded
+            end
+        end
+    end
+
+    return total, used
 end
 
 ---@param event_bus EventBus
@@ -215,20 +222,13 @@ function InventoryService:collect_items()
     return items
 end
 
----@return number  Free slots, or -1 if unknown/unconfigured
+---@return number  Free slots, or -1 if unknown/unavailable
 function InventoryService:get_free_slots()
-    local total = tonumber(self._cfg.total_bag_slots) or 0
-    if total <= 0 then
+    local total, used = compute_bag_counts()
+    if total < 0 then
         self._blackboard:set("inventory.free_slots", -1)
         return -1
     end
-
-    local used = count_bag_items()
-    if used == nil then
-        self._blackboard:set("inventory.free_slots", -1)
-        return -1
-    end
-
     local free = math.max(0, total - used)
     self._blackboard:set("inventory.free_slots", free)
     return free

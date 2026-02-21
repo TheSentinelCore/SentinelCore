@@ -129,30 +129,41 @@ local function scenario_kill_loot_cycle_repeats(env)
     client:destroy()
 end
 
-local function scenario_inventory_threshold_triggers_vendor(_env)
+local function scenario_inventory_threshold_triggers_vendor(env)
     local EventBus = require("events/EventBus")
     local Blackboard = require("core/Blackboard")
 
-    local helper_key = "common/utility/inventory_helper"
     local service_key = "services/InventoryService"
-    local prev_helper = package.loaded[helper_key]
     local prev_service = package.loaded[service_key]
 
-    -- Build 79 mock items (bags 0-3 full at 16 each, bag 4 has 15).
-    local mock_items = {}
-    for i = 1, 79 do
-        mock_items[#mock_items + 1] = {
-            item = T.mock_object({ item_id = 9000 + i }),
-            bag_id = math.floor((i - 1) / 16),
-            bag_slot = (i - 1) % 16,
+    -- 21841 = Netherweave Bag (16 slots each) in BAG_SIZES lookup.
+    local bag_obj = T.mock_object({ item_id = 21841 })
+
+    -- Player with 4 Netherweave Bags equipped at slots 20-23.
+    env.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            get_item_at_inventory_slot = function(_, slot_id)
+                if slot_id >= 20 and slot_id <= 23 then
+                    return { object = bag_obj }
+                end
+                return nil
+            end,
         }
     end
 
-    package.loaded[helper_key] = {
-        get_character_bag_slots = function()
-            return mock_items
-        end,
-    }
+    -- Fill bags nearly full: bag 0 = 16 items, bags 1-3 = 16 each, bag 4 = 15.
+    -- Total capacity = 16 + 4*16 = 80, used = 79, free = 1.
+    env.core.inventory.get_items_in_bag = function(bag_id)
+        local count = 16
+        if bag_id == 4 then count = 15 end
+        local out = {}
+        for i = 1, count do
+            out[#out + 1] = { object = T.mock_object({ item_id = 9000 + (bag_id * 16) + i }) }
+        end
+        return out
+    end
+
     package.loaded[service_key] = nil
     local InventoryService = require(service_key)
 
@@ -164,9 +175,7 @@ local function scenario_inventory_threshold_triggers_vendor(_env)
         emitted = true
     end, { owner = "smoke_inventory" })
 
-    local inventory = InventoryService:new(bus, bb, {
-        total_bag_slots = 80,
-    }, {
+    local inventory = InventoryService:new(bus, bb, {}, {
         min_free_slots = 2,
         never_sell = {},
         always_sell = {},
@@ -178,7 +187,6 @@ local function scenario_inventory_threshold_triggers_vendor(_env)
     T.assert_true(bb:get("inventory.needs_vendor", false) == true, "inventory_threshold: vendor trigger missing")
     T.assert_true(emitted == true, "inventory_threshold: threshold event missing")
 
-    package.loaded[helper_key] = prev_helper
     package.loaded[service_key] = prev_service
 end
 
