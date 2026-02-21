@@ -317,12 +317,22 @@ end
 
 ---@return boolean
 function InventoryService:is_vendor_enabled()
+    -- Check blackboard override first (survives profile reloads).
+    local bb_override = self._blackboard:get("inventory.vendor_enabled", nil)
+    if bb_override ~= nil then
+        return bb_override == true
+    end
     return self._policy.vendor_enabled ~= false
+end
+
+---@param enabled boolean
+function InventoryService:set_vendor_enabled(enabled)
+    self._blackboard:set("inventory.vendor_enabled", enabled)
 end
 
 ---@return boolean
 function InventoryService:needs_vendor_trip()
-    if self._policy.vendor_enabled == false then
+    if not self:is_vendor_enabled() then
         return false
     end
     local free = self:get_free_slots()

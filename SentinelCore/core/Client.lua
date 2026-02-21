@@ -227,6 +227,8 @@ function Client:_apply_runtime_bindings()
     if self._telemetry then
         self._telemetry._flush_interval = tonumber(runtime_cfg.telemetry and runtime_cfg.telemetry.flush_interval) or 1.0
     end
+
+    self._blackboard:set("rotation.policy", Defaults.copy(runtime_cfg.rotation or {}))
 end
 
 ---@private
@@ -677,7 +679,10 @@ end
 ---@return boolean
 ---@return string|nil
 function Client:set_runtime_setting(section, key, value, persist)
-    self._config:set_runtime_value(section, key, value)
+    local set_ok, set_err = self._config:set_runtime_value(section, key, value)
+    if not set_ok then
+        return false, set_err
+    end
     self:_apply_runtime_bindings()
 
     if persist == true then
@@ -704,6 +709,11 @@ function Client:set_policy_setting(key, value, persist)
     self._config:set_policy(policy)
     self:_apply_runtime_bindings()
     self:_refresh_policy_cache_bindings()
+
+    -- Blackboard override survives profile reloads during start().
+    if key == "vendor_enabled" and self._services.inventory then
+        self._services.inventory:set_vendor_enabled(value)
+    end
 
     if persist == true then
         local ok_policy, policy_err = self._config:save_policy()
