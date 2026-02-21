@@ -180,6 +180,13 @@ local function unit_has_aura(unit, spec)
         end
     end
 
+    if unit.has_debuff then
+        local ok, up = pcall(unit.has_debuff, unit, spec)
+        if ok and up == true then
+            return true
+        end
+    end
+
     return false
 end
 

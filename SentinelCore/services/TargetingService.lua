@@ -103,6 +103,33 @@ end
 ---@param unit game_object
 ---@param player game_object
 ---@return boolean
+local function is_engaged_by_others(unit, player)
+    if safe_method(unit, "is_in_combat") ~= true then
+        return false
+    end
+
+    local unit_target = unwrap_game_object(safe_method(unit, "get_target"))
+    if not unit_target then
+        -- Out-of-party contested combat; safest default is skip.
+        return true
+    end
+
+    if unit_target == player then
+        return false
+    end
+
+    local player_pet = unwrap_game_object(safe_method(player, "get_pet"))
+    if player_pet and unit_target == player_pet then
+        return false
+    end
+
+    return true
+end
+
+---@private
+---@param unit game_object
+---@param player game_object
+---@return boolean
 local function is_valid_target(unit, player)
     if not unit then
         return false
@@ -117,6 +144,9 @@ local function is_valid_target(unit, player)
         return false
     end
     if unit == player then
+        return false
+    end
+    if is_engaged_by_others(unit, player) then
         return false
     end
     if not can_engage(unit, player) then

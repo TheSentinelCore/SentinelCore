@@ -158,6 +158,10 @@ function CombatService:start(target)
         target_name = safe_target_name(target),
     })
 
+    if self._nav and self._nav.stop then
+        pcall(self._nav.stop, self._nav)
+    end
+
     return true, nil
 end
 
@@ -231,6 +235,10 @@ function CombatService:_execute_pull(target)
         end
         self._nav:move_to(target_pos)
         return true, nil
+    end
+
+    if self._nav and self._nav.stop then
+        pcall(self._nav.stop, self._nav)
     end
 
     if core and core.input and core.input.set_target then
@@ -335,6 +343,9 @@ function CombatService:update()
     end
 
     if self._state == "pull" then
+        if self._nav and self._nav.stop then
+            pcall(self._nav.stop, self._nav)
+        end
         local ok, err = self:_execute_pull(target)
         if not ok then
             self._last_error = err or ErrorCodes.PULL_FAILED
@@ -349,6 +360,9 @@ function CombatService:update()
     end
 
     if self._state == "combat" then
+        if self._nav and self._nav.stop then
+            pcall(self._nav.stop, self._nav)
+        end
         local ok_call, ok, err = pcall(self._rotation.tick_once, self._rotation)
         if not ok_call then
             self._last_error = ErrorCodes.ROTATION_UNAVAILABLE

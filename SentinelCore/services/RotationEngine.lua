@@ -39,6 +39,36 @@ local function queue_priority(action_priority)
     end
     return normalized
 end
+
+---@private
+---@param target any
+---@param action table
+local function prepare_target_cast(target, action)
+    if not target then
+        return
+    end
+
+    if core and core.input and type(core.input.set_target) == "function" then
+        pcall(core.input.set_target, target)
+    end
+
+    if action and action.skip_facing == true then
+        return
+    end
+
+    if core and core.input and type(core.input.look_at) == "function" then
+        local pos = nil
+        if type(target.get_position) == "function" then
+            local ok, value = pcall(target.get_position, target)
+            if ok then
+                pos = value
+            end
+        end
+        if pos then
+            pcall(core.input.look_at, pos)
+        end
+    end
+end
 ---@private
 ---@param registry RotationRegistry
 ---@param provider table|nil
@@ -550,6 +580,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if not is_native_game_object(cast_target) then
             return false, ErrorCodes.CAST_INVALID_TARGET
         end
+        prepare_target_cast(cast_target, action)
         local ok = pcall(self._queue.queue_spell_target, self._queue, spell_id, cast_target, qp,
             "SentinelCore", action.allow_movement)
         if not ok then
@@ -562,6 +593,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if not is_native_game_object(cast_self) then
             return false, ErrorCodes.CAST_INVALID_TARGET
         end
+        prepare_target_cast(cast_self, action)
         local ok = pcall(self._queue.queue_spell_target, self._queue, spell_id, cast_self, qp,
             "SentinelCore", true)
         if not ok then
@@ -647,6 +679,7 @@ function RotationEngine:_execute_guarded_fallback(action, ctx)
         if not is_native_game_object(cast_target) then
             return false, ErrorCodes.CAST_INVALID_TARGET
         end
+        prepare_target_cast(cast_target, action)
         if core and core.input and core.input.cast_target_spell then
             local ok = core.input.cast_target_spell(spell_id, cast_target)
             if ok then
@@ -662,6 +695,7 @@ function RotationEngine:_execute_guarded_fallback(action, ctx)
         if not is_native_game_object(cast_self) then
             return false, ErrorCodes.CAST_INVALID_TARGET
         end
+        prepare_target_cast(cast_self, action)
         if core and core.input and core.input.cast_target_spell then
             local ok = core.input.cast_target_spell(spell_id, cast_self)
             if ok then
@@ -743,6 +777,9 @@ function RotationEngine:_action_allowed(action, ctx)
     end
 
     if action.target_must_be_casting == true and ctx.target_is_casting ~= true then
+        return false, ErrorCodes.CAST_GUARD_BLOCKED
+    end
+    if action.allow_movement ~= true and ctx.player_is_moving == true then
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
 

@@ -74,9 +74,25 @@ local function run()
         can_attack = false,
         is_enemy = false,
     })
+    local other_player = T.mock_object({
+        name = "OtherPlayer",
+        level = 1,
+        position = { x = 7, y = 0, z = 0 },
+        is_enemy = false,
+    })
+    local engaged_by_other = T.mock_object({
+        name = "EngagedByOther",
+        level = 1,
+        health = 100,
+        max_health = 100,
+        position = { x = 5, y = 0, z = 0 },
+        can_attack = true,
+        in_combat = true,
+        target = other_player,
+    })
 
     core.object_manager.get_visible_objects = function()
-        return { non_engageable, neutral_attackable }
+        return { engaged_by_other, non_engageable, neutral_attackable }
     end
     local target2, err2 = targeting:acquire_target()
     T.assert_true(target2 ~= nil and target2:get_name() == "NeutralAttackable",
