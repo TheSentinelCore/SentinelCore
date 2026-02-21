@@ -7,6 +7,7 @@ local constants   = require("shared/constants")
 local config      = require("shared/config")
 local utils       = require("shared/utils")
 local helpers     = require("core/intent/intents/wsg_helpers")
+local pathing     = require("core/intent/pathing")
 
 local roam = {}
 roam.__index = roam
@@ -58,6 +59,25 @@ local function build_jittered_goal(base, jitter_radius)
         y = target_y,
         z = target_z,
     }
+end
+
+local function seed_route_index(route, world_model, bg_type)
+    if not route or #route == 0 then
+        return 0
+    end
+
+    local self_state = world_model and world_model:get_self()
+    local self_pos = self_state and self_state.position
+    if not self_pos then
+        return 0
+    end
+
+    local best_index = pathing.find_best_index(self_pos, route, { bg_type = bg_type })
+    if not best_index then
+        return 0
+    end
+
+    return (best_index - 1) % #route
 end
 
 ----------------------------------------------------------------------
@@ -203,7 +223,7 @@ function roam:_build_route(world_model)
             end
         end
         self._route = route
-        self._route_index = 0
+        self._route_index = seed_route_index(route, world_model, bg_type)
         return
     end
 
@@ -217,7 +237,7 @@ function roam:_build_route(world_model)
             end
         end
         self._route = route
-        self._route_index = 0
+        self._route_index = seed_route_index(route, world_model, bg_type)
         return
     end
 
@@ -228,7 +248,7 @@ function roam:_build_route(world_model)
     else
         self._route = {}
     end
-    self._route_index = 0
+    self._route_index = seed_route_index(self._route, world_model, bg_type)
 end
 
 function roam:pick_roam_target(world_model, advance_node)

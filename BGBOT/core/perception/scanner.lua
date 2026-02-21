@@ -11,6 +11,16 @@ local filters   = require("core/perception/filters")
 local scanner = {}
 scanner.__index = scanner
 
+local AURA_DISTANCE_DELTA_REFRESH = 20
+local AURA_REFRESH_NEAR = 0.4
+local AURA_REFRESH_TACTICAL = 1.0
+local AURA_REFRESH_FAR = 3.0
+local AURA_REFRESH_COMBAT = 0.5
+local AURA_REFRESH_SELF = 0.15
+local AURA_REFRESH_FLAG_TRACK = 0.6
+local AURA_CACHE_PRUNE_INTERVAL = 8.0
+local AURA_CACHE_STALE_GRACE = 12.0
+
 local function map_matches(map_id, id_list)
     for _, id in ipairs(id_list or {}) do
         if map_id == id then
@@ -68,6 +78,31 @@ local function safe_is_valid(obj)
     return ok and valid == true
 end
 
+local function cache_key_for_obj(obj)
+    return tostring(obj)
+end
+
+local function aura_scan_interval(opts, cached_has_flag)
+    if opts and opts.is_self then
+        return AURA_REFRESH_SELF
+    end
+    if cached_has_flag or (opts and opts.must_track) then
+        return AURA_REFRESH_FLAG_TRACK
+    end
+    if opts and opts.is_in_combat then
+        return AURA_REFRESH_COMBAT
+    end
+
+    local distance = tonumber(opts and opts.distance) or 0
+    if distance <= constants.RING.NEAR_MAX then
+        return AURA_REFRESH_NEAR
+    end
+    if distance <= constants.RING.TACTICAL_MAX then
+        return AURA_REFRESH_TACTICAL
+    end
+    return AURA_REFRESH_FAR
+end
+
 ----------------------------------------------------------------------
 -- Constructor
 ----------------------------------------------------------------------
@@ -84,6 +119,8 @@ function scanner.new(world_model)
     self.faction        = constants.FACTION.UNKNOWN
     self.faction_source = "unknown"
     self.scan_debug_stats = new_scan_debug_stats()
+    self.aura_cache = {} -- { [handle_key] = { auras, fetched_at, distance, is_in_combat, has_any_flag, has_horde_flag, has_alliance_flag } }
+    self.last_aura_cache_prune = 0
     return self
 end
 
@@ -123,7 +160,7 @@ function scanner:tick()
     local local_player = core.object_manager.get_local_player()
     if not safe_is_valid(local_player) then return end
 
-    local now = core.time()
+    local now = (core and core.time and core.time()) or 0
     local self_pos = utils.pos_from_object(local_player)
 
     -- Always update self-state
@@ -165,6 +202,7 @@ end
 function scanner:update_self(player, pos, now)
     self:resolve_faction(player)
     local spec_id = tonumber(select(1, safe_call_method(player, "get_specialization_id"))) or 0
+    local in_combat = player:is_in_combat()
 
     local self_state = {
         handle       = player,
@@ -180,7 +218,7 @@ function scanner:update_self(player, pos, now)
         group_role   = tonumber(player:get_group_role()) or constants.GROUP_ROLE.NONE,
         is_dead      = player:is_dead(),
         is_ghost     = player:is_ghost(),
-        is_in_combat = player:is_in_combat(),
+        is_in_combat = in_combat,
         is_mounted   = player:is_mounted(),
         is_moving    = player:is_moving(),
         movement_speed = player:get_movement_speed(),
@@ -189,7 +227,13 @@ function scanner:update_self(player, pos, now)
         debuffs      = player:get_debuffs(),
         is_casting   = player:is_casting_spell(),
         target       = player:get_target(),
-        has_flag     = self:check_has_flag(player),
+        has_flag     = self:check_has_flag(player, nil, {
+            now = now,
+            force_refresh = true,
+            is_self = true,
+            distance = 0,
+            is_in_combat = in_combat,
+        }),
         faction      = self.faction,
         last_updated = now,
     }
@@ -209,7 +253,12 @@ function scanner:update_bg_state(local_player, now)
     local run_time = tonumber(core.game_ui.get_battlefield_run_time()) or 0
     local status_indicates_prep = false
     local prep_active, prep_aura_id, prep_aura_name = self:detect_preparation_aura(local_player)
-    local has_local_flag = self:check_has_flag(local_player)
+    local has_local_flag = self:check_has_flag(local_player, nil, {
+        force_refresh = true,
+        is_self = true,
+        distance = 0,
+        must_track = true,
+    })
 
     -- Multi-BG detection: iterate ordered BG_MAP_REGISTRY, first match wins.
     local detected_bg_type = "unknown"
@@ -426,8 +475,14 @@ function scanner:detect_preparation_aura(player)
         return false, 0, ""
     end
 
+    local now = (core and core.time and core.time()) or 0
     local aura_lists = {
-        select(1, safe_call_method(player, "get_auras")),
+        select(1, self:get_auras_cached(player, now, {
+            force_refresh = true,
+            is_self = true,
+            distance = 0,
+            is_in_combat = false,
+        })),
         select(1, safe_call_method(player, "get_buffs")),
     }
 
@@ -445,6 +500,102 @@ function scanner:detect_preparation_aura(player)
     return false, 0, ""
 end
 
+function scanner:get_aura_cache_entry(obj)
+    if not obj then
+        return nil
+    end
+    return self.aura_cache[cache_key_for_obj(obj)]
+end
+
+function scanner:should_refresh_auras(cache_entry, now, opts)
+    if opts and opts.force_refresh then
+        return true
+    end
+    if not cache_entry then
+        return true
+    end
+
+    local interval = aura_scan_interval(opts, cache_entry.has_any_flag == true)
+    local elapsed = now - (cache_entry.fetched_at or 0)
+    if elapsed >= interval then
+        return true
+    end
+
+    local distance = tonumber(opts and opts.distance)
+    if distance and cache_entry.distance then
+        if math.abs(distance - cache_entry.distance) >= AURA_DISTANCE_DELTA_REFRESH then
+            return true
+        end
+    end
+
+    local in_combat = opts and opts.is_in_combat
+    if in_combat ~= nil and cache_entry.is_in_combat ~= nil and in_combat ~= cache_entry.is_in_combat then
+        if elapsed >= AURA_REFRESH_NEAR then
+            return true
+        end
+    end
+
+    return false
+end
+
+function scanner:get_auras_cached(obj, now, opts)
+    if not safe_is_valid(obj) then
+        return nil, false
+    end
+
+    opts = opts or {}
+    local key = cache_key_for_obj(obj)
+    local cache_entry = self.aura_cache[key]
+    if not self:should_refresh_auras(cache_entry, now, opts) then
+        return cache_entry.auras, true
+    end
+
+    local auras, ok = safe_call_method(obj, "get_auras")
+    if not ok or not auras then
+        if cache_entry and cache_entry.auras then
+            return cache_entry.auras, true
+        end
+        return nil, false
+    end
+
+    local has_horde = false
+    local has_alliance = false
+    for _, aura in pairs(auras) do
+        local id = aura.buff_id or 0
+        if id == constants.FLAG_AURAS.HORDE_FLAG then
+            has_horde = true
+        elseif id == constants.FLAG_AURAS.ALLIANCE_FLAG then
+            has_alliance = true
+        end
+    end
+
+    self.aura_cache[key] = {
+        auras = auras,
+        fetched_at = now,
+        distance = tonumber(opts.distance),
+        is_in_combat = opts.is_in_combat,
+        has_horde_flag = has_horde,
+        has_alliance_flag = has_alliance,
+        has_any_flag = has_horde or has_alliance,
+    }
+
+    return auras, true
+end
+
+function scanner:prune_aura_cache(now)
+    if (now - (self.last_aura_cache_prune or 0)) < AURA_CACHE_PRUNE_INTERVAL then
+        return
+    end
+
+    self.last_aura_cache_prune = now
+    for key, entry in pairs(self.aura_cache) do
+        local fetched_at = entry and entry.fetched_at or 0
+        if (now - fetched_at) > (AURA_CACHE_STALE_GRACE + AURA_REFRESH_FAR) then
+            self.aura_cache[key] = nil
+        end
+    end
+end
+
 ----------------------------------------------------------------------
 -- Full reconciliation scan
 ----------------------------------------------------------------------
@@ -452,6 +603,7 @@ end
 function scanner:scan_full(local_player, self_pos, now)
     local objects = core.object_manager.get_all_objects()
     if not objects then return end
+    self:prune_aura_cache(now)
 
     local stats = self.scan_debug_stats
     stats.full_total = 0
@@ -573,6 +725,7 @@ function scanner:build_entity_record(obj, local_player, pos, distance, ring, now
     local is_player_like = filters.is_player_like(obj)
     local is_enemy_with_local = obj:is_enemy_with(local_player)
     local spec_id = tonumber(select(1, safe_call_method(obj, "get_specialization_id"))) or 0
+    local is_in_combat = obj:is_in_combat()
 
     local record = {
         handle           = obj,
@@ -588,12 +741,17 @@ function scanner:build_entity_record(obj, local_player, pos, distance, ring, now
         is_enemy         = is_enemy_with_local,
         is_ally          = not is_enemy_with_local,
         is_dead          = obj:is_dead(),
-        is_in_combat     = obj:is_in_combat(),
+        is_in_combat     = is_in_combat,
         is_mounted       = obj:is_mounted(),
         is_moving        = obj:is_moving(),
         movement_speed   = obj:get_movement_speed(),
         target_handle    = obj:get_target(),
-        has_flag          = self:check_has_flag(obj),
+        has_flag         = self:check_has_flag(obj, nil, {
+            now = now,
+            distance = distance,
+            ring = ring,
+            is_in_combat = is_in_combat,
+        }),
         is_casting       = obj:is_casting_spell(),
         buffs            = obj:get_buffs(),
         debuffs          = obj:get_debuffs(),
@@ -641,11 +799,21 @@ function scanner:resolve_faction(player)
     if not safe_is_valid(player) then return end
 
     -- Highest-confidence source: local carried-flag aura.
-    if self:check_has_flag(player, constants.FLAG_AURAS.HORDE_FLAG) then
+    if self:check_has_flag(player, constants.FLAG_AURAS.HORDE_FLAG, {
+        force_refresh = true,
+        is_self = true,
+        distance = 0,
+        must_track = true,
+    }) then
         self:set_faction(constants.FACTION.ALLIANCE, "self_horde_flag_aura", true)
         return
     end
-    if self:check_has_flag(player, constants.FLAG_AURAS.ALLIANCE_FLAG) then
+    if self:check_has_flag(player, constants.FLAG_AURAS.ALLIANCE_FLAG, {
+        force_refresh = true,
+        is_self = true,
+        distance = 0,
+        must_track = true,
+    }) then
         self:set_faction(constants.FACTION.HORDE, "self_alliance_flag_aura", true)
         return
     end
@@ -692,10 +860,23 @@ end
 -- Flag aura checks (A-001)
 ----------------------------------------------------------------------
 
-function scanner:check_has_flag(obj, flag_aura_id)
+function scanner:check_has_flag(obj, flag_aura_id, opts)
     if not safe_is_valid(obj) then return false end
-    local auras, ok = safe_call_method(obj, "get_auras")
+    local scan_opts = opts or {}
+    local now = scan_opts.now or ((core and core.time and core.time()) or 0)
+    local auras, ok = self:get_auras_cached(obj, now, scan_opts)
     if not ok or not auras then return false end
+
+    local cache_entry = self:get_aura_cache_entry(obj)
+    if cache_entry then
+        if flag_aura_id == nil then
+            return cache_entry.has_any_flag == true
+        elseif flag_aura_id == constants.FLAG_AURAS.HORDE_FLAG then
+            return cache_entry.has_horde_flag == true
+        elseif flag_aura_id == constants.FLAG_AURAS.ALLIANCE_FLAG then
+            return cache_entry.has_alliance_flag == true
+        end
+    end
 
     for _, aura in pairs(auras) do
         local id = aura.buff_id or 0
@@ -721,22 +902,36 @@ function scanner:infer_flag_state(local_player, now)
 
     self:resolve_faction(local_player)
 
+    local self_state = self.world_model:get_self()
+    local self_pos = self_state and self_state.position or nil
     local our_carrier    = nil
     local their_carrier  = nil
     local our_flag_aura, enemy_flag_aura = self:get_team_flag_auras()
 
     local entities = self.world_model:get_all_entities()
     for _, ent in pairs(entities) do
-        if ent.has_flag and ent.handle and safe_is_valid(ent.handle) then
-            local auras = select(1, safe_call_method(ent.handle, "get_auras"))
-            if auras then
-                for _, aura in pairs(auras) do
-                    local id = aura.buff_id or 0
+        if ent and ent.handle and ent.is_player and not ent.is_dead and safe_is_valid(ent.handle) then
+            local distance = tonumber(ent.distance)
+            if (not distance or distance >= 999999) and self_pos and ent.position then
+                distance = utils.distance_3d(self_pos, ent.position)
+            end
 
-                    if id == constants.FLAG_AURAS.HORDE_FLAG
-                        or id == constants.FLAG_AURAS.ALLIANCE_FLAG then
+            local should_probe = (ent.has_flag == true)
+            if not should_probe and distance and distance <= constants.RING.NEAR_MAX then
+                should_probe = true
+            end
 
-                        -- If faction is still unknown, derive from observed carrier+aura relation.
+            if should_probe then
+                self:get_auras_cached(ent.handle, now, {
+                    distance = distance,
+                    ring = ent.ring,
+                    is_in_combat = ent.is_in_combat,
+                    must_track = ent.has_flag == true,
+                })
+
+                local cache_entry = self:get_aura_cache_entry(ent.handle)
+                if cache_entry and cache_entry.has_any_flag then
+                    local function apply_flag(id)
                         self:infer_faction_from_flag(ent, id)
                         our_flag_aura, enemy_flag_aura = self:get_team_flag_auras()
 
@@ -746,20 +941,33 @@ function scanner:infer_flag_state(local_player, now)
                             their_carrier = ent.handle
                         end
                     end
+
+                    if cache_entry.has_horde_flag then
+                        apply_flag(constants.FLAG_AURAS.HORDE_FLAG)
+                    end
+                    if cache_entry.has_alliance_flag then
+                        apply_flag(constants.FLAG_AURAS.ALLIANCE_FLAG)
+                    end
                 end
             end
         end
     end
 
     -- Check self (can carry enemy flag only)
-    local self_state = self.world_model:get_self()
     if self_state and self_state.handle and safe_is_valid(self_state.handle) then
         if self.faction == constants.FACTION.UNKNOWN then
             self:resolve_faction(self_state.handle)
             our_flag_aura, enemy_flag_aura = self:get_team_flag_auras()
         end
 
-        if enemy_flag_aura and self:check_has_flag(self_state.handle, enemy_flag_aura) then
+        if enemy_flag_aura and self:check_has_flag(self_state.handle, enemy_flag_aura, {
+            now = now,
+            force_refresh = true,
+            is_self = true,
+            distance = 0,
+            is_in_combat = self_state.is_in_combat,
+            must_track = true,
+        }) then
             our_carrier = self_state.handle
         end
     end

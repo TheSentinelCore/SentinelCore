@@ -7,6 +7,7 @@ local constants     = require("shared/constants")
 local bg_constants  = require("shared/bg_constants")
 local utils         = require("shared/utils")
 local helpers       = require("core/intent/intents/wsg_helpers")
+local pathing       = require("core/intent/pathing")
 
 local failsafe = {}
 failsafe.__index = failsafe
@@ -48,10 +49,7 @@ end
 ----------------------------------------------------------------------
 
 local function copy_pos(pos)
-    if not pos or pos.x == nil or pos.y == nil or pos.z == nil then
-        return nil
-    end
-    return { x = pos.x, y = pos.y, z = pos.z }
+    return pathing.copy_pos(pos)
 end
 
 local function count_nearby_allies(world_model, self_state, radius)
@@ -99,24 +97,11 @@ local function count_nearby_enemies(world_model, self_pos, radius)
     return count
 end
 
-local function nearest_from_list(self_pos, anchors)
-    if not anchors or not self_pos then
-        return nil
-    end
-
-    local best = nil
-    local best_dist = 999999
-    for _, pos in ipairs(anchors) do
-        if pos and pos.x and pos.y and pos.z then
-            local dist = utils.distance_3d(self_pos, pos)
-            if dist < best_dist then
-                best = pos
-                best_dist = dist
-            end
-        end
-    end
-
-    return best
+local function select_best_anchor(self_pos, anchors, bg_type, max_linear_distance)
+    return select(1, pathing.select_best_anchor(self_pos, anchors, {
+        bg_type = bg_type,
+        max_linear_distance = max_linear_distance,
+    }))
 end
 
 local function nearest_extracted_anchor(bg_type, self_pos)
@@ -137,20 +122,41 @@ local function nearest_extracted_anchor(bg_type, self_pos)
         return nil
     end
 
-    local best = nil
-    local best_dist = 999999
+    local extracted = {}
     for _, node in ipairs(src) do
         if node and node.x and node.y and node.z then
-            local p = { x = node.x, y = node.y, z = node.z }
-            local dist = utils.distance_3d(self_pos, p)
-            if dist + POSITION_MATCH_TOL < best_dist then
-                best = p
-                best_dist = dist
+            extracted[#extracted + 1] = { x = node.x, y = node.y, z = node.z }
+        end
+    end
+
+    return select_best_anchor(self_pos, extracted, bg_type)
+end
+
+local function select_best_ally_anchor(world_model, self_state, bg_type)
+    local self_pos = self_state and self_state.position
+    if not self_pos then
+        return nil
+    end
+
+    local self_handle = self_state and self_state.handle or nil
+    local anchors = {}
+    for _, ally in ipairs(world_model:get_allies()) do
+        if ally and ally.position and ally.position.x then
+            local same = false
+            if self_handle and ally.handle then
+                same = helpers.same_handle(self_handle, ally.handle)
+            end
+
+            if not same then
+                local dist = utils.distance_3d(self_pos, ally.position)
+                if dist <= (ALLY_ANCHOR_RANGE + POSITION_MATCH_TOL) then
+                    anchors[#anchors + 1] = ally.position
+                end
             end
         end
     end
 
-    return best
+    return select_best_anchor(self_pos, anchors, bg_type, ALLY_ANCHOR_RANGE + POSITION_MATCH_TOL)
 end
 
 local function select_safe_anchor(world_model, self_state)
@@ -159,20 +165,16 @@ local function select_safe_anchor(world_model, self_state)
         return nil, "none"
     end
 
-    local ally = select(1, helpers.find_nearest_ally(
-        world_model,
-        self_pos,
-        ALLY_ANCHOR_RANGE,
-        self_state and self_state.handle or nil
-    ))
-    if ally and ally.position then
-        return copy_pos(ally.position), "ally"
-    end
-
     local bg = world_model:get_bg_state()
     local bg_type = (bg and bg.bg_type) or "unknown"
+
+    local ally_anchor = select_best_ally_anchor(world_model, self_state, bg_type)
+    if ally_anchor then
+        return ally_anchor, "ally"
+    end
+
     local anchors = constants.BG_SAFE_ANCHORS and constants.BG_SAFE_ANCHORS[bg_type]
-    local anchor = nearest_from_list(self_pos, anchors)
+    local anchor = select_best_anchor(self_pos, anchors, bg_type)
     if anchor then
         return copy_pos(anchor), "bg_anchor"
     end

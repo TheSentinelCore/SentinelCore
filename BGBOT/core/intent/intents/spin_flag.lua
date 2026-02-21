@@ -79,6 +79,10 @@ function spin_flag:get_context()
     }
 end
 
+function spin_flag:can_bypass_gates(_current_intent_id)
+    return true
+end
+
 ----------------------------------------------------------------------
 -- Internal helpers
 ----------------------------------------------------------------------

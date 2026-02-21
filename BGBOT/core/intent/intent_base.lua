@@ -70,6 +70,22 @@ function intent_base:get_context()
     }
 end
 
+--- Whether this active intent allows immediate interruption by the next intent.
+---@param _next_intent_id string
+---@param _next_intent Intent|nil
+---@return boolean
+function intent_base:is_interruptible(_next_intent_id, _next_intent)
+    return false
+end
+
+--- Whether this candidate intent can bypass controller switch gates.
+---@param _current_intent_id string
+---@param _current_intent Intent|nil
+---@return boolean
+function intent_base:can_bypass_gates(_current_intent_id, _current_intent)
+    return false
+end
+
 --- Time (seconds) this intent has been active.
 ---@return number
 function intent_base:time_active()

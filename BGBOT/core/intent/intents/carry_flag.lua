@@ -161,4 +161,8 @@ function carry_flag:get_context()
     }
 end
 
+function carry_flag:is_interruptible(next_intent_id)
+    return next_intent_id == "escort_carrier" or next_intent_id == "intercept_carrier"
+end
+
 return carry_flag

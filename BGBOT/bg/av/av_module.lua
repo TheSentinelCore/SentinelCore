@@ -11,6 +11,7 @@ local av_module = {}
 av_module.__index = av_module
 
 local max = math.max
+local min = math.min
 
 ----------------------------------------------------------------------
 -- BgModule interface fields
@@ -127,8 +128,7 @@ local FACTION_NODE_INITIAL = {
     },
 }
 
--- Defensive chokepoint positions per faction — used by is_turtling().
--- If herd center-of-mass is within CHOKE_RADIUS of any of these, the team is turtling.
+-- Defensive chokepoint positions per faction — used by turtle-factor scoring.
 local DEFENSIVE_CHOKEPOINTS = {
     [constants.FACTION.ALLIANCE] = {
         { x = 638.592,  y = -32.422,  z = 46.061 },   -- Stormpike GY
@@ -145,6 +145,8 @@ local DEFENSIVE_CHOKEPOINTS = {
 }
 
 local CHOKE_RADIUS       = 120   -- herd within this radius of a chokepoint = turtling
+local TURTLE_FULL_RADIUS = CHOKE_RADIUS * 0.65
+local TURTLE_FADE_RADIUS = CHOKE_RADIUS * 1.75
 local NODE_SCAN_RADIUS   = 30    -- larger than AB/EotS; AV banners can be offset
 local HERD_NEARBY_RADIUS = 150   -- wider scan for AV since map is much larger
 local HERD_MIN_ALLIES    = 3     -- need at least 3 for meaningful CoM
@@ -400,7 +402,7 @@ local function copy_pos(pos)
     return { x = pos.x, y = pos.y, z = pos.z }
 end
 
-local function write_av_runtime_targets(world_model, target_key, target_pos, av_mode)
+local function write_av_runtime_targets(world_model, target_key, target_pos, av_mode, turtle_factor)
     local bg = world_model:get_bg_state()
     if not bg or bg.bg_type ~= "av" then
         return
@@ -409,6 +411,7 @@ local function write_av_runtime_targets(world_model, target_key, target_pos, av_
     bg.av_target_node_key = target_key or ""
     bg.av_target_node_pos = copy_pos(target_pos)
     bg.av_mode            = av_mode or "rush"
+    bg.av_turtle_factor   = turtle_factor or 0
 
     world_model:update_bg_state(bg)
 end
@@ -454,37 +457,55 @@ local function compute_herd_center(world_model, self_pos)
 end
 
 ----------------------------------------------------------------------
--- Turtle detection
+-- Turtle pressure factor
 ----------------------------------------------------------------------
 
---- Determine if the team appears to be turtling (herd clustered near
---- own defensive chokepoints).
+--- Compute turtle pressure factor based on herd center proximity to own
+--- defensive chokepoints. 0.0 = rush posture, 1.0 = full turtle posture.
 ---@param world_model WorldModel
 ---@param self_state table
----@return boolean is_turtle
+---@return number turtle_factor
 ---@return string|nil closest_choke_key (debug info)
-local function is_turtling(world_model, self_state)
+local function compute_turtle_factor(world_model, self_state)
     local self_faction = self_state.faction or constants.FACTION.UNKNOWN
     local self_pos = self_state.position
 
     local herd_center = compute_herd_center(world_model, self_pos)
     if not herd_center then
-        return false, nil
+        return 0.0, nil
     end
 
     local chokes = DEFENSIVE_CHOKEPOINTS[self_faction]
     if not chokes then
-        return false, nil
+        return 0.0, nil
     end
 
+    local best_dist = nil
+    local best_index = nil
     for i, choke in ipairs(chokes) do
         local dist = utils.distance_3d(herd_center, choke)
-        if dist <= CHOKE_RADIUS then
-            return true, "choke_" .. tostring(i)
+        if not best_dist or dist < best_dist then
+            best_dist = dist
+            best_index = i
         end
     end
 
-    return false, nil
+    if not best_dist then
+        return 0.0, nil
+    end
+
+    local factor
+    if best_dist <= TURTLE_FULL_RADIUS then
+        factor = 1.0
+    elseif best_dist >= TURTLE_FADE_RADIUS then
+        factor = 0.0
+    else
+        local span = max(1.0, TURTLE_FADE_RADIUS - TURTLE_FULL_RADIUS)
+        factor = 1.0 - ((best_dist - TURTLE_FULL_RADIUS) / span)
+    end
+
+    factor = min(1.0, max(0.0, factor))
+    return factor, (best_index and ("choke_" .. tostring(best_index)) or nil)
 end
 
 ----------------------------------------------------------------------
@@ -498,8 +519,9 @@ end
 ---@param node_key string
 ---@param node_pos table {x,y,z}
 ---@param owner number OWNER_* enum
----@return number multiplier  (1.0 normal, 2.0 for Rogue/Druid near enemy bunker)
-local function bunker_assault_multiplier(self_state, node_key, node_pos, owner)
+---@param enemy_defenders_near number
+---@return number multiplier  (1.0 normal, 2.0 for stealth or undefended assault windows)
+local function bunker_assault_multiplier(self_state, node_key, node_pos, owner, enemy_defenders_near)
     -- Only applies to enemy-owned bunker nodes.
     if not BUNKER_NODES[node_key] then
         return 1.0
@@ -518,6 +540,10 @@ local function bunker_assault_multiplier(self_state, node_key, node_pos, owner)
         return 1.0
     end
 
+    if (enemy_defenders_near or 0) <= 0 then
+        return 2.0
+    end
+
     local class_id = self_state.class_id or 0
     if class_id == constants.CLASS.ROGUE or class_id == constants.CLASS.DRUID then
         return 2.0
@@ -533,11 +559,12 @@ end
 --- Evaluate weights for all AV nodes and determine the best target.
 ---@param world_model WorldModel
 ---@param self_state table
----@param turtle boolean
+---@param turtle_factor number
 ---@return string|nil best_node_key
 ---@return number best_weight
 ---@return table info { owned, contested, theirs, neutral }
-function av_module:evaluate_node_weights(world_model, self_state, turtle)
+function av_module:evaluate_node_weights(world_model, self_state, turtle_factor)
+    local turtle = max(0.0, min(1.0, turtle_factor or 0.0))
     local self_faction = self_state.faction or constants.FACTION.UNKNOWN
     local self_pos = self_state.position
 
@@ -591,18 +618,18 @@ function av_module:evaluate_node_weights(world_model, self_state, turtle)
                 weight = weight * 0.6
             end
 
-            -- Rush mode: strongly prefer enemy-side nodes to push forward.
-            if not turtle and enemy_initial[key] then
-                weight = weight * 1.5
+            -- Rush mode preference scales down smoothly as turtle pressure rises.
+            if enemy_initial[key] then
+                weight = weight * (1.0 + ((1.0 - turtle) * 0.5))
             end
 
-            -- Turtle mode: prefer defending own-side contested nodes.
-            if turtle and owner == OWNER_CONTESTED and not enemy_initial[key] then
-                weight = weight * 1.8
+            -- Turtle mode preference scales up smoothly on own-side contested nodes.
+            if owner == OWNER_CONTESTED and not enemy_initial[key] then
+                weight = weight * (1.0 + (turtle * 0.8))
             end
 
             -- Bunker assault: class-based + proximity-gated priority for stealth classes.
-            local assault_mult = bunker_assault_multiplier(self_state, key, node.pos, owner)
+            local assault_mult = bunker_assault_multiplier(self_state, key, node.pos, owner, foes)
             weight = weight * assault_mult
 
             if weight > best_weight then
@@ -643,13 +670,18 @@ function av_module:score_intents(world_model, intent_registry)
     local low_hp = (self_state.health_pct or 100)
         <= (config.combat.retreat_hp_pct or constants.COMBAT.RETREAT_HEALTH_PCT)
 
-    -- Turtle detection.
-    local turtle, choke_key = is_turtling(world_model, self_state)
-    local av_mode = turtle and "turtle" or "rush"
+    -- Turtle pressure factor (0.0 rush .. 1.0 turtle).
+    local turtle_factor, choke_key = compute_turtle_factor(world_model, self_state)
+    local av_mode = "rush"
+    if turtle_factor >= 0.66 then
+        av_mode = "turtle"
+    elseif turtle_factor >= 0.33 then
+        av_mode = "balanced"
+    end
 
-    -- Evaluate node weights (turtle state influences weighting).
+    -- Evaluate node weights (turtle factor influences weighting).
     local target_key, target_weight, info =
-        self:evaluate_node_weights(world_model, self_state, turtle)
+        self:evaluate_node_weights(world_model, self_state, turtle_factor)
 
     ----------------------------------------------------------------
     -- Roam scoring
@@ -657,10 +689,8 @@ function av_module:score_intents(world_model, intent_registry)
     if target_key and intent_registry.roam then
         local base_score = 40 + (target_weight * 15)
 
-        -- Turtle mode: reduce push/advance score.
-        if turtle then
-            base_score = base_score * 0.5
-        end
+        -- Smoothly reduce push score as turtle pressure increases.
+        base_score = base_score * (1.0 - (0.5 * turtle_factor))
 
         scores.roam = max(scores.roam, base_score)
     end
@@ -680,10 +710,8 @@ function av_module:score_intents(world_model, intent_registry)
         end
         if enemies_near > 0 then
             local fight_score = 42 + max(0, enemies_near * 8)
-            -- Turtle mode: boost fight/defend score.
-            if turtle then
-                fight_score = fight_score * 1.3
-            end
+            -- Smoothly boost fight/defend score as turtle pressure increases.
+            fight_score = fight_score * (1.0 + (0.3 * turtle_factor))
             scores.fight = fight_score
         end
     end
@@ -712,7 +740,7 @@ function av_module:score_intents(world_model, intent_registry)
     if target_key and AV_NODES[target_key] then
         target_pos = AV_NODES[target_key].pos
     end
-    write_av_runtime_targets(world_model, target_key, target_pos, av_mode)
+    write_av_runtime_targets(world_model, target_key, target_pos, av_mode, turtle_factor)
 
     return scores
 end

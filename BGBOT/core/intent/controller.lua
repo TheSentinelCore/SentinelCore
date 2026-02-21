@@ -9,16 +9,25 @@ local config    = require("shared/config")
 local controller = {}
 controller.__index = controller
 
-local function can_bypass_gates(current_id, new_id)
-    if current_id == "carry_flag" and (new_id == "escort_carrier" or new_id == "intercept_carrier") then
-        return true
+local function intent_can_bypass_gates(current_intent, current_id, new_intent, new_id)
+    if new_intent and type(new_intent.can_bypass_gates) == "function" then
+        local ok, bypass = pcall(function()
+            return new_intent:can_bypass_gates(current_id, current_intent)
+        end)
+        if ok and bypass == true then
+            return true
+        end
     end
-    if new_id == "retreat" then
-        return true
+
+    if current_intent and type(current_intent.is_interruptible) == "function" then
+        local ok, interruptible = pcall(function()
+            return current_intent:is_interruptible(new_id, new_intent)
+        end)
+        if ok and interruptible == true then
+            return true
+        end
     end
-    if new_id == "spin_flag" then
-        return true
-    end
+
     return false
 end
 
@@ -72,7 +81,12 @@ function controller:process(recommendation)
     end
 
     -- Gate 1: Min-commit duration
-    local bypass_gates = can_bypass_gates(self.current_intent_id, new_id)
+    local bypass_gates = intent_can_bypass_gates(
+        self.current_intent,
+        self.current_intent_id,
+        new_inst,
+        new_id
+    )
 
     local min_commit = constants.MIN_COMMIT[self.current_intent_id] or 0
     if not bypass_gates and (now - self.commit_start) < min_commit then

@@ -70,4 +70,8 @@ function retreat:get_context()
     }
 end
 
+function retreat:can_bypass_gates(_current_intent_id)
+    return true
+end
+
 return retreat
