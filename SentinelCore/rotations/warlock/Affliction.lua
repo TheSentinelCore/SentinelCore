@@ -194,7 +194,7 @@ local function resolve_spell(ctx, spec, fallback)
     local resolved = nil
     if ctx and type(ctx.resolve_spell_id) == "function" and type(spell_name) == "string" and spell_name ~= "" then
         local id = spell_id(ctx.resolve_spell_id(spell_name, spell_fallback))
-        if id then
+        if id and learned_spell(id) then
             resolved = id
         end
     end

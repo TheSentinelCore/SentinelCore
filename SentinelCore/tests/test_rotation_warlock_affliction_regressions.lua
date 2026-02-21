@@ -129,6 +129,10 @@ local function run()
     T.assert_true(type(proc_action) == "table", "combat plan should include Nightfall proc action")
     T.assert_true(type(drain_soul_action) == "table", "combat plan should include Drain Soul replenish action")
 
+    local pull_profile = provider:get_pull_profile(base_ctx)
+    T.assert_eq(tonumber(pull_profile.pull_spell_id), 686,
+        "pull profile should resolve level-appropriate Shadow Bolt rank instead of max-rank fallback")
+
     local aoe = provider:aoe(base_ctx)
     local rain_action = nil
     for i = 1, #aoe do

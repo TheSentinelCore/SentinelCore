@@ -64,7 +64,7 @@ end
 ---@return SpellbookResolver
 function SpellbookResolver:new()
     local o = setmetatable({}, SpellbookResolver)
-    o._last_refresh = 0
+    o._last_refresh = -1000
     o._spells = {}
     return o
 end
@@ -72,7 +72,8 @@ end
 ---@private
 function SpellbookResolver:_refresh()
     local now = (core and core.time and core.time()) or 0
-    if now - self._last_refresh < 1.0 then
+    local has_cached_spells = type(self._spells) == "table" and next(self._spells) ~= nil
+    if has_cached_spells and now - self._last_refresh < 1.0 then
         return
     end
     self._last_refresh = now
@@ -143,7 +144,8 @@ function SpellbookResolver:best_rank(spell_name, fallback_ids)
     end
 
     if type(fallback_ids) == "table" and #fallback_ids > 0 then
-        return tonumber(fallback_ids[1])
+        -- Lowest rank is the safest fallback when runtime rank detection is uncertain.
+        return tonumber(fallback_ids[#fallback_ids])
     end
 
     return nil
