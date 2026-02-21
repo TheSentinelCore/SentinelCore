@@ -5,6 +5,9 @@ local BT = require("lib/BehaviorTree")
 ---@return table
 return function(inventory_service, vendor_service)
     return BT.Condition:new(function()
+        if not inventory_service:is_vendor_enabled() then
+            return false
+        end
         if vendor_service:is_active() then
             return true
         end

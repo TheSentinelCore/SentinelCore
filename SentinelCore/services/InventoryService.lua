@@ -316,6 +316,11 @@ function InventoryService:get_sell_candidates()
 end
 
 ---@return boolean
+function InventoryService:is_vendor_enabled()
+    return self._policy.vendor_enabled ~= false
+end
+
+---@return boolean
 function InventoryService:needs_vendor_trip()
     if self._policy.vendor_enabled == false then
         return false
