@@ -90,6 +90,30 @@ SpellCatalog.WARLOCK = {
             name = "curse of agony",
             ids = { 27218, 11713, 11712, 11711, 6217, 1014, 980 },
         },
+        CURSE_OF_THE_ELEMENTS = {
+            name = "curse of the elements",
+            ids = { 27228, 11722, 11721, 1490 },
+        },
+        CURSE_OF_TONGUES = {
+            name = "curse of tongues",
+            ids = { 11719, 1714 },
+        },
+        CURSE_OF_DOOM = {
+            name = "curse of doom",
+            ids = { 30910, 603 },
+        },
+        CURSE_OF_RECKLESSNESS = {
+            name = "curse of recklessness",
+            ids = { 27226, 11717, 7659, 7658, 704 },
+        },
+        CURSE_OF_WEAKNESS = {
+            name = "curse of weakness",
+            ids = { 30909, 27224, 11708, 11707, 7646, 6205, 1108, 702 },
+        },
+        AMPLIFY_CURSE = {
+            name = "amplify curse",
+            ids = { 18288 },
+        },
         IMMOLATE = {
             name = "immolate",
             ids = { 27215, 25309, 11668, 11667, 2941, 1094, 707, 348 },
@@ -157,6 +181,14 @@ SpellCatalog.WARLOCK = {
             name = "spell lock",
             ids = { 19647, 19244 },
         },
+        SOUL_LINK = {
+            name = "soul link",
+            ids = { 19028 },
+        },
+        FEL_DOMINATION = {
+            name = "fel domination",
+            ids = { 18708 },
+        },
 
         -- Armor Buffs
         DEMON_SKIN = {
@@ -198,6 +230,14 @@ SpellCatalog.WARLOCK = {
         CREATE_HEALTHSTONE = {
             name = "create healthstone",
             ids = { 27230, 11730, 11729, 5699, 6202, 6201 },
+        },
+        CREATE_SOULSTONE = {
+            name = "create soulstone",
+            ids = { 27238, 20757, 20756, 20755, 20752, 693 },
+        },
+        SHADOW_WARD = {
+            name = "shadow ward",
+            ids = { 28610, 11740, 11739, 6229 },
         },
         SHOOT = {
             name = "shoot",

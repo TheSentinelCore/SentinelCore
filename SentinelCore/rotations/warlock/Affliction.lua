@@ -19,6 +19,11 @@ local SPELLS = {
     SHADOW_BOLT = WL_SPELLS.SHADOW_BOLT,
     CORRUPTION = WL_SPELLS.CORRUPTION,
     CURSE_OF_AGONY = WL_SPELLS.CURSE_OF_AGONY,
+    CURSE_OF_THE_ELEMENTS = WL_SPELLS.CURSE_OF_THE_ELEMENTS,
+    CURSE_OF_DOOM = WL_SPELLS.CURSE_OF_DOOM,
+    CURSE_OF_TONGUES = WL_SPELLS.CURSE_OF_TONGUES,
+    CURSE_OF_RECKLESSNESS = WL_SPELLS.CURSE_OF_RECKLESSNESS,
+    AMPLIFY_CURSE = WL_SPELLS.AMPLIFY_CURSE,
     IMMOLATE = WL_SPELLS.IMMOLATE,
     SIPHON_LIFE = WL_SPELLS.SIPHON_LIFE,
     UNSTABLE_AFFLICTION = WL_SPELLS.UNSTABLE_AFFLICTION,
@@ -36,6 +41,8 @@ local SPELLS = {
     DARK_PACT = WL_SPELLS.DARK_PACT,
     HEALTH_FUNNEL = WL_SPELLS.HEALTH_FUNNEL,
     SPELL_LOCK = WL_SPELLS.SPELL_LOCK,
+    SOUL_LINK = WL_SPELLS.SOUL_LINK,
+    FEL_DOMINATION = WL_SPELLS.FEL_DOMINATION,
 
     DEMON_SKIN = WL_SPELLS.DEMON_SKIN,
     DEMON_ARMOR = WL_SPELLS.DEMON_ARMOR,
@@ -48,12 +55,14 @@ local SPELLS = {
     SUMMON_FELGUARD = WL_SPELLS.SUMMON_FELGUARD,
 
     CREATE_HEALTHSTONE = WL_SPELLS.CREATE_HEALTHSTONE,
+    CREATE_SOULSTONE = WL_SPELLS.CREATE_SOULSTONE,
+    SHADOW_WARD = WL_SPELLS.SHADOW_WARD,
     SHOOT = WL_SPELLS.SHOOT,
 }
 
 local SHARD_ITEM_ID = 6265
 local PET_ATTACK_THROTTLE = 1.0
-local PET_SPELL_LOCK_THROTTLE = 0.40
+local PET_SPELL_LOCK_COOLDOWN = 24.0
 local DOT_RECAST_SAFETY_SEC = 4.0
 local SPELLBOOK_CACHE_TTL = 0.50
 local _spellbook_cache = {
@@ -65,7 +74,9 @@ local _spellbook_cache = {
 -- runtime_cache(ctx) CANNOT persist across ticks because ctx is rebuilt each tick.
 local _last_pet_attack_at = 0
 local _last_spell_lock_at = 0
-local _dot_approved = {}   -- { [aura_first_id] = timestamp }
+local _dot_approved = {}   -- { ["targetkey:aura_id"] = timestamp }
+local _dot_approved_last_prune = 0
+local DOT_APPROVED_PRUNE_INTERVAL = 10.0
 
 ---@private
 local function refresh_spellbook_cache()
@@ -104,16 +115,16 @@ local DEFAULT_POLICY = {
     rest_until_full = true,
     rest_resume_health_pct = 1.00,
     rest_resume_mana_pct = 1.00,
-    life_tap_min_health_pct = 0.50,
+    life_tap_min_health_pct = 0.65,
     life_tap_max_mana_pct = 0.60,
-    life_tap_ooc_max_mana_pct = 0.85,
-    death_coil_hp_pct = 0.25,
+    life_tap_ooc_max_mana_pct = 0.70,
+    death_coil_hp_pct = 0.35,
     drain_life_hp_pct = 0.45,
     health_funnel_pet_hp_pct = 0.30,
     health_potion_hp_pct = 0.25,
     mana_potion_mana_pct = 0.15,
     mana_potion_min_hp_pct = 0.35,
-    wand_mana_pct = 0.08,
+    wand_mana_pct = 0.05,
     mana_sustain_enter_pct = 0.45,
     mana_sustain_exit_pct = 0.58,
     mana_recovery_enter_pct = 0.22,
@@ -669,7 +680,7 @@ local function try_pet_spell_lock(ctx)
     end
 
     local now = tonumber(ctx.now) or ((core and core.time and core.time()) or 0)
-    if now - _last_spell_lock_at < PET_SPELL_LOCK_THROTTLE then
+    if now - _last_spell_lock_at < PET_SPELL_LOCK_COOLDOWN then
         return
     end
     _last_spell_lock_at = now
@@ -765,6 +776,20 @@ local function safe_unit_call(unit, method, ...)
 end
 
 ---@private
+---@param now number
+local function prune_dot_approved(now)
+    if now - _dot_approved_last_prune < DOT_APPROVED_PRUNE_INTERVAL then
+        return
+    end
+    _dot_approved_last_prune = now
+    for k, ts in pairs(_dot_approved) do
+        if now - ts > DOT_RECAST_SAFETY_SEC * 2 then
+            _dot_approved[k] = nil
+        end
+    end
+end
+
+---@private
 ---@param ctx table
 ---@param aura_ids number[]
 ---@param refresh_window number
@@ -775,21 +800,25 @@ local function dot_needs_refresh(ctx, aura_ids, refresh_window)
     end
 
     local aura_key = aura_ids[1] or 0
+    local tkey = target_key(ctx.target)
+    local compound = tkey .. ":" .. tostring(aura_key)
+
+    local now = tonumber(ctx.now) or 0
+    prune_dot_approved(now)
 
     if not target_has_any_aura(ctx, aura_ids) then
-        -- Anti-double-cast: suppress if we recently approved this DoT.
+        -- Anti-double-cast: suppress if we recently approved this DoT on THIS target.
         -- Covers aura-detection-lag when cast_time > GCD (e.g. Immolate 2s cast, 1.5s GCD).
-        local now = tonumber(ctx.now) or 0
-        local last_approved = _dot_approved[aura_key] or 0
+        local last_approved = _dot_approved[compound] or 0
         if now - last_approved < DOT_RECAST_SAFETY_SEC then
             return false
         end
-        _dot_approved[aura_key] = now
+        _dot_approved[compound] = now
         return true
     end
 
     -- Aura exists — clear the approval record and check remaining time
-    _dot_approved[aura_key] = nil
+    _dot_approved[compound] = nil
 
     if type(ctx.target_aura_remaining) == "function" then
         local remaining = ctx.target_aura_remaining(aura_ids)
@@ -798,6 +827,19 @@ local function dot_needs_refresh(ctx, aura_ids, refresh_window)
         end
     end
     return false
+end
+
+---@private
+---@param ctx table
+---@return table spell
+---@return table aura_ids
+local function select_curse(ctx)
+    -- Curse of the Elements preferred (benefits all casters + self shadow/fire damage)
+    if resolve_spell(ctx, SPELLS.CURSE_OF_THE_ELEMENTS) then
+        return SPELLS.CURSE_OF_THE_ELEMENTS, WL_AURAS.CURSE_OF_THE_ELEMENTS
+    end
+    -- Fallback to Curse of Agony for damage
+    return SPELLS.CURSE_OF_AGONY, WL_AURAS.CURSE_OF_AGONY
 end
 
 ---@private
@@ -1099,6 +1141,13 @@ function Affliction:maintenance(ctx)
                     and not player_is_busy(local_ctx)
             end,
         }),
+        self_spell(SPELLS.CREATE_HEALTHSTONE, 252, {
+            condition = function(local_ctx)
+                return local_ctx.in_combat ~= true
+                    and not player_is_busy(local_ctx)
+                    and soul_shard_count(local_ctx) >= 2
+            end,
+        }),
         self_spell(SPELLS.LIFE_TAP, 250, {
             max_player_mana_pct = p.life_tap_ooc_max_mana_pct,
             min_player_health_pct = p.life_tap_min_health_pct,
@@ -1138,12 +1187,39 @@ function Affliction:defensive(ctx)
                 return local_ctx.in_combat == true
             end,
         }),
+        target_spell(SPELLS.FEAR, 960, {
+            max_target_distance = 20.0,
+            intent = "defensive",
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+                    and (tonumber(local_ctx.player_health_pct) or 1.0) < 0.40
+                    and not player_is_busy(local_ctx)
+            end,
+        }),
+        self_spell(SPELLS.HOWL_OF_TERROR, 955, {
+            requires_castable_check = false,
+            intent = "defensive",
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+                    and (tonumber(local_ctx.player_health_pct) or 1.0) < 0.40
+                    and (tonumber(local_ctx.enemy_count) or 1) >= 2
+                    and resolve_spell(local_ctx, SPELLS.HOWL_OF_TERROR) ~= nil
+            end,
+        }),
         target_spell(SPELLS.DRAIN_LIFE, 945, {
             max_player_health_pct = p.drain_life_hp_pct,
             max_target_distance = CAST_RANGE,
             intent = "defensive",
             condition = function(local_ctx)
                 return local_ctx.in_combat == true and not player_is_busy(local_ctx)
+            end,
+        }),
+        self_spell(SPELLS.SHADOW_WARD, 935, {
+            intent = "defensive",
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+                    and resolve_spell(local_ctx, SPELLS.SHADOW_WARD) ~= nil
+                    and (tonumber(local_ctx.player_health_pct) or 1.0) < 0.60
             end,
         }),
         ActionBuilder.best_mana_potion(620, {
@@ -1168,6 +1244,14 @@ function Affliction:interrupt(ctx)
             max_target_distance = CAST_RANGE,
             intent = "interrupt",
         }),
+        target_spell(SPELLS.FEAR, 740, {
+            target_must_be_casting = true,
+            max_target_distance = 20.0,
+            intent = "interrupt",
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+            end,
+        }),
     }
 end
 
@@ -1180,6 +1264,15 @@ function Affliction:utility(ctx)
     ensure_pet_attack(ctx)
 
     return {
+        self_spell(SPELLS.SOUL_LINK, 695, {
+            intent = "defensive",
+            condition = function(local_ctx)
+                return local_ctx.pet ~= nil
+                    and resolve_spell(local_ctx, SPELLS.SOUL_LINK) ~= nil
+                    and local_ctx.player_has_aura
+                    and local_ctx.player_has_aura(WL_AURAS.SOUL_LINK[1]) ~= true
+            end,
+        }),
         self_spell(function()
             return armor_spell
         end, 690, {
@@ -1199,21 +1292,42 @@ function Affliction:utility(ctx)
                     and not player_is_busy(local_ctx)
             end,
         }),
-        self_spell(SPELLS.DARK_PACT, 650, {
+        self_spell(SPELLS.DARK_PACT, 655, {
             max_player_mana_pct = p.life_tap_max_mana_pct,
             intent = "recover",
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
                     and local_ctx.pet ~= nil
+                    and resolve_spell(local_ctx, SPELLS.DARK_PACT) ~= nil
             end,
         }),
         self_spell(SPELLS.LIFE_TAP, 640, {
             max_player_mana_pct = p.life_tap_max_mana_pct,
             min_player_health_pct = p.life_tap_min_health_pct,
             intent = "recover",
-            combat_modes = { "sustain", "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
+            end,
+        }),
+        -- Pet re-summon: Fel Domination (instant summon talent) then Felhunter
+        self_spell(SPELLS.FEL_DOMINATION, 631, {
+            intent = "utility",
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+                    and local_ctx.pet == nil
+                    and resolve_spell(local_ctx, SPELLS.FEL_DOMINATION) ~= nil
+                    and not player_is_busy(local_ctx)
+            end,
+        }),
+        self_spell(function(local_ctx)
+            return best_summon_spell(local_ctx or ctx)
+        end, 630, {
+            intent = "utility",
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+                    and local_ctx.pet == nil
+                    and soul_shard_count(local_ctx) >= 1
+                    and not player_is_busy(local_ctx)
             end,
         }),
     }
@@ -1264,12 +1378,26 @@ function Affliction:combat(ctx)
                     and target_lives_long_enough(local_ctx, p.corruption_min_ttd_sec)
             end,
         }),
-        -- Curse of Agony (instant, allow movement)
+        -- Curse: prefer Curse of Elements (caster damage buff), fallback to Curse of Agony
+        target_spell(SPELLS.CURSE_OF_THE_ELEMENTS, 552, {
+            allow_movement = true,
+            max_target_distance = CAST_RANGE,
+            intent = "sustain",
+            condition = function(local_ctx)
+                return resolve_spell(local_ctx, SPELLS.CURSE_OF_THE_ELEMENTS) ~= nil
+                    and not target_has_any_aura(local_ctx, WL_AURAS.CURSE_OF_THE_ELEMENTS)
+                    and target_lives_long_enough(local_ctx, p.curse_of_agony_min_ttd_sec)
+            end,
+        }),
         target_spell(SPELLS.CURSE_OF_AGONY, 550, {
             allow_movement = true,
             max_target_distance = CAST_RANGE,
             intent = "sustain",
             condition = function(local_ctx)
+                -- Only if CoE is not available (not learned)
+                if resolve_spell(local_ctx, SPELLS.CURSE_OF_THE_ELEMENTS) ~= nil then
+                    return false
+                end
                 return dot_needs_refresh(local_ctx, WL_AURAS.CURSE_OF_AGONY, p.dot_refresh_window_sec)
                     and target_lives_long_enough(local_ctx, p.curse_of_agony_min_ttd_sec)
             end,
@@ -1368,14 +1496,18 @@ function Affliction:aoe(ctx)
                     and not target_has_any_aura(local_ctx, WL_AURAS.CORRUPTION)
             end,
         }),
-        -- Curse of Agony: spread for 2-target cleave
-        target_spell(SPELLS.CURSE_OF_AGONY, 548, {
+        -- Curse: spread to AoE targets (CoE if available, else CoA)
+        target_spell(function(local_ctx)
+            local spell, _ = select_curse(local_ctx)
+            return spell
+        end, 548, {
             allow_movement = true,
             max_target_distance = CAST_RANGE,
             intent = "sustain",
             condition = function(local_ctx)
+                local _, aura = select_curse(local_ctx)
                 return local_ctx.in_combat == true
-                    and not target_has_any_aura(local_ctx, WL_AURAS.CURSE_OF_AGONY)
+                    and not target_has_any_aura(local_ctx, aura)
             end,
         }),
         -- Shadow Bolt filler

@@ -981,6 +981,14 @@ function CombatService:_apply_combat_chase(target, now, distance)
         return
     end
 
+    -- Don't issue movement commands while casting/channelling (prevents interrupting
+    -- Drain Life, Drain Soul, Shadow Bolt, etc.)
+    local player = self._blackboard:get("player.object")
+    if safe_method(player, "is_casting_spell") == true
+        or safe_method(player, "is_channelling_spell") == true then
+        return
+    end
+
     distance = tonumber(distance) or self:_distance_to_target(target)
     if distance > chase_range then
         local target_pos = safe_method(target, "get_position")
