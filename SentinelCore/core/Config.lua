@@ -261,6 +261,7 @@ function Config:validate_runtime()
         or type(cfg.targeting) ~= "table"
         or type(cfg.combat) ~= "table"
         or type(cfg.objective) ~= "table"
+        or type(cfg.exploration) ~= "table"
         or type(cfg.rotation) ~= "table" then
         return false, ErrorCodes.CONFIG_INVALID
     end
@@ -415,6 +416,76 @@ function Config:validate_runtime()
     end
     local objective_progress_interval = tonumber(cfg.objective.progress_emit_interval)
     if objective_progress_interval == nil or objective_progress_interval <= 0 then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+
+    if cfg.exploration.enabled ~= nil and type(cfg.exploration.enabled) ~= "boolean" then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    if cfg.exploration.enabled_modes ~= nil then
+        if type(cfg.exploration.enabled_modes) ~= "table" then
+            return false, ErrorCodes.CONFIG_INVALID
+        end
+        for i = 1, #cfg.exploration.enabled_modes do
+            if type(cfg.exploration.enabled_modes[i]) ~= "string" or cfg.exploration.enabled_modes[i] == "" then
+                return false, ErrorCodes.CONFIG_INVALID
+            end
+        end
+    end
+
+    local exploration_positive_fields = {
+        "cell_size",
+        "cell_memory_ttl",
+        "cell_memory_max_entries",
+        "recent_cells",
+        "sighting_gain",
+        "sighting_cap",
+        "pursuit_extra_radius",
+        "pursuit_stale_timeout",
+        "frontier_min_radius",
+        "frontier_max_radius",
+        "frontier_ring_count",
+        "frontier_rays",
+        "novelty_horizon",
+        "seen_horizon",
+        "move_to_cooldown",
+        "soft_repath_cooldown",
+        "soft_repath_distance",
+        "arrive_distance",
+        "cell_failure_cooldown",
+        "max_failures_before_reset",
+    }
+    for i = 1, #exploration_positive_fields do
+        local key = exploration_positive_fields[i]
+        local value = tonumber(cfg.exploration[key])
+        if value ~= nil and value <= 0 then
+            return false, ErrorCodes.CONFIG_INVALID
+        end
+    end
+
+    local exploration_nonnegative_fields = {
+        "pursuit_min_gap",
+        "pursuit_distance_weight",
+        "weight_novelty",
+        "weight_sighting",
+        "weight_travel",
+        "weight_recent",
+        "weight_failure",
+        "destination_switch_distance",
+        "destination_switch_cooldown",
+        "destination_switch_min_gain",
+    }
+    for i = 1, #exploration_nonnegative_fields do
+        local key = exploration_nonnegative_fields[i]
+        local value = tonumber(cfg.exploration[key])
+        if value ~= nil and value < 0 then
+            return false, ErrorCodes.CONFIG_INVALID
+        end
+    end
+
+    local frontier_min = tonumber(cfg.exploration.frontier_min_radius)
+    local frontier_max = tonumber(cfg.exploration.frontier_max_radius)
+    if frontier_min ~= nil and frontier_max ~= nil and frontier_max < frontier_min then
         return false, ErrorCodes.CONFIG_INVALID
     end
 

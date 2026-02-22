@@ -48,7 +48,7 @@ function CombatKernelTree.create(services, command_handlers)
     selector:add(combat_active_branch)
     selector:add(objective_branch)
     selector:add(RunCombat(services.targeting, services.combat))
-    selector:add(Scout())
+    selector:add(Scout(services.exploration))
 
     root:add(selector)
 

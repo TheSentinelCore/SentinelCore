@@ -19,6 +19,7 @@ local Events = {
     TARGET_ACQUIRED = "grind.target_acquired",
     TARGET_LOST = "grind.target_lost",
     TARGET_SCORE_DEBUG = "grind.target_score_debug",
+    EXPLORATION_SELECTED = "grind.exploration_selected",
 
     -- Objectives
     OBJECTIVE_SELECTED = "objective.selected",

@@ -15,6 +15,7 @@ local NavigationAdapter = require("services/NavigationAdapter")
 local WorldDataAdapter = require("services/WorldDataAdapter")
 local ObjectiveService = require("services/ObjectiveService")
 local TargetingService = require("services/TargetingService")
+local ExplorationService = require("services/ExplorationService")
 local RotationEngine = require("services/RotationEngine")
 local CombatService = require("services/CombatService")
 local LootService = require("services/LootService")
@@ -118,6 +119,13 @@ function Client:new(config)
     local world_data = config.world_data_adapter or WorldDataAdapter:new(o._event_bus, o._blackboard, runtime_cfg.world_data)
     local objective = config.objective_service or ObjectiveService:new(o._event_bus, o._blackboard, runtime_cfg.objective)
     local targeting = config.targeting_service or TargetingService:new(o._event_bus, o._blackboard, runtime_cfg.targeting, navigation)
+    local exploration = config.exploration_service or ExplorationService:new(
+        o._event_bus,
+        o._blackboard,
+        runtime_cfg.exploration,
+        navigation,
+        targeting
+    )
     local rotation = config.rotation_engine or RotationEngine:new(o._event_bus, o._blackboard, runtime_cfg.combat)
     local combat = config.combat_service or CombatService:new(o._event_bus, o._blackboard, navigation, targeting, rotation, runtime_cfg.combat)
     local loot = config.loot_service or LootService:new(o._event_bus, o._blackboard, runtime_cfg.loot, navigation)
@@ -133,6 +141,7 @@ function Client:new(config)
         world_data = world_data,
         objective = objective,
         targeting = targeting,
+        exploration = exploration,
         rotation = rotation,
         combat = combat,
         loot = loot,
@@ -144,6 +153,7 @@ function Client:new(config)
     o._service_update_order = {
         "objective",
         "targeting",
+        "exploration",
         "combat",
         "loot",
         "inventory",
@@ -243,6 +253,9 @@ function Client:_apply_runtime_bindings()
     end
     if self._services.objective then
         self._services.objective._cfg = Defaults.copy(runtime_cfg.objective or {})
+    end
+    if self._services.exploration then
+        self._services.exploration._cfg = Defaults.copy(runtime_cfg.exploration or {})
     end
     if self._services.rotation then
         self._services.rotation._cfg = Defaults.copy(runtime_cfg.combat or {})
@@ -602,6 +615,9 @@ function Client:stop(reason)
     self._services.loot:reset()
     self._services.vendor:reset()
     self._services.recovery:reset()
+    if self._services.exploration and self._services.exploration.reset then
+        self._services.exploration:reset()
+    end
     self._services.targeting:clear_target("stop")
 
     self._context_pending = false

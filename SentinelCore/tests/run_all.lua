@@ -22,6 +22,7 @@ local tests = {
     "tests/test_sc017_mode_kernel_ordering",
     "tests/test_sc018_plan_composer",
     "tests/test_sc019_grinder_scenarios",
+    "tests/test_sc020_exploration_service",
 }
 
 ---@return table

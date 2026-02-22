@@ -867,20 +867,23 @@ function TargetingService:score_target(target, opts)
     local pull_risk_scale = tonumber(type(opts) == "table" and opts.pull_risk_scale or nil) or 0
     local pull_risk_deaths_per_hour = tonumber(type(opts) == "table" and opts.pull_risk_deaths_per_hour or nil) or 0
 
-    self._event_bus:emit(Events.TARGET_SCORE_DEBUG, {
-        target_id = tonumber(safe_method(target, "get_npc_id")) or 0,
-        score = score,
-        kill_speed = kill_speed,
-        loot_value = loot_value,
-        travel_cost = travel_cost,
-        path_distance = path_distance,
-        risk = risk,
-        pull_risk_budget = pull_risk_budget,
-        pull_risk_scale = pull_risk_scale,
-        pull_risk_deaths_per_hour = pull_risk_deaths_per_hour,
-        pull_pressure = pull_pressure,
-        unreachable_penalty = unreachable_penalty,
-    })
+    local suppress_debug = type(opts) == "table" and opts.suppress_debug == true
+    if not suppress_debug then
+        self._event_bus:emit(Events.TARGET_SCORE_DEBUG, {
+            target_id = tonumber(safe_method(target, "get_npc_id")) or 0,
+            score = score,
+            kill_speed = kill_speed,
+            loot_value = loot_value,
+            travel_cost = travel_cost,
+            path_distance = path_distance,
+            risk = risk,
+            pull_risk_budget = pull_risk_budget,
+            pull_risk_scale = pull_risk_scale,
+            pull_risk_deaths_per_hour = pull_risk_deaths_per_hour,
+            pull_pressure = pull_pressure,
+            unreachable_penalty = unreachable_penalty,
+        })
+    end
 
     return score, {
         risk = risk,
@@ -888,6 +891,115 @@ function TargetingService:score_target(target, opts)
         distance = distance,
         path_distance = path_distance,
     }
+end
+
+---@private
+---@return table
+function TargetingService:_get_visible_objects()
+    local objects = {}
+    if core and core.object_manager and core.object_manager.get_visible_objects then
+        local ok_objects, value = pcall(core.object_manager.get_visible_objects)
+        if ok_objects and type(value) == "table" then
+            objects = value
+        end
+    end
+    return objects
+end
+
+---@param opts? table
+---@return table
+function TargetingService:get_visible_candidates(opts)
+    opts = opts or {}
+
+    local player = unwrap_game_object(self._blackboard:get("player.object"))
+    if not player or safe_method(player, "is_valid") ~= true then
+        return {}
+    end
+
+    local now = type(opts) == "table" and tonumber(opts.now) or now_seconds()
+    self:_prune_target_memory(now)
+    self:_prune_path_cost_cache(now)
+
+    local player_team = self:_resolve_player_team(player)
+    local player_pos = opts.player_pos
+    if type(player_pos) ~= "table" then
+        player_pos = self._blackboard:get("player.position")
+    end
+    if type(player_pos) ~= "table" then
+        return {}
+    end
+
+    local max_distance = tonumber(opts.max_distance) or tonumber(self._cfg.max_radius) or 75.0
+    local include_blacklisted = opts.include_blacklisted == true
+    local include_engaged = opts.include_engaged == true
+
+    local objects = self:_get_visible_objects()
+    local pull_pressure_cache = {}
+    local pull_risk_budget, pull_risk_meta = self:_resolve_pull_risk_budget()
+    local candidates = {}
+
+    for i = 1, #objects do
+        local candidate = unwrap_game_object(objects[i])
+        local valid = is_valid_target(candidate, player)
+        if not valid and include_engaged and candidate and safe_method(candidate, "is_valid") == true then
+            valid = safe_method(candidate, "is_dead") ~= true
+                and safe_method(candidate, "is_ghost") ~= true
+                and can_engage(candidate, player) == true
+                and is_critter_unit(candidate) ~= true
+                and candidate ~= player
+        end
+
+        if valid and passes_faction_policy(candidate, player, player_team, self._cfg) then
+            local candidate_pos = safe_method(candidate, "get_position")
+            local dist = Helpers.distance_3d(player_pos, candidate_pos)
+            if dist <= max_distance then
+                self:_warm_path_cost(candidate, player_pos, now)
+                local blacklisted = self:_is_target_blacklisted(candidate, now)
+                if include_blacklisted or blacklisted ~= true then
+                    local score, meta = self:score_target(candidate, {
+                        now = now,
+                        objects = objects,
+                        player_pos = player_pos,
+                        pull_pressure_cache = pull_pressure_cache,
+                        pull_risk_budget = pull_risk_budget,
+                        pull_risk_scale = pull_risk_meta and pull_risk_meta.scale,
+                        pull_risk_deaths_per_hour = pull_risk_meta and pull_risk_meta.deaths_per_hour,
+                        suppress_debug = true,
+                    })
+
+                    candidates[#candidates + 1] = {
+                        target = candidate,
+                        distance = dist,
+                        score = tonumber(score) or 0,
+                        risk = tonumber(meta and meta.risk) or 0,
+                        pull_pressure = tonumber(meta and meta.pull_pressure) or 0,
+                        defensive = is_targeting_player_or_pet(candidate, player),
+                        blacklisted = blacklisted == true,
+                    }
+                end
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b)
+        local a_def = a and a.defensive == true
+        local b_def = b and b.defensive == true
+        if a_def ~= b_def then
+            return a_def
+        end
+
+        local a_score = tonumber(a and a.score) or -math.huge
+        local b_score = tonumber(b and b.score) or -math.huge
+        if a_score == b_score then
+            local a_dist = tonumber(a and a.distance) or math.huge
+            local b_dist = tonumber(b and b.distance) or math.huge
+            return a_dist < b_dist
+        end
+
+        return a_score > b_score
+    end)
+
+    return candidates
 end
 
 ---@return game_object|nil
@@ -901,13 +1013,7 @@ function TargetingService:acquire_target()
     self:_prune_target_memory(now)
     local player_team = self:_resolve_player_team(player)
 
-    local objects = {}
-    if core and core.object_manager and core.object_manager.get_visible_objects then
-        local ok_objects, value = pcall(core.object_manager.get_visible_objects)
-        if ok_objects and type(value) == "table" then
-            objects = value
-        end
-    end
+    local objects = self:_get_visible_objects()
     local radius = self:get_adaptive_radius()
     local player_pos = self._blackboard:get("player.position")
 
@@ -1006,13 +1112,7 @@ function TargetingService:acquire_defensive_target(preferred_target)
         return nil, ErrorCodes.TARGET_NOT_FOUND
     end
 
-    local objects = {}
-    if core and core.object_manager and core.object_manager.get_visible_objects then
-        local ok_objects, value = pcall(core.object_manager.get_visible_objects)
-        if ok_objects and type(value) == "table" then
-            objects = value
-        end
-    end
+    local objects = self:_get_visible_objects()
 
     local radius = tonumber(self._cfg.defensive_retarget_radius) or tonumber(self._cfg.max_radius) or 75.0
     local player_pos = self._blackboard:get("player.position")
