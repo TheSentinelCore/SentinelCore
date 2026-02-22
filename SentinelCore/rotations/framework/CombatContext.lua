@@ -612,6 +612,7 @@ function CombatContext:build(deps)
         class_id = bb:get("player.class_id", 0),
         spec_id = bb:get("player.spec_id", 0),
         enemy_count = bb:get("combat.enemy_count", 1),
+        combat_state = bb:get("combat.state", "idle"),
         in_combat = bb:get("player.in_combat", false),
         now = now,
         player_health_pct = player_health_pct,

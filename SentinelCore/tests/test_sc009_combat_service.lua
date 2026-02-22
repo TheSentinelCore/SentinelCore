@@ -70,13 +70,13 @@ local function run()
 
     local u1 = combat:update()
     T.assert_true(u1 == true, "combat update should run")
-    T.assert_eq(combat:get_state(), "pull", "combat service should remain in pull state until pull actually engages combat")
-    T.assert_eq(nav_calls.stop, 2, "in-range pull should stop nav before attempting pull action")
+    T.assert_eq(combat:get_state(), "combat",
+        "combat service should transition to combat once it reaches melee and can force auto-attack")
+    T.assert_eq(nav_calls.stop, 2, "in-range pull should stop nav once after committing to combat")
 
-    target._in_combat = true
     local u1b = combat:update()
-    T.assert_true(u1b == true, "combat update should transition after pull engages")
-    T.assert_eq(combat:get_state(), "combat", "combat service should switch to combat state once target enters combat")
+    T.assert_true(u1b == true, "combat update should continue once combat state is active")
+    T.assert_eq(combat:get_state(), "combat", "combat service should remain in combat state after transition")
 
     target._dead = true
     local u2 = combat:update()
@@ -134,6 +134,83 @@ local function run()
     T.assert_eq(combat_far:get_state(), "pull", "far target should remain in pull state while closing distance")
     T.assert_eq(nav_far_calls.stop, 1, "far pull should not cancel nav repeatedly while target is out of range")
     T.assert_eq(nav_far_calls.move_to, 1, "far pull should issue move_to when target is out of pull range")
+
+    local approach_target = T.mock_object({
+        name = "ApproachTarget",
+        position = { x = 40, y = 0, z = 0 },
+        health = 100,
+        max_health = 100,
+    })
+    local approach_tick_calls = 0
+    local approach_rotation = {
+        get_pull_profile = function() return { pull_spell_id = 20271, max_pull_range = 30 } end,
+        tick_once = function()
+            approach_tick_calls = approach_tick_calls + 1
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end,
+    }
+    local approach_nav_calls = { move_to = 0, stop = 0 }
+    local approach_nav = {
+        move_to = function(_, _, cb)
+            approach_nav_calls.move_to = approach_nav_calls.move_to + 1
+            if cb then
+                cb(true, nil, nil)
+            end
+        end,
+        stop = function()
+            approach_nav_calls.stop = approach_nav_calls.stop + 1
+        end,
+    }
+    local combat_approach = CombatService:new(bus, bb, approach_nav, targeting_far, approach_rotation, {
+        combat_timeout = 15,
+        pull_timeout = 5,
+    })
+    local approach_ok, approach_err = combat_approach:start(approach_target)
+    T.assert_true(approach_ok == true, "combat start should succeed for approach pre-cast scenario")
+    local approach_update = combat_approach:update()
+    T.assert_true(approach_update == true, "approach pull update should run")
+    T.assert_eq(combat_approach:get_state(), "pull",
+        "approach pull should remain in pull state while still outside melee/engage range")
+    T.assert_eq(approach_nav_calls.move_to, 1, "approach pull should issue movement toward distant target")
+    T.assert_eq(approach_tick_calls, 1,
+        "approach pull should tick rotation while moving so pre-pull setup spells can fire")
+
+    local auto_attack_calls = 0
+    local prev_start_auto_attack = env.core.input.start_auto_attack
+    local prev_cast_target_spell = env.core.input.cast_target_spell
+    env.core.input.start_auto_attack = function()
+        auto_attack_calls = auto_attack_calls + 1
+        return true
+    end
+    env.core.input.cast_target_spell = function()
+        return false
+    end
+    local melee_target = T.mock_object({
+        name = "MeleeFallbackTarget",
+        position = { x = 4, y = 0, z = 0 },
+        health = 100,
+        max_health = 100,
+    })
+    local melee_rotation = {
+        get_pull_profile = function() return { pull_spell_id = 20271, max_pull_range = 30 } end,
+        tick_once = function()
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end,
+    }
+    local melee_combat = CombatService:new(bus, bb, nav, targeting, melee_rotation, {
+        combat_timeout = 15,
+        pull_timeout = 5,
+    })
+    local melee_ok, melee_err = melee_combat:start(melee_target)
+    T.assert_true(melee_ok == true and melee_err == nil, "combat start should succeed for melee fallback scenario")
+    local melee_update = melee_combat:update()
+    T.assert_true(melee_update == true, "melee fallback pull update should run")
+    T.assert_eq(melee_combat:get_state(), "combat",
+        "melee fallback pull should transition to combat after forcing auto-attack")
+    T.assert_true(auto_attack_calls >= 1,
+        "melee fallback should explicitly start auto-attack when pull spell is blocked")
+    env.core.input.start_auto_attack = prev_start_auto_attack
+    env.core.input.cast_target_spell = prev_cast_target_spell
 
     local moving_target = T.mock_object({
         name = "MovingTarget",

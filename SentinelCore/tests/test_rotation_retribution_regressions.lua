@@ -288,9 +288,10 @@ local function run()
 
     local pull_no_seal = provider:get_pull_profile(base_ctx)
     T.assert_true(type(pull_no_seal) == "table", "pull profile should be a table")
-    T.assert_eq(tonumber(pull_no_seal.pull_spell_id) or 0, 0, "pull profile should not require ranged pull without active seal")
-    T.assert_eq(tonumber(pull_no_seal.max_pull_range), 5.5,
-        "pull profile should close into melee range when no active seal is present")
+    T.assert_eq(tonumber(pull_no_seal.pull_spell_id), 20271,
+        "pull profile should use Judgement as primary pull once the spell is learned")
+    T.assert_true(math.abs((tonumber(pull_no_seal.max_pull_range) or 0) - 9.35) < 0.001,
+        "pull profile should expose a 9.35y cast window so engage logic fires Judgement at 9y")
 
     local seal_ctx = {
         class_id = 2,
@@ -302,9 +303,9 @@ local function run()
     }
     local pull_with_seal = provider:get_pull_profile(seal_ctx)
     T.assert_eq(tonumber(pull_with_seal.pull_spell_id), 20271,
-        "pull profile should use Judgement when a seal is active")
-    T.assert_eq(tonumber(pull_with_seal.max_pull_range), 9.0,
-        "pull profile should close into 9-yard Judgement cast buffer when a seal is active")
+        "pull profile should still use Judgement when a seal is active")
+    T.assert_true(math.abs((tonumber(pull_with_seal.max_pull_range) or 0) - 9.35) < 0.001,
+        "pull profile should keep the same 9.35y Judgement engage window regardless of seal context")
 
     return {
         retribution_regressions = true,

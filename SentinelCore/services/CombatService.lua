@@ -208,6 +208,7 @@ end
 ---@field private _pull_nav_last_repath_at number
 ---@field private _pull_nav_repath_pending boolean
 ---@field private _pull_in_range_since number
+---@field private _pull_auto_attack_last_at number
 ---@field private _combat_nav_last_dest vec3|nil
 ---@field private _combat_nav_last_move_at number
 ---@field private _combat_nav_last_repath_at number
@@ -244,6 +245,7 @@ function CombatService:new(event_bus, blackboard, navigation, targeting, rotatio
     o._pull_nav_last_repath_at = 0
     o._pull_nav_repath_pending = false
     o._pull_in_range_since = 0
+    o._pull_auto_attack_last_at = 0
     o._combat_nav_last_dest = nil
     o._combat_nav_last_move_at = 0
     o._combat_nav_last_repath_at = 0
@@ -252,12 +254,89 @@ function CombatService:new(event_bus, blackboard, navigation, targeting, rotatio
     o._combat_face_last_at = 0
     o._combat_face_last_target_pos = nil
     o._last_error = nil
+    o:_set_state("idle")
     return o
 end
 
 ---@return boolean
 function CombatService:is_active()
     return self._state == "pull" or self._state == "combat"
+end
+
+---@private
+---@param value string
+function CombatService:_set_state(value)
+    self._state = tostring(value or "idle")
+    self._blackboard:set("combat.state", self._state)
+end
+
+---@private
+---@param pull_profile table|nil
+---@return number
+function CombatService:_resolve_pull_melee_range(pull_profile)
+    local from_profile = tonumber(pull_profile and pull_profile.melee_engage_range)
+    if from_profile and from_profile > 0 then
+        return from_profile
+    end
+    local movement = self:_resolve_movement_profile()
+    local chase_range = tonumber(movement and movement.combat_chase_range)
+    if chase_range and chase_range > 0 then
+        return chase_range
+    end
+    return 5.5
+end
+
+---@private
+---@param target game_object|nil
+---@param now number
+---@return boolean
+function CombatService:_try_start_auto_attack(target, now)
+    if not target then
+        return false
+    end
+
+    local repeat_cooldown = tonumber(self._cfg.pull_auto_attack_repeat_cooldown) or 0.35
+    if repeat_cooldown < 0 then
+        repeat_cooldown = 0
+    end
+    if (now - (tonumber(self._pull_auto_attack_last_at) or 0)) < repeat_cooldown then
+        return false
+    end
+    self._pull_auto_attack_last_at = now
+
+    if not core or not core.input then
+        return false
+    end
+
+    if type(core.input.set_target) == "function" then
+        pcall(core.input.set_target, target)
+    end
+
+    local start_methods = {
+        "start_auto_attack",
+        "start_attack",
+        "attack_target",
+        "attack",
+    }
+    for i = 1, #start_methods do
+        local fn = core.input[start_methods[i]]
+        if type(fn) == "function" then
+            local ok, result = pcall(fn, target)
+            if ok and result ~= false then
+                return true
+            end
+        end
+    end
+
+    -- WoW "Attack" spell id fallback for runtimes that expose only cast APIs.
+    if type(core.input.cast_target_spell) == "function" then
+        local ok, result = pcall(core.input.cast_target_spell, 6603, target)
+        if ok and result ~= false then
+            return true
+        end
+    end
+
+    return false
 end
 
 ---@private
@@ -465,6 +544,7 @@ function CombatService:_reset_pull_navigation()
     self._pull_nav_last_repath_at = 0
     self._pull_nav_repath_pending = false
     self._pull_in_range_since = 0
+    self._pull_auto_attack_last_at = 0
 end
 
 ---@private
@@ -969,7 +1049,7 @@ function CombatService:_maybe_switch_to_attacker(target, now)
         self._blackboard:set("loot.pending_target", target)
     end
     if self._state == "pull" then
-        self._state = "combat"
+        self:_set_state("combat")
         self._pull_sent = true
         self:_reset_pull_navigation()
     end
@@ -1024,7 +1104,7 @@ function CombatService:start(target)
     self._active_target = target
     self._blackboard:set("combat.target", target)
     self:_sync_enemy_count(target)
-    self._state = "pull"
+    self:_set_state("pull")
     self._started_at = now
     self._pull_started_at = now
     self._pull_sent = false
@@ -1045,7 +1125,7 @@ function CombatService:start(target)
 end
 
 function CombatService:reset()
-    self._state = "idle"
+    self:_set_state("idle")
     self._active_target = nil
     self._pull_sent = false
     self:_reset_pull_navigation()
@@ -1122,6 +1202,19 @@ function CombatService:_execute_pull(target)
             return false, ErrorCodes.TARGET_LOST
         end
         self:_update_pull_navigation(target_pos, now)
+
+        -- Let pull pipeline pre-cast setup actions while approaching (e.g. Seal).
+        local should_tick_approach = pull_profile.pull_spell_id ~= nil
+            or pull_profile.tick_rotation_while_approaching == true
+        if should_tick_approach then
+            local ok_call, ok, err = pcall(self._rotation.tick_once, self._rotation)
+            if not ok_call then
+                return false, ErrorCodes.ROTATION_UNAVAILABLE
+            end
+            if not ok and err ~= ErrorCodes.CAST_GUARD_BLOCKED and err ~= ErrorCodes.TARGET_NOT_FOUND then
+                return false, err
+            end
+        end
         return true, nil
     end
 
@@ -1140,11 +1233,6 @@ function CombatService:_execute_pull(target)
         self._pull_in_range_since = now
     end
 
-    if self._nav and self._nav.stop then
-        pcall(self._nav.stop, self._nav)
-    end
-    self:_reset_pull_navigation()
-
     if core and core.input and core.input.set_target then
         pcall(core.input.set_target, target)
     end
@@ -1157,6 +1245,14 @@ function CombatService:_execute_pull(target)
         if not ok and err ~= ErrorCodes.CAST_GUARD_BLOCKED then
             return false, err
         end
+    elseif pull_profile.tick_rotation_in_pull == true then
+        local ok_call, ok, err = pcall(self._rotation.tick_once, self._rotation)
+        if not ok_call then
+            return false, ErrorCodes.ROTATION_UNAVAILABLE
+        end
+        if not ok and err ~= ErrorCodes.CAST_GUARD_BLOCKED and err ~= ErrorCodes.TARGET_NOT_FOUND then
+            return false, err
+        end
     end
 
     local player = self._blackboard:get("player.object")
@@ -1164,15 +1260,27 @@ function CombatService:_execute_pull(target)
         or self._blackboard:get("player.in_combat", false) == true
     local target_in_combat = safe_method(target, "is_in_combat") == true
 
-    if pull_profile.pull_spell_id then
-        -- Do not advance to combat state until pull has actually engaged combat.
-        if not player_in_combat and not target_in_combat then
+    if not player_in_combat and not target_in_combat then
+        local melee_range = self:_resolve_pull_melee_range(pull_profile)
+        if distance > melee_range then
+            local target_pos = safe_method(target, "get_position")
+            if not target_pos then
+                return false, ErrorCodes.TARGET_LOST
+            end
+            self:_update_pull_navigation(target_pos, now)
             return true, nil
         end
+
+        -- Fallback: once in melee, force auto-attack so pull cannot stall on cooldowns.
+        self:_try_start_auto_attack(target, now)
+    end
+
+    if self._nav and self._nav.stop then
+        pcall(self._nav.stop, self._nav)
     end
 
     self._pull_sent = true
-    self._state = "combat"
+    self:_set_state("combat")
     self:_reset_pull_navigation()
     self:_reset_combat_navigation()
     return true, nil

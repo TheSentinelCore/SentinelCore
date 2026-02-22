@@ -300,6 +300,14 @@ end
 ---@private
 ---@param ctx table
 ---@return boolean
+local function in_engage_context(ctx)
+    local state = string.lower(tostring(ctx and ctx.combat_state or ""))
+    return (ctx and ctx.in_combat == true) or state == "pull" or state == "combat"
+end
+
+---@private
+---@param ctx table
+---@return boolean
 local function should_reseal(ctx)
     local seal_id = preferred_seal_id(ctx)
     if not seal_id then
@@ -852,7 +860,7 @@ function Retribution:utility(ctx)
             intent = "sustain",
             combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
-                return local_ctx.in_combat == true and should_reseal(local_ctx)
+                return in_engage_context(local_ctx) and should_reseal(local_ctx)
             end,
         }),
         self_spell(function()
@@ -906,7 +914,7 @@ function Retribution:combat(ctx)
             intent = "utility",
             combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
-                return should_reseal(local_ctx)
+                return in_engage_context(local_ctx) and should_reseal(local_ctx)
             end,
         }),
         target_spell(SPELLS.EXORCISM, 500, {
@@ -968,7 +976,7 @@ function Retribution:aoe(ctx)
             intent = "utility",
             combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
-                return should_reseal(local_ctx)
+                return in_engage_context(local_ctx) and should_reseal(local_ctx)
             end,
         }),
         target_spell(SPELLS.HAMMER_OF_WRATH, 520, {
@@ -983,17 +991,19 @@ end
 ---@param ctx table
 ---@return table
 function Retribution:get_pull_profile(ctx)
-    local seal = current_seal_id(ctx)
-    if not seal then
+    local judgement = resolve_spell(ctx, SPELLS.JUDGEMENT)
+    if not judgement then
         return {
             pull_spell_id = nil,
             max_pull_range = MELEE_RANGE,
+            melee_engage_range = MELEE_RANGE,
         }
     end
 
     return {
-        pull_spell_id = SPELLS.JUDGEMENT,
-        max_pull_range = JUDGEMENT_CAST_RANGE,
+        pull_spell_id = judgement,
+        max_pull_range = JUDGEMENT_CAST_RANGE + 0.35, -- compensates pull engage padding to fire at 9y
+        melee_engage_range = MELEE_RANGE,
     }
 end
 
