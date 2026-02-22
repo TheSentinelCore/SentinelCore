@@ -22,6 +22,15 @@ Defaults.recovery = {
     auto_restart_backoff_secs = { 2, 5, 10 },
 }
 
+Defaults.death = {
+    death_release_delay_secs = 2.5,
+    death_release_retry_secs = 2.0,
+    death_move_to_cooldown = 0.9,
+    death_move_reissue_distance = 1.0,
+    death_resurrect_distance = 10.0,
+    death_resurrect_retry_secs = 0.75,
+}
+
 Defaults.world_data = {
     base_url = "http://127.0.0.1:47120",
     max_retries = 2,
@@ -310,6 +319,7 @@ function Defaults.build_runtime(extra)
     local cfg = {
         runtime = deep_copy(Defaults.runtime),
         recovery = deep_copy(Defaults.recovery),
+        death = deep_copy(Defaults.death),
         world_data = deep_copy(Defaults.world_data),
         targeting = deep_copy(Defaults.targeting),
         objective = deep_copy(Defaults.objective),

@@ -52,6 +52,13 @@ local Events = {
     RECOVERY_COMPLETED = "recovery.completed",
     RECOVERY_ESCALATED = "recovery.escalated",
 
+    -- Death recovery
+    DEATH_RECOVERY_STARTED = "death.recovery_started",
+    DEATH_SPIRIT_RELEASED = "death.spirit_released",
+    DEATH_CORPSE_RUN_UPDATE = "death.corpse_run_update",
+    DEATH_RESURRECT_ATTEMPT = "death.resurrect_attempt",
+    DEATH_RESURRECTED = "death.resurrected",
+
     -- Telemetry
     TELEMETRY_FLUSHED = "telemetry.flushed",
 
