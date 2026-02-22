@@ -1,10 +1,12 @@
 local T = require("tests/TestUtil")
 local ErrorCodes = require("events/ErrorCodes")
+local Events = require("events/Events")
 
 local function run()
     local player = T.mock_object({ class_id = 2, spec_id = 0, health = 60, max_health = 100, mana = 30, max_mana = 100 })
     local target = T.mock_object({ name = "Enemy" })
     local food_item = T.mock_object({ item_id = 4540 })
+    local water_item = T.mock_object({ item_id = 159 })
 
     T.install_core_stub({
         object_manager = {
@@ -16,6 +18,7 @@ local function run()
                 if bag_id == 0 then
                     return {
                         { item = food_item, slot_id = 24 },
+                        { item = water_item, slot_id = 25 },
                     }
                 end
                 return {}
@@ -37,8 +40,15 @@ local function run()
     bb:set("player.in_combat", false)
 
     local rotation = RotationEngine:new(bus, bb, { aoe_enemy_threshold = 3 })
+    local blocked_events = 0
+    bus:on(Events.ROTATION_BLOCKED, function(data)
+        blocked_events = blocked_events + 1
+    end, { owner = rotation })
     local plan, err = rotation:generate_plan()
     T.assert_true(type(plan) == "table" and #plan > 0, "rotation plan should exist")
+    local movement_profile = rotation:get_movement_profile()
+    T.assert_eq(tonumber(movement_profile.combat_chase_range), 5.5,
+        "retribution movement profile should request melee chase range")
     local has_divine_storm = false
     local has_crusader_strike = false
     local has_judgement = false
@@ -85,6 +95,40 @@ local function run()
     player._mana = 100
     T.assert_true(rotation:should_hold_maintenance() == false, "rotation hold should clear after resources recover")
 
+    -- Drink priority validation: when HP is healthy and mana is low, maintenance should consume water, not food.
+    player._health = 100
+    player._mana = 20
+    bb:set("player.in_combat", false)
+    bb:set("rotation.rest.lock_until", 0)
+    if core and core._set_time and core.time then
+        core._set_time(core.time() + 1.0)
+    end
+    local queue = require("common/modules/spell_queue")
+    local before_entries = queue and queue.get_entries and #queue:get_entries() or 0
+    local drink_tick_ok, drink_tick_err = rotation:tick_maintenance_once()
+    T.assert_true(drink_tick_ok == true, "maintenance should execute a drink action when only mana is low")
+    local entries_after_drink = queue and queue.get_entries and queue:get_entries() or {}
+    local drink_entry = entries_after_drink[#entries_after_drink]
+    T.assert_true(#entries_after_drink > before_entries, "drink maintenance should enqueue a new action")
+    T.assert_true(type(drink_entry) == "table" and tonumber(drink_entry.item_id) == 159,
+        "drink maintenance should queue a water consumable when HP is healthy and mana is low")
+
+    local original_build_context = rotation._context_builder.build
+    rotation._context_builder.build = function()
+        return {
+            class_id = 2,
+            spec_id = 0,
+            in_combat = false,
+            eating_or_drinking = true,
+            player_health_pct = 1.0,
+            player_mana_pct = 1.0,
+            routine_policy = bb:get("rotation.policy"),
+        }
+    end
+    T.assert_true(rotation:should_hold_maintenance() == false,
+        "active drink/eat aura should not hold pulls once resources are already full")
+    rotation._context_builder.build = original_build_context
+
     bb:set("player.class_id", 1)
     local unsupported_plan, unsupported_err = rotation:generate_plan()
     T.assert_true(unsupported_plan == nil, "unsupported class should not resolve a combat plan")
@@ -116,6 +160,48 @@ local function run()
         local qp = tonumber(last.priority) or 0
         T.assert_true(qp >= 1 and qp <= 8, "queue priority should be normalized to API-supported range 1..8")
     end
+
+    local self_target_swaps = 0
+    local previous_set_target = core.input.set_target
+    core.input.set_target = function()
+        self_target_swaps = self_target_swaps + 1
+        return true
+    end
+
+    local self_ctx = {
+        player = io.stdout,
+        target = target,
+    }
+    local self_action = {
+        action_type = "cast_spell_self",
+        spell_id = 27136,
+        priority = 900,
+        allow_movement = true,
+        skip_facing = true,
+    }
+    local self_exec_ok, self_exec_err = rotation:execute_action(self_action, self_ctx)
+    T.assert_true(self_exec_ok == true or self_exec_err ~= nil,
+        "self cast execution should be deterministic (success or explicit guard error)")
+    T.assert_eq(self_target_swaps, 0, "self casts should not swap target away from enemy")
+    core.input.set_target = previous_set_target
+
+    local blocked_ok, blocked_err = rotation:_execute_plan({
+        {
+            action_type = "cast_spell_target",
+            spell_id = 20271,
+            priority = 1000,
+            condition = function()
+                return false
+            end,
+            requires_castable_check = false,
+        },
+    }, {
+        player = player,
+        target = target,
+        player_is_moving = false,
+    })
+    T.assert_true(blocked_ok == false and blocked_err ~= nil, "blocked plan execution should return an explicit guard error")
+    T.assert_true(blocked_events >= 1, "rotation should emit blocked diagnostics when no action can execute")
 
     return {
         sc008_rotation_contract = true,

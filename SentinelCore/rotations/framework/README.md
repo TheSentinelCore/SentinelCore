@@ -37,6 +37,11 @@ Supported guard fields:
 - `condition(ctx, action)`
 - `requires_castable_check` (default `true`)
 
+Item action metadata:
+
+- `item_kind`: optional semantic selector for `use_item_self` (`food`, `water`, `food_or_water`) resolved from current consumables when available.
+- `rest_lock_secs`: optional post-consume lock window to prevent repeated item spam while rest auras settle.
+
 ## Provider Contract
 
 Providers should implement:
@@ -50,8 +55,28 @@ Providers should implement:
 - `combat(ctx)`
 - `aoe(ctx)`
 - `get_pull_profile(ctx)`
+- `get_movement_profile(ctx)` (optional, combat chase tuning; fallback derives from pull profile)
 - `maintenance(ctx)` (optional, out-of-combat upkeep)
 
 Register providers in `rotations/Providers.lua`.
 
 `RotationEngine` loads providers via that catalog, registers by metadata, and evaluates action guards before executing queue/input casts.
+
+## Combat Context Notes
+
+`CombatContext` now exposes target typing helpers for legality-gated spells:
+
+- `target_is_player`
+- `target_creature_type_id`
+- `target_creature_type_name`
+- `target_is_demon`
+- `target_is_undead`
+- `target_is_undead_or_demon`
+- `target_is_creature_type(name)`
+
+It also exposes out-of-combat rest context:
+
+- `eating_or_drinking` (aura-derived with rest-lock fallback)
+- `rest_lock_until`
+
+Use these when a spell has strict target-family rules (for example, Exorcism/Holy Wrath in TBC).

@@ -17,6 +17,9 @@ local tests = {
     "tests/test_sc012_vendor_service",
     "tests/test_sc013_recovery_and_grind",
     "tests/test_sc014_telemetry_and_smoke",
+    "tests/test_sc015_mode_kernel",
+    "tests/test_sc016_objective_service",
+    "tests/test_sc017_mode_kernel_ordering",
 }
 
 ---@return table
@@ -31,6 +34,17 @@ local function create_test_spell_queue()
             priority = priority,
             owner = owner,
             allow_movement = allow_movement,
+        }
+        return nil
+    end
+
+    function queue:queue_spell_self(spell_id, priority, owner, allow_movement)
+        entries[#entries + 1] = {
+            spell_id = spell_id,
+            priority = priority,
+            owner = owner,
+            allow_movement = allow_movement,
+            kind = "spell_self",
         }
         return nil
     end

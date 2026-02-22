@@ -23,6 +23,7 @@ local _last_profile_result = nil
 local _selected_profile_index = 1
 local _show_expert_settings = false
 local _runtime_feed_filter = "all"
+local _selected_runtime_mode = "grind"
 local PALADIN_CLASS_ID = 2
 local WARLOCK_CLASS_ID = 9
 
@@ -32,10 +33,17 @@ local FEED_FILTER_LABELS = {
     error = "Error",
 }
 
+local MODE_LABELS = {
+    grind = "Grind",
+    quest = "Quest",
+    gather = "Gather",
+    bg = "BG",
+}
+
 local TOOLTIPS = {
     runtime_state = "Current HSM state and substate for SentinelCore's execution pipeline.",
     runtime_health = "Quick dependency health: world data, navigation, and inventory pressure.",
-    runtime_actions = "Start/Pause/Resume/Stop control the grind mode state machine.",
+    runtime_actions = "Start/Pause/Resume/Stop control the currently selected mode state machine.",
     runtime_feed = "Live event feed from SentinelCore. Use filters to reduce noise.",
     snapshot_world = "Frozen snapshot of world context, dependencies, inventory, and telemetry.",
     settings_profile = "Settings are runtime-only until saved to the active profile.",
@@ -48,8 +56,9 @@ local TOOLTIPS = {
     search_radius = "Max radius for querying nearby vendors from SentinelQueryServer.",
     expert_panel = "Shows advanced targeting and compatibility controls.",
     ret_section = "Retribution combat sustain settings. These values tune healing, potion, and consecration behavior.",
-    ret_flash_hp = "Cast Flash of Light when health is at or below this threshold.",
-    ret_holy_hp = "Cast Holy Light as emergency sustain at or below this threshold.",
+    ret_flash_hp = "Flash of Light health threshold (used only in very-low-mana fallback mode).",
+    ret_flash_oom = "Maximum mana threshold where Flash of Light is allowed as the low-mana fallback heal.",
+    ret_holy_hp = "Cast Holy Light as the primary sustain heal at or below this threshold.",
     ret_low_mana = "Below this mana threshold, the routine can downrank Flash of Light for efficiency.",
     ret_health_pot = "Use best health potion when HP is at or below this threshold in combat.",
     ret_mana_pot = "Use best mana potion when mana is at or below this threshold in combat.",
@@ -401,8 +410,10 @@ end
 ---@param width number
 ---@param modes string[]
 ---@param active string
+---@param labels? table<string, string>
 ---@return string
-local function render_mode_selector(window, colors, x, y, width, modes, active)
+local function render_mode_selector(window, colors, x, y, width, modes, active, labels)
+    labels = labels or FEED_FILTER_LABELS
     local count = #modes
     if count < 1 then
         return active
@@ -413,7 +424,7 @@ local function render_mode_selector(window, colors, x, y, width, modes, active)
 
     for i = 1, count do
         local mode = tostring(modes[i])
-        local label = FEED_FILTER_LABELS[mode] or mode
+        local label = labels[mode] or mode
         local bx = x + ((i - 1) * (btn_w + gap))
         if mode == active then
             window:render_rect_filled(vec2.new(bx, y), vec2.new(bx + btn_w, y + 18), lighten_color(colors.primary_accent, 10), 6)
@@ -526,10 +537,18 @@ local function register_tabs(ui, client)
                 local state = client and client.get_state and client:get_state() or "unknown"
                 local snapshot = client and client.get_snapshot and client:get_snapshot() or nil
                 local substate = snapshot and snapshot.substate or "-"
+                local mode = snapshot and snapshot.mode
+                    or (client and client.get_active_mode_id and client:get_active_mode_id())
+                    or _selected_runtime_mode
                 local fail_reason = snapshot and snapshot.fail_reason or "-"
                 local deps = snapshot and snapshot.dependencies or {}
                 local context = snapshot and snapshot.context or {}
                 local inventory = snapshot and snapshot.inventory or {}
+                local objective = snapshot and snapshot.objective or {}
+
+                if state == "running" or state == "paused" then
+                    _selected_runtime_mode = tostring(mode or _selected_runtime_mode)
+                end
 
                 local section_y = y_offset
                 y_offset = render_section_title(window, colors, x, y_offset, width, "Control Center")
@@ -546,6 +565,7 @@ local function register_tabs(ui, client)
                     state_bg = color.new(160, 65, 65, 170)
                 end
                 chip_x = chip_x + render_chip(window, colors, chip_x, y_offset, state_label, state_bg)
+                chip_x = chip_x + render_chip(window, colors, chip_x, y_offset, "Mode: " .. tostring(mode or "-"), colors.section_bg)
                 chip_x = chip_x + render_chip(window, colors, chip_x, y_offset, "Sub: " .. tostring(substate), colors.section_bg)
                 if fail_reason and tostring(fail_reason) ~= "" and tostring(fail_reason) ~= "-" then
                     chip_x = chip_x + render_chip(window, colors, chip_x, y_offset, "Fail: " .. tostring(fail_reason), color.new(160, 65, 65, 170))
@@ -583,12 +603,68 @@ local function register_tabs(ui, client)
                     tostring(context.area_id or "-")
                 )
                 y_offset = render_line(window, colors, x, y_offset, "Location", location_text)
+                local objective_state = tostring(objective.state or "idle")
+                local objective_label = tostring(
+                    (objective.objective and (objective.objective.label or objective.objective.id))
+                    or "none"
+                )
+                y_offset = render_line(window, colors, x, y_offset, "Objective", objective_state .. " (" .. objective_label .. ")")
+                if client and client.get_mode_objective_queue then
+                    local queue, meta = client:get_mode_objective_queue(mode or _selected_runtime_mode)
+                    local queue_count = type(queue) == "table" and #queue or 0
+                    local queue_index = tonumber(meta and meta.index) or 1
+                    local queue_loop = meta and meta.loop == true and "loop" or "once"
+                    y_offset = render_line(window, colors, x, y_offset, "Objective Queue",
+                        string.format("%d nodes | idx %d | %s", queue_count, queue_index, queue_loop))
+                end
 
                 y_offset = y_offset + 4
 
                 local button_h = 22
                 local gap = 6
                 local button_w = (width - (gap * 3)) / 4
+
+                local mode_options = {}
+                local mode_labels = {}
+                if client and client.list_modes then
+                    local list = client:list_modes()
+                    for i = 1, #list do
+                        if list[i].functional == true then
+                            local mode_id = tostring(list[i].id or "")
+                            if mode_id ~= "" then
+                                mode_options[#mode_options + 1] = mode_id
+                                mode_labels[mode_id] = MODE_LABELS[mode_id] or mode_id
+                            end
+                        end
+                    end
+                end
+                if #mode_options < 1 then
+                    mode_options = { "grind" }
+                    mode_labels.grind = MODE_LABELS.grind
+                end
+                table.sort(mode_options)
+                local mode_valid = false
+                for i = 1, #mode_options do
+                    if mode_options[i] == _selected_runtime_mode then
+                        mode_valid = true
+                        break
+                    end
+                end
+                if not mode_valid then
+                    _selected_runtime_mode = mode_options[1]
+                end
+                y_offset = render_line(window, colors, x, y_offset, "Selected Mode", _selected_runtime_mode)
+                _selected_runtime_mode = render_mode_selector(
+                    window,
+                    colors,
+                    x,
+                    y_offset,
+                    width,
+                    mode_options,
+                    _selected_runtime_mode,
+                    mode_labels
+                )
+                y_offset = y_offset + 24
 
                 local start_enabled = state == "idle" or state == "failed"
                 local pause_enabled = state == "running"
@@ -598,7 +674,7 @@ local function register_tabs(ui, client)
 
                 local bx = x
                 if render_button(window, colors, bx, y_offset, button_w, button_h, "Start", start_enabled) then
-                    local ok, err = client:start("grind")
+                    local ok, err = client:start(_selected_runtime_mode)
                     _last_action_result = ok and "Start: ok" or ("Start: " .. tostring(err))
                 end
 
@@ -914,17 +990,23 @@ local function register_tabs(ui, client)
                     y_offset = render_section_title(window, colors, x, y_offset, width, "Retribution Combat")
                     render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.ret_section)
                     y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Flash Heal HP", tonumber(retri_rotation.flash_light_hp_pct) or 0.60, 0.02, 0.20, 0.90, 2,
+                        "Holy Light HP", tonumber(retri_rotation.holy_light_hp_pct) or 0.60, 0.02, 0.10, 0.90, 2,
+                        function(new_value)
+                            set_retri_policy("holy_light_hp_pct", new_value)
+                        end,
+                        TOOLTIPS.ret_holy_hp, self)
+                    y_offset = render_stepper(window, colors, x, y_offset, width,
+                        "Flash Heal HP", tonumber(retri_rotation.flash_light_hp_pct) or 0.45, 0.02, 0.10, 0.80, 2,
                         function(new_value)
                             set_retri_policy("flash_light_hp_pct", new_value)
                         end,
                         TOOLTIPS.ret_flash_hp, self)
                     y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Holy Light HP", tonumber(retri_rotation.holy_light_hp_pct) or 0.35, 0.02, 0.10, 0.80, 2,
+                        "Flash OOM Mana", tonumber(retri_rotation.flash_light_very_oom_mana_pct) or 0.12, 0.01, 0.03, 0.40, 2,
                         function(new_value)
-                            set_retri_policy("holy_light_hp_pct", new_value)
+                            set_retri_policy("flash_light_very_oom_mana_pct", new_value)
                         end,
-                        TOOLTIPS.ret_holy_hp, self)
+                        TOOLTIPS.ret_flash_oom, self)
                     y_offset = render_stepper(window, colors, x, y_offset, width,
                         "Low Mana Downrank", tonumber(retri_rotation.heal_low_mana_threshold) or 0.22, 0.01, 0.05, 0.60, 2,
                         function(new_value)

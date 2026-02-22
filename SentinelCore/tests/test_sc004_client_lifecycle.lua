@@ -46,16 +46,33 @@ local function run()
         started_event = data
     end)
 
-    local ok, err = client:start("grind")
+    local modes = client:list_modes()
+    T.assert_true(type(modes) == "table" and #modes >= 4, "mode list should include all registered modes")
+
+    local ok, err = client:start("quest")
     T.assert_true(ok == true, "client start failed: " .. tostring(err))
     T.assert_eq(client:get_state(), "running", "state should be running")
+    T.assert_eq(client:get_active_mode_id(), "quest", "active mode should match started mode")
     T.assert_true(started_event ~= nil, "started event not emitted")
     T.assert_true(type(started_event.session_id) == "string" and started_event.session_id ~= "",
         "started event should include session_id")
     T.assert_true(type(started_event.state) == "string" and started_event.state ~= "",
         "started event should include state")
+    T.assert_eq(tostring(started_event.mode), "quest", "started event mode should match selected mode")
+    local snap = client:get_snapshot()
+    T.assert_true(type(snap.objective) == "table", "snapshot objective section missing")
+    T.assert_eq(tostring(snap.objective.mode), "quest", "snapshot objective mode mismatch")
 
-    local ok2 = client:start("grind")
+    local set_queue_ok, set_queue_err = client:set_mode_objective_queue("quest", {
+        { x = 1, y = 2, z = 3, label = "QuestNodeA" },
+        { x = 4, y = 5, z = 6, label = "QuestNodeB" },
+    }, { loop = false })
+    T.assert_true(set_queue_ok == true, "set_mode_objective_queue failed: " .. tostring(set_queue_err))
+    local queue, queue_meta = client:get_mode_objective_queue("quest")
+    T.assert_eq(#queue, 2, "mode objective queue should contain configured waypoints")
+    T.assert_true(queue_meta.loop == false, "mode objective queue loop metadata mismatch")
+
+    local ok2 = client:start("quest")
     T.assert_true(ok2 == true, "start should be idempotent")
 
     local paused = client:pause("test")

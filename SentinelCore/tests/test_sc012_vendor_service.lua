@@ -25,15 +25,13 @@ local function run()
         move_to = function(_, _, cb) cb(true, nil, nil) end,
     }
 
-    local world = {
-        captured_opts = nil,
-        get_nearby_vendors = function(_, _, opts, cb)
-            world.captured_opts = opts
-            cb(true, {
-                { vendor_id = 1, npc_id = 1, map_id = 571, x = 1, y = 1, z = 1, can_sell = true, can_repair = true, faction_mask = 0 },
-            }, nil)
-        end,
-    }
+    local world = { captured_opts = nil }
+    world.get_nearby_vendors = function(self, _, opts, cb)
+        self.captured_opts = opts
+        cb(true, {
+            { vendor_id = 1, npc_id = 1, map_id = 571, x = 1, y = 1, z = 1, can_sell = true, can_repair = true, faction_mask = 0 },
+        }, nil)
+    end
 
     local inv = {
         needs_vendor_trip = function() return true end,

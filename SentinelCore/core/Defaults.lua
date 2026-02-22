@@ -36,7 +36,9 @@ Defaults.world_data = {
 Defaults.targeting = {
     base_radius = 45.0,
     max_radius = 75.0,
+    defensive_retarget_radius = 35.0,
     pull_range = 30.0,
+    only_engage_opposing_faction_if_attacked = true,
     score_weights = {
         kill_speed = 0.40,
         loot_value = 0.20,
@@ -45,9 +47,25 @@ Defaults.targeting = {
     },
 }
 
+Defaults.objective = {
+    objective_timeout = 120.0,
+    progress_emit_interval = 1.0,
+}
+
 Defaults.combat = {
     combat_timeout = 30.0,
     pull_timeout = 8.0,
+    min_pull_mana_pct = 0.12,
+    pull_chase_repath_distance = 3.0,
+    pull_chase_repath_cooldown = 0.35,
+    pull_chase_move_to_cooldown = 0.75,
+    combat_chase_range = 5.5,
+    combat_chase_repath_distance = 3.0,
+    combat_chase_repath_cooldown = 0.35,
+    combat_chase_move_to_cooldown = 0.75,
+    combat_face_cooldown = 0.20,
+    combat_face_max_distance = 7.0,
+    combat_face_realign_distance = 0.75,
     action_throttle = 0.15,
     aoe_enemy_threshold = 3,
 }
@@ -60,9 +78,10 @@ Defaults.rotation = {
             loh_hp_pct = 0.10,
             divine_shield_hp_pct = 0.20,
             divine_protection_hp_pct = 0.35,
-            holy_light_hp_pct = 0.35,
-            holy_light_min_mana_pct = 0.25,
-            flash_light_hp_pct = 0.60,
+            holy_light_hp_pct = 0.60,
+            holy_light_min_mana_pct = 0.22,
+            flash_light_hp_pct = 0.45,
+            flash_light_very_oom_mana_pct = 0.12,
             heal_low_mana_threshold = 0.22,
             heal_critical_mana_threshold = 0.08,
             health_potion_hp_pct = 0.30,
@@ -70,6 +89,7 @@ Defaults.rotation = {
             mana_potion_min_hp_pct = 0.35,
             consecration_st_min_mana_pct = 0.35,
             consecration_aoe_min_mana_pct = 0.45,
+            exorcism_min_mana_pct = 0.55,
             holy_wrath_aoe_min_mana_pct = 0.30,
         },
     },
@@ -189,6 +209,7 @@ function Defaults.build_runtime(extra)
         recovery = deep_copy(Defaults.recovery),
         world_data = deep_copy(Defaults.world_data),
         targeting = deep_copy(Defaults.targeting),
+        objective = deep_copy(Defaults.objective),
         combat = deep_copy(Defaults.combat),
         rotation = deep_copy(Defaults.rotation),
         loot = deep_copy(Defaults.loot),

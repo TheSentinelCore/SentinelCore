@@ -1,12 +1,10 @@
 local BT = require("lib/BehaviorTree")
+local ModeState = require("core/ModeState")
 
 ---@return table
 return function()
     return BT.Action:new(function(bb)
-        local sm = bb:get("core.state_machine")
-        if sm then
-            sm:set_substate("running.grind.scout")
-        end
+        ModeState.set_phase(bb, "scout")
         return BT.SUCCESS
     end, "Scout")
 end

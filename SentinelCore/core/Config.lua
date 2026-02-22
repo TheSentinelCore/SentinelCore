@@ -106,6 +106,7 @@ local RETRIBUTION_POLICY_BOUNDS = {
     holy_light_hp_pct = { 0.0, 1.0 },
     holy_light_min_mana_pct = { 0.0, 1.0 },
     flash_light_hp_pct = { 0.0, 1.0 },
+    flash_light_very_oom_mana_pct = { 0.0, 1.0 },
     heal_low_mana_threshold = { 0.0, 1.0 },
     heal_critical_mana_threshold = { 0.0, 1.0 },
     health_potion_hp_pct = { 0.0, 1.0 },
@@ -113,6 +114,7 @@ local RETRIBUTION_POLICY_BOUNDS = {
     mana_potion_min_hp_pct = { 0.0, 1.0 },
     consecration_st_min_mana_pct = { 0.0, 1.0 },
     consecration_aoe_min_mana_pct = { 0.0, 1.0 },
+    exorcism_min_mana_pct = { 0.0, 1.0 },
     holy_wrath_aoe_min_mana_pct = { 0.0, 1.0 },
 }
 
@@ -153,18 +155,34 @@ local function validate_rotation_policy(rotation_cfg)
 
     local ret = rotation_cfg.paladin.retribution
     for key, bounds in pairs(RETRIBUTION_POLICY_BOUNDS) do
-        if not in_range(ret[key], bounds[1], bounds[2]) then
+        local value = ret[key]
+        if value == nil then
+            value = Defaults.rotation.paladin.retribution[key]
+        end
+        if not in_range(value, bounds[1], bounds[2]) then
             return false
         end
     end
 
-    if ret.heal_critical_mana_threshold > ret.heal_low_mana_threshold then
+    local heal_critical = ret.heal_critical_mana_threshold
+    if heal_critical == nil then
+        heal_critical = Defaults.rotation.paladin.retribution.heal_critical_mana_threshold
+    end
+    local heal_low = ret.heal_low_mana_threshold
+    if heal_low == nil then
+        heal_low = Defaults.rotation.paladin.retribution.heal_low_mana_threshold
+    end
+    if heal_critical > heal_low then
         return false
     end
 
     local aff = rotation_cfg.warlock.affliction
     for key, bounds in pairs(AFFLICTION_POLICY_BOUNDS) do
-        if not in_range(aff[key], bounds[1], bounds[2]) then
+        local value = aff[key]
+        if value == nil then
+            value = Defaults.rotation.warlock.affliction[key]
+        end
+        if not in_range(value, bounds[1], bounds[2]) then
             return false
         end
     end
@@ -181,6 +199,8 @@ function Config:validate_runtime()
         or type(cfg.world_data) ~= "table"
         or type(cfg.vendor) ~= "table"
         or type(cfg.targeting) ~= "table"
+        or type(cfg.combat) ~= "table"
+        or type(cfg.objective) ~= "table"
         or type(cfg.rotation) ~= "table" then
         return false, ErrorCodes.CONFIG_INVALID
     end
@@ -228,6 +248,24 @@ function Config:validate_runtime()
     local base_radius = tonumber(cfg.targeting.base_radius)
     local max_radius = tonumber(cfg.targeting.max_radius)
     if base_radius == nil or max_radius == nil or base_radius <= 0 or max_radius < base_radius then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    local defensive_radius = tonumber(cfg.targeting.defensive_retarget_radius)
+    if defensive_radius ~= nil and defensive_radius <= 0 then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+
+    local min_pull_mana_pct = tonumber(cfg.combat.min_pull_mana_pct)
+    if min_pull_mana_pct ~= nil and (min_pull_mana_pct < 0 or min_pull_mana_pct > 1) then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+
+    local objective_timeout = tonumber(cfg.objective.objective_timeout)
+    if objective_timeout == nil or objective_timeout <= 0 then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    local objective_progress_interval = tonumber(cfg.objective.progress_emit_interval)
+    if objective_progress_interval == nil or objective_progress_interval <= 0 then
         return false, ErrorCodes.CONFIG_INVALID
     end
 

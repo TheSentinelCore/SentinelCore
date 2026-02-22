@@ -524,12 +524,16 @@ end
 ---@return number
 local function soul_shard_count(ctx)
     local cache = runtime_cache(ctx)
-    if cache.soul_shard_count ~= nil then
+    local now = tonumber(type(ctx) == "table" and ctx.now or nil)
+    if now ~= nil
+        and cache.soul_shard_count ~= nil
+        and tonumber(cache.soul_shard_count_at) == now then
         return tonumber(cache.soul_shard_count) or 0
     end
 
     local count = inventory_item_count(SHARD_ITEM_ID)
     cache.soul_shard_count = count
+    cache.soul_shard_count_at = now
     return count
 end
 
@@ -689,12 +693,12 @@ end
 ---@return table[]
 function Affliction:maintenance(ctx)
     local p = policy(ctx)
-    local armor_spell = best_armor_spell(ctx)
-    local summon_spell = best_summon_spell(ctx)
 
     return {
         ActionBuilder.item_self(ConsumableCatalog.TBC_WATER_ITEM_IDS, 980, {
             max_player_mana_pct = p.drink_mana_pct,
+            item_kind = "water",
+            rest_lock_secs = 2.0,
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
@@ -703,21 +707,23 @@ function Affliction:maintenance(ctx)
         }),
         ActionBuilder.item_self(ConsumableCatalog.TBC_FOOD_ITEM_IDS, 970, {
             max_player_health_pct = p.eat_health_pct,
+            item_kind = "food",
+            rest_lock_secs = 2.0,
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
                     and local_ctx.eating_or_drinking ~= true
             end,
         }),
-        self_spell(function()
-            return armor_spell
+        self_spell(function(local_ctx)
+            return best_armor_spell(local_ctx or ctx)
         end, 260, {
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true and not has_armor_buff(local_ctx)
             end,
         }),
-        self_spell(function()
-            return summon_spell
+        self_spell(function(local_ctx)
+            return best_summon_spell(local_ctx or ctx)
         end, 255, {
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
@@ -742,9 +748,6 @@ function Affliction:should_hold_maintenance(ctx)
     local p = policy(ctx)
     if ctx.in_combat == true then
         return false
-    end
-    if ctx.eating_or_drinking == true then
-        return true
     end
 
     local needs_health = ctx.player_health_pct and ctx.player_health_pct < p.eat_health_pct

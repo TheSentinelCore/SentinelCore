@@ -1,10 +1,12 @@
 local BT = require("lib/BehaviorTree")
 local ErrorCodes = require("events/ErrorCodes")
+local ModeState = require("core/ModeState")
 
 ---@param vendor_service VendorService
 ---@return table
 return function(vendor_service)
     return BT.Action:new(function(bb)
+        ModeState.set_phase(bb, "vendor")
         local canonical = bb:get("context.canonical")
         if not canonical then
             bb:set("core.fail_reason", ErrorCodes.CTX_UNRESOLVED)
@@ -29,6 +31,7 @@ return function(vendor_service)
         if vendor_service:get_state() == "completed" then
             vendor_service:reset()
             bb:set("inventory.needs_vendor", false)
+            ModeState.set_phase(bb, "scout")
             return BT.SUCCESS
         end
 

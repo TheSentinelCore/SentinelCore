@@ -48,7 +48,12 @@ local function prepare_target_cast(target, action)
         return
     end
 
-    if core and core.input and type(core.input.set_target) == "function" then
+    local should_set_target = true
+    if action and (action.action_type == "cast_spell_self" or action.skip_target_swap == true) then
+        should_set_target = false
+    end
+
+    if should_set_target and core and core.input and type(core.input.set_target) == "function" then
         pcall(core.input.set_target, target)
     end
 
@@ -117,6 +122,8 @@ end
 ---@field private _context_builder CombatContextBuilder
 ---@field private _last_cast_at number
 ---@field private _active_provider_class_id number
+---@field private _last_blocked_event_at number
+---@field private _last_blocked_event_key string
 local RotationEngine = {}
 RotationEngine.__index = RotationEngine
 
@@ -140,6 +147,8 @@ function RotationEngine:new(event_bus, blackboard, cfg)
     o._context_builder = CombatContext:new(blackboard)
     o._last_cast_at = 0
     o._active_provider_class_id = 0
+    o._last_blocked_event_at = 0
+    o._last_blocked_event_key = ""
 
     local initial_class_id = tonumber(blackboard and blackboard.get and blackboard:get("player.class_id", 0)) or 0
     o:_sync_provider_registry(initial_class_id)
@@ -245,6 +254,199 @@ local function safe_item_id(item_obj)
     end
 
     return tonumber(id) or 0
+end
+
+---@private
+---@param item_obj any
+---@return string
+local function safe_item_name(item_obj)
+    if not item_obj or type(item_obj.get_name) ~= "function" then
+        return ""
+    end
+    local ok, name = pcall(item_obj.get_name, item_obj)
+    if not ok or type(name) ~= "string" then
+        return ""
+    end
+    return string.lower(name)
+end
+
+---@private
+---@param value any
+---@return string
+local function normalize_text(value)
+    if type(value) ~= "string" then
+        return ""
+    end
+    return string.lower(value)
+end
+
+---@private
+---@param row table
+---@param keys string[]
+---@return boolean
+local function row_has_true_flag(row, keys)
+    if type(row) ~= "table" then
+        return false
+    end
+    for i = 1, #keys do
+        if row[keys[i]] == true then
+            return true
+        end
+    end
+    return false
+end
+
+---@private
+---@param row table
+---@return string
+local function row_consumable_text(row)
+    if type(row) ~= "table" then
+        return ""
+    end
+
+    local parts = {
+        normalize_text(row.kind),
+        normalize_text(row.category),
+        normalize_text(row.type),
+        normalize_text(row.consumable_type),
+        normalize_text(row.subtype),
+        normalize_text(row.name),
+    }
+
+    local out = ""
+    for i = 1, #parts do
+        if parts[i] ~= "" then
+            if out == "" then
+                out = parts[i]
+            else
+                out = out .. " " .. parts[i]
+            end
+        end
+    end
+    return out
+end
+
+---@private
+---@param text string
+---@param tokens string[]
+---@return boolean
+local function text_contains_any(text, tokens)
+    local haystack = normalize_text(text)
+    if haystack == "" then
+        return false
+    end
+
+    for i = 1, #tokens do
+        local needle = normalize_text(tokens[i])
+        if needle ~= "" and string.find(haystack, needle, 1, true) ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+---@private
+---@param row table
+---@param kind string
+---@return boolean
+local function consumable_matches_kind(row, kind)
+    if type(row) ~= "table" then
+        return false
+    end
+    if row.is_health_potion == true or row.is_mana_potion == true then
+        return false
+    end
+
+    local text = row_consumable_text(row)
+    local item_obj = unwrap_item_object(row and (row.item or row))
+    local item_name = safe_item_name(item_obj)
+    if item_name ~= "" then
+        if text == "" then
+            text = item_name
+        else
+            text = text .. " " .. item_name
+        end
+    end
+
+    local food = row_has_true_flag(row, {
+        "is_food",
+        "is_eat",
+        "is_edible",
+        "is_food_consumable",
+    }) or text_contains_any(text, {
+        "food",
+        "bread",
+        "cheese",
+        "biscuit",
+        "venison",
+        "meat",
+        "fish",
+        "stew",
+        "banana",
+        "roll",
+    })
+    local water = row_has_true_flag(row, {
+        "is_water",
+        "is_drink",
+        "is_drinkable",
+        "is_water_consumable",
+    }) or text_contains_any(text, {
+        "water",
+        "drink",
+        "juice",
+        "tea",
+        "milk",
+        "refreshment",
+    })
+
+    if kind == "food" then
+        return food
+    end
+    if kind == "water" then
+        return water
+    end
+    if kind == "food_or_water" then
+        return food or water
+    end
+    return false
+end
+
+---@private
+---@param row table
+---@return number
+local function consumable_row_item_id(row)
+    if type(row) ~= "table" then
+        return 0
+    end
+    local direct = tonumber(row.item_id) or 0
+    if direct > 0 then
+        return direct
+    end
+
+    local item_obj = unwrap_item_object(row.item or row)
+    return safe_item_id(item_obj)
+end
+
+---@private
+---@param consumables table
+---@param kind string
+---@return number|nil
+local function best_consumable_item_id(consumables, kind)
+    if type(consumables) ~= "table" then
+        return nil
+    end
+
+    local selected = nil
+    for i = 1, #consumables do
+        local row = consumables[i]
+        if consumable_matches_kind(row, kind) then
+            local item_id = consumable_row_item_id(row)
+            if item_id > 0 and (selected == nil or item_id > selected) then
+                selected = item_id
+            end
+        end
+    end
+    return selected
 end
 
 ---@private
@@ -410,14 +612,51 @@ function RotationEngine:_resolve_item_id(action, ctx)
                 local is_health = action.action_type == "use_best_health_potion" and row.is_health_potion == true
                 local is_mana = action.action_type == "use_best_mana_potion" and row.is_mana_potion == true
                 if is_health or is_mana then
-                    local item_obj = unwrap_item_object(row and row.item)
-                    local item_id = safe_item_id(item_obj)
+                    local item_id = consumable_row_item_id(row)
                     if item_id > 0 and (selected == nil or item_id > selected) then
                         selected = item_id
                     end
                 end
             end
             return selected
+        end
+    end
+
+    if action.action_type == "use_item_self"
+        and type(action.item_kind) == "string"
+        and action.item_kind ~= ""
+        and self._inventory_helper
+        and self._inventory_helper.get_current_consumables_list then
+        if self._inventory_helper.update_consumables_list then
+            pcall(self._inventory_helper.update_consumables_list, self._inventory_helper)
+        end
+
+        local list_ok, consumables = pcall(self._inventory_helper.get_current_consumables_list, self._inventory_helper)
+        if list_ok and type(consumables) == "table" then
+            local matched = {}
+            for i = 1, #consumables do
+                local row = consumables[i]
+                if consumable_matches_kind(row, string.lower(action.item_kind)) then
+                    local item_id = consumable_row_item_id(row)
+                    if item_id > 0 then
+                        matched[item_id] = true
+                    end
+                end
+            end
+
+            if type(action.item_id) == "table" then
+                for i = 1, #action.item_id do
+                    local preferred_id = tonumber(action.item_id[i]) or 0
+                    if preferred_id > 0 and matched[preferred_id] == true then
+                        return preferred_id
+                    end
+                end
+            end
+
+            local selected = best_consumable_item_id(consumables, string.lower(action.item_kind))
+            if selected and selected > 0 then
+                return selected
+            end
         end
     end
 
@@ -442,15 +681,30 @@ function RotationEngine:_resolve_item_id(action, ctx)
     return nil
 end
 
+---@private
+---@param action table
+---@param ctx table
+function RotationEngine:_on_action_executed(action, ctx)
+    if type(action) ~= "table" or action.action_type ~= "use_item_self" then
+        return
+    end
+
+    local lock_secs = tonumber(action.rest_lock_secs) or 0
+    if lock_secs <= 0 then
+        return
+    end
+
+    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
+    if self._blackboard and self._blackboard.set then
+        self._blackboard:set("rotation.rest.lock_until", now + lock_secs)
+    end
+end
+
 ---@return boolean
 function RotationEngine:should_hold_maintenance()
     local ctx = self:_build_context()
     if ctx.in_combat == true then
         return false
-    end
-
-    if ctx.eating_or_drinking == true then
-        return true
     end
 
     local provider = self:get_provider(ctx)
@@ -552,9 +806,12 @@ end
 ---@return boolean
 ---@return string|nil
 function RotationEngine:_execute_queue_first(action, ctx)
+    local now = (core and core.time and core.time()) or 0
+
     if action.action_type == "use_best_health_potion" and self._izi and self._izi.use_best_health_potion_safe then
         local ok, used = pcall(self._izi.use_best_health_potion_safe)
         if ok and used == true then
+            self._last_cast_at = now
             return true, nil
         end
     end
@@ -562,11 +819,17 @@ function RotationEngine:_execute_queue_first(action, ctx)
     if action.action_type == "use_best_mana_potion" and self._izi and self._izi.use_best_mana_potion_safe then
         local ok, used = pcall(self._izi.use_best_mana_potion_safe)
         if ok and used == true then
+            self._last_cast_at = now
             return true, nil
         end
     end
 
     if not self._queue then
+        return false, ErrorCodes.CAST_GUARD_BLOCKED
+    end
+
+    local throttle = tonumber(self._cfg.action_throttle) or 0.12
+    if now - self._last_cast_at < throttle then
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
 
@@ -586,20 +849,35 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
+        self._last_cast_at = now
         return true, nil
     end
 
-    if action.action_type == "cast_spell_self" and self._queue.queue_spell_target then
-        if not is_native_game_object(cast_self) then
-            return false, ErrorCodes.CAST_INVALID_TARGET
+    if action.action_type == "cast_spell_self" and self._queue.queue_spell_self then
+        if spell_id <= 0 then
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
-        prepare_target_cast(cast_self, action)
-        local ok = pcall(self._queue.queue_spell_target, self._queue, spell_id, cast_self, qp,
-            "SentinelCore", true)
+        local ok = pcall(
+            self._queue.queue_spell_self,
+            self._queue,
+            spell_id,
+            qp,
+            "SentinelCore",
+            action.allow_movement
+        )
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
+        self._last_cast_at = now
         return true, nil
+    end
+
+    if action.action_type == "cast_spell_self" then
+        if not is_native_game_object(cast_self) then
+            return false, ErrorCodes.CAST_INVALID_TARGET
+        end
+        -- Do not route self-casts through queue_spell_target; some queue adapters swap target to self.
+        return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
 
     if action.action_type == "cast_spell_position" and self._queue.queue_spell_position then
@@ -612,6 +890,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
+        self._last_cast_at = now
         return true, nil
     end
 
@@ -623,6 +902,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
+        self._last_cast_at = now
         return true, nil
     end
 
@@ -635,6 +915,7 @@ function RotationEngine:_execute_queue_first(action, ctx)
         if not ok then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
+        self._last_cast_at = now
         return true, nil
     end
 
@@ -664,8 +945,8 @@ function RotationEngine:_execute_guarded_fallback(action, ctx)
         or action.action_type == "cast_spell_self"
         or action.action_type == "cast_spell_position" then
         if core and core.spell_book and core.spell_book.is_usable_spell then
-            local usable = core.spell_book.is_usable_spell(spell_id)
-            if usable == false then
+            local ok_usable, usable = pcall(core.spell_book.is_usable_spell, spell_id)
+            if ok_usable and usable == false then
                 return false, ErrorCodes.CAST_GUARD_BLOCKED
             end
         end
@@ -695,6 +976,15 @@ function RotationEngine:_execute_guarded_fallback(action, ctx)
         if not is_native_game_object(cast_self) then
             return false, ErrorCodes.CAST_INVALID_TARGET
         end
+        if core and core.input and core.input.cast_self_spell then
+            local ok = core.input.cast_self_spell(spell_id)
+            if ok then
+                self._last_cast_at = now
+                return true, nil
+            end
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end
+
         prepare_target_cast(cast_self, action)
         if core and core.input and core.input.cast_target_spell then
             local ok = core.input.cast_target_spell(spell_id, cast_self)
@@ -776,6 +1066,14 @@ function RotationEngine:_action_allowed(action, ctx)
         return false, ErrorCodes.TARGET_NOT_FOUND
     end
 
+    if action.action_type == "use_item_self" and self._blackboard and self._blackboard.get then
+        local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
+        local lock_until = tonumber(self._blackboard:get("rotation.rest.lock_until", 0)) or 0
+        if lock_until > now then
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end
+    end
+
     if action.target_must_be_casting == true and ctx.target_is_casting ~= true then
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
@@ -823,6 +1121,17 @@ function RotationEngine:_action_allowed(action, ctx)
     local spell_id, spell_err = self:_resolve_action_spell_id(action, ctx)
     if spell_err then
         return false, spell_err
+    end
+
+    if spell_id and spell_id > 0
+        and (action.action_type == "cast_spell_target"
+            or action.action_type == "cast_spell_self"
+            or action.action_type == "cast_spell_position")
+        and core and core.spell_book and core.spell_book.is_usable_spell then
+        local ok_usable, usable = pcall(core.spell_book.is_usable_spell, spell_id)
+        if ok_usable and usable == false then
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end
     end
 
     local _, pos_err = self:_resolve_action_position(action, ctx)
@@ -885,6 +1194,7 @@ end
 function RotationEngine:execute_action(action, ctx)
     local ok, err = self:_execute_queue_first(action, ctx)
     if ok then
+        self:_on_action_executed(action, ctx)
         self._event_bus:emit(Events.ROTATION_EXECUTED, {
             action = action,
             adapter = "queue",
@@ -894,6 +1204,7 @@ function RotationEngine:execute_action(action, ctx)
 
     local fallback_ok, fallback_err = self:_execute_guarded_fallback(action, ctx)
     if fallback_ok then
+        self:_on_action_executed(action, ctx)
         self._event_bus:emit(Events.ROTATION_EXECUTED, {
             action = action,
             adapter = "fallback",
@@ -902,6 +1213,52 @@ function RotationEngine:execute_action(action, ctx)
     end
 
     return false, fallback_err or err
+end
+
+---@private
+---@param action table
+---@param reason string|nil
+---@param index number
+---@return table
+function RotationEngine:_blocked_entry(action, reason, index)
+    return {
+        index = index,
+        reason = reason or ErrorCodes.CAST_GUARD_BLOCKED,
+        action_type = tostring(action and action.action_type or ""),
+        priority = tonumber(action and action.priority) or 0,
+        spell_id = tonumber(action and (action._resolved_spell_id or action.spell_id)) or 0,
+        item_id = tonumber(action and (action._resolved_item_id or action.item_id)) or 0,
+    }
+end
+
+---@private
+---@param reason string|nil
+---@param blocked table[]
+function RotationEngine:_emit_rotation_blocked(reason, blocked)
+    if not self._event_bus then
+        return
+    end
+
+    local now = (core and core.time and core.time()) or 0
+    local top = blocked and blocked[1] or nil
+    local key = string.format(
+        "%s|%s|%d|%d",
+        tostring(reason or ErrorCodes.CAST_GUARD_BLOCKED),
+        tostring(top and top.action_type or ""),
+        tonumber(top and top.spell_id) or 0,
+        tonumber(top and top.item_id) or 0
+    )
+    if key == self._last_blocked_event_key and (now - self._last_blocked_event_at) < 2.00 then
+        return
+    end
+
+    self._last_blocked_event_key = key
+    self._last_blocked_event_at = now
+    self._event_bus:emit(Events.ROTATION_BLOCKED, {
+        timestamp = now,
+        error_code = reason or ErrorCodes.CAST_GUARD_BLOCKED,
+        blocked = blocked or {},
+    })
 end
 
 ---@return table[]|nil
@@ -933,14 +1290,20 @@ end
 ---@private
 ---@param plan table[]
 ---@param ctx table
+---@param opts? table
 ---@return boolean
 ---@return string|nil
-function RotationEngine:_execute_plan(plan, ctx)
+function RotationEngine:_execute_plan(plan, ctx, opts)
+    local emit_blocked = not (type(opts) == "table" and opts.emit_blocked == false)
     if #plan == 0 then
+        if emit_blocked then
+            self:_emit_rotation_blocked(ErrorCodes.CAST_GUARD_BLOCKED, {})
+        end
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
 
     local last_err = ErrorCodes.CAST_GUARD_BLOCKED
+    local blocked = {}
     for i = 1, #plan do
         local action = plan[i]
         local allowed, guard_err = self:_action_allowed(action, ctx)
@@ -950,11 +1313,20 @@ function RotationEngine:_execute_plan(plan, ctx)
                 return true, nil
             end
             last_err = exec_err or guard_err or last_err
+            if #blocked < 4 then
+                blocked[#blocked + 1] = self:_blocked_entry(action, exec_err or guard_err, i)
+            end
         else
             last_err = guard_err or last_err
+            if #blocked < 4 then
+                blocked[#blocked + 1] = self:_blocked_entry(action, guard_err, i)
+            end
         end
     end
 
+    if emit_blocked then
+        self:_emit_rotation_blocked(last_err, blocked)
+    end
     return false, last_err
 end
 
@@ -981,7 +1353,32 @@ function RotationEngine:tick_maintenance_once()
     end
 
     local plan = self:build_maintenance_plan(ctx, provider)
-    return self:_execute_plan(plan, ctx)
+    return self:_execute_plan(plan, ctx, { emit_blocked = false })
+end
+
+---@return table
+function RotationEngine:get_movement_profile()
+    local ctx = self:_build_context()
+    local provider = self:get_provider(ctx)
+
+    local movement = {}
+    if provider and provider.get_movement_profile then
+        local ok_profile, profile = pcall(provider.get_movement_profile, provider, ctx)
+        if ok_profile and type(profile) == "table" then
+            movement = profile
+        end
+    end
+
+    if movement.combat_chase_range == nil and provider and provider.get_pull_profile then
+        local ok_pull, pull = pcall(provider.get_pull_profile, provider, ctx)
+        if ok_pull and type(pull) == "table" then
+            movement.combat_chase_range = tonumber(pull.combat_chase_range) or tonumber(pull.max_pull_range)
+        end
+    end
+
+    return {
+        combat_chase_range = tonumber(movement.combat_chase_range),
+    }
 end
 
 ---@return table
@@ -989,7 +1386,10 @@ function RotationEngine:get_pull_profile()
     local ctx = self:_build_context()
     local provider = self:get_provider(ctx)
     if provider and provider.get_pull_profile then
-        return provider:get_pull_profile(ctx)
+        local ok_profile, profile = pcall(provider.get_pull_profile, provider, ctx)
+        if ok_profile and type(profile) == "table" then
+            return profile
+        end
     end
     return {
         pull_spell_id = nil,

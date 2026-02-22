@@ -1,14 +1,53 @@
 -- Shared Rotation Settings Custom UI
 -- A reusable custom window module for displaying rotation settings across all classes
 
+---@private
+---@param module_name string
+---@param fallback any
+---@return any
+local function require_or(module_name, fallback)
+    local ok, mod = pcall(require, module_name)
+    if ok and mod ~= nil then
+        return mod
+    end
+    return fallback
+end
+
 ---@type color
-local color = require("common/color")
+local color = require_or("common/color", {
+    new = function(r, g, b, a)
+        return { r = r or 0, g = g or 0, b = b or 0, a = a or 255 }
+    end,
+    white = function(a)
+        return { r = 255, g = 255, b = 255, a = a or 255 }
+    end,
+})
 
 ---@type vec2
-local vec2 = require("common/geometry/vector_2")
+local vec2 = require_or("common/geometry/vector_2", {
+    new = function(x, y)
+        return { x = x or 0, y = y or 0 }
+    end,
+})
 
 ---@type enums
-local enums = require("common/enums")
+local enums = require_or("common/enums", {
+    window_enums = {
+        font_id = {
+            FONT_SMALL = 0,
+            FONT_SEMI_BIG = 0,
+        },
+        window_resizing_flags = {
+            RESIZE_BOTH_AXIS = 0,
+        },
+        window_cross_visuals = {
+            DEFAULT = 0,
+        },
+        window_behaviour_flags = {
+            NO_SCROLLBAR = 0,
+        },
+    },
+})
 
 -- ============================================================================
 -- HELPER FUNCTIONS (Menu API Compatibility)
@@ -1239,30 +1278,27 @@ function RotationSettingsUI:_process_key_capture_input()
     end
 
     for key_code = 1, 255 do
-        if key_code == 1 or key_code == 2 then
-            goto continue_key
-        end
-        if core.input.is_key_pressed(key_code) then
-            if key_code == 27 then
+        if key_code ~= 1 and key_code ~= 2 then
+            if core.input.is_key_pressed(key_code) then
+                if key_code == 27 then
+                    self._active_key_capture = nil
+                    return
+                end
+
+                pcall(function()
+                    if key_code == 8 or key_code == 46 then
+                        if self._active_key_capture.element.set_key then
+                            self._active_key_capture.element:set_key(999)
+                        end
+                    elseif self._active_key_capture.element.set_key then
+                        self._active_key_capture.element:set_key(key_code)
+                    end
+                end)
+
                 self._active_key_capture = nil
                 return
             end
-
-            pcall(function()
-                if key_code == 8 or key_code == 46 then
-                    if self._active_key_capture.element.set_key then
-                        self._active_key_capture.element:set_key(999)
-                    end
-                elseif self._active_key_capture.element.set_key then
-                    self._active_key_capture.element:set_key(key_code)
-                end
-            end)
-
-            self._active_key_capture = nil
-            return
         end
-
-        ::continue_key::
     end
 end
 
@@ -1592,35 +1628,31 @@ function RotationSettingsUI:_render_tab_groups(section, y_offset)
     end
 
     for _, group in ipairs(section.groups) do
-        if not self:_is_entry_visible(group) then
-            goto continue_group
-        end
+        if self:_is_entry_visible(group) then
+            if group.label then
+                local label_pos = vec2.new(LAYOUT.padding_side, y_offset)
+                self.window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG, label_pos,
+                    self.colors.text_secondary, group.label)
+                y_offset = y_offset + self.window:get_text_size(group.label).y + 10
+            end
 
-        if group.label then
-            local label_pos = vec2.new(LAYOUT.padding_side, y_offset)
-            self.window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG, label_pos,
-                self.colors.text_secondary, group.label)
-            y_offset = y_offset + self.window:get_text_size(group.label).y + 10
-        end
-
-        if group.type == "checkbox_grid" then
-            y_offset = self:_render_checkbox_grid(group, y_offset)
-        elseif group.type == "slider_list" then
-            y_offset = self:_render_slider_list(group, y_offset)
-        elseif group.type == "combo_list" then
-            y_offset = self:_render_combo_list(group, y_offset)
-        elseif group.type == "segmented_control" then
-            y_offset = self:_render_segmented_control(group, y_offset)
-        elseif group.type == "keybind_grid" then
-            y_offset = self:_render_keybind_grid(group, y_offset)
-        elseif group.type == "custom" and group.render_fn then
-            local ok, new_y = pcall(group.render_fn, self, y_offset)
-            if ok and type(new_y) == "number" then
-                y_offset = new_y
+            if group.type == "checkbox_grid" then
+                y_offset = self:_render_checkbox_grid(group, y_offset)
+            elseif group.type == "slider_list" then
+                y_offset = self:_render_slider_list(group, y_offset)
+            elseif group.type == "combo_list" then
+                y_offset = self:_render_combo_list(group, y_offset)
+            elseif group.type == "segmented_control" then
+                y_offset = self:_render_segmented_control(group, y_offset)
+            elseif group.type == "keybind_grid" then
+                y_offset = self:_render_keybind_grid(group, y_offset)
+            elseif group.type == "custom" and group.render_fn then
+                local ok, new_y = pcall(group.render_fn, self, y_offset)
+                if ok and type(new_y) == "number" then
+                    y_offset = new_y
+                end
             end
         end
-
-        ::continue_group::
     end
 
     return y_offset

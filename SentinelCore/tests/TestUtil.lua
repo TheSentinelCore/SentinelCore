@@ -19,6 +19,12 @@ function TestUtil.install_core_stub(overrides)
     local previous_core = _G.core
     local previous_nav = _G.SentinelNavClient
     local previous_sc = _G.SentinelCore
+    local previous_preload = {}
+    local preload_keys = {
+        "common/color",
+        "common/geometry/vector_2",
+        "common/enums",
+    }
     rawset(_G, "__SentinelCoreHostCore", rawget(_G, "__SentinelCoreHostCore") or previous_core)
 
     local fs = {}
@@ -89,6 +95,7 @@ function TestUtil.install_core_stub(overrides)
         },
         input = {
             cast_target_spell = function() return true end,
+            cast_self_spell = function() return true end,
             cast_position_spell = function() return true end,
             set_target = function() return true end,
             use_item = function() return true end,
@@ -135,6 +142,48 @@ function TestUtil.install_core_stub(overrides)
         end
     end
 
+    previous_preload["common/color"] = package.preload["common/color"]
+    package.preload["common/color"] = function()
+        return {
+            new = function(r, g, b, a)
+                return { r = r or 0, g = g or 0, b = b or 0, a = a or 255 }
+            end,
+            white = function(a)
+                return { r = 255, g = 255, b = 255, a = a or 255 }
+            end,
+        }
+    end
+
+    previous_preload["common/geometry/vector_2"] = package.preload["common/geometry/vector_2"]
+    package.preload["common/geometry/vector_2"] = function()
+        return {
+            new = function(x, y)
+                return { x = x or 0, y = y or 0 }
+            end,
+        }
+    end
+
+    previous_preload["common/enums"] = package.preload["common/enums"]
+    package.preload["common/enums"] = function()
+        return {
+            window_enums = {
+                font_id = {
+                    FONT_SMALL = 0,
+                    FONT_SEMI_BIG = 0,
+                },
+                window_resizing_flags = {
+                    RESIZE_BOTH_AXIS = 0,
+                },
+                window_cross_visuals = {
+                    DEFAULT = 0,
+                },
+                window_behaviour_flags = {
+                    NO_SCROLLBAR = 0,
+                },
+            },
+        }
+    end
+
     _G.core = core_stub
     return {
         core = core_stub,
@@ -143,6 +192,10 @@ function TestUtil.install_core_stub(overrides)
             _G.core = previous_core or rawget(_G, "__SentinelCoreHostCore")
             _G.SentinelNavClient = previous_nav
             _G.SentinelCore = previous_sc
+            for i = 1, #preload_keys do
+                local key = preload_keys[i]
+                package.preload[key] = previous_preload[key]
+            end
         end,
     }
 end

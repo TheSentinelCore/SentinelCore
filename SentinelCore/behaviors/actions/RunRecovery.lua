@@ -1,4 +1,5 @@
 local BT = require("lib/BehaviorTree")
+local ModeState = require("core/ModeState")
 
 ---@param recovery_service RecoveryService
 ---@param command_handlers table
@@ -7,6 +8,7 @@ return function(recovery_service, command_handlers)
     command_handlers = command_handlers or {}
 
     return BT.Action:new(function(bb)
+        ModeState.set_phase(bb, "recover")
         local now = bb:get("_time", 0)
         local command = recovery_service:update(now)
         if not command then

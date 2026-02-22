@@ -36,6 +36,9 @@ local SPELLS = {
 }
 
 local MELEE_RANGE = 5.5
+local JUDGEMENT_RANGE = 10.0
+local JUDGEMENT_CAST_RANGE = 9.0
+local EXECUTE_TARGET_HEALTH_PCT = 0.20
 
 local DEFAULT_POLICY = {
     drink_mana_pct = 0.45,
@@ -45,10 +48,11 @@ local DEFAULT_POLICY = {
     divine_shield_hp_pct = 0.20,
     divine_protection_hp_pct = 0.35,
 
-    holy_light_hp_pct = 0.35,
-    holy_light_min_mana_pct = 0.25,
+    holy_light_hp_pct = 0.60,
+    holy_light_min_mana_pct = 0.22,
 
-    flash_light_hp_pct = 0.60,
+    flash_light_hp_pct = 0.45,
+    flash_light_very_oom_mana_pct = 0.12,
     heal_low_mana_threshold = 0.22,
     heal_critical_mana_threshold = 0.08,
 
@@ -58,6 +62,7 @@ local DEFAULT_POLICY = {
 
     consecration_st_min_mana_pct = 0.35,
     consecration_aoe_min_mana_pct = 0.45,
+    exorcism_min_mana_pct = 0.55,
     holy_wrath_aoe_min_mana_pct = 0.30,
 }
 
@@ -243,15 +248,40 @@ end
 ---@private
 ---@param ctx table
 ---@return number|nil
-local function flash_of_light_by_policy(ctx)
-    local p = policy(ctx)
-    return RankPolicy.select_by_mana_policy(ctx, {
-        spell_name = SpellCatalog.name(SPELLS.FLASH_OF_LIGHT),
-        fallback_ids = SpellCatalog.ids(SPELLS.FLASH_OF_LIGHT),
-        low_mana_rank_ids = SpellCatalog.low_mana_ids(SPELLS.FLASH_OF_LIGHT),
-        low_mana_threshold = p.heal_low_mana_threshold,
-        critical_mana_threshold = p.heal_critical_mana_threshold,
-    })
+local function flash_of_light_max_rank(ctx)
+    return RankPolicy.select_max_rank(ctx, SpellCatalog.name(SPELLS.FLASH_OF_LIGHT), SpellCatalog.ids(SPELLS.FLASH_OF_LIGHT))
+end
+
+---@private
+---@param ctx table
+---@param p table
+---@return boolean
+local function should_hold_flash_for_execute(ctx, p)
+    local target_health_pct = tonumber(ctx and ctx.target_health_pct)
+    if not target_health_pct or target_health_pct > EXECUTE_TARGET_HEALTH_PCT then
+        return false
+    end
+
+    -- In execute range, preserve mana unless player health is in the critical heal band.
+    local player_health_pct = tonumber(ctx and ctx.player_health_pct) or 1.0
+    local critical_heal_floor = tonumber(p and p.holy_light_hp_pct) or 0.35
+    return player_health_pct > critical_heal_floor
+end
+
+---@private
+---@param ctx table
+---@return boolean
+local function target_is_undead_or_demon(ctx)
+    if type(ctx) ~= "table" then
+        return false
+    end
+    if ctx.target_is_undead_or_demon == true then
+        return true
+    end
+    if type(ctx.target_is_creature_type) == "function" then
+        return ctx.target_is_creature_type("undead") or ctx.target_is_creature_type("demon")
+    end
+    return false
 end
 
 ---@private
@@ -320,31 +350,27 @@ end
 ---@return table[]
 function Retribution:maintenance(ctx)
     local p = policy(ctx)
-    local seal_id = preferred_seal_id(ctx)
     local aura_id = resolve_spell(ctx, SPELLS.SANCTITY_AURA)
 
     return {
+        ActionBuilder.item_self(ConsumableCatalog.TBC_FOOD_ITEM_IDS, 985, {
+            max_player_health_pct = p.eat_health_pct,
+            item_kind = "food",
+            rest_lock_secs = 2.0,
+            condition = function(local_ctx)
+                return local_ctx.in_combat ~= true
+                    and local_ctx.player_is_moving ~= true
+                    and local_ctx.eating_or_drinking ~= true
+            end,
+        }),
         ActionBuilder.item_self(ConsumableCatalog.TBC_WATER_ITEM_IDS, 980, {
             max_player_mana_pct = p.drink_mana_pct,
+            item_kind = "water",
+            rest_lock_secs = 2.0,
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
                     and local_ctx.eating_or_drinking ~= true
-            end,
-        }),
-        ActionBuilder.item_self(ConsumableCatalog.TBC_FOOD_ITEM_IDS, 970, {
-            max_player_health_pct = p.eat_health_pct,
-            condition = function(local_ctx)
-                return local_ctx.in_combat ~= true
-                    and local_ctx.player_is_moving ~= true
-                    and local_ctx.eating_or_drinking ~= true
-            end,
-        }),
-        self_spell(function()
-            return seal_id
-        end, 260, {
-            condition = function(local_ctx)
-                return local_ctx.in_combat ~= true and should_reseal(local_ctx)
             end,
         }),
         self_spell(function()
@@ -364,9 +390,6 @@ function Retribution:should_hold_maintenance(ctx)
     if ctx.in_combat == true then
         return false
     end
-    if ctx.eating_or_drinking == true then
-        return true
-    end
 
     local needs_health = ctx.player_health_pct and ctx.player_health_pct < p.eat_health_pct
     local needs_mana = ctx.player_mana_pct and ctx.player_mana_pct < p.drink_mana_pct
@@ -383,7 +406,7 @@ function Retribution:defensive(ctx)
     end
 
     local flash_light = function(local_ctx)
-        return flash_of_light_by_policy(local_ctx)
+        return flash_of_light_max_rank(local_ctx)
     end
 
     return {
@@ -405,15 +428,18 @@ function Retribution:defensive(ctx)
         self_spell(holy_light, 945, {
             max_player_health_pct = p.holy_light_hp_pct,
             min_player_mana_pct = p.holy_light_min_mana_pct,
+            allow_movement = false,
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
             end,
         }),
         self_spell(flash_light, 935, {
             max_player_health_pct = p.flash_light_hp_pct,
-            min_player_mana_pct = p.heal_critical_mana_threshold,
+            max_player_mana_pct = p.flash_light_very_oom_mana_pct,
+            allow_movement = false,
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
+                    and not should_hold_flash_for_execute(local_ctx, p)
             end,
         }),
         ActionBuilder.best_mana_potion(620, {
@@ -479,8 +505,12 @@ function Retribution:combat(ctx)
             max_target_health_pct = 0.20,
             max_target_distance = 30.0,
         }),
+        target_spell(SPELLS.CRUSADER_STRIKE, 555, {
+            max_target_distance = MELEE_RANGE,
+        }),
         target_spell(SPELLS.JUDGEMENT, 550, {
-            max_target_distance = 10.0,
+            max_target_distance = JUDGEMENT_CAST_RANGE,
+            allow_movement = true,
             condition = function(local_ctx)
                 return has_active_seal(local_ctx)
             end,
@@ -492,15 +522,16 @@ function Retribution:combat(ctx)
                 return should_reseal(local_ctx)
             end,
         }),
-        target_spell(SPELLS.CRUSADER_STRIKE, 535, {
-            max_target_distance = MELEE_RANGE,
-        }),
         self_spell(SPELLS.CONSECRATION, 515, {
             max_target_distance = 8.0,
             min_player_mana_pct = p.consecration_st_min_mana_pct,
         }),
         target_spell(SPELLS.EXORCISM, 500, {
             max_target_distance = 30.0,
+            min_player_mana_pct = p.exorcism_min_mana_pct,
+            condition = function(local_ctx)
+                return target_is_undead_or_demon(local_ctx)
+            end,
         }),
     }
 end
@@ -518,9 +549,16 @@ function Retribution:aoe(ctx)
         self_spell(SPELLS.HOLY_WRATH, 560, {
             max_target_distance = 10.0,
             min_player_mana_pct = p.holy_wrath_aoe_min_mana_pct,
+            condition = function(local_ctx)
+                return target_is_undead_or_demon(local_ctx)
+            end,
+        }),
+        target_spell(SPELLS.CRUSADER_STRIKE, 555, {
+            max_target_distance = MELEE_RANGE,
         }),
         target_spell(SPELLS.JUDGEMENT, 550, {
-            max_target_distance = 10.0,
+            max_target_distance = JUDGEMENT_CAST_RANGE,
+            allow_movement = true,
             condition = function(local_ctx)
                 return has_active_seal(local_ctx)
             end,
@@ -531,9 +569,6 @@ function Retribution:aoe(ctx)
             condition = function(local_ctx)
                 return should_reseal(local_ctx)
             end,
-        }),
-        target_spell(SPELLS.CRUSADER_STRIKE, 535, {
-            max_target_distance = MELEE_RANGE,
         }),
         target_spell(SPELLS.HAMMER_OF_WRATH, 520, {
             max_target_health_pct = 0.20,
@@ -549,13 +584,21 @@ function Retribution:get_pull_profile(ctx)
     if not seal then
         return {
             pull_spell_id = nil,
-            max_pull_range = 30,
+            max_pull_range = MELEE_RANGE,
         }
     end
 
     return {
         pull_spell_id = SPELLS.JUDGEMENT,
-        max_pull_range = 30,
+        max_pull_range = JUDGEMENT_CAST_RANGE,
+    }
+end
+
+---@param ctx table
+---@return table
+function Retribution:get_movement_profile(ctx)
+    return {
+        combat_chase_range = MELEE_RANGE,
     }
 end
 

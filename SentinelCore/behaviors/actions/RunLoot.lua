@@ -1,5 +1,6 @@
 local BT = require("lib/BehaviorTree")
 local ErrorCodes = require("events/ErrorCodes")
+local ModeState = require("core/ModeState")
 
 ---@param loot_service LootService
 ---@return table
@@ -14,6 +15,7 @@ return function(loot_service)
 
         if loot_service:get_state() == "completed" then
             clear_pending()
+            ModeState.set_phase(bb, "scout")
             return BT.SUCCESS
         end
 
@@ -37,9 +39,11 @@ return function(loot_service)
                 bb:set("core.fail_reason", err or ErrorCodes.LOOT_FAILED)
                 return BT.FAILURE
             end
+            ModeState.set_phase(bb, "loot")
             return BT.RUNNING
         end
 
+        ModeState.set_phase(bb, "loot")
         local ok, err = loot_service:update()
         if not ok then
             clear_pending()
@@ -49,6 +53,7 @@ return function(loot_service)
 
         if loot_service:get_state() == "completed" then
             clear_pending()
+            ModeState.set_phase(bb, "scout")
             return BT.SUCCESS
         end
 

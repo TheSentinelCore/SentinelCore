@@ -20,6 +20,8 @@ local function build_action(action_type, priority, opts)
         priority = priority,
         allow_movement = opts.allow_movement == true,
         target = target,
+        item_kind = opts.item_kind,
+        rest_lock_secs = opts.rest_lock_secs,
         requires_castable_check = opts.requires_castable_check ~= false and action_type ~= "use_item_self" and
             action_type ~= "use_best_health_potion" and action_type ~= "use_best_mana_potion",
         skip_facing = opts.skip_facing == true,
@@ -55,7 +57,9 @@ function ActionBuilder.self_spell(spell_id, priority, opts)
     opts = opts or {}
     opts.skip_facing = true
     opts.skip_range = true
-    opts.allow_movement = true
+    if opts.allow_movement == nil then
+        opts.allow_movement = true
+    end
     local action = build_action("cast_spell_self", priority, opts)
     action.spell_id = spell_id
     return action

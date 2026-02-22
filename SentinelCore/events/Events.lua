@@ -20,9 +20,17 @@ local Events = {
     TARGET_LOST = "grind.target_lost",
     TARGET_SCORE_DEBUG = "grind.target_score_debug",
 
+    -- Objectives
+    OBJECTIVE_SELECTED = "objective.selected",
+    OBJECTIVE_PROGRESS = "objective.progress",
+    OBJECTIVE_COMPLETED = "objective.completed",
+    OBJECTIVE_FAILED = "objective.failed",
+
     -- Combat
     PULL_STARTED = "combat.pull_started",
     ROTATION_EXECUTED = "combat.rotation_executed",
+    ROTATION_BLOCKED = "combat.rotation_blocked",
+    TARGET_SWITCHED = "combat.target_switched",
     KILL_CONFIRMED = "combat.kill_confirmed",
     COMBAT_FAILED = "combat.failed",
 

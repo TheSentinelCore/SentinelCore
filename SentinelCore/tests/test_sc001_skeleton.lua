@@ -18,10 +18,25 @@ local function run()
 
     local grind = GrindMode:new()
     T.assert_eq(grind:id(), "grind", "grind mode id mismatch")
+    local enter_ctx = {
+        dependencies_ok = true,
+        canonical_context = { map_id = 530, zone_id = 3518, area_id = 3520 },
+    }
 
-    T.assert_true(QuestMode:new():can_enter({}) == false, "quest placeholder must be non-functional")
-    T.assert_true(GatherMode:new():can_enter({}) == false, "gather placeholder must be non-functional")
-    T.assert_true(BgMode:new():can_enter({}) == false, "bg placeholder must be non-functional")
+    local quest = QuestMode:new()
+    local gather = GatherMode:new()
+    local bg = BgMode:new()
+
+    T.assert_true(quest:can_enter(enter_ctx) == true, "quest mode should be functional")
+    T.assert_true(gather:can_enter(enter_ctx) == true, "gather mode should be functional")
+    T.assert_true(bg:can_enter(enter_ctx) == true, "bg mode should be functional")
+
+    local quest_def = quest:get_definition()
+    T.assert_eq(quest_def.id, "quest", "quest mode definition id mismatch")
+    T.assert_true(type(quest_def.phases) == "table" and #quest_def.phases > 0, "quest mode phases missing")
+    T.assert_true(type(quest:get_objective_provider()) == "table", "quest objective provider missing")
+    T.assert_true(type(gather:get_objective_provider()) == "table", "gather objective provider missing")
+    T.assert_true(type(bg:get_objective_provider()) == "table", "bg objective provider missing")
 
     return {
         sc001_layout_loads = true,

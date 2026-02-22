@@ -103,24 +103,84 @@ end
 ---@param mana_type number|nil
 ---@return number|nil
 local function resolve_mana_pct(unit, unit_helper, mana_type)
-    if unit and unit_helper and unit_helper.get_resource_percentage and mana_type ~= nil then
+    if not unit then
+        return nil
+    end
+
+    local function ratio(current, maximum)
+        local c = to_number(current)
+        local m = to_number(maximum)
+        if c == nil or m == nil or m <= 0 then
+            return nil
+        end
+        return normalize_pct(c / m)
+    end
+
+    local helper_pct = nil
+    if unit_helper and unit_helper.get_resource_percentage and mana_type ~= nil then
         local ok, pct = pcall(unit_helper.get_resource_percentage, unit_helper, unit, mana_type)
         if ok then
-            local normalized = normalize_pct(pct)
-            if normalized ~= nil then
-                return normalized
-            end
+            helper_pct = normalize_pct(pct)
         end
     end
 
-    if unit and mana_type ~= nil then
-        local mana = to_number(safe_unit_call(unit, "get_power", mana_type)) or 0
-        local mana_max = to_number(safe_unit_call(unit, "get_max_power", mana_type)) or mana
-        mana_max = math.max(1, mana_max)
-        return normalize_pct(mana / mana_max)
+    local mana_api_pct = ratio(
+        safe_unit_call(unit, "get_mana"),
+        safe_unit_call(unit, "get_max_mana")
+    )
+
+    local power_primary_pct = nil
+    if mana_type ~= nil then
+        power_primary_pct = ratio(
+            safe_unit_call(unit, "get_power", mana_type),
+            safe_unit_call(unit, "get_max_power", mana_type)
+        )
     end
 
-    return nil
+    local power_fallback_zero_pct = nil
+    if mana_type ~= nil then
+        power_fallback_zero_pct = ratio(
+            safe_unit_call(unit, "get_power", 0),
+            safe_unit_call(unit, "get_max_power", 0)
+        )
+    end
+
+    -- Prefer direct power for the declared mana type. If enum mapping is wrong
+    -- and reports 0, fall back to power(0) when it is positive.
+    if power_primary_pct ~= nil then
+        if power_primary_pct > 0 then
+            return power_primary_pct
+        end
+        if mana_type ~= 0 and power_fallback_zero_pct ~= nil and power_fallback_zero_pct > 0 then
+            return power_fallback_zero_pct
+        end
+        if mana_api_pct ~= nil and mana_api_pct > 0 then
+            return mana_api_pct
+        end
+        if helper_pct ~= nil and helper_pct > 0 then
+            return helper_pct
+        end
+        return power_primary_pct
+    end
+
+    if power_fallback_zero_pct ~= nil then
+        if power_fallback_zero_pct > 0 then
+            return power_fallback_zero_pct
+        end
+        if mana_api_pct ~= nil and mana_api_pct > 0 then
+            return mana_api_pct
+        end
+        if helper_pct ~= nil and helper_pct > 0 then
+            return helper_pct
+        end
+        return power_fallback_zero_pct
+    end
+
+    if mana_api_pct ~= nil then
+        return mana_api_pct
+    end
+
+    return helper_pct
 end
 
 ---@private
@@ -215,6 +275,112 @@ local function resolve_eating_or_drinking(player, enums)
     return false
 end
 
+---@private
+---@param blackboard Blackboard|nil
+---@param now number
+---@return number
+local function resolve_rest_lock_until(blackboard, now)
+    if not blackboard or type(blackboard.get) ~= "function" then
+        return 0
+    end
+    local lock_until = tonumber(blackboard:get("rotation.rest.lock_until", 0)) or 0
+    if lock_until <= now then
+        return 0
+    end
+    return lock_until
+end
+
+local CREATURE_TYPE_ID = {
+    DEMON = 3,
+    UNDEAD = 6,
+}
+
+---@private
+---@param value any
+---@return string|nil
+local function normalize_creature_type_name(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+
+    local lowered = string.lower(value)
+    if lowered == "" then
+        return nil
+    end
+    return lowered
+end
+
+---@private
+---@param unit game_object|nil
+---@return number|nil
+---@return string|nil
+local function resolve_creature_type(unit)
+    if not unit then
+        return nil, nil
+    end
+
+    if safe_unit_call(unit, "is_undead") == true then
+        return CREATURE_TYPE_ID.UNDEAD, "undead"
+    end
+    if safe_unit_call(unit, "is_demon") == true then
+        return CREATURE_TYPE_ID.DEMON, "demon"
+    end
+
+    local id = nil
+    local name = nil
+
+    local methods = {
+        "get_creature_type",
+        "get_creature_type_id",
+        "get_unit_type",
+    }
+    for i = 1, #methods do
+        local value = safe_unit_call(unit, methods[i])
+        if type(value) == "number" and id == nil then
+            id = tonumber(value)
+        elseif type(value) == "string" and name == nil then
+            name = normalize_creature_type_name(value)
+        elseif type(value) == "table" then
+            if id == nil then
+                id = tonumber(value.id or value.type_id or value.creature_type)
+            end
+            if name == nil then
+                name = normalize_creature_type_name(value.name or value.type or value.creature_type_name)
+            end
+        end
+    end
+
+    if name == nil then
+        name = normalize_creature_type_name(safe_unit_call(unit, "get_creature_type_name"))
+    end
+
+    return id, name
+end
+
+---@private
+---@param creature_type_id number|nil
+---@param creature_type_name string|nil
+---@param wanted string
+---@return boolean
+local function creature_type_matches(creature_type_id, creature_type_name, wanted)
+    local key = string.upper(tostring(wanted or ""))
+    if key == "" then
+        return false
+    end
+
+    local normalized_name = normalize_creature_type_name(creature_type_name)
+    if normalized_name and string.find(normalized_name, string.lower(key), 1, true) ~= nil then
+        return true
+    end
+
+    local wanted_id = CREATURE_TYPE_ID[key]
+    if wanted_id and tonumber(creature_type_id) == wanted_id then
+        return true
+    end
+
+    return false
+end
+
 ---@param deps table
 ---@return table
 function CombatContext:build(deps)
@@ -251,8 +417,15 @@ function CombatContext:build(deps)
     end
 
     local target_is_casting = safe_unit_call(target, "is_casting_spell") == true
+    local target_creature_type_id, target_creature_type_name = resolve_creature_type(target)
+    local target_is_demon = creature_type_matches(target_creature_type_id, target_creature_type_name, "demon")
+    local target_is_undead = creature_type_matches(target_creature_type_id, target_creature_type_name, "undead")
+    local target_is_player = safe_unit_call(target, "is_player") == true
+        or safe_unit_call(target, "is_player_unit") == true
     local player_is_moving = resolve_player_moving(player)
-    local eating_or_drinking = resolve_eating_or_drinking(player, enums)
+    local now = (core and core.time and core.time()) or 0
+    local rest_lock_until = resolve_rest_lock_until(bb, now)
+    local eating_or_drinking = resolve_eating_or_drinking(player, enums) or rest_lock_until > now
 
     local function player_has_aura(spec)
         return unit_has_aura(player, spec)
@@ -260,6 +433,13 @@ function CombatContext:build(deps)
 
     local function target_has_aura(spec)
         return unit_has_aura(target, spec)
+    end
+
+    local function target_is_creature_type(spec)
+        if type(spec) ~= "string" then
+            return false
+        end
+        return creature_type_matches(target_creature_type_id, target_creature_type_name, spec)
     end
 
     local pet = safe_unit_call(player, "get_pet")
@@ -286,17 +466,25 @@ function CombatContext:build(deps)
         spec_id = bb:get("player.spec_id", 0),
         enemy_count = bb:get("combat.enemy_count", 1),
         in_combat = bb:get("player.in_combat", false),
-        now = (core and core.time and core.time()) or 0,
+        now = now,
         player_health_pct = player_health_pct,
         player_mana_pct = player_mana_pct,
         target_health_pct = target_health_pct,
         target_distance = target_distance,
         target_is_casting = target_is_casting,
+        target_is_player = target_is_player,
+        target_creature_type_id = target_creature_type_id,
+        target_creature_type_name = target_creature_type_name,
+        target_is_demon = target_is_demon,
+        target_is_undead = target_is_undead,
+        target_is_undead_or_demon = target_is_demon or target_is_undead,
         player_is_moving = player_is_moving,
         eating_or_drinking = eating_or_drinking,
+        rest_lock_until = rest_lock_until,
         routine_policy = bb:get("rotation.policy"),
         player_has_aura = player_has_aura,
         target_has_aura = target_has_aura,
+        target_is_creature_type = target_is_creature_type,
         pet = pet,
         pet_health_pct = pet_health_pct,
         resolve_spell_id = resolve_spell_id,

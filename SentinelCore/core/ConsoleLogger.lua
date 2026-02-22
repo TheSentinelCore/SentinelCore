@@ -123,6 +123,44 @@ function ConsoleLogger:_bind()
     self._event_bus:on(Events.RECOVERY_COMPLETED, function()
         self:_log("info", "recovery completed", Events.RECOVERY_COMPLETED)
     end, { owner = self })
+
+    self._event_bus:on(Events.TARGET_SWITCHED, function(data)
+        self:_log("warn", string.format(
+            "combat target switched (%s): %s -> %s",
+            tostring(data and data.reason or "unknown"),
+            tostring(data and data.from_target_name or "unknown"),
+            tostring(data and data.to_target_name or "unknown")
+        ), Events.TARGET_SWITCHED)
+    end, { owner = self })
+
+    self._event_bus:on(Events.OBJECTIVE_SELECTED, function(data)
+        local objective = data and data.objective or {}
+        self:_log("info", string.format(
+            "objective selected (%s): %s",
+            tostring(data and data.mode or "unknown"),
+            tostring(objective.label or objective.id or "objective")
+        ), Events.OBJECTIVE_SELECTED)
+    end, { owner = self })
+
+    self._event_bus:on(Events.OBJECTIVE_COMPLETED, function(data)
+        local objective = data and data.objective or {}
+        self:_log("info", string.format(
+            "objective completed (%s): %s",
+            tostring(data and data.mode or "unknown"),
+            tostring(objective.label or objective.id or "objective")
+        ), Events.OBJECTIVE_COMPLETED)
+    end, { owner = self })
+
+    self._event_bus:on(Events.OBJECTIVE_FAILED, function(data)
+        local objective = data and data.objective or {}
+        self:_log("warn", string.format(
+            "objective failed (%s): %s err=%s",
+            tostring(data and data.mode or "unknown"),
+            tostring(objective.label or objective.id or "objective"),
+            tostring(data and data.error_code or "unknown")
+        ), Events.OBJECTIVE_FAILED)
+    end, { owner = self })
+
 end
 
 function ConsoleLogger:set_enabled(enabled)

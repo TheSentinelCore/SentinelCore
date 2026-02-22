@@ -79,6 +79,9 @@ function RecoveryService:update(now)
     local backoff = self._cfg.auto_restart_backoff_secs or { 2, 5, 10 }
 
     if self._stage == "reported" then
+        local idx = math.min(#backoff, self._attempts_used + 1)
+        local delay = tonumber(backoff[idx]) or 1
+        self._next_restart_at = now + delay
         self._stage = "paused"
         return {
             action = "pause",
@@ -111,7 +114,9 @@ function RecoveryService:update(now)
         if now >= self._next_restart_at then
             self._attempts_used = self._attempts_used + 1
             self._stage = "restarting"
-            self._next_restart_at = 0
+            local next_idx = math.min(#backoff, self._attempts_used + 1)
+            local next_delay = tonumber(backoff[next_idx]) or 1
+            self._next_restart_at = now + next_delay
             self._event_bus:emit(Events.RECOVERY_ESCALATED, {
                 timestamp = now,
                 stage = "restart",

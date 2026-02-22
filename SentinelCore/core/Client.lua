@@ -9,9 +9,11 @@ local Config = require("core/Config")
 local Sensors = require("core/Sensors")
 local Telemetry = require("core/Telemetry")
 local ConsoleLogger = require("core/ConsoleLogger")
+local ModeState = require("core/ModeState")
 
 local NavigationAdapter = require("services/NavigationAdapter")
 local WorldDataAdapter = require("services/WorldDataAdapter")
+local ObjectiveService = require("services/ObjectiveService")
 local TargetingService = require("services/TargetingService")
 local RotationEngine = require("services/RotationEngine")
 local CombatService = require("services/CombatService")
@@ -36,6 +38,8 @@ local BgMode = require("modes/BgMode")
 ---@field private _services table
 ---@field private _modes table<string, table>
 ---@field private _active_mode table|nil
+---@field private _active_mode_id string|nil
+---@field private _active_mode_definition table|nil
 ---@field private _active_tree table|nil
 ---@field private _started boolean
 ---@field private _context_pending boolean
@@ -109,6 +113,7 @@ function Client:new(config)
 
     local navigation = config.navigation_adapter or NavigationAdapter:new(o._event_bus, o._blackboard)
     local world_data = config.world_data_adapter or WorldDataAdapter:new(o._event_bus, o._blackboard, runtime_cfg.world_data)
+    local objective = config.objective_service or ObjectiveService:new(o._event_bus, o._blackboard, runtime_cfg.objective)
     local targeting = config.targeting_service or TargetingService:new(o._event_bus, o._blackboard, runtime_cfg.targeting)
     local rotation = config.rotation_engine or RotationEngine:new(o._event_bus, o._blackboard, runtime_cfg.combat)
     local combat = config.combat_service or CombatService:new(o._event_bus, o._blackboard, navigation, targeting, rotation, runtime_cfg.combat)
@@ -123,6 +128,7 @@ function Client:new(config)
         blackboard = o._blackboard,
         navigation = navigation,
         world_data = world_data,
+        objective = objective,
         targeting = targeting,
         rotation = rotation,
         combat = combat,
@@ -133,6 +139,7 @@ function Client:new(config)
     }
 
     o._service_update_order = {
+        "objective",
         "targeting",
         "combat",
         "loot",
@@ -147,6 +154,8 @@ function Client:new(config)
         bg = BgMode:new(),
     }
     o._active_mode = nil
+    o._active_mode_id = nil
+    o._active_mode_definition = nil
     o._active_tree = nil
 
     return o
@@ -168,6 +177,30 @@ end
 ---@return table|nil
 function Client:_get_mode(mode_id)
     return self._modes[mode_id]
+end
+
+---@private
+---@param mode table
+---@param mode_id string
+---@return table
+function Client:_resolve_mode_definition(mode, mode_id)
+    local raw_definition = nil
+    if mode and type(mode.get_definition) == "function" then
+        local ok, value = pcall(mode.get_definition, mode)
+        if ok and type(value) == "table" then
+            raw_definition = value
+        end
+    end
+    if type(raw_definition) ~= "table" then
+        raw_definition = { id = mode_id }
+    end
+    if raw_definition.id == nil and raw_definition.mode_id == nil then
+        raw_definition.id = mode_id
+    end
+
+    local definition = ModeState.normalize_definition(raw_definition)
+    self._state_machine:register_mode(definition.id, definition.phases, definition.default_phase)
+    return definition
 end
 
 ---@private
@@ -204,6 +237,9 @@ function Client:_apply_runtime_bindings()
     end
     if self._services.targeting then
         self._services.targeting._cfg = Defaults.copy(runtime_cfg.targeting or {})
+    end
+    if self._services.objective then
+        self._services.objective._cfg = Defaults.copy(runtime_cfg.objective or {})
     end
     if self._services.rotation then
         self._services.rotation._cfg = Defaults.copy(runtime_cfg.combat or {})
@@ -257,7 +293,7 @@ function Client:_write_runtime_state(force)
         }
     end
 
-    local anchor = self._blackboard:get("grind.anchor")
+    local anchor = self._blackboard:get("core.mode_anchor") or self._blackboard:get("grind.anchor")
     if anchor then
         runtime_state.last_grind_anchor = {
             x = anchor.x or 0,
@@ -395,9 +431,22 @@ end
 
 ---@private
 ---@param mode table
-function Client:_bind_mode_tree(mode)
+---@param mode_definition table
+---@return boolean
+---@return string|nil
+function Client:_bind_mode_tree(mode, mode_definition)
+    mode_definition = mode_definition or ModeState.normalize_definition({
+        id = mode and mode.id and mode:id() or ModeState.default_mode_id(),
+    })
     self._active_mode = mode
-    self._active_tree = mode:build_tree(self._services, {
+    self._active_mode_id = mode_definition.id
+    self._active_mode_definition = Defaults.copy(mode_definition)
+
+    self._state_machine:set_active_mode(mode_definition.id)
+    self._blackboard:set("core.mode", mode_definition.id)
+    self._blackboard:set("core.mode_definition", Defaults.copy(mode_definition))
+
+    local tree = mode:build_tree(self._services, {
         pause = function(reason)
             self:pause(reason)
         end,
@@ -409,6 +458,32 @@ function Client:_bind_mode_tree(mode)
             self._state_machine:transition("failed", { failure_code = error_code })
         end,
     })
+    if tree == nil then
+        self._active_tree = nil
+        return false, ErrorCodes.MODE_NOT_AVAILABLE
+    end
+
+    self._active_tree = tree
+    return true, nil
+end
+
+---@private
+---@param mode table
+---@param mode_definition table
+function Client:_configure_mode_objectives(mode, mode_definition)
+    if not self._services.objective or not self._services.objective.set_mode then
+        return
+    end
+
+    local objective_provider = nil
+    if mode and type(mode.get_objective_provider) == "function" then
+        local ok_provider, provider = pcall(mode.get_objective_provider, mode)
+        if ok_provider then
+            objective_provider = provider
+        end
+    end
+
+    self._services.objective:set_mode(mode_definition.id, objective_provider, self._services)
 end
 
 ---@param mode_id string
@@ -455,26 +530,41 @@ function Client:start(mode_id, opts)
         })
         return false, ErrorCodes.MODE_NOT_AVAILABLE
     end
+    local mode_definition = self:_resolve_mode_definition(mode, mode_id)
+    if mode_definition.functional == false then
+        self._state_machine:transition("failed", {
+            failure_code = ErrorCodes.MODE_NOT_AVAILABLE,
+        })
+        return false, ErrorCodes.MODE_NOT_AVAILABLE
+    end
 
     if self._state_machine:get_state() == "failed" then
         self._state_machine:reset()
     end
 
+    self._state_machine:set_active_mode(mode_definition.id)
     local transitioned, transition_err = self._state_machine:transition("running", {
-        substate = "running.grind.scout",
+        mode_id = mode_definition.id,
+        substate = ModeState.compose_substate(mode_definition.id, mode_definition.default_phase),
     })
     if not transitioned then
         return false, ErrorCodes.STATE_TRANSITION_INVALID .. ":" .. tostring(transition_err)
     end
 
-    self:_bind_mode_tree(mode)
+    local bind_ok, bind_err = self:_bind_mode_tree(mode, mode_definition)
+    if not bind_ok then
+        self._state_machine:transition("failed", {
+            failure_code = bind_err or ErrorCodes.MODE_NOT_AVAILABLE,
+        })
+        return false, bind_err or ErrorCodes.MODE_NOT_AVAILABLE
+    end
     self._active_mode:on_enter({})
+    self:_configure_mode_objectives(mode, mode_definition)
 
     self._started = true
-    self._blackboard:set("core.mode", mode_id)
     self._event_bus:emit(Events.STARTED, {
         timestamp = (core and core.time and core.time()) or 0,
-        mode = mode_id,
+        mode = mode_definition.id,
         session_id = self._telemetry:get_session_id(),
     })
 
@@ -498,6 +588,9 @@ function Client:stop(reason)
     end
 
     self._services.navigation:stop()
+    if self._services.objective and self._services.objective.reset then
+        self._services.objective:reset()
+    end
     self._services.combat:reset()
     self._services.loot:reset()
     self._services.vendor:reset()
@@ -507,6 +600,11 @@ function Client:stop(reason)
     self._context_pending = false
     self._active_tree = nil
     self._active_mode = nil
+    self._active_mode_id = nil
+    self._active_mode_definition = nil
+    self._blackboard:clear("core.mode")
+    self._blackboard:clear("core.mode_definition")
+    self._blackboard:clear("core.mode_anchor")
     self._blackboard:clear("core.fail_reason")
     self._blackboard:clear("core.fail_detail")
 
@@ -559,8 +657,24 @@ function Client:resume()
         return false
     end
 
+    local mode_definition = self._active_mode_definition
+    if type(mode_definition) ~= "table" then
+        mode_definition = self._blackboard:get("core.mode_definition")
+    end
+    if type(mode_definition) ~= "table" then
+        mode_definition = ModeState.normalize_definition({
+            id = self._blackboard:get("core.mode") or ModeState.default_mode_id(),
+        })
+    else
+        mode_definition = ModeState.normalize_definition(mode_definition)
+    end
+
+    self._state_machine:register_mode(mode_definition.id, mode_definition.phases, mode_definition.default_phase)
+    self._state_machine:set_active_mode(mode_definition.id)
+
     local ok = self._state_machine:transition("running", {
-        substate = "running.grind.scout",
+        mode_id = mode_definition.id,
+        substate = ModeState.compose_substate(mode_definition.id, mode_definition.default_phase),
     })
     if not ok then
         return false
@@ -592,6 +706,8 @@ function Client:update()
             local can_enter = self._active_mode:can_enter({
                 dependencies_ok = true,
                 canonical_context = self._blackboard:get("context.canonical"),
+                mode_id = self._active_mode_id,
+                mode_definition = self._active_mode_definition,
             })
             if not can_enter then
                 self:_report_critical(ErrorCodes.MODE_CAN_ENTER_FAILED, { stage = "mode_tick" })
@@ -633,6 +749,10 @@ end
 function Client:get_snapshot()
     local canonical = self._blackboard:get("context.canonical") or {}
     local telemetry = self._telemetry:get_snapshot()
+    local objective_snapshot = {}
+    if self._services.objective and self._services.objective.get_snapshot then
+        objective_snapshot = self._services.objective:get_snapshot()
+    end
 
     return {
         timestamp = self._blackboard:get("_time", 0),
@@ -640,6 +760,7 @@ function Client:get_snapshot()
         state = self._state_machine:get_state(),
         substate = self._state_machine:get_substate(),
         full_state = self._state_machine:get_full_state(),
+        mode = self._active_mode_id or self._blackboard:get("core.mode"),
         fail_reason = self._blackboard:get("core.fail_reason"),
         context = {
             ui_map_id = self._blackboard:get("context.ui_map_id"),
@@ -658,6 +779,7 @@ function Client:get_snapshot()
             free_slots = self._blackboard:get("inventory.free_slots", 0),
             needs_vendor = self._blackboard:get("inventory.needs_vendor", false),
         },
+        objective = objective_snapshot,
         telemetry = telemetry,
     }
 end
@@ -742,6 +864,122 @@ end
 ---@return string
 function Client:get_active_profile_id()
     return self._config:get_active_profile_id()
+end
+
+---@return table[]
+function Client:list_modes()
+    local mode_ids = {}
+    for mode_id, _ in pairs(self._modes) do
+        mode_ids[#mode_ids + 1] = mode_id
+    end
+    table.sort(mode_ids)
+
+    local out = {}
+    for i = 1, #mode_ids do
+        local mode_id = mode_ids[i]
+        local mode = self._modes[mode_id]
+        local definition = self:_resolve_mode_definition(mode, mode_id)
+        out[#out + 1] = {
+            id = definition.id,
+            functional = definition.functional == true,
+            default_phase = definition.default_phase,
+            phases = Defaults.copy(definition.phases),
+            capability_flags = Defaults.copy(definition.capability_flags),
+            description = definition.description,
+        }
+    end
+    return out
+end
+
+---@return string|nil
+function Client:get_active_mode_id()
+    return self._active_mode_id or self._blackboard:get("core.mode")
+end
+
+---@private
+---@param mode_id string
+---@return string
+function Client:_objective_queue_key(mode_id)
+    return string.format("objective.%s.queue", tostring(mode_id))
+end
+
+---@private
+---@param mode_id string
+---@return string
+function Client:_objective_index_key(mode_id)
+    return string.format("objective.%s.queue_index", tostring(mode_id))
+end
+
+---@private
+---@param mode_id string
+---@return string
+function Client:_objective_loop_key(mode_id)
+    return string.format("objective.%s.loop", tostring(mode_id))
+end
+
+---@param mode_id string
+---@param waypoints table[]
+---@param opts? table
+---@return boolean
+---@return string|nil
+function Client:set_mode_objective_queue(mode_id, waypoints, opts)
+    opts = opts or {}
+    if type(waypoints) ~= "table" then
+        return false, ErrorCodes.INVALID_PARAMS
+    end
+
+    local normalized_mode = ModeState.normalize_definition({ id = mode_id }).id
+    local queue = {}
+    for i = 1, #waypoints do
+        local waypoint = waypoints[i]
+        if type(waypoint) ~= "table" then
+            return false, ErrorCodes.INVALID_PARAMS
+        end
+        local x = tonumber(waypoint.x)
+        local y = tonumber(waypoint.y)
+        local z = tonumber(waypoint.z)
+        if x == nil or y == nil or z == nil then
+            return false, ErrorCodes.INVALID_PARAMS
+        end
+
+        queue[#queue + 1] = {
+            x = x,
+            y = y,
+            z = z,
+            label = waypoint.label ~= nil and tostring(waypoint.label) or nil,
+            arrive_distance = tonumber(waypoint.arrive_distance),
+            reissue_secs = tonumber(waypoint.reissue_secs),
+            timeout_secs = tonumber(waypoint.timeout_secs),
+        }
+    end
+
+    self._blackboard:set(self:_objective_queue_key(normalized_mode), queue)
+    self._blackboard:set(self:_objective_index_key(normalized_mode), 1)
+    if opts.loop ~= nil then
+        self._blackboard:set(self:_objective_loop_key(normalized_mode), opts.loop == true)
+    end
+    return true, nil
+end
+
+---@param mode_id string
+---@return table[]
+---@return table
+function Client:get_mode_objective_queue(mode_id)
+    local normalized_mode = ModeState.normalize_definition({ id = mode_id }).id
+    local queue = self._blackboard:get(self:_objective_queue_key(normalized_mode)) or {}
+    local metadata = {
+        index = tonumber(self._blackboard:get(self:_objective_index_key(normalized_mode), 1)) or 1,
+        loop = self._blackboard:get(self:_objective_loop_key(normalized_mode), false) == true,
+    }
+    return Defaults.copy(queue), metadata
+end
+
+---@param mode_id string
+function Client:clear_mode_objective_queue(mode_id)
+    local normalized_mode = ModeState.normalize_definition({ id = mode_id }).id
+    self._blackboard:set(self:_objective_queue_key(normalized_mode), {})
+    self._blackboard:set(self:_objective_index_key(normalized_mode), 1)
+    self._blackboard:clear(self:_objective_loop_key(normalized_mode))
 end
 
 ---@param profile_id string

@@ -36,6 +36,8 @@ function Telemetry:new(event_bus, blackboard, flush_interval)
         failures = 0,
         pauses = 0,
         resumes = 0,
+        objectives_completed = 0,
+        objective_failures = 0,
     }
     o._rates = {
         xp_per_hour = 0,
@@ -85,6 +87,14 @@ function Telemetry:_bind_events()
 
     self._event_bus:on(Events.RESUMED, function()
         self._counters.resumes = self._counters.resumes + 1
+    end, { owner = self })
+
+    self._event_bus:on(Events.OBJECTIVE_COMPLETED, function()
+        self._counters.objectives_completed = self._counters.objectives_completed + 1
+    end, { owner = self })
+
+    self._event_bus:on(Events.OBJECTIVE_FAILED, function()
+        self._counters.objective_failures = self._counters.objective_failures + 1
     end, { owner = self })
 end
 

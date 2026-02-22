@@ -506,7 +506,7 @@ function VendorService:update()
     end
 
     local return_enabled = self._cfg.return_to_anchor ~= false
-    local anchor = self._blackboard:get("grind.anchor")
+    local anchor = self._blackboard:get("core.mode_anchor") or self._blackboard:get("grind.anchor")
     if return_enabled and anchor then
         self._state = "returning"
         self._return_started_at = now
