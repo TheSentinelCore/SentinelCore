@@ -141,6 +141,23 @@ local function run()
     T.assert_true(target4 == nil and err4 ~= nil,
         "targeting should skip opposing-faction players when they are not attacking us")
 
+    -- Faction filter must still work when player.faction_team is absent and only faction_id/object data exists.
+    bb:clear("player.faction_team")
+    bb:set("player.faction_id", 67) -- horde
+    core.object_manager.get_visible_objects = function()
+        return { hostile_player_idle }
+    end
+    local target4b, err4b = targeting:acquire_target()
+    T.assert_true(target4b == nil and err4b ~= nil,
+        "targeting should still skip proactive opposing-faction pulls when faction team key is missing")
+    core.object_manager.get_visible_objects = function()
+        return { hostile_player_attacking }
+    end
+    local target4c, err4c = targeting:acquire_target()
+    T.assert_true(target4c ~= nil and target4c:get_name() == "HostilePlayerAttacking",
+        "targeting should still defend against opposing-faction attackers when faction team key is missing")
+    bb:set("player.faction_team", "horde")
+
     local passive_pull_target = T.mock_object({
         name = "PassivePullTarget",
         level = 10,

@@ -418,6 +418,28 @@ function TargetingService:get_adaptive_radius()
 end
 
 ---@private
+---@param player game_object|nil
+---@return string|nil
+function TargetingService:_resolve_player_team(player)
+    local team = FactionResolver.resolve_team(self._blackboard:get("player.faction_team"))
+    if team ~= nil and team ~= "" then
+        return team
+    end
+
+    team = FactionResolver.resolve_team(self._blackboard:get("player.faction_id"))
+    if team ~= nil and team ~= "" then
+        return team
+    end
+
+    team = FactionResolver.resolve_team(safe_method(player, "get_faction_id"))
+    if team ~= nil and team ~= "" then
+        return team
+    end
+
+    return nil
+end
+
+---@private
 ---@return number
 ---@return table
 function TargetingService:_resolve_pull_risk_budget()
@@ -877,7 +899,7 @@ function TargetingService:acquire_target()
     end
     local now = now_seconds()
     self:_prune_target_memory(now)
-    local player_team = FactionResolver.resolve_team(self._blackboard:get("player.faction_team", ""))
+    local player_team = self:_resolve_player_team(player)
 
     local objects = {}
     if core and core.object_manager and core.object_manager.get_visible_objects then
@@ -994,7 +1016,7 @@ function TargetingService:acquire_defensive_target(preferred_target)
 
     local radius = tonumber(self._cfg.defensive_retarget_radius) or tonumber(self._cfg.max_radius) or 75.0
     local player_pos = self._blackboard:get("player.position")
-    local player_team = FactionResolver.resolve_team(self._blackboard:get("player.faction_team", ""))
+    local player_team = self:_resolve_player_team(player)
     local target = find_defensive_target(
         objects,
         player,
