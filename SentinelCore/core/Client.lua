@@ -22,6 +22,7 @@ local LootService = require("services/LootService")
 local InventoryService = require("services/InventoryService")
 local VendorService = require("services/VendorService")
 local RecoveryService = require("services/RecoveryService")
+local DeathRecoveryService = require("services/DeathRecoveryService")
 
 local GrindMode = require("modes/GrindMode")
 local QuestMode = require("modes/QuestMode")
@@ -134,6 +135,9 @@ function Client:new(config)
     local inventory = config.inventory_service or InventoryService:new(o._event_bus, o._blackboard, runtime_cfg.inventory, o._config:get_policy())
     local vendor = config.vendor_service or VendorService:new(o._event_bus, o._blackboard, navigation, world_data, inventory, runtime_cfg.vendor, o._config:get_vendor_cache())
     local recovery = config.recovery_service or RecoveryService:new(o._event_bus, o._blackboard, runtime_cfg.recovery)
+    local death_recovery = config.death_recovery_service or DeathRecoveryService:new(
+        o._event_bus, o._blackboard, runtime_cfg.death, navigation
+    )
 
     o._services = {
         blackboard = o._blackboard,
@@ -148,6 +152,7 @@ function Client:new(config)
         inventory = inventory,
         vendor = vendor,
         recovery = recovery,
+        death_recovery = death_recovery,
     }
 
     o._service_update_order = {
@@ -274,6 +279,9 @@ function Client:_apply_runtime_bindings()
     end
     if self._services.recovery then
         self._services.recovery._cfg = Defaults.copy(runtime_cfg.recovery or {})
+    end
+    if self._services.death_recovery then
+        self._services.death_recovery._cfg = Defaults.copy(runtime_cfg.death or {})
     end
 
     local idle_threshold = tonumber(runtime_cfg and runtime_cfg.telemetry and runtime_cfg.telemetry.idle_full_resource_threshold)
@@ -619,6 +627,9 @@ function Client:stop(reason)
         self._services.exploration:reset()
     end
     self._services.targeting:clear_target("stop")
+    if self._services.death_recovery and self._services.death_recovery.reset then
+        self._services.death_recovery:reset()
+    end
 
     self._context_pending = false
     self._active_tree = nil
@@ -720,31 +731,50 @@ function Client:update()
     local now = self._blackboard:get("_time", 0)
 
     if state == "running" then
-        -- 2) Dependency health checks.
+        -- 2) Dependency health checks (nav needed for corpse run).
         self:_dependency_health_check(false)
 
-        -- 3) Mode controller tick.
-        self:_resolve_context_if_due(false)
-        if self._active_mode and self._active_tree and self._blackboard:has("context.canonical") then
-            local can_enter = self._active_mode:can_enter({
-                dependencies_ok = true,
-                canonical_context = self._blackboard:get("context.canonical"),
-                mode_id = self._active_mode_id,
-                mode_definition = self._active_mode_definition,
-            })
-            if not can_enter then
-                self:_report_critical(ErrorCodes.MODE_CAN_ENTER_FAILED, { stage = "mode_tick" })
-            else
-                self._active_mode:tick({})
-            end
+        -- 3) Death recovery gate.
+        local was_dead = self._services.death_recovery:is_active()
+        self._services.death_recovery:update()
+        local is_dead = self._services.death_recovery:is_active()
+
+        -- Post-resurrection cleanup: clear stale service state.
+        if was_dead and not is_dead then
+            self._services.combat:reset()
+            self._services.loot:reset()
+            self._services.targeting:clear_target("resurrected")
         end
 
-        -- 4) Service updates.
-        self:_service_updates()
+        if is_dead then
+            -- While dead, skip mode tick + service updates.
+            -- Recovery supervisor still runs for stuck detection.
+            local recovery_command = self._services.recovery:update(now)
+            self:_apply_recovery_command(recovery_command)
+        else
+            -- 4) Normal operations.
+            self:_resolve_context_if_due(false)
+            if self._active_mode and self._active_tree and self._blackboard:has("context.canonical") then
+                local can_enter = self._active_mode:can_enter({
+                    dependencies_ok = true,
+                    canonical_context = self._blackboard:get("context.canonical"),
+                    mode_id = self._active_mode_id,
+                    mode_definition = self._active_mode_definition,
+                })
+                if not can_enter then
+                    self:_report_critical(ErrorCodes.MODE_CAN_ENTER_FAILED, { stage = "mode_tick" })
+                else
+                    self._active_mode:tick({})
+                end
+            end
 
-        -- 5) Recovery supervisor.
-        local recovery_command = self._services.recovery:update(now)
-        self:_apply_recovery_command(recovery_command)
+            -- 5) Service updates.
+            self:_service_updates()
+
+            -- 6) Recovery supervisor.
+            local recovery_command = self._services.recovery:update(now)
+            self:_apply_recovery_command(recovery_command)
+        end
     elseif state == "paused" then
         local recovery_command = self._services.recovery:update(now)
         self:_apply_recovery_command(recovery_command)
@@ -801,6 +831,11 @@ function Client:get_snapshot()
         inventory = {
             free_slots = self._blackboard:get("inventory.free_slots", 0),
             needs_vendor = self._blackboard:get("inventory.needs_vendor", false),
+        },
+        death = {
+            active = self._blackboard:get("death.active", false),
+            state = self._blackboard:get("death.state", "idle"),
+            distance_to_corpse = self._blackboard:get("death.distance_to_corpse"),
         },
         objective = objective_snapshot,
         telemetry = telemetry,
