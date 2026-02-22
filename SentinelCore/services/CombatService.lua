@@ -68,6 +68,21 @@ local function normalize_pct(value)
 end
 
 ---@private
+---@param value number
+---@param min_value number
+---@param max_value number
+---@return number
+local function clamp(value, min_value, max_value)
+    if value < min_value then
+        return min_value
+    end
+    if value > max_value then
+        return max_value
+    end
+    return value
+end
+
+---@private
 ---@param unit game_object|nil
 ---@return number|nil
 local function resolve_unit_mana_pct(unit)
@@ -83,6 +98,23 @@ local function resolve_unit_mana_pct(unit)
 
     current = tonumber(safe_method(unit, "get_mana"))
     maximum = tonumber(safe_method(unit, "get_max_mana"))
+    if current ~= nil and maximum ~= nil and maximum > 0 then
+        return normalize_pct(current / maximum)
+    end
+
+    return nil
+end
+
+---@private
+---@param unit game_object|nil
+---@return number|nil
+local function resolve_unit_health_pct(unit)
+    if not unit then
+        return nil
+    end
+
+    local current = tonumber(safe_method(unit, "get_health"))
+    local maximum = tonumber(safe_method(unit, "get_max_health"))
     if current ~= nil and maximum ~= nil and maximum > 0 then
         return normalize_pct(current / maximum)
     end
@@ -204,6 +236,129 @@ function CombatService:is_active()
     return self._state == "pull" or self._state == "combat"
 end
 
+---@private
+---@param value number|nil
+---@param default number
+---@return number
+function CombatService:_read_ratio_metric(value, default)
+    local n = tonumber(value)
+    if n == nil then
+        return default
+    end
+    if n < 0 then
+        n = 0
+    end
+    return n
+end
+
+---@private
+---@param player game_object|nil
+---@return number|nil
+function CombatService:_resolve_player_mana_pct(player)
+    local mana_pct = resolve_unit_mana_pct(player)
+    if mana_pct ~= nil then
+        return mana_pct
+    end
+
+    local current = tonumber(self._blackboard:get("player.mana", 0))
+    local maximum = tonumber(self._blackboard:get("player.max_mana", 0))
+    if current ~= nil and maximum ~= nil and maximum > 0 then
+        return normalize_pct(current / maximum)
+    end
+
+    return nil
+end
+
+---@private
+---@param player game_object|nil
+---@return number|nil
+function CombatService:_resolve_player_health_pct(player)
+    local health_pct = resolve_unit_health_pct(player)
+    if health_pct ~= nil then
+        return health_pct
+    end
+
+    local current = tonumber(self._blackboard:get("player.health", 0))
+    local maximum = tonumber(self._blackboard:get("player.max_health", 0))
+    if current ~= nil and maximum ~= nil and maximum > 0 then
+        return normalize_pct(current / maximum)
+    end
+
+    return nil
+end
+
+---@private
+---@param defensive boolean
+---@return table
+function CombatService:_resolve_recovery_governor(defensive)
+    local base_mana_threshold = tonumber(self._cfg.min_pull_mana_pct) or 0
+    local base_health_threshold = tonumber(self._cfg.min_pull_health_pct) or 0
+    local player = self._blackboard:get("player.object")
+    local mana_pct = self:_resolve_player_mana_pct(player)
+    local health_pct = self:_resolve_player_health_pct(player)
+
+    local deaths_per_hour = self:_read_ratio_metric(self._blackboard:get("telemetry.rates.deaths_per_hour", 0), 0)
+    local idle_full_resource_pct = self:_read_ratio_metric(self._blackboard:get("telemetry.rates.idle_full_resource_pct", 0), 0)
+
+    local death_low = tonumber(self._cfg.recovery_deaths_per_hour_low) or 0.20
+    local death_high = tonumber(self._cfg.recovery_deaths_per_hour_high) or 1.50
+    if death_high <= death_low then
+        death_high = death_low + 0.01
+    end
+    local death_t = clamp((deaths_per_hour - death_low) / (death_high - death_low), 0.0, 1.0)
+
+    local idle_relax_start = tonumber(self._cfg.recovery_idle_relax_start_pct) or 0.18
+    local idle_relax_full = tonumber(self._cfg.recovery_idle_relax_full_pct) or 0.35
+    if idle_relax_full <= idle_relax_start then
+        idle_relax_full = idle_relax_start + 0.01
+    end
+    local idle_t = clamp((idle_full_resource_pct - idle_relax_start) / (idle_relax_full - idle_relax_start), 0.0, 1.0)
+
+    local mana_bonus = death_t * (tonumber(self._cfg.recovery_mana_bonus_max) or 0.20)
+    local health_bonus = death_t * (tonumber(self._cfg.recovery_health_bonus_max) or 0.10)
+    local mana_relief = idle_t * (tonumber(self._cfg.recovery_idle_mana_relief_max) or 0.06)
+    local health_relief = idle_t * (tonumber(self._cfg.recovery_idle_health_relief_max) or 0.04)
+
+    local mana_threshold = base_mana_threshold + mana_bonus - mana_relief
+    local health_threshold = base_health_threshold + health_bonus - health_relief
+
+    local mana_floor = tonumber(self._cfg.recovery_mana_floor_pct) or 0
+    local mana_ceiling = tonumber(self._cfg.recovery_mana_ceiling_pct) or 0.65
+    local health_floor = tonumber(self._cfg.recovery_health_floor_pct) or 0
+    local health_ceiling = tonumber(self._cfg.recovery_health_ceiling_pct) or 0.95
+    mana_threshold = clamp(mana_threshold, mana_floor, mana_ceiling)
+    health_threshold = clamp(health_threshold, health_floor, health_ceiling)
+
+    local hold_for_mana = defensive ~= true
+        and base_mana_threshold > 0
+        and mana_pct ~= nil
+        and mana_pct < mana_threshold
+    local hold_for_health = defensive ~= true
+        and base_health_threshold > 0
+        and health_pct ~= nil
+        and health_pct < health_threshold
+
+    self._blackboard:set("combat.recovery_governor.mana_threshold", mana_threshold)
+    self._blackboard:set("combat.recovery_governor.health_threshold", health_threshold)
+    self._blackboard:set("combat.recovery_governor.deaths_per_hour", deaths_per_hour)
+    self._blackboard:set("combat.recovery_governor.idle_full_resource_pct", idle_full_resource_pct)
+    self._blackboard:set("combat.recovery_governor.hold_for_mana", hold_for_mana)
+    self._blackboard:set("combat.recovery_governor.hold_for_health", hold_for_health)
+    self._blackboard:set("combat.recovery_governor.hold", hold_for_mana or hold_for_health)
+
+    return {
+        hold = hold_for_mana or hold_for_health,
+        hold_for_mana = hold_for_mana,
+        hold_for_health = hold_for_health,
+        mana_pct = mana_pct,
+        health_pct = health_pct,
+        mana_threshold = mana_threshold,
+        health_threshold = health_threshold,
+        deaths_per_hour = deaths_per_hour,
+        idle_full_resource_pct = idle_full_resource_pct,
+    }
+end
+
 ---@return boolean
 ---@return string|nil
 function CombatService:run_maintenance(force)
@@ -214,12 +369,17 @@ function CombatService:run_maintenance(force)
         return false, nil
     end
     local should_run = force == true
+    local governor = nil
     if not should_run and self._rotation.should_hold_maintenance then
         local ok_hold, hold = pcall(self._rotation.should_hold_maintenance, self._rotation)
         if ok_hold and hold == true then
             should_run = true
-        else
-            return false, nil
+        end
+    end
+    if not should_run then
+        governor = self:_resolve_recovery_governor(false)
+        if governor.hold == true then
+            should_run = true
         end
     end
     if not should_run then
@@ -244,15 +404,19 @@ function CombatService:should_hold_for_maintenance()
     if self:is_active() then
         return false
     end
-    if not self._rotation or not self._rotation.should_hold_maintenance then
-        return false
+    local hold = false
+    if self._rotation and self._rotation.should_hold_maintenance then
+        local ok, provider_hold = pcall(self._rotation.should_hold_maintenance, self._rotation)
+        hold = ok and provider_hold == true
     end
 
-    local ok, hold = pcall(self._rotation.should_hold_maintenance, self._rotation)
-    if not ok or hold ~= true then
+    if not hold then
+        local governor = self:_resolve_recovery_governor(false)
+        hold = governor.hold == true
+    end
+    if not hold then
         return false
     end
-
     if self._nav and self._nav.stop then
         pcall(self._nav.stop, self._nav)
     end
@@ -615,17 +779,14 @@ function CombatService:start(target)
         end
     end
 
-    local min_pull_mana_pct = tonumber(self._cfg.min_pull_mana_pct)
-    if min_pull_mana_pct and min_pull_mana_pct > 0 then
-        local player = self._blackboard:get("player.object")
-        local mana_pct = resolve_unit_mana_pct(player)
-        local defensive = is_defensive_target(target, player)
-        if mana_pct ~= nil and mana_pct < min_pull_mana_pct and defensive ~= true then
-            if self._nav and self._nav.stop then
-                pcall(self._nav.stop, self._nav)
-            end
-            return false, ErrorCodes.MAINTENANCE_REQUIRED
+    local player = self._blackboard:get("player.object")
+    local defensive = is_defensive_target(target, player)
+    local governor = self:_resolve_recovery_governor(defensive)
+    if governor.hold == true then
+        if self._nav and self._nav.stop then
+            pcall(self._nav.stop, self._nav)
         end
+        return false, ErrorCodes.MAINTENANCE_REQUIRED
     end
 
     local now = (core and core.time and core.time()) or 0

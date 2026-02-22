@@ -215,6 +215,52 @@ local function run()
     player._mana = 100
     player._max_mana = 100
 
+    local adaptive_gate_rotation = {
+        should_hold_maintenance = function()
+            return false
+        end,
+        get_pull_profile = function() return { pull_spell_id = 20271, max_pull_range = 30 } end,
+        tick_once = function() return true, nil end,
+        tick_maintenance_once = function() return true, nil end,
+    }
+    local adaptive_target = T.mock_object({
+        name = "AdaptiveGateTarget",
+        position = { x = 8, y = 0, z = 0 },
+        health = 100,
+        max_health = 100,
+    })
+    local adaptive_gate = CombatService:new(bus, bb, nav, targeting, adaptive_gate_rotation, {
+        combat_timeout = 15,
+        pull_timeout = 5,
+        min_pull_mana_pct = 0.12,
+        recovery_deaths_per_hour_low = 0.20,
+        recovery_deaths_per_hour_high = 1.20,
+        recovery_mana_bonus_max = 0.24,
+        recovery_idle_relax_start_pct = 0.15,
+        recovery_idle_relax_full_pct = 0.40,
+        recovery_idle_mana_relief_max = 0.28,
+    })
+
+    player._mana = 18
+    player._max_mana = 100
+    bb:set("telemetry.rates.deaths_per_hour", 2.4)
+    bb:set("telemetry.rates.idle_full_resource_pct", 0.0)
+    local adaptive_hold_ok, adaptive_hold_err = adaptive_gate:start(adaptive_target)
+    T.assert_true(adaptive_hold_ok == false and adaptive_hold_err == ErrorCodes.MAINTENANCE_REQUIRED,
+        "adaptive recovery governor should tighten pull mana threshold when deaths/hour spikes")
+    T.assert_true(adaptive_gate:should_hold_for_maintenance() == true,
+        "maintenance hold should activate from adaptive recovery governor even when provider hold is false")
+    T.assert_true((tonumber(bb:get("combat.recovery_governor.mana_threshold", 0)) or 0) >= 0.30,
+        "adaptive governor should publish elevated mana threshold under high death pressure")
+
+    bb:set("telemetry.rates.idle_full_resource_pct", 0.40)
+    local adaptive_relaxed_ok, adaptive_relaxed_err = adaptive_gate:start(adaptive_target)
+    T.assert_true(adaptive_relaxed_ok == true and adaptive_relaxed_err == nil,
+        "adaptive recovery governor should relax pull threshold when idle full-resource time is high")
+    adaptive_gate:reset()
+    player._mana = 100
+    player._max_mana = 100
+
     local resting_rotation = {
         should_hold_maintenance = function()
             return true
@@ -378,6 +424,7 @@ local function run()
         sc009_pull_chase_no_stop_spam = true,
         sc009_pull_chase_move_to_hysteresis = true,
         sc009_pull_start_rest_gate = true,
+        sc009_adaptive_pull_rest_governor = true,
         sc009_defensive_retarget = true,
         sc009_combat_chase = true,
         sc009_combat_reface = true,

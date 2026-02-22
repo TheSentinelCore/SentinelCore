@@ -259,6 +259,55 @@ function Config:validate_runtime()
     if min_pull_mana_pct ~= nil and (min_pull_mana_pct < 0 or min_pull_mana_pct > 1) then
         return false, ErrorCodes.CONFIG_INVALID
     end
+    local min_pull_health_pct = tonumber(cfg.combat.min_pull_health_pct)
+    if min_pull_health_pct ~= nil and (min_pull_health_pct < 0 or min_pull_health_pct > 1) then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    local recovery_deaths_low = tonumber(cfg.combat.recovery_deaths_per_hour_low)
+    if recovery_deaths_low ~= nil and recovery_deaths_low < 0 then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    local recovery_deaths_high = tonumber(cfg.combat.recovery_deaths_per_hour_high)
+    if recovery_deaths_high ~= nil and recovery_deaths_high < 0 then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    if recovery_deaths_low ~= nil and recovery_deaths_high ~= nil and recovery_deaths_high < recovery_deaths_low then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    local recovery_ratio_fields = {
+        "recovery_mana_bonus_max",
+        "recovery_health_bonus_max",
+        "recovery_idle_relax_start_pct",
+        "recovery_idle_relax_full_pct",
+        "recovery_idle_mana_relief_max",
+        "recovery_idle_health_relief_max",
+        "recovery_mana_floor_pct",
+        "recovery_mana_ceiling_pct",
+        "recovery_health_floor_pct",
+        "recovery_health_ceiling_pct",
+    }
+    for i = 1, #recovery_ratio_fields do
+        local key = recovery_ratio_fields[i]
+        local value = tonumber(cfg.combat[key])
+        if value ~= nil and (value < 0 or value > 1) then
+            return false, ErrorCodes.CONFIG_INVALID
+        end
+    end
+    local idle_relax_start = tonumber(cfg.combat.recovery_idle_relax_start_pct)
+    local idle_relax_full = tonumber(cfg.combat.recovery_idle_relax_full_pct)
+    if idle_relax_start ~= nil and idle_relax_full ~= nil and idle_relax_full < idle_relax_start then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    local mana_floor = tonumber(cfg.combat.recovery_mana_floor_pct)
+    local mana_ceiling = tonumber(cfg.combat.recovery_mana_ceiling_pct)
+    if mana_floor ~= nil and mana_ceiling ~= nil and mana_ceiling < mana_floor then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    local health_floor = tonumber(cfg.combat.recovery_health_floor_pct)
+    local health_ceiling = tonumber(cfg.combat.recovery_health_ceiling_pct)
+    if health_floor ~= nil and health_ceiling ~= nil and health_ceiling < health_floor then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
 
     local objective_timeout = tonumber(cfg.objective.objective_timeout)
     if objective_timeout == nil or objective_timeout <= 0 then
