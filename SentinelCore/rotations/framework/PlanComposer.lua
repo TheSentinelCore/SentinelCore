@@ -287,8 +287,16 @@ local function apply_maintenance_scheduler(plan, ctx)
         local action = plan[i]
         local base_priority = tonumber(action and action.priority) or 0
         local bonus = tonumber(action and action.scheduler_bias) or 0
-        if dominant_kind ~= nil and type(action) == "table" and action.item_kind == dominant_kind then
-            bonus = bonus + 25
+        if type(action) == "table" then
+            local kind = tostring(action.item_kind or "")
+            if kind == "food" then
+                bonus = bonus + (food_deficit * 120)
+            elseif kind == "water" then
+                bonus = bonus + (water_deficit * 120)
+            end
+            if dominant_kind ~= nil and kind == dominant_kind then
+                bonus = bonus + 18
+            end
         end
         action._scheduler_priority = base_priority + bonus
     end

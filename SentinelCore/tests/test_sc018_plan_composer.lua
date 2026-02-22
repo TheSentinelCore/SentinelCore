@@ -96,6 +96,14 @@ local function run()
     T.assert_true(type(maintenance_plan_food[1]) == "table" and maintenance_plan_food[1].item_kind == "food",
         "maintenance scheduler should prioritize food when health deficit dominates")
 
+    local maintenance_ctx_edge = {
+        player_health_pct = 0.78,
+        player_mana_pct = 0.42,
+    }
+    local maintenance_plan_edge = PlanComposer.compose_maintenance(provider, maintenance_ctx_edge)
+    T.assert_true(type(maintenance_plan_edge[1]) == "table" and maintenance_plan_edge[1].item_kind == "water",
+        "maintenance scheduler should use deficit weighting so small mana deficits can outrank base-priority food")
+
     return {
         sc018_plan_composer_scheduler = true,
     }
