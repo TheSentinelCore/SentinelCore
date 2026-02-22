@@ -3,6 +3,7 @@ local Providers = require("rotations/Providers")
 local SpellbookResolver = require("rotations/framework/SpellbookResolver")
 local CombatContext = require("rotations/framework/CombatContext")
 local PlanComposer = require("rotations/framework/PlanComposer")
+local RestPolicy = require("rotations/framework/RestPolicy")
 local ErrorCodes = require("events/ErrorCodes")
 local Events = require("events/Events")
 local Helpers = require("lib/Helpers")
@@ -766,6 +767,37 @@ function RotationEngine:_rest_lock_remaining(action, now)
     return lock_until - now
 end
 
+---@private
+---@param ctx table
+---@return RestPolicyThresholds|nil
+function RotationEngine:_resolve_rest_thresholds(ctx)
+    local runtime = type(ctx.routine_policy) == "table" and ctx.routine_policy or nil
+    local class_id = tonumber(ctx.class_id) or 0
+    local source = nil
+    if class_id == 2 then
+        local paladin = type(runtime) == "table" and runtime.paladin or nil
+        source = type(paladin) == "table" and paladin.retribution or nil
+    elseif class_id == 9 then
+        local warlock = type(runtime) == "table" and runtime.warlock or nil
+        source = type(warlock) == "table" and warlock.affliction or nil
+    end
+
+    if type(source) ~= "table" and type(runtime) == "table" then
+        source = runtime
+    end
+    if type(source) ~= "table" then
+        return nil
+    end
+
+    return RestPolicy.resolve(source, {
+        default_eat_start = tonumber(source.eat_health_pct) or 0,
+        default_drink_start = tonumber(source.drink_mana_pct) or 0,
+        default_eat_stop = 1.0,
+        default_drink_stop = 1.0,
+        default_rest_until_full = true,
+    })
+end
+
 ---@return boolean
 function RotationEngine:should_hold_maintenance()
     local ctx = self:_build_context()
@@ -773,36 +805,28 @@ function RotationEngine:should_hold_maintenance()
         return false
     end
 
+    local provider_hold = false
+    local provider_ok = false
     local provider = self:get_provider(ctx)
     if provider and provider.should_hold_maintenance then
         local ok, hold = pcall(provider.should_hold_maintenance, provider, ctx)
         if ok then
-            return hold == true
+            provider_ok = true
+            provider_hold = hold == true
+            if provider_hold then
+                return true
+            end
         end
     end
 
-    local class_id = tonumber(ctx.class_id) or 0
-    local runtime = type(ctx.routine_policy) == "table" and ctx.routine_policy or nil
-
-    local eat_threshold = nil
-    local drink_threshold = nil
-    if class_id == 2 then
-        local paladin = type(runtime) == "table" and runtime.paladin or nil
-        local retribution = type(paladin) == "table" and paladin.retribution or nil
-        eat_threshold = tonumber(type(retribution) == "table" and retribution.eat_health_pct or nil)
-        drink_threshold = tonumber(type(retribution) == "table" and retribution.drink_mana_pct or nil)
+    local fallback_thresholds = self:_resolve_rest_thresholds(ctx)
+    if fallback_thresholds then
+        return RestPolicy.should_hold(ctx, fallback_thresholds)
     end
-
-    if eat_threshold == nil and type(runtime) == "table" then
-        eat_threshold = tonumber(runtime.eat_health_pct)
+    if provider_ok then
+        return provider_hold
     end
-    if drink_threshold == nil and type(runtime) == "table" then
-        drink_threshold = tonumber(runtime.drink_mana_pct)
-    end
-
-    local needs_health_rest = eat_threshold and ctx.player_health_pct and ctx.player_health_pct < eat_threshold
-    local needs_mana_rest = drink_threshold and ctx.player_mana_pct and ctx.player_mana_pct < drink_threshold
-    return needs_health_rest == true or needs_mana_rest == true
+    return false
 end
 
 ---@private

@@ -210,6 +210,7 @@ local function run()
         eating_or_drinking = true,
         player_is_eating = false,
         player_is_drinking = true,
+        player_health_pct = 0.90,
     }, food_action) == true, "food should still be allowed while already drinking")
     T.assert_true(water_action.condition({
         in_combat = false,
@@ -217,6 +218,7 @@ local function run()
         eating_or_drinking = true,
         player_is_eating = true,
         player_is_drinking = false,
+        player_mana_pct = 0.90,
     }, water_action) == true, "water should still be allowed while already eating")
 
     local aoe = provider:aoe(base_ctx)

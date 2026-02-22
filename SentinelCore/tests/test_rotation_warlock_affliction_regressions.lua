@@ -248,6 +248,7 @@ local function run()
         eating_or_drinking = true,
         player_is_eating = false,
         player_is_drinking = true,
+        player_health_pct = 0.90,
     }, maintenance_food) == true, "warlock food should still be allowed while drinking")
     T.assert_true(maintenance_water.condition({
         in_combat = false,
@@ -255,6 +256,7 @@ local function run()
         eating_or_drinking = true,
         player_is_eating = true,
         player_is_drinking = false,
+        player_mana_pct = 0.90,
     }, maintenance_water) == true, "warlock water should still be allowed while eating")
 
     include_shards = false

@@ -100,6 +100,8 @@ end
 local RETRIBUTION_POLICY_BOUNDS = {
     drink_mana_pct = { 0.0, 1.0 },
     eat_health_pct = { 0.0, 1.0 },
+    rest_resume_health_pct = { 0.0, 1.0 },
+    rest_resume_mana_pct = { 0.0, 1.0 },
     loh_hp_pct = { 0.0, 1.0 },
     divine_shield_hp_pct = { 0.0, 1.0 },
     divine_protection_hp_pct = { 0.0, 1.0 },
@@ -121,6 +123,8 @@ local RETRIBUTION_POLICY_BOUNDS = {
 local AFFLICTION_POLICY_BOUNDS = {
     drink_mana_pct = { 0.0, 1.0 },
     eat_health_pct = { 0.0, 1.0 },
+    rest_resume_health_pct = { 0.0, 1.0 },
+    rest_resume_mana_pct = { 0.0, 1.0 },
     life_tap_min_health_pct = { 0.0, 1.0 },
     life_tap_max_mana_pct = { 0.0, 1.0 },
     life_tap_ooc_max_mana_pct = { 0.0, 1.0 },
@@ -176,6 +180,34 @@ local function validate_rotation_policy(rotation_cfg)
         return false
     end
 
+    local ret_rest_until_full = ret.rest_until_full
+    if ret_rest_until_full == nil then
+        ret_rest_until_full = Defaults.rotation.paladin.retribution.rest_until_full
+    end
+    if type(ret_rest_until_full) ~= "boolean" then
+        return false
+    end
+
+    local ret_eat_start = tonumber(ret.eat_health_pct)
+    if ret_eat_start == nil then
+        ret_eat_start = Defaults.rotation.paladin.retribution.eat_health_pct
+    end
+    local ret_drink_start = tonumber(ret.drink_mana_pct)
+    if ret_drink_start == nil then
+        ret_drink_start = Defaults.rotation.paladin.retribution.drink_mana_pct
+    end
+    local ret_eat_stop = tonumber(ret.rest_resume_health_pct)
+    if ret_eat_stop == nil then
+        ret_eat_stop = Defaults.rotation.paladin.retribution.rest_resume_health_pct
+    end
+    local ret_drink_stop = tonumber(ret.rest_resume_mana_pct)
+    if ret_drink_stop == nil then
+        ret_drink_stop = Defaults.rotation.paladin.retribution.rest_resume_mana_pct
+    end
+    if ret_eat_stop < ret_eat_start or ret_drink_stop < ret_drink_start then
+        return false
+    end
+
     local aff = rotation_cfg.warlock.affliction
     for key, bounds in pairs(AFFLICTION_POLICY_BOUNDS) do
         local value = aff[key]
@@ -185,6 +217,34 @@ local function validate_rotation_policy(rotation_cfg)
         if not in_range(value, bounds[1], bounds[2]) then
             return false
         end
+    end
+
+    local aff_rest_until_full = aff.rest_until_full
+    if aff_rest_until_full == nil then
+        aff_rest_until_full = Defaults.rotation.warlock.affliction.rest_until_full
+    end
+    if type(aff_rest_until_full) ~= "boolean" then
+        return false
+    end
+
+    local aff_eat_start = tonumber(aff.eat_health_pct)
+    if aff_eat_start == nil then
+        aff_eat_start = Defaults.rotation.warlock.affliction.eat_health_pct
+    end
+    local aff_drink_start = tonumber(aff.drink_mana_pct)
+    if aff_drink_start == nil then
+        aff_drink_start = Defaults.rotation.warlock.affliction.drink_mana_pct
+    end
+    local aff_eat_stop = tonumber(aff.rest_resume_health_pct)
+    if aff_eat_stop == nil then
+        aff_eat_stop = Defaults.rotation.warlock.affliction.rest_resume_health_pct
+    end
+    local aff_drink_stop = tonumber(aff.rest_resume_mana_pct)
+    if aff_drink_stop == nil then
+        aff_drink_stop = Defaults.rotation.warlock.affliction.rest_resume_mana_pct
+    end
+    if aff_eat_stop < aff_eat_start or aff_drink_stop < aff_drink_start then
+        return false
     end
 
     return true

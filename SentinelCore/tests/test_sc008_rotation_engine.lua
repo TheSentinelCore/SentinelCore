@@ -92,6 +92,28 @@ local function run()
     T.assert_true(maintenance_tick_ok == true, "maintenance tick should execute consumable action when rest is needed")
 
     T.assert_true(rotation:should_hold_maintenance() == true, "rotation should hold pulls while rest thresholds are unmet")
+    local original_build_context_top_off = rotation._context_builder.build
+    rotation._context_builder.build = function()
+        return {
+            class_id = 2,
+            spec_id = 0,
+            in_combat = false,
+            eating_or_drinking = true,
+            player_is_eating = false,
+            player_is_drinking = true,
+            player_health_pct = 0.90,
+            player_mana_pct = 0.90,
+            now = (core and core.time and core.time()) or 0,
+            rest_lock_until = 0,
+            rest_lock_food_until = 0,
+            rest_lock_water_until = 0,
+            routine_policy = bb:get("rotation.policy"),
+        }
+    end
+    T.assert_true(rotation:should_hold_maintenance() == true,
+        "active rest should continue until near-full resources are reached")
+    rotation._context_builder.build = original_build_context_top_off
+
     player._health = 100
     player._mana = 100
     T.assert_true(rotation:should_hold_maintenance() == false, "rotation hold should clear after resources recover")
@@ -141,7 +163,7 @@ local function run()
     T.assert_true(water_allowed_under_food_lock == true and water_allowed_err == nil,
         "rest locks should be scoped by consumable kind so food lock does not block water")
 
-    local original_build_context = rotation._context_builder.build
+    local original_build_context_full = rotation._context_builder.build
     rotation._context_builder.build = function()
         return {
             class_id = 2,
@@ -155,7 +177,7 @@ local function run()
     end
     T.assert_true(rotation:should_hold_maintenance() == false,
         "active drink/eat aura should not hold pulls once resources are already full")
-    rotation._context_builder.build = original_build_context
+    rotation._context_builder.build = original_build_context_full
 
     bb:set("player.class_id", 1)
     local unsupported_plan, unsupported_err = rotation:generate_plan()

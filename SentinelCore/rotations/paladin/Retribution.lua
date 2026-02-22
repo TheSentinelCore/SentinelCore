@@ -7,6 +7,7 @@ local ConsumableCatalog = require("rotations/framework/ConsumableCatalog")
 local SpellCatalog = require("rotations/framework/SpellCatalog")
 local AuraCatalog = require("rotations/framework/AuraCatalog")
 local RankPolicy = require("rotations/framework/RankPolicy")
+local RestPolicy = require("rotations/framework/RestPolicy")
 
 Retribution.CLASS_ID = 2
 Retribution.SPEC = "retribution"
@@ -43,6 +44,9 @@ local EXECUTE_TARGET_HEALTH_PCT = 0.20
 local DEFAULT_POLICY = {
     drink_mana_pct = 0.45,
     eat_health_pct = 0.80,
+    rest_until_full = true,
+    rest_resume_health_pct = 1.00,
+    rest_resume_mana_pct = 1.00,
 
     loh_hp_pct = 0.10,
     divine_shield_hp_pct = 0.20,
@@ -160,6 +164,19 @@ local function policy(ctx)
     end
 
     return out
+end
+
+---@private
+---@param p table
+---@return RestPolicyThresholds
+local function rest_policy_thresholds(p)
+    return RestPolicy.resolve(p, {
+        default_eat_start = DEFAULT_POLICY.eat_health_pct,
+        default_drink_start = DEFAULT_POLICY.drink_mana_pct,
+        default_eat_stop = DEFAULT_POLICY.rest_resume_health_pct,
+        default_drink_stop = DEFAULT_POLICY.rest_resume_mana_pct,
+        default_rest_until_full = DEFAULT_POLICY.rest_until_full,
+    })
 end
 
 ---@private
@@ -458,11 +475,12 @@ end
 ---@return table[]
 function Retribution:maintenance(ctx)
     local p = policy(ctx)
+    local rest = rest_policy_thresholds(p)
     local aura_id = resolve_spell(ctx, SPELLS.SANCTITY_AURA)
 
     return {
         ActionBuilder.item_self(ConsumableCatalog.TBC_FOOD_ITEM_IDS, 985, {
-            max_player_health_pct = p.eat_health_pct,
+            max_player_health_pct = rest.eat_stop_pct,
             item_kind = "food",
             rest_lock_secs = 2.0,
             intent = "recover",
@@ -470,11 +488,12 @@ function Retribution:maintenance(ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
                     and local_ctx.player_is_eating ~= true
+                    and RestPolicy.needs_health_rest(local_ctx, rest)
                     and (local_ctx.eating_or_drinking ~= true or local_ctx.player_is_drinking == true)
             end,
         }),
         ActionBuilder.item_self(ConsumableCatalog.TBC_WATER_ITEM_IDS, 980, {
-            max_player_mana_pct = p.drink_mana_pct,
+            max_player_mana_pct = rest.drink_stop_pct,
             item_kind = "water",
             rest_lock_secs = 2.0,
             intent = "recover",
@@ -482,6 +501,7 @@ function Retribution:maintenance(ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
                     and local_ctx.player_is_drinking ~= true
+                    and RestPolicy.needs_mana_rest(local_ctx, rest)
                     and (local_ctx.eating_or_drinking ~= true or local_ctx.player_is_eating == true)
             end,
         }),
@@ -499,13 +519,8 @@ end
 ---@return boolean
 function Retribution:should_hold_maintenance(ctx)
     local p = policy(ctx)
-    if ctx.in_combat == true then
-        return false
-    end
-
-    local needs_health = ctx.player_health_pct and ctx.player_health_pct < p.eat_health_pct
-    local needs_mana = ctx.player_mana_pct and ctx.player_mana_pct < p.drink_mana_pct
-    return needs_health == true or needs_mana == true
+    local rest = rest_policy_thresholds(p)
+    return RestPolicy.should_hold(ctx, rest)
 end
 
 ---@param ctx table
