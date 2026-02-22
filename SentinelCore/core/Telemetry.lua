@@ -337,6 +337,17 @@ function Telemetry:_update_rates(now)
     self._rates.gold_per_hour = (gold_gained / elapsed) * 3600.0
 end
 
+---@private
+function Telemetry:_publish_runtime_metrics()
+    self._blackboard:set("telemetry.rates.deaths_per_hour", tonumber(self._rates.deaths_per_hour) or 0)
+    self._blackboard:set("telemetry.rates.cast_guard_blocked_per_min", tonumber(self._rates.cast_guard_blocked_per_min) or 0)
+    self._blackboard:set("telemetry.rates.chase_repaths_per_min", tonumber(self._rates.chase_repaths_per_min) or 0)
+    self._blackboard:set("telemetry.rates.failed_pulls_per_hour", tonumber(self._rates.failed_pulls_per_hour) or 0)
+    self._blackboard:set("telemetry.rates.unreachable_targets_per_hour", tonumber(self._rates.unreachable_targets_per_hour) or 0)
+    self._blackboard:set("telemetry.rates.idle_full_resource_pct", tonumber(self._rates.idle_full_resource_pct) or 0)
+    self._blackboard:set("telemetry.rates.combat_downtime_avg_secs", tonumber(self._rates.combat_downtime_avg_secs) or 0)
+end
+
 ---@param now number
 function Telemetry:update(now)
     now = now or ((core and core.time and core.time()) or 0)
@@ -353,6 +364,7 @@ function Telemetry:update(now)
     self:_sample_death_state(now)
 
     self:_update_rates(now)
+    self:_publish_runtime_metrics()
 
     if now - self._last_flush < self._flush_interval then
         return

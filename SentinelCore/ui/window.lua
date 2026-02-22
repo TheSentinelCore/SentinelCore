@@ -823,18 +823,65 @@ local function register_tabs(ui, client)
                 local telemetry = snapshot.telemetry or {}
                 local rates = telemetry.rates or {}
                 local counters = telemetry.counters or {}
+                local cast_guard_by_spell = rates.cast_guard_blocked_per_min_by_spell or {}
 
                 y_offset = y_offset + 6
                 y_offset = render_section_title(window, colors, x, y_offset, width, "Telemetry")
 
+                y_offset = render_line(window, colors, x, y_offset, "Uptime (s)", string.format("%.1f", tonumber(telemetry.uptime_secs) or 0))
                 y_offset = render_line(window, colors, x, y_offset, "XP/hr", string.format("%.1f", tonumber(rates.xp_per_hour) or 0))
                 y_offset = render_line(window, colors, x, y_offset, "Kills/hr", string.format("%.1f", tonumber(rates.kills_per_hour) or 0))
+                y_offset = render_line(window, colors, x, y_offset, "Deaths/hr", string.format("%.2f", tonumber(rates.deaths_per_hour) or 0))
                 y_offset = render_line(window, colors, x, y_offset, "Gold/hr", string.format("%.1f", tonumber(rates.gold_per_hour) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Uptime (s)", string.format("%.1f", tonumber(telemetry.uptime_secs) or 0))
+                y_offset = render_line(window, colors, x, y_offset, "Combat Gap Avg (s)",
+                    string.format("%.2f", tonumber(rates.combat_downtime_avg_secs) or 0))
+                y_offset = render_line(window, colors, x, y_offset, "Idle Full Resource (%)",
+                    string.format("%.1f", (tonumber(rates.idle_full_resource_pct) or 0) * 100.0))
+                y_offset = render_line(window, colors, x, y_offset, "Cast Guard/min",
+                    string.format("%.2f", tonumber(rates.cast_guard_blocked_per_min) or 0))
+                y_offset = render_line(window, colors, x, y_offset, "Chase Repaths/min",
+                    string.format("%.2f", tonumber(rates.chase_repaths_per_min) or 0))
+                y_offset = render_line(window, colors, x, y_offset, "Chase Updates/min",
+                    string.format("%.2f", tonumber(rates.chase_updates_per_min) or 0))
+                y_offset = render_line(window, colors, x, y_offset, "Failed Pulls/hr",
+                    string.format("%.2f", tonumber(rates.failed_pulls_per_hour) or 0))
+                y_offset = render_line(window, colors, x, y_offset, "Unreachable/hr",
+                    string.format("%.2f", tonumber(rates.unreachable_targets_per_hour) or 0))
                 y_offset = render_line(window, colors, x, y_offset, "Kills", counters.kills or 0)
+                y_offset = render_line(window, colors, x, y_offset, "Deaths", counters.deaths or 0)
                 y_offset = render_line(window, colors, x, y_offset, "Loot Events", counters.loot_events or 0)
                 y_offset = render_line(window, colors, x, y_offset, "Vendor Trips", counters.vendor_trips or 0)
+                y_offset = render_line(window, colors, x, y_offset, "Cast Guard Blocked", counters.cast_guard_blocked or 0)
+                y_offset = render_line(window, colors, x, y_offset, "Failed Pulls", counters.failed_pulls or 0)
+                y_offset = render_line(window, colors, x, y_offset, "Unreachable Targets", counters.unreachable_targets or 0)
                 y_offset = render_line(window, colors, x, y_offset, "Failures", counters.failures or 0)
+
+                local blocked_spell_rows = {}
+                for spell_id, rate in pairs(cast_guard_by_spell) do
+                    local sid = tonumber(spell_id)
+                    local per_min = tonumber(rate) or 0
+                    if sid and sid > 0 and per_min > 0 then
+                        blocked_spell_rows[#blocked_spell_rows + 1] = { spell_id = sid, per_min = per_min }
+                    end
+                end
+                table.sort(blocked_spell_rows, function(a, b)
+                    if a.per_min == b.per_min then
+                        return a.spell_id < b.spell_id
+                    end
+                    return a.per_min > b.per_min
+                end)
+                local top_rows = math.min(3, #blocked_spell_rows)
+                for i = 1, top_rows do
+                    local row = blocked_spell_rows[i]
+                    y_offset = render_line(
+                        window,
+                        colors,
+                        x,
+                        y_offset,
+                        string.format("Cast Guard Top %d", i),
+                        string.format("Spell %d (%.2f/min)", row.spell_id, row.per_min)
+                    )
+                end
 
                 return y_offset + 8
             end

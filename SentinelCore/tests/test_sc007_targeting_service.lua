@@ -283,6 +283,40 @@ local function run()
         "pull risk budget should skip high-pressure targets even when kill-speed score is attractive")
     T.assert_true(nav_calls.estimates >= 2, "target scoring should warm path cost estimates during acquisition")
 
+    local targeting_adaptive = TargetingService:new(bus, bb, {
+        base_radius = 45,
+        max_radius = 60,
+        pull_risk_budget = 1.10,
+        pull_risk_deaths_per_hour_low = 0.20,
+        pull_risk_deaths_per_hour_high = 2.00,
+        pull_risk_budget_min_scale = 0.30,
+        pull_risk_budget_max_scale = 1.00,
+        pull_risk_budget_min_absolute = 0.10,
+        pull_add_scan_radius = 10,
+        pull_add_risk_weight = 0.60,
+        score_weights = {
+            kill_speed = 0.5,
+            loot_value = 0.2,
+            travel_cost = 0.2,
+            risk = 0.3,
+        },
+    })
+
+    bb:set("telemetry.rates.deaths_per_hour", 0.0)
+    local adaptive_safe_pick, adaptive_safe_err = targeting_adaptive:acquire_target()
+    T.assert_true(adaptive_safe_pick ~= nil and adaptive_safe_pick:get_name() == "RiskyTarget",
+        "adaptive pull-risk budget should stay permissive at low deaths/hour")
+    T.assert_true((tonumber(bb:get("targeting.pull_risk_budget.effective", 0)) or 0) >= 1.0,
+        "adaptive pull-risk budget should remain near base budget when deaths/hour is low")
+
+    targeting_adaptive:clear_target("adaptive_high_death_budget")
+    bb:set("telemetry.rates.deaths_per_hour", 3.0)
+    local adaptive_high_death_pick, adaptive_high_death_err = targeting_adaptive:acquire_target()
+    T.assert_true(adaptive_high_death_pick ~= nil and adaptive_high_death_pick:get_name() == "SafeTarget",
+        "adaptive pull-risk budget should become conservative as deaths/hour increases")
+    T.assert_true((tonumber(bb:get("targeting.pull_risk_budget.effective", 0)) or 0) <= 0.5,
+        "adaptive pull-risk budget should shrink under sustained high death rate")
+
     local fake_nav_path = {
         estimate_path_cost = function(_, from_pos, to_pos, cb)
             local x = tonumber(to_pos and to_pos.x) or 0
@@ -378,6 +412,7 @@ local function run()
         sc007_defensive_retarget = true,
         sc007_target_blacklist_ttl = true,
         sc007_target_risk_budget_and_path_cost = true,
+        sc007_adaptive_pull_risk_budget = true,
     }
 end
 

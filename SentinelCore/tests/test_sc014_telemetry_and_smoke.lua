@@ -97,6 +97,17 @@ local function run()
     local by_spell = snap.telemetry.rates.cast_guard_blocked_per_min_by_spell or {}
     T.assert_true(type(by_spell) == "table" and tonumber(by_spell[20271] or 0) > 0,
         "telemetry should expose cast-guard per-minute map by spell id")
+    local bb = client:get_blackboard()
+    T.assert_true((tonumber(bb:get("telemetry.rates.deaths_per_hour", -1)) or -1) >= 0,
+        "telemetry should publish deaths/hour to blackboard")
+    T.assert_true((tonumber(bb:get("telemetry.rates.cast_guard_blocked_per_min", 0)) or 0) > 0,
+        "telemetry should publish cast-guard blocked/min to blackboard")
+    T.assert_true((tonumber(bb:get("telemetry.rates.failed_pulls_per_hour", 0)) or 0) > 0,
+        "telemetry should publish failed pulls/hour to blackboard")
+    T.assert_true((tonumber(bb:get("telemetry.rates.unreachable_targets_per_hour", 0)) or 0) > 0,
+        "telemetry should publish unreachable targets/hour to blackboard")
+    T.assert_true((tonumber(bb:get("telemetry.rates.idle_full_resource_pct", 0)) or 0) > 0,
+        "telemetry should publish idle full-resource percentage to blackboard")
     T.assert_true(snap.context.map_id == 530, "snapshot canonical map missing")
     T.assert_true(flush_count >= 1 and type(last_flush) == "table", "telemetry flush event missing")
     T.assert_true(type(last_flush.counters) == "table", "flush payload counters missing")

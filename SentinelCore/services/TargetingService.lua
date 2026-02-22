@@ -109,6 +109,21 @@ local function now_seconds()
     return (core and core.time and core.time()) or 0
 end
 
+---@private
+---@param value number
+---@param min_value number
+---@param max_value number
+---@return number
+local function clamp(value, min_value, max_value)
+    if value < min_value then
+        return min_value
+    end
+    if value > max_value then
+        return max_value
+    end
+    return value
+end
+
 ---@class TargetingService
 ---@field private _event_bus EventBus
 ---@field private _blackboard Blackboard
@@ -400,6 +415,53 @@ function TargetingService:get_adaptive_radius()
     local has_target = self:get_target() ~= nil
     local boost = (not in_combat and not has_target) and 10.0 or 0.0
     return math.min(max_radius, base + boost)
+end
+
+---@private
+---@return number
+---@return table
+function TargetingService:_resolve_pull_risk_budget()
+    local base_budget = tonumber(self._cfg.pull_risk_budget) or 0
+    if base_budget <= 0 then
+        return 0, {
+            base = base_budget,
+            effective = 0,
+            scale = 0,
+            deaths_per_hour = tonumber(self._blackboard:get("telemetry.rates.deaths_per_hour", 0)) or 0,
+        }
+    end
+
+    local deaths_per_hour = tonumber(self._blackboard:get("telemetry.rates.deaths_per_hour", 0)) or 0
+    if deaths_per_hour < 0 then
+        deaths_per_hour = 0
+    end
+
+    local low = tonumber(self._cfg.pull_risk_deaths_per_hour_low) or 0.20
+    local high = tonumber(self._cfg.pull_risk_deaths_per_hour_high) or 1.50
+    if high <= low then
+        high = low + 0.01
+    end
+
+    local min_scale = tonumber(self._cfg.pull_risk_budget_min_scale) or 0.45
+    local max_scale = tonumber(self._cfg.pull_risk_budget_max_scale) or 1.00
+    min_scale = clamp(min_scale, 0.05, 2.00)
+    max_scale = clamp(max_scale, min_scale, 2.00)
+
+    local t = clamp((deaths_per_hour - low) / (high - low), 0.0, 1.0)
+    local scale = max_scale + ((min_scale - max_scale) * t)
+    local effective = base_budget * scale
+
+    local min_absolute = tonumber(self._cfg.pull_risk_budget_min_absolute) or 0
+    if min_absolute > 0 then
+        effective = math.max(min_absolute, effective)
+    end
+
+    return effective, {
+        base = base_budget,
+        effective = effective,
+        scale = scale,
+        deaths_per_hour = deaths_per_hour,
+    }
 end
 
 ---@private
@@ -779,6 +841,9 @@ function TargetingService:score_target(target, opts)
     end
 
     local score = (kill_speed * w_kill) + (loot_value * w_loot) - (travel_cost * w_travel) - (risk * w_risk)
+    local pull_risk_budget = tonumber(type(opts) == "table" and opts.pull_risk_budget or nil) or 0
+    local pull_risk_scale = tonumber(type(opts) == "table" and opts.pull_risk_scale or nil) or 0
+    local pull_risk_deaths_per_hour = tonumber(type(opts) == "table" and opts.pull_risk_deaths_per_hour or nil) or 0
 
     self._event_bus:emit(Events.TARGET_SCORE_DEBUG, {
         target_id = tonumber(safe_method(target, "get_npc_id")) or 0,
@@ -788,6 +853,9 @@ function TargetingService:score_target(target, opts)
         travel_cost = travel_cost,
         path_distance = path_distance,
         risk = risk,
+        pull_risk_budget = pull_risk_budget,
+        pull_risk_scale = pull_risk_scale,
+        pull_risk_deaths_per_hour = pull_risk_deaths_per_hour,
         pull_pressure = pull_pressure,
         unreachable_penalty = unreachable_penalty,
     })
@@ -835,7 +903,11 @@ function TargetingService:acquire_target()
     local best_score = -math.huge
     local nearby_combat_count = 0
     local pull_pressure_cache = {}
-    local pull_risk_budget = tonumber(self._cfg.pull_risk_budget) or 0
+    local pull_risk_budget, pull_risk_meta = self:_resolve_pull_risk_budget()
+    self._blackboard:set("targeting.pull_risk_budget.base", tonumber(pull_risk_meta.base) or 0)
+    self._blackboard:set("targeting.pull_risk_budget.scale", tonumber(pull_risk_meta.scale) or 0)
+    self._blackboard:set("targeting.pull_risk_budget.effective", tonumber(pull_risk_meta.effective) or 0)
+    self._blackboard:set("targeting.pull_risk_budget.deaths_per_hour", tonumber(pull_risk_meta.deaths_per_hour) or 0)
 
     if defensive_target then
         best_target = defensive_target
@@ -845,6 +917,9 @@ function TargetingService:acquire_target()
             objects = objects,
             player_pos = player_pos,
             pull_pressure_cache = pull_pressure_cache,
+            pull_risk_budget = pull_risk_budget,
+            pull_risk_scale = pull_risk_meta and pull_risk_meta.scale,
+            pull_risk_deaths_per_hour = pull_risk_meta and pull_risk_meta.deaths_per_hour,
         })
     end
 
@@ -867,6 +942,9 @@ function TargetingService:acquire_target()
                             objects = objects,
                             player_pos = player_pos,
                             pull_pressure_cache = pull_pressure_cache,
+                            pull_risk_budget = pull_risk_budget,
+                            pull_risk_scale = pull_risk_meta and pull_risk_meta.scale,
+                            pull_risk_deaths_per_hour = pull_risk_meta and pull_risk_meta.deaths_per_hour,
                         })
                         local risk = tonumber(meta and meta.risk) or 0
                         local over_budget = pull_risk_budget > 0 and risk > pull_risk_budget
