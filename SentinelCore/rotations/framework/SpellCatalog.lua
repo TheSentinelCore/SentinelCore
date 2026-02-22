@@ -21,7 +21,11 @@ SpellCatalog.PALADIN = {
         },
         HAMMER_OF_JUSTICE = {
             name = "hammer of justice",
-            ids = { 853 },
+            ids = { 10308, 5589, 5588, 853 },
+        },
+        REPENTANCE = {
+            name = "repentance",
+            ids = { 20066 },
         },
         SEAL_OF_BLOOD = {
             name = "seal of blood",

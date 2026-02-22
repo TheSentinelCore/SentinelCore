@@ -224,6 +224,7 @@ function TestUtil.mock_object(props)
         _item_id = props.item_id or 0,
         _in_combat = props.in_combat == true,
         _casting = props.casting == true,
+        _channeling = props.channeling == true,
         _can_attack = props.can_attack ~= false,
         _is_enemy = props.is_enemy ~= false,
         _classification = props.classification or 0,
@@ -237,7 +238,7 @@ function TestUtil.mock_object(props)
     function obj:is_ghost() return self._ghost end
     function obj:is_in_combat() return self._in_combat end
     function obj:is_casting_spell() return self._casting end
-    function obj:is_channelling_spell() return false end
+    function obj:is_channelling_spell() return self._channeling end
     function obj:get_position() return self._position end
     function obj:get_name() return self._name end
     function obj:get_level() return self._level end

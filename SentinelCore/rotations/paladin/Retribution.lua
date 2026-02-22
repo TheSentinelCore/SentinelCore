@@ -20,7 +20,8 @@ local SPELLS = {
     JUDGEMENT = RET_SPELLS.JUDGEMENT.ids[1],
     HAMMER_OF_WRATH = RET_SPELLS.HAMMER_OF_WRATH.ids[1],
     AVENGING_WRATH = RET_SPELLS.AVENGING_WRATH.ids[1],
-    HAMMER_OF_JUSTICE = RET_SPELLS.HAMMER_OF_JUSTICE.ids[1],
+    HAMMER_OF_JUSTICE = RET_SPELLS.HAMMER_OF_JUSTICE,
+    REPENTANCE = RET_SPELLS.REPENTANCE,
 
     SEAL_OF_BLOOD = RET_SPELLS.SEAL_OF_BLOOD,
     SEAL_OF_COMMAND = RET_SPELLS.SEAL_OF_COMMAND,
@@ -37,7 +38,8 @@ local SPELLS = {
 }
 
 local MELEE_RANGE = 5.5
-local JUDGEMENT_RANGE = 10.0
+local HAMMER_OF_JUSTICE_CAST_RANGE = 10.0
+local REPENTANCE_CAST_RANGE = 20.0
 local JUDGEMENT_CAST_RANGE = 9.0
 local EXECUTE_TARGET_HEALTH_PCT = 0.20
 
@@ -79,6 +81,11 @@ local DEFAULT_POLICY = {
     holy_light_execute_hold_ttd_sec = 6.0,
     hammer_of_wrath_min_ttd_sec = 0.80,
     consecration_aoe_min_ttd_sec = 4.50,
+    hoj_defensive_hp_pct = 0.52,
+    hoj_defensive_min_ttd_sec = 2.0,
+    repentance_defensive_hp_pct = 0.34,
+    repentance_defensive_min_ttd_sec = 4.5,
+    repentance_defensive_min_distance = 6.0,
     ttd_alpha = 0.35,
     ttd_min_sample_secs = 0.20,
     ttd_memory_ttl_secs = 20.0,
@@ -550,6 +557,192 @@ local function target_is_undead_or_demon(ctx)
 end
 
 ---@private
+---@param ctx table
+---@param spec table|string|number
+---@return number
+local function spell_cooldown_remaining(ctx, spec)
+    if type(ctx) ~= "table" or type(ctx.spell_cooldown_remaining) ~= "function" then
+        return 0
+    end
+    local id = resolve_spell(ctx, spec)
+    if not id then
+        return 0
+    end
+    local ok_cd, cooldown = pcall(ctx.spell_cooldown_remaining, id)
+    if not ok_cd then
+        return 0
+    end
+    return tonumber(cooldown) or 0
+end
+
+---@private
+---@param ctx table
+---@return boolean
+local function target_is_humanoid_or_player(ctx)
+    if type(ctx) ~= "table" then
+        return false
+    end
+    if ctx.target_is_player == true then
+        return true
+    end
+    if type(ctx.target_is_creature_type) == "function" then
+        return ctx.target_is_creature_type("humanoid")
+    end
+    local name = string.lower(tostring(ctx.target_creature_type_name or ""))
+    if name ~= "" and string.find(name, "humanoid", 1, true) ~= nil then
+        return true
+    end
+    return tonumber(ctx.target_creature_type_id) == 7
+end
+
+---@private
+---@param ctx table
+---@return boolean
+local function target_has_hard_cc(ctx)
+    if type(ctx) ~= "table" or type(ctx.target_has_aura) ~= "function" then
+        return false
+    end
+
+    local hoj = SpellCatalog.ids(SPELLS.HAMMER_OF_JUSTICE)
+    if type(hoj) == "table" and #hoj > 0 and ctx.target_has_aura(hoj) == true then
+        return true
+    end
+
+    local repentance = SpellCatalog.ids(SPELLS.REPENTANCE)
+    if type(repentance) == "table" and #repentance > 0 and ctx.target_has_aura(repentance) == true then
+        return true
+    end
+
+    return false
+end
+
+---@private
+---@param ctx table
+---@return boolean
+local function hoj_is_ready(ctx)
+    local hoj = resolve_spell(ctx, SPELLS.HAMMER_OF_JUSTICE)
+    if not is_learned(hoj) then
+        return false
+    end
+    return spell_cooldown_remaining(ctx, SPELLS.HAMMER_OF_JUSTICE) <= 0.05
+end
+
+---@private
+---@param ctx table
+---@return boolean
+local function should_use_repentance_interrupt(ctx)
+    if type(ctx) ~= "table" then
+        return false
+    end
+    local repentance = resolve_spell(ctx, SPELLS.REPENTANCE)
+    if not is_learned(repentance) then
+        return false
+    end
+    if target_is_humanoid_or_player(ctx) ~= true then
+        return false
+    end
+    if target_has_hard_cc(ctx) == true then
+        return false
+    end
+
+    local distance = tonumber(ctx.target_distance) or 999
+    if distance > HAMMER_OF_JUSTICE_CAST_RANGE then
+        return true
+    end
+
+    -- In HoJ range, prefer HoJ when ready (stun persists through incoming damage).
+    if hoj_is_ready(ctx) then
+        return false
+    end
+    return true
+end
+
+---@private
+---@param ctx table
+---@param p table
+---@return boolean
+local function should_use_hammer_of_justice_defensive(ctx, p)
+    if type(ctx) ~= "table" then
+        return false
+    end
+    local hoj = resolve_spell(ctx, SPELLS.HAMMER_OF_JUSTICE)
+    if not is_learned(hoj) then
+        return false
+    end
+    if ctx.in_combat ~= true then
+        return false
+    end
+    if target_has_hard_cc(ctx) == true then
+        return false
+    end
+
+    local hp = tonumber(ctx.player_health_pct) or 1.0
+    local hp_gate = tonumber(p and p.hoj_defensive_hp_pct) or 0.52
+    if hp > hp_gate then
+        return false
+    end
+
+    local distance = tonumber(ctx.target_distance) or 999
+    if distance > HAMMER_OF_JUSTICE_CAST_RANGE then
+        return false
+    end
+
+    local ttd = tonumber(ctx.ret_target_ttd_seconds or ctx.target_ttd_seconds)
+    local min_ttd = tonumber(p and p.hoj_defensive_min_ttd_sec) or 2.0
+    if ttd ~= nil and ttd < min_ttd then
+        return false
+    end
+
+    return true
+end
+
+---@private
+---@param ctx table
+---@param p table
+---@return boolean
+local function should_use_repentance_defensive(ctx, p)
+    if type(ctx) ~= "table" then
+        return false
+    end
+    local repentance = resolve_spell(ctx, SPELLS.REPENTANCE)
+    if not is_learned(repentance) then
+        return false
+    end
+    if ctx.in_combat ~= true then
+        return false
+    end
+    if target_is_humanoid_or_player(ctx) ~= true then
+        return false
+    end
+    if target_has_hard_cc(ctx) == true then
+        return false
+    end
+    if hoj_is_ready(ctx) and (tonumber(ctx.target_distance) or 999) <= HAMMER_OF_JUSTICE_CAST_RANGE then
+        return false
+    end
+
+    local hp = tonumber(ctx.player_health_pct) or 1.0
+    local hp_gate = tonumber(p and p.repentance_defensive_hp_pct) or 0.34
+    if hp > hp_gate then
+        return false
+    end
+
+    local distance = tonumber(ctx.target_distance) or 999
+    local min_distance = tonumber(p and p.repentance_defensive_min_distance) or 6.0
+    if distance < min_distance or distance > REPENTANCE_CAST_RANGE then
+        return false
+    end
+
+    local ttd = tonumber(ctx.ret_target_ttd_seconds or ctx.target_ttd_seconds)
+    local min_ttd = tonumber(p and p.repentance_defensive_min_ttd_sec) or 4.5
+    if ttd ~= nil and ttd < min_ttd then
+        return false
+    end
+
+    return true
+end
+
+---@private
 ---@param spec table|string|number|function
 ---@param priority number
 ---@param opts? table
@@ -792,6 +985,22 @@ function Retribution:defensive(ctx)
             intent = "defensive",
             combat_modes = { "burst", "sustain", "recovery" },
         }),
+        target_spell(SPELLS.HAMMER_OF_JUSTICE, 955, {
+            max_target_distance = HAMMER_OF_JUSTICE_CAST_RANGE,
+            intent = "defensive",
+            combat_modes = { "burst", "sustain", "recovery" },
+            condition = function(local_ctx)
+                return should_use_hammer_of_justice_defensive(local_ctx, p)
+            end,
+        }),
+        target_spell(SPELLS.REPENTANCE, 952, {
+            max_target_distance = REPENTANCE_CAST_RANGE,
+            intent = "defensive",
+            combat_modes = { "burst", "sustain", "recovery" },
+            condition = function(local_ctx)
+                return should_use_repentance_defensive(local_ctx, p)
+            end,
+        }),
         self_spell(holy_light, 945, {
             max_player_health_pct = p.holy_light_hp_pct,
             min_player_mana_pct = p.holy_light_min_mana_pct,
@@ -832,7 +1041,20 @@ function Retribution:interrupt(ctx)
     return {
         target_spell(SPELLS.HAMMER_OF_JUSTICE, 760, {
             target_must_be_casting = true,
-            max_target_distance = 10.0,
+            max_target_distance = HAMMER_OF_JUSTICE_CAST_RANGE,
+            intent = "interrupt",
+            condition = function(local_ctx)
+                local hoj = resolve_spell(local_ctx, SPELLS.HAMMER_OF_JUSTICE)
+                return is_learned(hoj) and target_has_hard_cc(local_ctx) ~= true
+            end,
+        }),
+        target_spell(SPELLS.REPENTANCE, 750, {
+            target_must_be_casting = true,
+            max_target_distance = REPENTANCE_CAST_RANGE,
+            intent = "interrupt",
+            condition = function(local_ctx)
+                return should_use_repentance_interrupt(local_ctx)
+            end,
         }),
     }
 end

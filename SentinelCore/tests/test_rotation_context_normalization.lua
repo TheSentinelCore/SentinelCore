@@ -80,8 +80,28 @@ local function run()
     T.assert_eq(ctx.target_health_pct, 0.25, "target health pct must normalize 25 -> 0.25")
     T.assert_eq(ctx.player_mana_pct, 0.22, "mana pct must normalize 22 -> 0.22")
     T.assert_true(ctx.target_is_undead_or_demon == true, "context should identify undead targets for spell gating")
+    T.assert_true(ctx.target_is_casting == true and ctx.target_is_channeling == false,
+        "context should expose cast/channel states separately")
+    T.assert_true(ctx.target_is_casting_or_channeling == true,
+        "context should expose combined cast/channel state for interrupt guards")
     T.assert_true(type(ctx.target_is_creature_type) == "function" and ctx.target_is_creature_type("undead") == true,
         "context should provide creature-type predicate helper")
+
+    target._casting = false
+    target._channeling = true
+    local ctx_channel = ctx_builder:build({
+        enums = enums,
+        helpers = {
+            unit_helper = unit_helper_fraction,
+            distance_3d = function(_, _) return 5 end,
+        },
+    })
+    T.assert_true(ctx_channel.target_is_casting == false and ctx_channel.target_is_channeling == true,
+        "context should detect channeling targets for interrupt logic")
+    T.assert_true(ctx_channel.target_is_casting_or_channeling == true,
+        "combined cast/channel flag should stay true for channeling targets")
+    target._casting = true
+    target._channeling = false
 
     local unit_helper_fraction = {
         get_health_percentage = function(_, unit)

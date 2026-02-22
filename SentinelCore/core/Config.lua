@@ -123,6 +123,8 @@ local RETRIBUTION_POLICY_BOUNDS = {
     mana_recovery_enter_pct = { 0.0, 1.0 },
     mana_recovery_exit_pct = { 0.0, 1.0 },
     holy_light_execute_hold_hp_pct = { 0.0, 1.0 },
+    hoj_defensive_hp_pct = { 0.0, 1.0 },
+    repentance_defensive_hp_pct = { 0.0, 1.0 },
     ttd_alpha = { 0.0, 1.0 },
 }
 
@@ -132,6 +134,9 @@ local RETRIBUTION_POLICY_TIME_BOUNDS = {
     holy_light_execute_hold_ttd_sec = { 0.0, 120.0 },
     hammer_of_wrath_min_ttd_sec = { 0.0, 30.0 },
     consecration_aoe_min_ttd_sec = { 0.0, 120.0 },
+    hoj_defensive_min_ttd_sec = { 0.0, 120.0 },
+    repentance_defensive_min_ttd_sec = { 0.0, 120.0 },
+    repentance_defensive_min_distance = { 0.0, 40.0 },
     ttd_min_sample_secs = { 0.01, 10.0 },
     ttd_memory_ttl_secs = { 1.0, 600.0 },
     ttd_max_seconds = { 1.0, 600.0 },

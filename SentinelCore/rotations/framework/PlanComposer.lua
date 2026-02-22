@@ -320,7 +320,9 @@ local function resolve_action_release_delay(action, ctx)
         end
     end
 
-    if action.target_must_be_casting == true and ctx and ctx.target_is_casting ~= true then
+    local target_casting = ctx
+        and (ctx.target_is_casting == true or ctx.target_is_channeling == true or ctx.target_is_casting_or_channeling == true)
+    if action.target_must_be_casting == true and target_casting ~= true then
         if 1.20 > release then
             release = 1.20
         end

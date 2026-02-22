@@ -1435,7 +1435,10 @@ function RotationEngine:_action_allowed(action, ctx)
         end
     end
 
-    if action.target_must_be_casting == true and ctx.target_is_casting ~= true then
+    local target_casting = ctx.target_is_casting == true
+        or ctx.target_is_channeling == true
+        or ctx.target_is_casting_or_channeling == true
+    if action.target_must_be_casting == true and target_casting ~= true then
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
     if action.allow_movement ~= true and ctx.player_is_moving == true then

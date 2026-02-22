@@ -7,6 +7,8 @@ local function run()
         [27136] = true,
         [27174] = true,
         [20218] = true,
+        [10308] = true,
+        [20066] = true,
     }
 
     T.install_core_stub({
@@ -84,6 +86,102 @@ local function run()
     T.assert_true(type(exorcism_action.combat_modes) == "table" and exorcism_action.combat_modes[1] == "burst",
         "exorcism should be restricted to burst mana mode through scheduler metadata")
 
+    local interrupt = provider:interrupt(base_ctx)
+    local hoj_interrupt = nil
+    local repentance_interrupt = nil
+    for i = 1, #interrupt do
+        local action = interrupt[i]
+        if action.action_type == "cast_spell_target" then
+            local sid = nil
+            if type(action.spell_id) == "function" then
+                sid = tonumber(action.spell_id(base_ctx, action)) or 0
+            else
+                sid = tonumber(action.spell_id) or 0
+            end
+            if sid == 10308 then
+                hoj_interrupt = action
+            elseif sid == 20066 then
+                repentance_interrupt = action
+            end
+        end
+    end
+    T.assert_true(type(hoj_interrupt) == "table", "interrupt plan should include Hammer of Justice")
+    T.assert_true(type(repentance_interrupt) == "table", "interrupt plan should include Repentance fallback")
+    T.assert_true(hoj_interrupt.target_must_be_casting == true and repentance_interrupt.target_must_be_casting == true,
+        "HoJ and Repentance interrupt actions should require active cast/channel targets")
+    T.assert_eq(tonumber(hoj_interrupt.max_target_distance), 10.0,
+        "HoJ interrupt should be constrained to 10-yard range")
+    T.assert_eq(tonumber(repentance_interrupt.max_target_distance), 20.0,
+        "Repentance interrupt should use 20-yard range")
+
+    local rep_interrupt_far = repentance_interrupt.condition({
+        target_distance = 16.0,
+        target_is_player = false,
+        target_is_creature_type = function(kind)
+            return tostring(kind) == "humanoid"
+        end,
+        target_has_aura = function()
+            return false
+        end,
+        spell_cooldown_remaining = function()
+            return 0
+        end,
+        resolve_spell_id = resolve_from_fallback,
+    }, repentance_interrupt)
+    T.assert_true(rep_interrupt_far == true,
+        "repentance interrupt should engage at range when target is humanoid/player and outside HoJ reach")
+
+    local rep_interrupt_hoj_ready = repentance_interrupt.condition({
+        target_distance = 8.0,
+        target_is_player = true,
+        target_has_aura = function()
+            return false
+        end,
+        spell_cooldown_remaining = function(spell_id)
+            if tonumber(spell_id) == 10308 then
+                return 0
+            end
+            return 0
+        end,
+        resolve_spell_id = resolve_from_fallback,
+    }, repentance_interrupt)
+    T.assert_true(rep_interrupt_hoj_ready == false,
+        "repentance interrupt should defer to HoJ when HoJ is ready in 10-yard range")
+
+    local rep_interrupt_hoj_cd = repentance_interrupt.condition({
+        target_distance = 8.0,
+        target_is_player = true,
+        target_has_aura = function()
+            return false
+        end,
+        spell_cooldown_remaining = function(spell_id)
+            if tonumber(spell_id) == 10308 then
+                return 8.0
+            end
+            return 0
+        end,
+        resolve_spell_id = resolve_from_fallback,
+    }, repentance_interrupt)
+    T.assert_true(rep_interrupt_hoj_cd == true,
+        "repentance interrupt should activate in HoJ range when HoJ is on cooldown")
+
+    local rep_interrupt_invalid = repentance_interrupt.condition({
+        target_distance = 16.0,
+        target_is_player = false,
+        target_is_creature_type = function()
+            return false
+        end,
+        target_has_aura = function()
+            return false
+        end,
+        spell_cooldown_remaining = function()
+            return 0
+        end,
+        resolve_spell_id = resolve_from_fallback,
+    }, repentance_interrupt)
+    T.assert_true(rep_interrupt_invalid == false,
+        "repentance interrupt should be blocked on non-humanoid non-player targets")
+
     local exorcism_invalid = exorcism_action.condition({
         player_mana_pct = 0.80,
         target_is_undead_or_demon = false,
@@ -148,12 +246,18 @@ local function run()
     local has_mana_potion = false
     local flash_action = nil
     local holy_action = nil
+    local hoj_defensive_action = nil
+    local repentance_defensive_action = nil
     for i = 1, #defensive do
         local action = defensive[i]
         if action.action_type == "use_best_health_potion" then
             has_health_potion = true
         elseif action.action_type == "use_best_mana_potion" then
             has_mana_potion = true
+        elseif action.action_type == "cast_spell_target" and tonumber(action.priority) == 955 then
+            hoj_defensive_action = action
+        elseif action.action_type == "cast_spell_target" and tonumber(action.priority) == 952 then
+            repentance_defensive_action = action
         elseif action.action_type == "cast_spell_self" and tonumber(action.priority) == 945 then
             holy_action = action
         elseif action.action_type == "cast_spell_self" and tonumber(action.priority) == 935 then
@@ -164,6 +268,9 @@ local function run()
     T.assert_true(has_mana_potion, "defensive plan should include mana potion action")
     T.assert_true(type(holy_action) == "table", "defensive plan should include Holy Light action")
     T.assert_true(type(flash_action) == "table", "defensive plan should include Flash of Light action")
+    T.assert_true(type(hoj_defensive_action) == "table", "defensive plan should include Hammer of Justice peel action")
+    T.assert_true(type(repentance_defensive_action) == "table",
+        "defensive plan should include Repentance peel action")
     T.assert_true(flash_action.allow_movement == false, "flash of light should require standing still")
     T.assert_true((tonumber(flash_action.max_player_mana_pct) or -1) >= 0 and
         (tonumber(flash_action.max_player_mana_pct) or -1) <= 0.15,
@@ -211,6 +318,43 @@ local function run()
     }
     local low_mana_spell = flash_action.spell_id(low_ctx, flash_action)
     T.assert_eq(low_mana_spell, 27137, "Flash of Light should always resolve to max learned rank")
+
+    local hoj_defensive_ok = hoj_defensive_action.condition({
+        in_combat = true,
+        player_health_pct = 0.40,
+        target_distance = 9.0,
+        target_has_aura = function()
+            return false
+        end,
+        spell_cooldown_remaining = function()
+            return 0
+        end,
+        resolve_spell_id = resolve_from_fallback,
+    }, hoj_defensive_action)
+    T.assert_true(hoj_defensive_ok == true,
+        "defensive HoJ should trigger in low-health melee pressure windows")
+
+    local rep_defensive_ok = repentance_defensive_action.condition({
+        in_combat = true,
+        player_health_pct = 0.25,
+        target_distance = 14.0,
+        target_is_player = false,
+        target_is_creature_type = function(kind)
+            return tostring(kind) == "humanoid"
+        end,
+        target_has_aura = function()
+            return false
+        end,
+        spell_cooldown_remaining = function(spell_id)
+            if tonumber(spell_id) == 10308 then
+                return 5.0
+            end
+            return 0
+        end,
+        resolve_spell_id = resolve_from_fallback,
+    }, repentance_defensive_action)
+    T.assert_true(rep_defensive_ok == true,
+        "defensive Repentance should be available when HoJ is unavailable and distance is safe")
 
     local maintenance = provider:maintenance(base_ctx)
     local has_food = false

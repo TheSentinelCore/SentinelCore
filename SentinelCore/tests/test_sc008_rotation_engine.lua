@@ -163,6 +163,26 @@ local function run()
     T.assert_true(water_allowed_under_food_lock == true and water_allowed_err == nil,
         "rest locks should be scoped by consumable kind so food lock does not block water")
 
+    local interrupt_channel_allowed, interrupt_channel_err = rotation:_action_allowed({
+        action_type = "cast_spell_target",
+        spell_id = 853,
+        target_must_be_casting = true,
+        allow_movement = true,
+    }, {
+        now = (core and core.time and core.time()) or 0,
+        player = player,
+        target = target,
+        target_is_casting = false,
+        target_is_channeling = true,
+        target_is_casting_or_channeling = true,
+        player_is_moving = false,
+        player_health_pct = 1.0,
+        player_mana_pct = 1.0,
+        target_distance = 5.0,
+    })
+    T.assert_true(interrupt_channel_allowed == true and interrupt_channel_err == nil,
+        "interrupt guards should treat channeling targets as valid cast targets")
+
     local original_build_context_full = rotation._context_builder.build
     rotation._context_builder.build = function()
         return {

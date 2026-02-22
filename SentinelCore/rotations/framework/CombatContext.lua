@@ -423,6 +423,7 @@ local function resolve_rest_lock_until(blackboard, now, kind)
 end
 
 local CREATURE_TYPE_ID = {
+    HUMANOID = 7,
     DEMON = 3,
     UNDEAD = 6,
 }
@@ -490,6 +491,84 @@ local function resolve_creature_type(unit)
 end
 
 ---@private
+---@param unit game_object|nil
+---@return boolean
+---@return boolean
+---@return number|nil
+---@return string|nil
+local function resolve_cast_state(unit)
+    if not unit then
+        return false, false, nil, nil
+    end
+
+    local casting = safe_unit_call(unit, "is_casting_spell") == true
+    local channeling = safe_unit_call(unit, "is_channelling_spell") == true
+        or safe_unit_call(unit, "is_channeling_spell") == true
+
+    local cast_spell_id = nil
+    local cast_spell_name = nil
+
+    local direct_methods = {
+        "get_casting_spell_id",
+        "get_current_cast_spell_id",
+        "get_cast_spell_id",
+        "get_channel_spell_id",
+        "get_current_channel_spell_id",
+        "get_spell_cast_id",
+    }
+    for i = 1, #direct_methods do
+        local value = safe_unit_call(unit, direct_methods[i])
+        local numeric = tonumber(value)
+        if numeric and numeric > 0 then
+            cast_spell_id = numeric
+            break
+        end
+    end
+
+    local detail_methods = {
+        "get_casting_spell",
+        "get_current_cast_spell",
+        "get_channel_spell",
+        "get_current_channel_spell",
+        "get_active_spell",
+    }
+    for i = 1, #detail_methods do
+        local value = safe_unit_call(unit, detail_methods[i])
+        if type(value) == "table" then
+            if cast_spell_id == nil then
+                local numeric = tonumber(value.spell_id or value.id or value.entry)
+                if numeric and numeric > 0 then
+                    cast_spell_id = numeric
+                end
+            end
+            if cast_spell_name == nil and type(value.name) == "string" and value.name ~= "" then
+                cast_spell_name = value.name
+            end
+        elseif cast_spell_name == nil and type(value) == "string" and value ~= "" then
+            cast_spell_name = value
+        end
+    end
+
+    local name_methods = {
+        "get_casting_spell_name",
+        "get_current_cast_spell_name",
+        "get_channel_spell_name",
+        "get_current_channel_spell_name",
+    }
+    if cast_spell_name == nil then
+        for i = 1, #name_methods do
+            local value = safe_unit_call(unit, name_methods[i])
+            if type(value) == "string" and value ~= "" then
+                cast_spell_name = value
+                break
+            end
+        end
+    end
+
+    return casting, channeling, cast_spell_id, cast_spell_name
+end
+
+---@private
 ---@param creature_type_id number|nil
 ---@param creature_type_name string|nil
 ---@param wanted string
@@ -548,7 +627,7 @@ function CombatContext:build(deps)
         target_distance = distance_3d(player_pos, target_pos)
     end
 
-    local target_is_casting = safe_unit_call(target, "is_casting_spell") == true
+    local target_is_casting, target_is_channeling, target_cast_spell_id, target_cast_spell_name = resolve_cast_state(target)
     local target_creature_type_id, target_creature_type_name = resolve_creature_type(target)
     local target_is_demon = creature_type_matches(target_creature_type_id, target_creature_type_name, "demon")
     local target_is_undead = creature_type_matches(target_creature_type_id, target_creature_type_name, "undead")
@@ -620,6 +699,10 @@ function CombatContext:build(deps)
         target_health_pct = target_health_pct,
         target_distance = target_distance,
         target_is_casting = target_is_casting,
+        target_is_channeling = target_is_channeling,
+        target_is_casting_or_channeling = target_is_casting or target_is_channeling,
+        target_cast_spell_id = target_cast_spell_id,
+        target_cast_spell_name = target_cast_spell_name,
         target_is_player = target_is_player,
         target_creature_type_id = target_creature_type_id,
         target_creature_type_name = target_creature_type_name,
