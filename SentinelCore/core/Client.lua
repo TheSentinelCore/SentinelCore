@@ -110,11 +110,14 @@ function Client:new(config)
     o._blackboard:set("core.session_id", o._telemetry:get_session_id())
 
     local runtime_cfg = o._config:get_runtime()
+    local idle_threshold = tonumber(runtime_cfg and runtime_cfg.telemetry and runtime_cfg.telemetry.idle_full_resource_threshold)
+        or 0.98
+    o._blackboard:set("telemetry.idle_full_resource_threshold", idle_threshold)
 
     local navigation = config.navigation_adapter or NavigationAdapter:new(o._event_bus, o._blackboard)
     local world_data = config.world_data_adapter or WorldDataAdapter:new(o._event_bus, o._blackboard, runtime_cfg.world_data)
     local objective = config.objective_service or ObjectiveService:new(o._event_bus, o._blackboard, runtime_cfg.objective)
-    local targeting = config.targeting_service or TargetingService:new(o._event_bus, o._blackboard, runtime_cfg.targeting)
+    local targeting = config.targeting_service or TargetingService:new(o._event_bus, o._blackboard, runtime_cfg.targeting, navigation)
     local rotation = config.rotation_engine or RotationEngine:new(o._event_bus, o._blackboard, runtime_cfg.combat)
     local combat = config.combat_service or CombatService:new(o._event_bus, o._blackboard, navigation, targeting, rotation, runtime_cfg.combat)
     local loot = config.loot_service or LootService:new(o._event_bus, o._blackboard, runtime_cfg.loot, navigation)
@@ -259,6 +262,10 @@ function Client:_apply_runtime_bindings()
     if self._services.recovery then
         self._services.recovery._cfg = Defaults.copy(runtime_cfg.recovery or {})
     end
+
+    local idle_threshold = tonumber(runtime_cfg and runtime_cfg.telemetry and runtime_cfg.telemetry.idle_full_resource_threshold)
+        or 0.98
+    self._blackboard:set("telemetry.idle_full_resource_threshold", idle_threshold)
 
     if self._telemetry then
         self._telemetry._flush_interval = tonumber(runtime_cfg.telemetry and runtime_cfg.telemetry.flush_interval) or 1.0

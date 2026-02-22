@@ -211,11 +211,173 @@ local function run()
     T.assert_true(target6 ~= nil and target6:get_name() == "BlacklistedTarget",
         "expired blacklist should allow high-score target to be selected again")
 
+    local nav_calls = { estimates = 0 }
+    local fake_nav = {
+        estimate_path_cost = function(_, from_pos, to_pos, cb)
+            nav_calls.estimates = nav_calls.estimates + 1
+            local x = tonumber(to_pos and to_pos.x) or 0
+            if x >= 30 then
+                cb(true, 120, nil)
+            else
+                cb(true, math.max(5, x), nil)
+            end
+        end,
+    }
+
+    local targeting_risk = TargetingService:new(bus, bb, {
+        base_radius = 45,
+        max_radius = 60,
+        pull_risk_budget = 0.25,
+        pull_add_scan_radius = 10,
+        pull_add_risk_weight = 0.30,
+        score_weights = {
+            kill_speed = 0.5,
+            loot_value = 0.2,
+            travel_cost = 0.2,
+            risk = 0.3,
+        },
+    }, fake_nav)
+
+    local risky_target = T.mock_object({
+        name = "RiskyTarget",
+        level = 10,
+        health = 15,
+        max_health = 100,
+        position = { x = 8, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local risky_add_1 = T.mock_object({
+        name = "RiskyAdd1",
+        level = 10,
+        health = 100,
+        max_health = 100,
+        position = { x = 9, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local risky_add_2 = T.mock_object({
+        name = "RiskyAdd2",
+        level = 10,
+        health = 100,
+        max_health = 100,
+        position = { x = 10, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local safe_target = T.mock_object({
+        name = "SafeTarget",
+        level = 10,
+        health = 80,
+        max_health = 100,
+        position = { x = 24, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+
+    core.object_manager.get_visible_objects = function()
+        return { risky_target, risky_add_1, risky_add_2, safe_target }
+    end
+    local risk_pick, risk_err = targeting_risk:acquire_target()
+    T.assert_true(risk_pick ~= nil and risk_pick:get_name() == "SafeTarget",
+        "pull risk budget should skip high-pressure targets even when kill-speed score is attractive")
+    T.assert_true(nav_calls.estimates >= 2, "target scoring should warm path cost estimates during acquisition")
+
+    local fake_nav_path = {
+        estimate_path_cost = function(_, from_pos, to_pos, cb)
+            local x = tonumber(to_pos and to_pos.x) or 0
+            if x < 12 then
+                cb(true, 140, nil)
+            else
+                cb(true, 18, nil)
+            end
+        end,
+    }
+    local targeting_path = TargetingService:new(bus, bb, {
+        base_radius = 45,
+        max_radius = 60,
+        pull_risk_budget = 5.0,
+        score_weights = {
+            kill_speed = 0.35,
+            loot_value = 0.1,
+            travel_cost = 0.45,
+            risk = 0.10,
+        },
+    }, fake_nav_path)
+    local near_bad_path = T.mock_object({
+        name = "NearBadPath",
+        level = 10,
+        health = 20,
+        max_health = 100,
+        position = { x = 9, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local far_good_path = T.mock_object({
+        name = "FarGoodPath",
+        level = 10,
+        health = 28,
+        max_health = 100,
+        position = { x = 16, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    core.object_manager.get_visible_objects = function()
+        return { near_bad_path, far_good_path }
+    end
+    local path_pick, path_err = targeting_path:acquire_target()
+    T.assert_true(path_pick ~= nil and path_pick:get_name() == "FarGoodPath",
+        "path-cost-aware scoring should favor lower path-cost targets over closer but expensive-path targets")
+
+    local fake_nav_unreachable = {
+        estimate_path_cost = function(_, from_pos, to_pos, cb)
+            local x = tonumber(to_pos and to_pos.x) or 0
+            if x <= 11 then
+                cb(false, nil, ErrorCodes.NAV_MOVE_FAILED)
+            else
+                cb(true, x, nil)
+            end
+        end,
+    }
+    local targeting_unreachable = TargetingService:new(bus, bb, {
+        base_radius = 45,
+        max_radius = 60,
+        path_unreachable_ttl = 5.0,
+        pull_risk_budget = 5.0,
+    }, fake_nav_unreachable)
+    local unreachable_target = T.mock_object({
+        name = "UnreachableTarget",
+        level = 10,
+        health = 30,
+        max_health = 100,
+        position = { x = 10, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local reachable_target = T.mock_object({
+        name = "ReachableTarget",
+        level = 10,
+        health = 40,
+        max_health = 100,
+        position = { x = 15, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    core.object_manager.get_visible_objects = function()
+        return { unreachable_target, reachable_target }
+    end
+    local unreachable_pick, unreachable_err = targeting_unreachable:acquire_target()
+    T.assert_true(unreachable_pick ~= nil and unreachable_pick:get_name() == "ReachableTarget",
+        "unreachable path estimates should blacklist bad candidates and select reachable alternatives")
+    T.assert_true(targeting_unreachable:is_target_blacklisted(unreachable_target) == true,
+        "unreachable candidate should be temporarily blacklisted from future pulls")
+
     return {
         sc007_target_scoring = true,
         sc007_faction_defense_only = true,
         sc007_defensive_retarget = true,
         sc007_target_blacklist_ttl = true,
+        sc007_target_risk_budget_and_path_cost = true,
     }
 end
 

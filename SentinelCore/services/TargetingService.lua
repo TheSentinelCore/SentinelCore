@@ -113,24 +113,31 @@ end
 ---@field private _event_bus EventBus
 ---@field private _blackboard Blackboard
 ---@field private _cfg table
+---@field private _nav NavigationAdapter|nil
 ---@field private _current_target game_object|nil
 ---@field private _target_memory table<string, table>
 ---@field private _target_memory_last_prune_at number
+---@field private _path_cost_cache table<string, table>
+---@field private _path_cost_last_prune_at number
 local TargetingService = {}
 TargetingService.__index = TargetingService
 
 ---@param event_bus EventBus
 ---@param blackboard Blackboard
 ---@param cfg table
+---@param navigation? NavigationAdapter
 ---@return TargetingService
-function TargetingService:new(event_bus, blackboard, cfg)
+function TargetingService:new(event_bus, blackboard, cfg, navigation)
     local o = setmetatable({}, TargetingService)
     o._event_bus = event_bus
     o._blackboard = blackboard
     o._cfg = cfg or {}
+    o._nav = navigation
     o._current_target = nil
     o._target_memory = {}
     o._target_memory_last_prune_at = 0
+    o._path_cost_cache = {}
+    o._path_cost_last_prune_at = 0
     return o
 end
 
@@ -247,6 +254,140 @@ end
 function TargetingService:is_target_blacklisted(target)
     local blocked = self:_is_target_blacklisted(target, now_seconds())
     return blocked == true
+end
+
+---@private
+---@param target game_object|nil
+---@return string
+function TargetingService:_path_cost_key(target)
+    return self:_target_memory_key(target)
+end
+
+---@private
+---@param now number
+function TargetingService:_prune_path_cost_cache(now)
+    local prune_interval = tonumber(self._cfg.path_cost_prune_interval) or 2.0
+    if (now - (tonumber(self._path_cost_last_prune_at) or 0)) < prune_interval then
+        return
+    end
+    self._path_cost_last_prune_at = now
+
+    local ttl = tonumber(self._cfg.path_cost_cache_ttl) or 8.0
+    local max_entries = tonumber(self._cfg.path_cost_cache_max_entries) or 256
+    local active = 0
+    for key, entry in pairs(self._path_cost_cache) do
+        local updated_at = tonumber(entry and entry.updated_at) or 0
+        local pending = entry and entry.pending == true
+        if pending or (updated_at > 0 and (now - updated_at) <= ttl) then
+            active = active + 1
+        else
+            self._path_cost_cache[key] = nil
+        end
+    end
+
+    if active <= max_entries then
+        return
+    end
+
+    local overflow = active - max_entries
+    for key, _ in pairs(self._path_cost_cache) do
+        self._path_cost_cache[key] = nil
+        overflow = overflow - 1
+        if overflow <= 0 then
+            break
+        end
+    end
+end
+
+---@private
+---@param target game_object|nil
+---@param now number
+---@return table|nil
+function TargetingService:_path_cost_snapshot(target, now)
+    if not target then
+        return nil
+    end
+    local key = self:_path_cost_key(target)
+    local entry = self._path_cost_cache[key]
+    if type(entry) ~= "table" then
+        return nil
+    end
+
+    local ttl = tonumber(self._cfg.path_cost_cache_ttl) or 8.0
+    local updated_at = tonumber(entry.updated_at) or 0
+    if entry.pending == true then
+        return nil
+    end
+    if updated_at <= 0 or (now - updated_at) > ttl then
+        self._path_cost_cache[key] = nil
+        return nil
+    end
+    return entry
+end
+
+---@private
+---@param target game_object|nil
+---@param player_pos vec3|nil
+---@param now number
+function TargetingService:_warm_path_cost(target, player_pos, now)
+    if not target
+        or not player_pos
+        or not self._nav
+        or type(self._nav.estimate_path_cost) ~= "function" then
+        return
+    end
+
+    self:_prune_path_cost_cache(now)
+
+    local target_pos = safe_method(target, "get_position")
+    if not target_pos then
+        return
+    end
+
+    local key = self:_path_cost_key(target)
+    local entry = self._path_cost_cache[key]
+    local request_interval = tonumber(self._cfg.path_cost_request_interval) or 1.5
+    local stale_window = tonumber(self._cfg.path_cost_cache_ttl) or 8.0
+    if type(entry) == "table" then
+        local requested_at = tonumber(entry.requested_at) or 0
+        if entry.pending == true and (now - requested_at) < request_interval then
+            return
+        end
+        local updated_at = tonumber(entry.updated_at) or 0
+        if entry.pending ~= true and updated_at > 0 and (now - updated_at) < stale_window then
+            return
+        end
+    else
+        entry = {}
+        self._path_cost_cache[key] = entry
+    end
+
+    entry.pending = true
+    entry.requested_at = now
+
+    local target_ref = target
+    self._nav:estimate_path_cost(player_pos, target_pos, function(ok, cost, error_code)
+        local current = self._path_cost_cache[key]
+        if type(current) ~= "table" then
+            current = {}
+            self._path_cost_cache[key] = current
+        end
+
+        current.pending = false
+        current.updated_at = now_seconds()
+        if ok == true and tonumber(cost) and tonumber(cost) > 0 then
+            current.ok = true
+            current.cost = tonumber(cost)
+            current.error_code = nil
+        else
+            current.ok = false
+            current.cost = nil
+            current.error_code = error_code or ErrorCodes.NAV_MOVE_FAILED
+
+            local ttl = tonumber(self._cfg.path_unreachable_ttl) or 20.0
+            self:mark_target_failed(target_ref, current.error_code, ttl)
+        end
+    end)
 end
 
 ---@return number
@@ -491,6 +632,56 @@ end
 
 ---@private
 ---@param target game_object
+---@param player game_object
+---@param objects table|nil
+---@param cfg table
+---@param cache table|nil
+---@return number
+local function estimate_pull_pressure(target, player, objects, cfg, cache)
+    if type(objects) ~= "table" then
+        return 0
+    end
+
+    local key = safe_unit_guid(target)
+    if key <= 0 then
+        key = target
+    end
+    if type(cache) == "table" and cache[key] ~= nil then
+        return tonumber(cache[key]) or 0
+    end
+
+    local scan_radius = tonumber(cfg and cfg.pull_add_scan_radius) or 10.0
+    local target_pos = safe_method(target, "get_position")
+    if not target_pos then
+        return 0
+    end
+
+    local nearby = 0
+    for i = 1, #objects do
+        local candidate = unwrap_game_object(objects[i])
+        if candidate
+            and candidate ~= target
+            and safe_method(candidate, "is_valid") == true
+            and safe_method(candidate, "is_dead") ~= true
+            and safe_method(candidate, "is_ghost") ~= true
+            and is_critter_unit(candidate) ~= true
+            and can_engage(candidate, player) then
+            local candidate_pos = safe_method(candidate, "get_position")
+            local dist = Helpers.distance_3d(target_pos, candidate_pos)
+            if dist <= scan_radius then
+                nearby = nearby + 1
+            end
+        end
+    end
+
+    if type(cache) == "table" then
+        cache[key] = nearby
+    end
+    return nearby
+end
+
+---@private
+---@param target game_object
 ---@param score number
 ---@param nearby_combat_count number
 ---@param reason string|nil
@@ -511,19 +702,31 @@ function TargetingService:_commit_target(target, score, nearby_combat_count, rea
 end
 
 ---@param target game_object
+---@param opts? table
 ---@return number
-function TargetingService:score_target(target)
+---@return table
+function TargetingService:score_target(target, opts)
     local player = self._blackboard:get("player.object")
     if not player then
-        return -math.huge
+        return -math.huge, {}
     end
 
     local player_pos = self._blackboard:get("player.position")
     local target_pos = safe_method(target, "get_position")
     if not target_pos then
-        return -math.huge
+        return -math.huge, {}
     end
+    if type(opts) == "table" and opts.player_pos then
+        player_pos = opts.player_pos
+    end
+
+    local now = type(opts) == "table" and tonumber(opts.now) or now_seconds()
     local distance = Helpers.distance_3d(player_pos, target_pos)
+    local path_distance = distance
+    local path_info = self:_path_cost_snapshot(target, now)
+    if type(path_info) == "table" and path_info.ok == true and tonumber(path_info.cost) then
+        path_distance = math.max(distance, tonumber(path_info.cost) or distance)
+    end
 
     local target_hp = math.max(1, tonumber(safe_method(target, "get_health")) or 1)
     local target_max_hp = math.max(1, tonumber(safe_method(target, "get_max_health")) or target_hp)
@@ -544,8 +747,36 @@ function TargetingService:score_target(target)
 
     local kill_speed = 1.0 - hp_ratio
     local loot_value = (target_level >= player_level) and 1.0 or 0.6
-    local travel_cost = distance / math.max(1.0, tonumber(self._cfg.max_radius) or 75.0)
+    local travel_cost = path_distance / math.max(1.0, tonumber(self._cfg.max_radius) or 75.0)
     local risk = math.max(0, level_delta * 0.2) + elite_risk
+
+    local blacklisted, memory_entry = self:_is_target_blacklisted(target, now)
+    if blacklisted == true then
+        risk = risk + 2.0
+    else
+        local failures = tonumber(memory_entry and memory_entry.failures) or 0
+        local failure_penalty = tonumber(self._cfg.memory_failure_risk_penalty) or 0.12
+        risk = risk + math.min(1.0, failures * failure_penalty)
+    end
+
+    local pull_pressure = 0
+    if type(opts) == "table" and type(opts.objects) == "table" then
+        pull_pressure = estimate_pull_pressure(
+            target,
+            player,
+            opts.objects,
+            self._cfg,
+            opts.pull_pressure_cache
+        )
+    end
+    local add_risk_weight = tonumber(self._cfg.pull_add_risk_weight) or 0.20
+    risk = risk + (math.max(0, pull_pressure - 1) * add_risk_weight)
+
+    local unreachable_penalty = 0
+    if type(path_info) == "table" and path_info.ok == false then
+        unreachable_penalty = tonumber(self._cfg.path_unreachable_risk_penalty) or 1.0
+        risk = risk + unreachable_penalty
+    end
 
     local score = (kill_speed * w_kill) + (loot_value * w_loot) - (travel_cost * w_travel) - (risk * w_risk)
 
@@ -555,10 +786,18 @@ function TargetingService:score_target(target)
         kill_speed = kill_speed,
         loot_value = loot_value,
         travel_cost = travel_cost,
+        path_distance = path_distance,
         risk = risk,
+        pull_pressure = pull_pressure,
+        unreachable_penalty = unreachable_penalty,
     })
 
-    return score
+    return score, {
+        risk = risk,
+        pull_pressure = pull_pressure,
+        distance = distance,
+        path_distance = path_distance,
+    }
 end
 
 ---@return game_object|nil
@@ -595,16 +834,25 @@ function TargetingService:acquire_target()
     local best_target = nil
     local best_score = -math.huge
     local nearby_combat_count = 0
+    local pull_pressure_cache = {}
+    local pull_risk_budget = tonumber(self._cfg.pull_risk_budget) or 0
 
     if defensive_target then
         best_target = defensive_target
-        best_score = self:score_target(defensive_target)
+        self:_warm_path_cost(defensive_target, player_pos, now)
+        best_score = self:score_target(defensive_target, {
+            now = now,
+            objects = objects,
+            player_pos = player_pos,
+            pull_pressure_cache = pull_pressure_cache,
+        })
     end
 
     for i = 1, #objects do
         local candidate = unwrap_game_object(objects[i])
         if is_valid_target(candidate, player)
             and passes_faction_policy(candidate, player, player_team, self._cfg) then
+            self:_warm_path_cost(candidate, player_pos, now)
             local blacklisted = self:_is_target_blacklisted(candidate, now)
             if blacklisted ~= true then
                 local candidate_pos = safe_method(candidate, "get_position")
@@ -614,8 +862,15 @@ function TargetingService:acquire_target()
                         nearby_combat_count = nearby_combat_count + 1
                     end
                     if not defensive_target then
-                        local score = self:score_target(candidate)
-                        if score > best_score then
+                        local score, meta = self:score_target(candidate, {
+                            now = now,
+                            objects = objects,
+                            player_pos = player_pos,
+                            pull_pressure_cache = pull_pressure_cache,
+                        })
+                        local risk = tonumber(meta and meta.risk) or 0
+                        local over_budget = pull_risk_budget > 0 and risk > pull_risk_budget
+                        if not over_budget and score > best_score then
                             best_score = score
                             best_target = candidate
                         end

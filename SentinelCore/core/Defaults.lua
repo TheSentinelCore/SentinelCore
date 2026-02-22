@@ -38,6 +38,16 @@ Defaults.targeting = {
     max_radius = 75.0,
     defensive_retarget_radius = 35.0,
     pull_range = 30.0,
+    pull_risk_budget = 1.20,
+    pull_add_scan_radius = 10.0,
+    pull_add_risk_weight = 0.20,
+    memory_failure_risk_penalty = 0.12,
+    path_cost_cache_ttl = 8.0,
+    path_cost_request_interval = 1.5,
+    path_cost_prune_interval = 2.0,
+    path_cost_cache_max_entries = 256,
+    path_unreachable_ttl = 20.0,
+    path_unreachable_risk_penalty = 1.0,
     only_engage_opposing_faction_if_attacked = true,
     score_weights = {
         kill_speed = 0.40,
@@ -138,6 +148,7 @@ Defaults.vendor = {
 
 Defaults.telemetry = {
     flush_interval = 1.0,
+    idle_full_resource_threshold = 0.98,
 }
 
 Defaults.policy = {

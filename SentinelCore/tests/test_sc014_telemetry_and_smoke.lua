@@ -1,5 +1,6 @@
 local T = require("tests/TestUtil")
 local Events = require("events/Events")
+local ErrorCodes = require("events/ErrorCodes")
 
 local function run()
     local player = T.mock_object({
@@ -63,14 +64,39 @@ local function run()
     bus:emit(Events.KILL_CONFIRMED, {})
     bus:emit(Events.LOOT_COMPLETED, {})
     bus:emit(Events.VENDOR_COMPLETED, {})
+    bus:emit(Events.ROTATION_BLOCKED, {
+        error_code = ErrorCodes.CAST_GUARD_BLOCKED,
+        blocked = {
+            { reason = ErrorCodes.CAST_GUARD_BLOCKED, spell_id = 20271, action_type = "cast_spell_target" },
+            { reason = ErrorCodes.CAST_GUARD_BLOCKED, spell_id = 35395, action_type = "cast_spell_target" },
+        },
+    })
+    bus:emit(Events.COMBAT_FAILED, { error_code = ErrorCodes.PULL_FAILED })
+    bus:emit(Events.COMBAT_FAILED, { error_code = ErrorCodes.TARGET_LOST })
+    bus:emit(Events.COMBAT_CHASE_UPDATE, { phase = "combat", reason = "target_shift" })
+    bus:emit(Events.COMBAT_CHASE_UPDATE, { phase = "pull", reason = "refresh" })
 
     env.core._set_time(1000.3)
+    client:update()
+    env.core._set_time(1000.7)
     client:update()
     local snap = client:get_snapshot()
 
     T.assert_true(type(snap.telemetry) == "table", "snapshot telemetry missing")
     T.assert_true((snap.telemetry.counters.kills or 0) >= 1, "telemetry kill counter missing")
+    T.assert_true((snap.telemetry.counters.cast_guard_blocked or 0) >= 2, "telemetry cast-guard counter missing")
+    T.assert_true((snap.telemetry.counters.failed_pulls or 0) >= 1, "telemetry failed pull counter missing")
+    T.assert_true((snap.telemetry.counters.unreachable_targets or 0) >= 1, "telemetry unreachable target counter missing")
+    T.assert_true((snap.telemetry.counters.chase_repaths or 0) >= 1, "telemetry chase repath counter missing")
+    T.assert_true((snap.telemetry.counters.idle_full_resource_secs or 0) > 0, "telemetry idle full-resource timer missing")
     T.assert_true((snap.telemetry.uptime_secs or 0) > 0, "telemetry uptime missing")
+    T.assert_true((snap.telemetry.rates.cast_guard_blocked_per_min or 0) > 0,
+        "telemetry cast-guard rate missing")
+    T.assert_true((snap.telemetry.rates.chase_repaths_per_min or 0) > 0, "telemetry chase repath rate missing")
+    T.assert_true((snap.telemetry.rates.combat_downtime_avg_secs or 0) >= 0, "telemetry combat downtime metric missing")
+    local by_spell = snap.telemetry.rates.cast_guard_blocked_per_min_by_spell or {}
+    T.assert_true(type(by_spell) == "table" and tonumber(by_spell[20271] or 0) > 0,
+        "telemetry should expose cast-guard per-minute map by spell id")
     T.assert_true(snap.context.map_id == 530, "snapshot canonical map missing")
     T.assert_true(flush_count >= 1 and type(last_flush) == "table", "telemetry flush event missing")
     T.assert_true(type(last_flush.counters) == "table", "flush payload counters missing")

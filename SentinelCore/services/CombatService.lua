@@ -322,11 +322,20 @@ end
 ---@private
 ---@param target_pos vec3
 ---@param now number
-function CombatService:_issue_pull_move_to(target_pos, now)
+---@param reason string|nil
+function CombatService:_issue_pull_move_to(target_pos, now, reason)
     local destination = copy_vec3(target_pos) or target_pos
     if self._nav and self._nav.move_to then
         self._nav:move_to(destination)
     end
+    self._event_bus:emit(Events.COMBAT_CHASE_UPDATE, {
+        timestamp = now,
+        phase = "pull",
+        reason = tostring(reason or "refresh"),
+        x = tonumber(destination and destination.x) or 0,
+        y = tonumber(destination and destination.y) or 0,
+        z = tonumber(destination and destination.z) or 0,
+    })
     self._pull_nav_last_dest = copy_vec3(destination)
     self._pull_nav_last_move_at = now
     self._pull_nav_repath_pending = false
@@ -351,7 +360,13 @@ function CombatService:_update_pull_navigation(target_pos, now)
     end
 
     if should_issue then
-        self:_issue_pull_move_to(target_pos, now)
+        local reason = "refresh"
+        if self._pull_nav_last_dest == nil then
+            reason = "initial"
+        elseif destination_changed then
+            reason = "target_shift"
+        end
+        self:_issue_pull_move_to(target_pos, now, reason)
     end
 end
 
@@ -371,11 +386,20 @@ end
 ---@private
 ---@param target_pos vec3
 ---@param now number
-function CombatService:_issue_combat_move_to(target_pos, now)
+---@param reason string|nil
+function CombatService:_issue_combat_move_to(target_pos, now, reason)
     local destination = copy_vec3(target_pos) or target_pos
     if self._nav and self._nav.move_to then
         self._nav:move_to(destination)
     end
+    self._event_bus:emit(Events.COMBAT_CHASE_UPDATE, {
+        timestamp = now,
+        phase = "combat",
+        reason = tostring(reason or "refresh"),
+        x = tonumber(destination and destination.x) or 0,
+        y = tonumber(destination and destination.y) or 0,
+        z = tonumber(destination and destination.z) or 0,
+    })
     self._combat_nav_last_dest = copy_vec3(destination)
     self._combat_nav_last_move_at = now
     self._combat_nav_repath_pending = false
@@ -401,7 +425,13 @@ function CombatService:_update_combat_navigation(target_pos, now)
     end
 
     if should_issue then
-        self:_issue_combat_move_to(target_pos, now)
+        local reason = "refresh"
+        if self._combat_nav_last_dest == nil then
+            reason = "initial"
+        elseif destination_changed then
+            reason = "target_shift"
+        end
+        self:_issue_combat_move_to(target_pos, now, reason)
     end
 end
 

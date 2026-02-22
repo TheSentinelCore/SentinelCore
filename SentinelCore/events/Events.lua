@@ -33,6 +33,7 @@ local Events = {
     TARGET_SWITCHED = "combat.target_switched",
     KILL_CONFIRMED = "combat.kill_confirmed",
     COMBAT_FAILED = "combat.failed",
+    COMBAT_CHASE_UPDATE = "combat.chase_update",
 
     -- Loot
     LOOT_STARTED = "loot.started",
