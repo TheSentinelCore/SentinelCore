@@ -165,8 +165,9 @@ end
 ---@param action table
 ---@param intent_weights table
 ---@param mode string
+---@param ctx table
 ---@return number
-local function resolve_action_scheduler_bonus(action, intent_weights, mode)
+local function resolve_action_scheduler_bonus(action, intent_weights, mode, ctx)
     local bonus = tonumber(action and action.scheduler_bias) or 0
     if type(action) ~= "table" then
         return bonus
@@ -194,9 +195,181 @@ local function resolve_action_scheduler_bonus(action, intent_weights, mode)
         if mode_bonus ~= nil then
             bonus = bonus + mode_bonus
         end
+    elseif type(dynamic_bonus) == "function" then
+        local ok_bonus, value = pcall(dynamic_bonus, ctx, action, mode)
+        if ok_bonus and tonumber(value) then
+            bonus = bonus + tonumber(value)
+        end
     end
 
     return bonus
+end
+
+local DEFAULT_RELATIVE_DEADLINES = {
+    defensive = 0.45,
+    interrupt = 0.20,
+    execute = 0.40,
+    sustain = 0.95,
+    burst = 1.20,
+    recover = 1.10,
+    utility = 1.60,
+}
+
+---@private
+---@param action table
+---@return string[]
+local function action_intents(action)
+    if type(action) ~= "table" then
+        return { "sustain" }
+    end
+
+    if type(action.intent) == "string" and action.intent ~= "" then
+        return { string.lower(action.intent) }
+    end
+
+    if type(action.intent) == "table" and #action.intent > 0 then
+        local out = {}
+        for i = 1, #action.intent do
+            out[#out + 1] = string.lower(tostring(action.intent[i]))
+        end
+        return out
+    end
+
+    return { "sustain" }
+end
+
+---@private
+---@param action table
+---@param mode string
+---@return number|nil
+local function action_relative_deadline_override(action, mode)
+    if type(action) ~= "table" then
+        return nil
+    end
+
+    if tonumber(action.relative_deadline_sec) then
+        return tonumber(action.relative_deadline_sec)
+    end
+
+    local per_mode = action.relative_deadline_by_mode
+    if type(per_mode) == "table" then
+        local mode_deadline = tonumber(per_mode[mode]) or tonumber(per_mode.default)
+        if mode_deadline then
+            return mode_deadline
+        end
+    end
+
+    return nil
+end
+
+---@private
+---@param action table
+---@param ctx table
+---@return number
+local function resolve_action_release_delay(action, ctx)
+    local release = tonumber(action and action.release_delay_sec) or 0
+    if type(action) ~= "table" then
+        return math.max(0, release)
+    end
+
+    local action_type = tostring(action.action_type or "")
+    if (action_type == "cast_spell_target" or action_type == "cast_spell_self" or action_type == "cast_spell_position") then
+        local gcd = tonumber(ctx and ctx.global_cooldown_remaining) or 0
+        if gcd > release then
+            release = gcd
+        end
+
+        local spell_id = tonumber(action._resolved_spell_id or action.spell_id) or 0
+        if spell_id <= 0 and type(action.spell_id) == "function" then
+            local ok_spell, value = pcall(action.spell_id, ctx, action)
+            if ok_spell and tonumber(value) and tonumber(value) > 0 then
+                spell_id = tonumber(value)
+            end
+        end
+
+        if spell_id > 0 and type(ctx and ctx.spell_cooldown_remaining) == "function" then
+            local ok_cd, cooldown = pcall(ctx.spell_cooldown_remaining, spell_id)
+            if ok_cd and tonumber(cooldown) and tonumber(cooldown) > release then
+                release = tonumber(cooldown)
+            end
+        end
+    end
+
+    local target_distance = tonumber(ctx and ctx.target_distance)
+    local move_speed = tonumber(ctx and ctx.player_move_speed) or 7.0
+    if move_speed <= 0 then
+        move_speed = 7.0
+    end
+
+    if target_distance and action.max_target_distance and target_distance > action.max_target_distance then
+        local travel = (target_distance - action.max_target_distance) / move_speed
+        if travel > release then
+            release = travel
+        end
+    end
+    if target_distance and action.min_target_distance and target_distance < action.min_target_distance then
+        local retreat = (action.min_target_distance - target_distance) / move_speed
+        if retreat > release then
+            release = retreat
+        end
+    end
+
+    if action.allow_movement ~= true and ctx and ctx.player_is_moving == true then
+        if 0.25 > release then
+            release = 0.25
+        end
+    end
+
+    if action.target_must_be_casting == true and ctx and ctx.target_is_casting ~= true then
+        if 1.20 > release then
+            release = 1.20
+        end
+    end
+
+    if release < 0 then
+        release = 0
+    end
+    return release
+end
+
+---@private
+---@param action table
+---@param ctx table
+---@param mode string
+---@return number
+local function resolve_action_relative_deadline(action, ctx, mode)
+    local override = action_relative_deadline_override(action, mode)
+    if override and override > 0 then
+        return override
+    end
+
+    local intents = action_intents(action)
+    local deadline = nil
+    for i = 1, #intents do
+        local candidate = tonumber(DEFAULT_RELATIVE_DEADLINES[intents[i]])
+        if candidate ~= nil and (deadline == nil or candidate < deadline) then
+            deadline = candidate
+        end
+    end
+    if deadline == nil then
+        deadline = DEFAULT_RELATIVE_DEADLINES.sustain
+    end
+
+    local player_health_pct = tonumber(ctx and ctx.player_health_pct) or 1.0
+    if player_health_pct <= 0.20 then
+        deadline = math.min(deadline, 0.20)
+    elseif player_health_pct <= 0.35 then
+        deadline = math.min(deadline, 0.35)
+    end
+
+    local melee = action and action.max_target_distance and tonumber(action.max_target_distance) ~= nil
+        and tonumber(action.max_target_distance) <= 6.0
+    local swing_remaining = tonumber(ctx and ctx.melee_swing_remaining) or 0
+    if melee and swing_remaining > 0 then
+        deadline = math.min(deadline, math.max(0.12, swing_remaining + 0.10))
+    end
+
+    return math.max(0.08, deadline)
 end
 
 ---@private
@@ -205,14 +378,20 @@ end
 local function apply_combat_scheduler(plan, ctx)
     local mode = resolve_scheduler_mode(ctx)
     local intent_weights = resolve_intent_weights(ctx)
+    local now = tonumber(ctx and ctx.now) or 0
 
     local kept = {}
     for i = 1, #plan do
         local action = plan[i]
         if action_mode_allowed(action, mode) then
             local base_priority = tonumber(action.priority) or 0
-            local scheduler_bonus = resolve_action_scheduler_bonus(action, intent_weights, mode)
+            local scheduler_bonus = resolve_action_scheduler_bonus(action, intent_weights, mode, ctx)
+            local release_delay = resolve_action_release_delay(action, ctx)
+            local relative_deadline = resolve_action_relative_deadline(action, ctx, mode)
             action._scheduler_priority = base_priority + scheduler_bonus
+            action._scheduler_release = release_delay
+            action._scheduler_relative_deadline = relative_deadline
+            action._scheduler_deadline = now + release_delay + relative_deadline
             kept[#kept + 1] = action
         else
             action._scheduler_priority = NEG_INF
@@ -304,6 +483,44 @@ end
 
 ---@private
 ---@param plan table[]
+---@param ready_window number
+local function stable_deadline_sort(plan, ready_window)
+    local insertion_order = {}
+    for i = 1, #plan do
+        insertion_order[plan[i]] = i
+    end
+
+    table.sort(plan, function(a, b)
+        local ar = tonumber(a and a._scheduler_release) or 0
+        local br = tonumber(b and b._scheduler_release) or 0
+        local a_ready = ar <= ready_window
+        local b_ready = br <= ready_window
+        if a_ready ~= b_ready then
+            return a_ready
+        end
+
+        local ad = tonumber(a and a._scheduler_deadline) or math.huge
+        local bd = tonumber(b and b._scheduler_deadline) or math.huge
+        if ad ~= bd then
+            return ad < bd
+        end
+
+        if ar ~= br then
+            return ar < br
+        end
+
+        local ap = tonumber(a and (a._scheduler_priority or a.priority)) or 0
+        local bp = tonumber(b and (b._scheduler_priority or b.priority)) or 0
+        if ap ~= bp then
+            return ap > bp
+        end
+
+        return (insertion_order[a] or 0) < (insertion_order[b] or 0)
+    end)
+end
+
+---@private
+---@param plan table[]
 local function stable_priority_sort(plan)
     local insertion_order = {}
     for i = 1, #plan do
@@ -346,7 +563,7 @@ function PlanComposer.compose_combat(provider, ctx, aoe_threshold)
     end
 
     apply_combat_scheduler(plan, ctx)
-    stable_priority_sort(plan)
+    stable_deadline_sort(plan, tonumber(ctx and ctx.scheduler_ready_window) or 0.05)
     return plan
 end
 

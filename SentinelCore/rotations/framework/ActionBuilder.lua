@@ -25,6 +25,9 @@ local function build_action(action_type, priority, opts)
         intent_bonus = opts.intent_bonus,
         scheduler_group = opts.scheduler_group,
         scheduler_bias = opts.scheduler_bias,
+        relative_deadline_sec = opts.relative_deadline_sec,
+        relative_deadline_by_mode = opts.relative_deadline_by_mode,
+        release_delay_sec = opts.release_delay_sec,
         item_kind = opts.item_kind,
         rest_lock_secs = opts.rest_lock_secs,
         requires_castable_check = opts.requires_castable_check ~= false and action_type ~= "use_item_self" and

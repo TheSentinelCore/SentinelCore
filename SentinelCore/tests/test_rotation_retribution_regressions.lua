@@ -48,6 +48,7 @@ local function run()
     local judgement_priority = 0
     local crusader_priority = 0
     local exorcism_action = nil
+    local hammer_action = nil
     local consecration_action = nil
     for i = 1, #combat do
         local action = combat[i]
@@ -65,6 +66,9 @@ local function run()
         if action.action_type == "cast_spell_target" and tonumber(action.priority) == 500 then
             exorcism_action = action
         end
+        if action.action_type == "cast_spell_target" and tonumber(action.spell_id) == 24275 then
+            hammer_action = action
+        end
         if action.action_type == "cast_spell_self" and tonumber(action.priority) == 545 then
             has_reseal = true
         end
@@ -74,6 +78,7 @@ local function run()
     T.assert_true(crusader_priority > judgement_priority,
         "combat plan should prioritize Crusader Strike before Judgement when both are available")
     T.assert_true(type(exorcism_action) == "table", "combat plan should include Exorcism action for valid targets")
+    T.assert_true(type(hammer_action) == "table", "combat plan should include Hammer of Wrath action")
     T.assert_true(type(consecration_action) ~= "table",
         "single-target combat plan should not include Consecration when aoe threshold is not met")
     T.assert_true(type(exorcism_action.combat_modes) == "table" and exorcism_action.combat_modes[1] == "burst",
@@ -90,6 +95,19 @@ local function run()
         target_is_undead_or_demon = true,
     }, exorcism_action)
     T.assert_true(exorcism_valid == true, "exorcism should be allowed on undead/demon targets")
+
+    local hammer_low_ttd = hammer_action.condition({
+        target_ttd_seconds = 0.30,
+        target_health_pct = 0.20,
+    }, hammer_action)
+    T.assert_true(hammer_low_ttd == false,
+        "hammer of wrath should be gated by kill horizon and skipped when target TTD is too short")
+    local hammer_good_ttd = hammer_action.condition({
+        target_ttd_seconds = 2.50,
+        target_health_pct = 0.20,
+    }, hammer_action)
+    T.assert_true(hammer_good_ttd == true,
+        "hammer of wrath should be allowed when target TTD clears execute minimum horizon")
 
     local state_burst = provider:resolve_combat_state({
         player_mana_pct = 0.70,
@@ -157,17 +175,28 @@ local function run()
         in_combat = true,
         player_health_pct = 0.70,
         target_health_pct = 0.20,
+        target_ttd_seconds = 3.0,
     }, flash_action)
     T.assert_true(flash_execute_hold == false,
-        "flash of light should be held in execute range when player health is not in the critical band")
+        "flash of light should be held by kill horizon when target TTD is short and health is not critical")
 
     local flash_execute_critical = flash_action.condition({
         in_combat = true,
         player_health_pct = 0.30,
         target_health_pct = 0.20,
+        target_ttd_seconds = 3.0,
     }, flash_action)
     T.assert_true(flash_execute_critical == true,
         "flash of light should still be allowed in execute range at critical player health")
+
+    local flash_high_ttd = flash_action.condition({
+        in_combat = true,
+        player_health_pct = 0.70,
+        target_health_pct = 0.20,
+        target_ttd_seconds = 12.0,
+    }, flash_action)
+    T.assert_true(flash_high_ttd == true,
+        "flash of light should not be held when execute-range target has a long kill horizon")
 
     local high_mana_spell = flash_action.spell_id(base_ctx, flash_action)
     T.assert_eq(high_mana_spell, 27137, "high mana Flash of Light should use max rank")
@@ -237,6 +266,16 @@ local function run()
     T.assert_true(type(aoe_consecration_action) == "table", "aoe plan should include Consecration action")
     T.assert_true(type(aoe_consecration_action.combat_modes) == "table",
         "aoe consecration should carry scheduler combat mode metadata")
+    local aoe_consecration_short_ttd = aoe_consecration_action.condition({
+        target_ttd_seconds = 2.0,
+    }, aoe_consecration_action)
+    T.assert_true(aoe_consecration_short_ttd == false,
+        "aoe consecration should be skipped when kill horizon is too short")
+    local aoe_consecration_long_ttd = aoe_consecration_action.condition({
+        target_ttd_seconds = 8.0,
+    }, aoe_consecration_action)
+    T.assert_true(aoe_consecration_long_ttd == true,
+        "aoe consecration should be allowed when kill horizon is long enough")
     T.assert_true(type(holy_wrath_action) == "table", "aoe plan should include Holy Wrath action")
     local holy_wrath_invalid = holy_wrath_action.condition({
         target_is_undead_or_demon = false,

@@ -104,6 +104,53 @@ local function run()
     T.assert_true(type(maintenance_plan_edge[1]) == "table" and maintenance_plan_edge[1].item_kind == "water",
         "maintenance scheduler should use deficit weighting so small mana deficits can outrank base-priority food")
 
+    -- EDF-like scheduling: ready actions with earlier deadlines should outrank
+    -- higher base-priority actions that are still on cooldown.
+    local deadline_provider = {
+        defensive = function() return {} end,
+        interrupt = function() return {} end,
+        utility = function() return {} end,
+        combat = function()
+            return {
+                {
+                    action_type = "cast_spell_target",
+                    priority = 300,
+                    intent = "burst",
+                    spell_id = 1001,
+                    max_target_distance = 30.0,
+                },
+                {
+                    action_type = "cast_spell_target",
+                    priority = 220,
+                    intent = "sustain",
+                    spell_id = 1002,
+                    max_target_distance = 5.5,
+                },
+            }
+        end,
+        aoe = function() return {} end,
+    }
+
+    local deadline_ctx = {
+        enemy_count = 1,
+        now = 50.0,
+        global_cooldown_remaining = 0.0,
+        player_move_speed = 7.0,
+        target_distance = 4.0,
+        spell_cooldown_remaining = function(spell_id)
+            if tonumber(spell_id) == 1001 then
+                return 3.0
+            end
+            return 0.0
+        end,
+    }
+    local deadline_plan = PlanComposer.compose_combat(deadline_provider, deadline_ctx, 3)
+    T.assert_true(type(deadline_plan[1]) == "table" and tonumber(deadline_plan[1].spell_id) == 1002,
+        "combat scheduler should prioritize earliest-deadline ready actions over higher-priority cooldown-locked actions")
+    T.assert_true((tonumber(deadline_plan[1]._scheduler_deadline) or math.huge) <
+        (tonumber(deadline_plan[2]._scheduler_deadline) or -math.huge),
+        "combat scheduler should sort by earliest absolute deadline (EDF-like)")
+
     return {
         sc018_plan_composer_scheduler = true,
     }

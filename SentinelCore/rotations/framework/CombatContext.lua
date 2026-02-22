@@ -209,6 +209,132 @@ local function resolve_player_moving(player)
 end
 
 ---@private
+---@param value any
+---@return number
+local function normalize_seconds(value)
+    local n = tonumber(value)
+    if n == nil then
+        return 0
+    end
+    if n > 50 then
+        n = n / 1000.0
+    end
+    if n < 0 then
+        n = 0
+    end
+    return n
+end
+
+---@private
+---@return number
+local function resolve_global_cooldown_remaining()
+    if not core or not core.spell_book then
+        return 0
+    end
+    if type(core.spell_book.get_global_cooldown) ~= "function" then
+        return 0
+    end
+
+    local ok, value = pcall(core.spell_book.get_global_cooldown)
+    if not ok then
+        return 0
+    end
+    return normalize_seconds(value)
+end
+
+---@private
+---@param spell_id number|nil
+---@param gcd_remaining number
+---@return number
+local function resolve_spell_cooldown_remaining(spell_id, gcd_remaining)
+    local id = tonumber(spell_id) or 0
+    if id <= 0 or not core or not core.spell_book then
+        return gcd_remaining or 0
+    end
+
+    local remaining = nil
+    if type(core.spell_book.get_spell_cooldown_remaining) == "function" then
+        local ok_remaining, value = pcall(core.spell_book.get_spell_cooldown_remaining, id)
+        if ok_remaining then
+            remaining = tonumber(value)
+        end
+    end
+
+    if (remaining == nil or remaining <= 0) and type(core.spell_book.get_spell_cooldown) == "function" then
+        local ok_cd, a, b = pcall(core.spell_book.get_spell_cooldown, id)
+        if ok_cd then
+            if type(a) == "table" then
+                remaining = tonumber(a.remaining)
+                    or tonumber(a.cooldown_remaining)
+                    or tonumber(a.time_left)
+                    or tonumber(a.left)
+                    or tonumber(a.duration)
+            elseif tonumber(a) and tonumber(a) > 0 and tonumber(a) <= 30 then
+                remaining = tonumber(a)
+            elseif tonumber(b) and tonumber(b) > 0 and tonumber(b) <= 30 and tonumber(a) == 0 then
+                remaining = tonumber(b)
+            end
+        end
+    end
+
+    remaining = normalize_seconds(remaining)
+    local gcd = normalize_seconds(gcd_remaining)
+    if gcd > remaining then
+        remaining = gcd
+    end
+    return remaining
+end
+
+local SWING_REMAINING_METHODS = {
+    "get_main_hand_swing_time_remaining",
+    "get_main_hand_swing_remaining",
+    "get_swing_time_remaining",
+    "get_melee_swing_time_remaining",
+    "get_auto_attack_time_remaining",
+    "get_attack_cooldown_remaining",
+}
+
+---@private
+---@param player game_object|nil
+---@return number
+local function resolve_melee_swing_remaining(player)
+    if not player then
+        return 0
+    end
+
+    for i = 1, #SWING_REMAINING_METHODS do
+        local value = safe_unit_call(player, SWING_REMAINING_METHODS[i])
+        if type(value) == "table" then
+            value = tonumber(value.remaining)
+                or tonumber(value.time_left)
+                or tonumber(value.left)
+                or tonumber(value.duration)
+        end
+        local normalized = normalize_seconds(value)
+        if normalized > 0 then
+            return normalized
+        end
+    end
+
+    return 0
+end
+
+---@private
+---@param player game_object|nil
+---@return number
+local function resolve_player_move_speed(player)
+    if not player then
+        return 7.0
+    end
+
+    local speed = to_number(safe_unit_call(player, "get_movement_speed"))
+    if speed == nil or speed <= 0 then
+        return 7.0
+    end
+    return speed
+end
+
+---@private
 ---@param unit game_object|nil
 ---@param spec any
 ---@return boolean
@@ -429,6 +555,9 @@ function CombatContext:build(deps)
     local target_is_player = safe_unit_call(target, "is_player") == true
         or safe_unit_call(target, "is_player_unit") == true
     local player_is_moving = resolve_player_moving(player)
+    local player_move_speed = resolve_player_move_speed(player)
+    local gcd_remaining = resolve_global_cooldown_remaining()
+    local melee_swing_remaining = resolve_melee_swing_remaining(player)
     local now = (core and core.time and core.time()) or 0
     local rest_lock_until = resolve_rest_lock_until(bb, now)
     local rest_lock_food_until = resolve_rest_lock_until(bb, now, "food")
@@ -471,6 +600,10 @@ function CombatContext:build(deps)
         return nil
     end
 
+    local function spell_cooldown_remaining(spell_id)
+        return resolve_spell_cooldown_remaining(spell_id, gcd_remaining)
+    end
+
     return {
         player = player,
         target = target,
@@ -493,6 +626,9 @@ function CombatContext:build(deps)
         target_is_undead = target_is_undead,
         target_is_undead_or_demon = target_is_demon or target_is_undead,
         player_is_moving = player_is_moving,
+        player_move_speed = player_move_speed,
+        global_cooldown_remaining = gcd_remaining,
+        melee_swing_remaining = melee_swing_remaining,
         player_is_eating = player_is_eating,
         player_is_drinking = player_is_drinking,
         eating_or_drinking = eating_or_drinking,
@@ -506,6 +642,7 @@ function CombatContext:build(deps)
         pet = pet,
         pet_health_pct = pet_health_pct,
         resolve_spell_id = resolve_spell_id,
+        spell_cooldown_remaining = spell_cooldown_remaining,
     }
 end
 

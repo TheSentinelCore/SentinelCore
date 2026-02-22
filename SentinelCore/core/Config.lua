@@ -118,6 +118,23 @@ local RETRIBUTION_POLICY_BOUNDS = {
     consecration_aoe_min_mana_pct = { 0.0, 1.0 },
     exorcism_min_mana_pct = { 0.0, 1.0 },
     holy_wrath_aoe_min_mana_pct = { 0.0, 1.0 },
+    mana_sustain_enter_pct = { 0.0, 1.0 },
+    mana_sustain_exit_pct = { 0.0, 1.0 },
+    mana_recovery_enter_pct = { 0.0, 1.0 },
+    mana_recovery_exit_pct = { 0.0, 1.0 },
+    holy_light_execute_hold_hp_pct = { 0.0, 1.0 },
+    ttd_alpha = { 0.0, 1.0 },
+}
+
+local RETRIBUTION_POLICY_TIME_BOUNDS = {
+    execute_ttd_horizon_sec = { 0.0, 120.0 },
+    flash_light_execute_hold_ttd_sec = { 0.0, 120.0 },
+    holy_light_execute_hold_ttd_sec = { 0.0, 120.0 },
+    hammer_of_wrath_min_ttd_sec = { 0.0, 30.0 },
+    consecration_aoe_min_ttd_sec = { 0.0, 120.0 },
+    ttd_min_sample_secs = { 0.01, 10.0 },
+    ttd_memory_ttl_secs = { 1.0, 600.0 },
+    ttd_max_seconds = { 1.0, 600.0 },
 }
 
 local AFFLICTION_POLICY_BOUNDS = {
@@ -168,6 +185,16 @@ local function validate_rotation_policy(rotation_cfg)
         end
     end
 
+    for key, bounds in pairs(RETRIBUTION_POLICY_TIME_BOUNDS) do
+        local value = ret[key]
+        if value == nil then
+            value = Defaults.rotation.paladin.retribution[key]
+        end
+        if not in_range(value, bounds[1], bounds[2]) then
+            return false
+        end
+    end
+
     local heal_critical = ret.heal_critical_mana_threshold
     if heal_critical == nil then
         heal_critical = Defaults.rotation.paladin.retribution.heal_critical_mana_threshold
@@ -205,6 +232,30 @@ local function validate_rotation_policy(rotation_cfg)
         ret_drink_stop = Defaults.rotation.paladin.retribution.rest_resume_mana_pct
     end
     if ret_eat_stop < ret_eat_start or ret_drink_stop < ret_drink_start then
+        return false
+    end
+
+    local sustain_enter = tonumber(ret.mana_sustain_enter_pct)
+    if sustain_enter == nil then
+        sustain_enter = Defaults.rotation.paladin.retribution.mana_sustain_enter_pct
+    end
+    local sustain_exit = tonumber(ret.mana_sustain_exit_pct)
+    if sustain_exit == nil then
+        sustain_exit = Defaults.rotation.paladin.retribution.mana_sustain_exit_pct
+    end
+    if sustain_exit < sustain_enter then
+        return false
+    end
+
+    local recovery_enter = tonumber(ret.mana_recovery_enter_pct)
+    if recovery_enter == nil then
+        recovery_enter = Defaults.rotation.paladin.retribution.mana_recovery_enter_pct
+    end
+    local recovery_exit = tonumber(ret.mana_recovery_exit_pct)
+    if recovery_exit == nil then
+        recovery_exit = Defaults.rotation.paladin.retribution.mana_recovery_exit_pct
+    end
+    if recovery_exit < recovery_enter then
         return false
     end
 
