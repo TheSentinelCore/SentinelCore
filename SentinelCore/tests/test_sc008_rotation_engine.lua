@@ -5,6 +5,7 @@ local Events = require("events/Events")
 local function run()
     local player = T.mock_object({ class_id = 2, spec_id = 0, health = 60, max_health = 100, mana = 30, max_mana = 100 })
     local target = T.mock_object({ name = "Enemy" })
+    function target:get_guid() return 101 end
     local food_item = T.mock_object({ item_id = 4540 })
     local water_item = T.mock_object({ item_id = 159 })
 
@@ -203,8 +204,65 @@ local function run()
     T.assert_true(blocked_ok == false and blocked_err ~= nil, "blocked plan execution should return an explicit guard error")
     T.assert_true(blocked_events >= 1, "rotation should emit blocked diagnostics when no action can execute")
 
+    rotation._action_retry_until = {}
+    rotation._action_retry_last_sweep_at = 0
+    local retry_attempts = 0
+    local original_execute_action = rotation.execute_action
+    rotation.execute_action = function(self, action, ctx)
+        retry_attempts = retry_attempts + 1
+        return false, ErrorCodes.CAST_GUARD_BLOCKED
+    end
+
+    local retry_action = {
+        action_type = "cast_spell_target",
+        spell_id = 20271,
+        priority = 1000,
+        allow_movement = true,
+        requires_castable_check = false,
+    }
+    local retry_ctx = {
+        player = player,
+        target = target,
+        player_is_moving = false,
+        player_health_pct = 1.0,
+        target_health_pct = 1.0,
+        player_mana_pct = 1.0,
+        target_distance = 5.0,
+        now = core.time(),
+    }
+
+    local retry_ok_1, retry_err_1 = rotation:_execute_plan({ retry_action }, retry_ctx, { emit_blocked = false })
+    T.assert_true(retry_ok_1 == false and retry_err_1 ~= nil, "retry governor setup should produce an initial blocked action")
+    T.assert_eq(retry_attempts, 1, "first blocked execution should attempt action once")
+
+    local retry_ok_2, retry_err_2 = rotation:_execute_plan({ retry_action }, retry_ctx, { emit_blocked = false })
+    T.assert_true(retry_ok_2 == false and retry_err_2 == ErrorCodes.CAST_GUARD_BLOCKED,
+        "second execution within retry window should be blocked by retry governor")
+    T.assert_eq(retry_attempts, 1, "retry window should suppress immediate reattempts for same action key")
+
+    local alt_target = T.mock_object({ name = "AltEnemy" })
+    function alt_target:get_guid() return 202 end
+    retry_ctx.target = alt_target
+    local retry_ok_3, retry_err_3 = rotation:_execute_plan({ retry_action }, retry_ctx, { emit_blocked = false })
+    T.assert_true(retry_ok_3 == false and retry_err_3 ~= nil,
+        "same action on a different target key should still be attempted during original target backoff")
+    T.assert_eq(retry_attempts, 2, "retry key should include target guid so different targets do not share backoff")
+
+    if core and core._set_time and core.time then
+        core._set_time(core.time() + 0.6)
+    end
+    retry_ctx.target = target
+    retry_ctx.now = core.time()
+    local retry_ok_4, retry_err_4 = rotation:_execute_plan({ retry_action }, retry_ctx, { emit_blocked = false })
+    T.assert_true(retry_ok_4 == false and retry_err_4 ~= nil,
+        "action should be retried after retry window expires")
+    T.assert_eq(retry_attempts, 3, "expired retry window should allow a fresh action attempt")
+
+    rotation.execute_action = original_execute_action
+
     return {
         sc008_rotation_contract = true,
+        sc008_retry_governor = true,
     }
 end
 

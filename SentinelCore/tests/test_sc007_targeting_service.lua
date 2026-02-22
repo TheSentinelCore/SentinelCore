@@ -1,4 +1,5 @@
 local T = require("tests/TestUtil")
+local ErrorCodes = require("events/ErrorCodes")
 
 local function run()
     local player = T.mock_object({
@@ -166,11 +167,55 @@ local function run()
     local defensive_target, defensive_err = targeting:acquire_defensive_target(passive_pull_target)
     T.assert_true(defensive_target ~= nil and defensive_target:get_name() == "AddAttacker",
         "defensive retarget should prefer mobs that are actively attacking the player")
+    targeting:clear_target("blacklist_setup")
+
+    local blacklisted_target = T.mock_object({
+        name = "BlacklistedTarget",
+        level = 10,
+        health = 15,
+        max_health = 100,
+        position = { x = 5, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local fallback_target = T.mock_object({
+        name = "FallbackTarget",
+        level = 10,
+        health = 100,
+        max_health = 100,
+        position = { x = 12, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+
+    core.object_manager.get_visible_objects = function()
+        return { fallback_target, blacklisted_target }
+    end
+
+    targeting:mark_target_failed(blacklisted_target, ErrorCodes.PULL_FAILED, 3.0)
+    T.assert_true(targeting:is_target_blacklisted(blacklisted_target) == true,
+        "marked failed target should be blacklisted until TTL expires")
+
+    local target5, err5 = targeting:acquire_target()
+    T.assert_true(target5 ~= nil and target5:get_name() == "FallbackTarget",
+        "acquire_target should skip blacklisted candidates while blacklist TTL is active")
+
+    if core and core._set_time and core.time then
+        core._set_time(core.time() + 3.2)
+    end
+    T.assert_true(targeting:is_target_blacklisted(blacklisted_target) == false,
+        "blacklist entry should expire after its TTL elapses")
+
+    targeting:clear_target("blacklist_expired")
+    local target6, err6 = targeting:acquire_target()
+    T.assert_true(target6 ~= nil and target6:get_name() == "BlacklistedTarget",
+        "expired blacklist should allow high-score target to be selected again")
 
     return {
         sc007_target_scoring = true,
         sc007_faction_defense_only = true,
         sc007_defensive_retarget = true,
+        sc007_target_blacklist_ttl = true,
     }
 end
 

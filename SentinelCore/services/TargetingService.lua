@@ -93,11 +93,29 @@ local function is_visible_unit(objects, unit)
     return false
 end
 
+---@private
+---@param unit game_object|nil
+---@return number
+local function safe_unit_guid(unit)
+    local guid = tonumber(safe_method(unit, "get_guid"))
+        or tonumber(safe_method(unit, "get_object_guid"))
+        or 0
+    return guid
+end
+
+---@private
+---@return number
+local function now_seconds()
+    return (core and core.time and core.time()) or 0
+end
+
 ---@class TargetingService
 ---@field private _event_bus EventBus
 ---@field private _blackboard Blackboard
 ---@field private _cfg table
 ---@field private _current_target game_object|nil
+---@field private _target_memory table<string, table>
+---@field private _target_memory_last_prune_at number
 local TargetingService = {}
 TargetingService.__index = TargetingService
 
@@ -111,7 +129,124 @@ function TargetingService:new(event_bus, blackboard, cfg)
     o._blackboard = blackboard
     o._cfg = cfg or {}
     o._current_target = nil
+    o._target_memory = {}
+    o._target_memory_last_prune_at = 0
     return o
+end
+
+---@private
+---@param target game_object|nil
+---@return string
+function TargetingService:_target_memory_key(target)
+    local guid = safe_unit_guid(target)
+    if guid > 0 then
+        return "guid:" .. tostring(guid)
+    end
+
+    local npc_id = tonumber(safe_method(target, "get_npc_id")) or 0
+    local pos = safe_method(target, "get_position")
+    local x = tonumber(pos and pos.x) or 0
+    local y = tonumber(pos and pos.y) or 0
+    local z = tonumber(pos and pos.z) or 0
+    local name = tostring(safe_method(target, "get_name") or "unknown")
+    return string.format("fallback:%d:%s:%.1f:%.1f:%.1f", npc_id, name, x, y, z)
+end
+
+---@private
+---@param now number
+function TargetingService:_prune_target_memory(now)
+    local prune_interval = tonumber(self._cfg.target_memory_prune_interval) or 2.0
+    if (now - (tonumber(self._target_memory_last_prune_at) or 0)) < prune_interval then
+        return
+    end
+    self._target_memory_last_prune_at = now
+
+    local active_count = 0
+    for key, entry in pairs(self._target_memory) do
+        local retry_until = tonumber(entry and entry.retry_until) or 0
+        if retry_until > now then
+            active_count = active_count + 1
+        else
+            self._target_memory[key] = nil
+        end
+    end
+
+    local max_entries = tonumber(self._cfg.target_memory_max_entries) or 256
+    if active_count <= max_entries then
+        return
+    end
+
+    local overflow = active_count - max_entries
+    for key, _ in pairs(self._target_memory) do
+        self._target_memory[key] = nil
+        overflow = overflow - 1
+        if overflow <= 0 then
+            break
+        end
+    end
+end
+
+---@private
+---@param target game_object|nil
+---@param now? number
+---@return boolean
+---@return table|nil
+function TargetingService:_is_target_blacklisted(target, now)
+    if not target then
+        return false, nil
+    end
+    now = tonumber(now) or now_seconds()
+    local key = self:_target_memory_key(target)
+    local entry = self._target_memory[key]
+    if type(entry) ~= "table" then
+        return false, nil
+    end
+
+    local retry_until = tonumber(entry.retry_until) or 0
+    if retry_until > now then
+        return true, entry
+    end
+
+    self._target_memory[key] = nil
+    return false, nil
+end
+
+---@param target game_object|nil
+---@param reason string|nil
+---@param ttl number|nil
+function TargetingService:mark_target_failed(target, reason, ttl)
+    if not target then
+        return
+    end
+
+    local now = now_seconds()
+    self:_prune_target_memory(now)
+
+    local resolved_ttl = tonumber(ttl) or tonumber(self._cfg.target_memory_default_ttl) or 12.0
+    if resolved_ttl <= 0 then
+        return
+    end
+
+    local key = self:_target_memory_key(target)
+    local previous = self._target_memory[key]
+    local retry_until = now + resolved_ttl
+    if type(previous) == "table" and tonumber(previous.retry_until) then
+        retry_until = math.max(retry_until, tonumber(previous.retry_until) or 0)
+    end
+
+    self._target_memory[key] = {
+        retry_until = retry_until,
+        reason = reason or (type(previous) == "table" and previous.reason) or ErrorCodes.TARGET_LOST,
+        failures = (type(previous) == "table" and (tonumber(previous.failures) or 0) or 0) + 1,
+        last_updated = now,
+    }
+end
+
+---@param target game_object|nil
+---@return boolean
+function TargetingService:is_target_blacklisted(target)
+    local blocked = self:_is_target_blacklisted(target, now_seconds())
+    return blocked == true
 end
 
 ---@return number
@@ -433,6 +568,8 @@ function TargetingService:acquire_target()
     if not player or safe_method(player, "is_valid") ~= true then
         return nil, ErrorCodes.TARGET_NOT_FOUND
     end
+    local now = now_seconds()
+    self:_prune_target_memory(now)
     local player_team = FactionResolver.resolve_team(self._blackboard:get("player.faction_team", ""))
 
     local objects = {}
@@ -468,17 +605,20 @@ function TargetingService:acquire_target()
         local candidate = unwrap_game_object(objects[i])
         if is_valid_target(candidate, player)
             and passes_faction_policy(candidate, player, player_team, self._cfg) then
-            local candidate_pos = safe_method(candidate, "get_position")
-            local dist = Helpers.distance_3d(player_pos, candidate_pos)
-            if dist <= radius then
-                if dist <= 10.0 then
-                    nearby_combat_count = nearby_combat_count + 1
-                end
-                if not defensive_target then
-                    local score = self:score_target(candidate)
-                    if score > best_score then
-                        best_score = score
-                        best_target = candidate
+            local blacklisted = self:_is_target_blacklisted(candidate, now)
+            if blacklisted ~= true then
+                local candidate_pos = safe_method(candidate, "get_position")
+                local dist = Helpers.distance_3d(player_pos, candidate_pos)
+                if dist <= radius then
+                    if dist <= 10.0 then
+                        nearby_combat_count = nearby_combat_count + 1
+                    end
+                    if not defensive_target then
+                        local score = self:score_target(candidate)
+                        if score > best_score then
+                            best_score = score
+                            best_target = candidate
+                        end
                     end
                 end
             end

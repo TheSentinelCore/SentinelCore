@@ -20,6 +20,30 @@ local ITEM_UNWRAP_KEYS = {
     "game_object",
 }
 
+local RETRY_BLOCK_REASON = "__ACTION_RETRY_PENDING__"
+
+---@private
+---@param unit any
+---@return number
+local function safe_unit_guid(unit)
+    if not unit then
+        return 0
+    end
+    if type(unit.get_guid) == "function" then
+        local ok, guid = pcall(unit.get_guid, unit)
+        if ok and tonumber(guid) and tonumber(guid) > 0 then
+            return tonumber(guid)
+        end
+    end
+    if type(unit.get_object_guid) == "function" then
+        local ok, guid = pcall(unit.get_object_guid, unit)
+        if ok and tonumber(guid) and tonumber(guid) > 0 then
+            return tonumber(guid)
+        end
+    end
+    return 0
+end
+
 ---@private
 ---@param action_priority any
 ---@return number
@@ -124,6 +148,8 @@ end
 ---@field private _active_provider_class_id number
 ---@field private _last_blocked_event_at number
 ---@field private _last_blocked_event_key string
+---@field private _action_retry_until table<string, number>
+---@field private _action_retry_last_sweep_at number
 local RotationEngine = {}
 RotationEngine.__index = RotationEngine
 
@@ -149,6 +175,8 @@ function RotationEngine:new(event_bus, blackboard, cfg)
     o._active_provider_class_id = 0
     o._last_blocked_event_at = 0
     o._last_blocked_event_key = ""
+    o._action_retry_until = {}
+    o._action_retry_last_sweep_at = 0
 
     local initial_class_id = tonumber(blackboard and blackboard.get and blackboard:get("player.class_id", 0)) or 0
     o:_sync_provider_registry(initial_class_id)
@@ -740,6 +768,277 @@ function RotationEngine:should_hold_maintenance()
 end
 
 ---@private
+---@param reason string|nil
+---@return string|nil
+function RotationEngine:_normalize_block_reason(reason)
+    if reason == RETRY_BLOCK_REASON then
+        return ErrorCodes.CAST_GUARD_BLOCKED
+    end
+    return reason
+end
+
+---@private
+---@param action table
+---@param ctx table
+---@return number
+function RotationEngine:_action_retry_target_guid(action, ctx)
+    local action_type = tostring(action and action.action_type or "")
+    local target = nil
+    if action_type == "cast_spell_target" then
+        target = unwrap_game_object(ctx and ctx.target)
+    elseif action_type == "cast_spell_self" then
+        target = unwrap_game_object(ctx and ctx.player)
+    elseif action_type == "cast_spell_position" then
+        target = unwrap_game_object(ctx and ctx.target) or unwrap_game_object(ctx and ctx.player)
+    else
+        target = unwrap_game_object(ctx and ctx.player)
+    end
+    return safe_unit_guid(target)
+end
+
+---@private
+---@param action table
+---@param ctx table
+---@return string
+function RotationEngine:_action_retry_key(action, ctx)
+    local action_type = tostring(action and action.action_type or "")
+    local spell_id = tonumber(action and (action._resolved_spell_id or action.spell_id)) or 0
+    local item_id = tonumber(action and action._resolved_item_id) or 0
+    if item_id <= 0 then
+        item_id = tonumber(action and action.item_id) or 0
+    end
+    local target_guid = self:_action_retry_target_guid(action, ctx)
+    return string.format("%s|%d|%d|%d", action_type, spell_id, item_id, target_guid)
+end
+
+---@private
+---@param now number
+function RotationEngine:_prune_action_retry_windows(now)
+    local sweep_interval = tonumber(self._cfg.action_retry_sweep_interval) or 2.0
+    if (now - (tonumber(self._action_retry_last_sweep_at) or 0)) < sweep_interval then
+        return
+    end
+    self._action_retry_last_sweep_at = now
+
+    local active_count = 0
+    for key, retry_until in pairs(self._action_retry_until) do
+        if tonumber(retry_until) and retry_until > now then
+            active_count = active_count + 1
+        else
+            self._action_retry_until[key] = nil
+        end
+    end
+
+    local max_entries = tonumber(self._cfg.action_retry_max_entries) or 512
+    if active_count <= max_entries then
+        return
+    end
+
+    local overflow = active_count - max_entries
+    for key, _ in pairs(self._action_retry_until) do
+        self._action_retry_until[key] = nil
+        overflow = overflow - 1
+        if overflow <= 0 then
+            break
+        end
+    end
+end
+
+---@private
+---@param spell_id number
+---@return number|nil
+function RotationEngine:_resolve_spell_retry_backoff(spell_id)
+    if spell_id <= 0 or not core or not core.spell_book then
+        return nil
+    end
+
+    local remaining = nil
+    if type(core.spell_book.get_spell_cooldown_remaining) == "function" then
+        local ok_remaining, value = pcall(core.spell_book.get_spell_cooldown_remaining, spell_id)
+        if ok_remaining and tonumber(value) then
+            remaining = tonumber(value)
+        end
+    end
+
+    if (remaining == nil or remaining <= 0) and type(core.spell_book.get_spell_cooldown) == "function" then
+        local ok_cd, a, b = pcall(core.spell_book.get_spell_cooldown, spell_id)
+        if ok_cd then
+            if type(a) == "table" then
+                remaining = tonumber(a.remaining)
+                    or tonumber(a.cooldown_remaining)
+                    or tonumber(a.time_left)
+                    or tonumber(a.left)
+                    or tonumber(a.duration)
+            elseif tonumber(a) and tonumber(a) > 0 and tonumber(a) <= 30 then
+                remaining = tonumber(a)
+            elseif tonumber(b) and tonumber(b) > 0 and tonumber(b) <= 30 and tonumber(a) == 0 then
+                remaining = tonumber(b)
+            end
+        end
+    end
+
+    local gcd = nil
+    if type(core.spell_book.get_global_cooldown) == "function" then
+        local ok_gcd, value = pcall(core.spell_book.get_global_cooldown)
+        if ok_gcd and tonumber(value) then
+            gcd = tonumber(value)
+        end
+    end
+
+    if remaining and remaining > 50 then
+        remaining = remaining / 1000.0
+    end
+    if gcd and gcd > 50 then
+        gcd = gcd / 1000.0
+    end
+
+    if remaining == nil or remaining < 0 then
+        remaining = 0
+    end
+    if gcd and gcd > remaining then
+        remaining = gcd
+    end
+
+    if remaining > 0 then
+        return remaining
+    end
+    return nil
+end
+
+---@private
+---@param action table
+---@param ctx table
+---@param reason string|nil
+---@param now number
+---@return number
+function RotationEngine:_estimate_action_retry_backoff(action, ctx, reason, now)
+    local backoff = tonumber(self._cfg.action_retry_default_backoff) or 0.25
+    local throttle = tonumber(self._cfg.action_throttle) or 0.12
+    local since_cast = now - (tonumber(self._last_cast_at) or 0)
+    if since_cast < throttle then
+        backoff = math.max(backoff, throttle - since_cast)
+    end
+
+    if action.allow_movement ~= true and ctx.player_is_moving == true then
+        backoff = math.max(backoff, tonumber(self._cfg.action_retry_moving_backoff) or 0.18)
+    end
+
+    local player_mana_pct = tonumber(ctx.player_mana_pct)
+    if action.min_player_mana_pct and player_mana_pct and player_mana_pct < action.min_player_mana_pct then
+        local deficit = action.min_player_mana_pct - player_mana_pct
+        backoff = math.max(backoff, math.min(1.75, 0.30 + (deficit * 3.0)))
+    end
+    if action.max_player_mana_pct and player_mana_pct and player_mana_pct > action.max_player_mana_pct then
+        backoff = math.max(backoff, tonumber(self._cfg.action_retry_resource_backoff) or 0.40)
+    end
+
+    local player_health_pct = tonumber(ctx.player_health_pct)
+    if action.min_player_health_pct and player_health_pct and player_health_pct < action.min_player_health_pct then
+        backoff = math.max(backoff, tonumber(self._cfg.action_retry_resource_backoff) or 0.40)
+    end
+
+    local target_health_pct = tonumber(ctx.target_health_pct)
+    if action.min_target_health_pct and target_health_pct and target_health_pct < action.min_target_health_pct then
+        backoff = math.max(backoff, tonumber(self._cfg.action_retry_threshold_backoff) or 0.30)
+    end
+    if action.max_target_health_pct and target_health_pct and target_health_pct > action.max_target_health_pct then
+        backoff = math.max(backoff, tonumber(self._cfg.action_retry_threshold_backoff) or 0.30)
+    end
+
+    local target_distance = tonumber(ctx.target_distance)
+    if action.max_target_distance and target_distance and target_distance > action.max_target_distance then
+        backoff = math.max(backoff, tonumber(self._cfg.action_retry_range_backoff) or 0.28)
+    end
+    if action.min_target_distance and target_distance and target_distance < action.min_target_distance then
+        backoff = math.max(backoff, tonumber(self._cfg.action_retry_range_backoff) or 0.28)
+    end
+
+    if action.action_type == "use_item_self" and self._blackboard and self._blackboard.get then
+        local lock_until = tonumber(self._blackboard:get("rotation.rest.lock_until", 0)) or 0
+        if lock_until > now then
+            backoff = math.max(backoff, lock_until - now)
+        end
+    end
+
+    local spell_id = tonumber(action._resolved_spell_id or action.spell_id) or 0
+    local cooldown_backoff = self:_resolve_spell_retry_backoff(spell_id)
+    if cooldown_backoff then
+        backoff = math.max(backoff, cooldown_backoff)
+    end
+
+    if reason == ErrorCodes.TARGET_NOT_FOUND or reason == ErrorCodes.CAST_INVALID_TARGET then
+        backoff = math.max(backoff, tonumber(self._cfg.action_retry_invalid_target_backoff) or 0.45)
+    end
+
+    local min_backoff = tonumber(self._cfg.action_retry_min_backoff) or 0.12
+    local max_backoff = tonumber(self._cfg.action_retry_max_backoff) or 2.00
+    if backoff < min_backoff then
+        backoff = min_backoff
+    elseif backoff > max_backoff then
+        backoff = max_backoff
+    end
+    return backoff
+end
+
+---@private
+---@param action table
+---@param ctx table
+---@param reason string|nil
+---@param now number
+function RotationEngine:_schedule_action_retry(action, ctx, reason, now)
+    if reason == RETRY_BLOCK_REASON then
+        return
+    end
+
+    local key = self:_action_retry_key(action, ctx)
+    if key == "" then
+        return
+    end
+
+    local normalized_reason = self:_normalize_block_reason(reason) or ErrorCodes.CAST_GUARD_BLOCKED
+    local backoff = self:_estimate_action_retry_backoff(action, ctx, normalized_reason, now)
+    local retry_until = now + backoff
+    local existing = tonumber(self._action_retry_until[key]) or 0
+    if retry_until > existing then
+        self._action_retry_until[key] = retry_until
+    end
+end
+
+---@private
+---@param action table
+---@param ctx table
+function RotationEngine:_clear_action_retry(action, ctx)
+    local key = self:_action_retry_key(action, ctx)
+    if key == "" then
+        return
+    end
+    self._action_retry_until[key] = nil
+end
+
+---@private
+---@param action table
+---@param ctx table
+---@param now number
+---@return boolean
+function RotationEngine:_is_action_retry_blocked(action, ctx, now)
+    self:_prune_action_retry_windows(now)
+    local key = self:_action_retry_key(action, ctx)
+    if key == "" then
+        return false
+    end
+
+    local retry_until = tonumber(self._action_retry_until[key]) or 0
+    if retry_until > now then
+        return true
+    end
+
+    if retry_until > 0 then
+        self._action_retry_until[key] = nil
+    end
+    return false
+end
+
+---@private
 ---@param action table
 ---@param ctx table
 ---@return number|nil
@@ -1061,13 +1360,13 @@ function RotationEngine:_action_allowed(action, ctx)
     if type(action) ~= "table" then
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
+    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
 
     if action.action_type == "cast_spell_target" and not ctx.target then
         return false, ErrorCodes.TARGET_NOT_FOUND
     end
 
     if action.action_type == "use_item_self" and self._blackboard and self._blackboard.get then
-        local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
         local lock_until = tonumber(self._blackboard:get("rotation.rest.lock_until", 0)) or 0
         if lock_until > now then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
@@ -1154,6 +1453,10 @@ function RotationEngine:_action_allowed(action, ctx)
         end
     end
 
+    if self:_is_action_retry_blocked(action, ctx, now) then
+        return false, RETRY_BLOCK_REASON
+    end
+
     if action.requires_castable_check == true and self._spell_helper and self._spell_helper.is_spell_castable then
         local caster = unwrap_game_object(ctx.player)
         local target = nil
@@ -1194,6 +1497,7 @@ end
 function RotationEngine:execute_action(action, ctx)
     local ok, err = self:_execute_queue_first(action, ctx)
     if ok then
+        self:_clear_action_retry(action, ctx)
         self:_on_action_executed(action, ctx)
         self._event_bus:emit(Events.ROTATION_EXECUTED, {
             action = action,
@@ -1204,6 +1508,7 @@ function RotationEngine:execute_action(action, ctx)
 
     local fallback_ok, fallback_err = self:_execute_guarded_fallback(action, ctx)
     if fallback_ok then
+        self:_clear_action_retry(action, ctx)
         self:_on_action_executed(action, ctx)
         self._event_bus:emit(Events.ROTATION_EXECUTED, {
             action = action,
@@ -1302,6 +1607,7 @@ function RotationEngine:_execute_plan(plan, ctx, opts)
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
 
+    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
     local last_err = ErrorCodes.CAST_GUARD_BLOCKED
     local blocked = {}
     for i = 1, #plan do
@@ -1312,14 +1618,18 @@ function RotationEngine:_execute_plan(plan, ctx, opts)
             if executed then
                 return true, nil
             end
-            last_err = exec_err or guard_err or last_err
+            local normalized_exec_err = self:_normalize_block_reason(exec_err or guard_err) or ErrorCodes.CAST_GUARD_BLOCKED
+            last_err = normalized_exec_err or last_err
+            self:_schedule_action_retry(action, ctx, normalized_exec_err, now)
             if #blocked < 4 then
-                blocked[#blocked + 1] = self:_blocked_entry(action, exec_err or guard_err, i)
+                blocked[#blocked + 1] = self:_blocked_entry(action, normalized_exec_err, i)
             end
         else
-            last_err = guard_err or last_err
+            local normalized_guard_err = self:_normalize_block_reason(guard_err) or ErrorCodes.CAST_GUARD_BLOCKED
+            last_err = normalized_guard_err or last_err
+            self:_schedule_action_retry(action, ctx, guard_err, now)
             if #blocked < 4 then
-                blocked[#blocked + 1] = self:_blocked_entry(action, guard_err, i)
+                blocked[#blocked + 1] = self:_blocked_entry(action, normalized_guard_err, i)
             end
         end
     end

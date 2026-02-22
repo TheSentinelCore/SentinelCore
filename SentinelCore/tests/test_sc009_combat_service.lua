@@ -45,7 +45,15 @@ local function run()
             nav_calls.stop = nav_calls.stop + 1
         end,
     }
-    local targeting = { get_target = function() return target end }
+    local target_fail_marks = 0
+    local last_target_fail_reason = nil
+    local targeting = {
+        get_target = function() return target end,
+        mark_target_failed = function(_, failed_target, reason, ttl)
+            target_fail_marks = target_fail_marks + 1
+            last_target_fail_reason = reason
+        end,
+    }
     local rotation = {
         get_pull_profile = function() return { pull_spell_id = 20271, max_pull_range = 30 } end,
         tick_once = function() return true, nil end,
@@ -92,6 +100,9 @@ local function run()
     T.assert_true(safe_ok == true, "combat update must not throw on stale object")
     T.assert_true(update_ok == false and update_err == ErrorCodes.TARGET_LOST,
         "stale object should fail closed with TARGET_LOST")
+    T.assert_eq(target_fail_marks, 1, "combat failure should report failed target to targeting memory")
+    T.assert_eq(last_target_fail_reason, ErrorCodes.TARGET_LOST,
+        "combat failure should classify stale-target failure as TARGET_LOST")
 
     local far_target = T.mock_object({
         name = "FarTarget",
@@ -130,50 +141,7 @@ local function run()
         health = 100,
         max_health = 100,
     })
-    local repath_calls = { move_to = 0, find_path = 0 }
-    local nav_client_bb = {
-        values = {
-            ["player.position"] = player:get_position(),
-        },
-        get = function(self, key)
-            return self.values[key]
-        end,
-        set = function(self, key, value)
-            self.values[key] = value
-        end,
-    }
-    local nav_client_state = {
-        moving = false,
-        movement = {
-            navigate = function() end,
-        },
-        nav_client = {
-            find_path = function(_, _, _, cb)
-                repath_calls.find_path = repath_calls.find_path + 1
-                cb(true, {
-                    waypoints = {
-                        { x = 1, y = 0, z = 0 },
-                        { x = 2, y = 0, z = 0 },
-                    },
-                })
-            end,
-        },
-        is_moving = function(self)
-            return self.moving == true
-        end,
-        get_full_state = function(self)
-            if self.moving then
-                return "moving"
-            end
-            return "idle"
-        end,
-        get_blackboard = function()
-            return nav_client_bb
-        end,
-        get_path_opts = function()
-            return {}
-        end,
-    }
+    local repath_calls = { move_to = 0 }
     local nav_follow_style = {
         move_to = function(_, _, cb)
             repath_calls.move_to = repath_calls.move_to + 1
@@ -182,29 +150,31 @@ local function run()
             end
         end,
         stop = function() end,
-        get_client = function()
-            return nav_client_state
-        end,
     }
     local combat_moving = CombatService:new(bus, bb, nav_follow_style, targeting_far, rotation, {
         combat_timeout = 15,
         pull_timeout = 5,
         pull_chase_repath_distance = 3.0,
-        pull_chase_repath_cooldown = 0.0,
-        pull_chase_move_to_cooldown = 0.0,
+        pull_chase_move_to_cooldown = 0.5,
     })
     local moving_ok, moving_err = combat_moving:start(moving_target)
     T.assert_true(moving_ok == true, "combat start should succeed for moving target chase")
     local moving_update_1 = combat_moving:update()
     T.assert_true(moving_update_1 == true, "first pull update should issue move_to for moving target")
     T.assert_eq(repath_calls.move_to, 1, "first moving-target update should kick off move_to")
-    T.assert_eq(repath_calls.find_path, 0, "first moving-target update should not repath yet")
-    nav_client_state.moving = true
-    moving_target._position = { x = 46, y = 0, z = 0 }
     local moving_update_2 = combat_moving:update()
-    T.assert_true(moving_update_2 == true, "second pull update should async repath while already moving")
-    T.assert_eq(repath_calls.move_to, 1, "repath should avoid reissuing move_to while walking")
-    T.assert_eq(repath_calls.find_path, 1, "repath should use find_path when destination moves")
+    T.assert_true(moving_update_2 == true, "second pull update should run without issuing duplicate move_to")
+    T.assert_eq(repath_calls.move_to, 1, "same-destination chase should avoid repeated move_to calls")
+    moving_target._position = { x = 46, y = 0, z = 0 }
+    local moving_update_3 = combat_moving:update()
+    T.assert_true(moving_update_3 == true, "third pull update should run while destination changes")
+    T.assert_eq(repath_calls.move_to, 1, "destination refresh should still honor move_to cooldown")
+    if core and core.time and core._set_time then
+        core._set_time(core.time() + 0.6)
+    end
+    local moving_update_4 = combat_moving:update()
+    T.assert_true(moving_update_4 == true, "pull update should re-issue move_to after cooldown for shifted target")
+    T.assert_eq(repath_calls.move_to, 2, "moved target should trigger move_to refresh after cooldown")
 
     local low_mana_rotation = {
         should_hold_maintenance = function()
@@ -406,7 +376,7 @@ local function run()
         sc009_combat_loop = true,
         sc009_combat_stale_target_guard = true,
         sc009_pull_chase_no_stop_spam = true,
-        sc009_pull_chase_soft_repath = true,
+        sc009_pull_chase_move_to_hysteresis = true,
         sc009_pull_start_rest_gate = true,
         sc009_defensive_retarget = true,
         sc009_combat_chase = true,

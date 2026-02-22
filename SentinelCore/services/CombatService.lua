@@ -307,20 +307,6 @@ function CombatService:_resolve_movement_profile()
 end
 
 ---@private
----@return any|nil
-function CombatService:_resolve_nav_client()
-    if not self._nav or type(self._nav.get_client) ~= "function" then
-        return nil
-    end
-
-    local ok, client = pcall(self._nav.get_client, self._nav)
-    if not ok then
-        return nil
-    end
-    return client
-end
-
----@private
 ---@param target_pos vec3
 ---@return boolean
 function CombatService:_pull_destination_changed(target_pos)
@@ -352,110 +338,21 @@ end
 function CombatService:_update_pull_navigation(target_pos, now)
     local destination_changed = self:_pull_destination_changed(target_pos)
     local move_to_cooldown = tonumber(self._cfg.pull_chase_move_to_cooldown) or 0.75
-    local repath_cooldown = tonumber(self._cfg.pull_chase_repath_cooldown) or 0.35
-    local nav_client = self:_resolve_nav_client()
+    local since_last = now - (tonumber(self._pull_nav_last_move_at) or 0)
+    local should_issue = false
 
-    if not nav_client then
-        if self._pull_nav_last_dest == nil
-            or destination_changed
-            or (now - self._pull_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_pull_move_to(target_pos, now)
-        end
-        return
+    if self._pull_nav_last_dest == nil then
+        should_issue = true
+    elseif destination_changed and since_last >= move_to_cooldown then
+        should_issue = true
+    elseif since_last >= (move_to_cooldown * 2.0) then
+        -- Keep chase alive if nav finished/failed without requiring direct path calls here.
+        should_issue = true
     end
 
-    local is_moving = false
-    if type(nav_client.is_moving) == "function" then
-        local ok_moving, moving = pcall(nav_client.is_moving, nav_client)
-        is_moving = ok_moving and moving == true
+    if should_issue then
+        self:_issue_pull_move_to(target_pos, now)
     end
-
-    local awaiting_path = false
-    if type(nav_client.get_full_state) == "function" then
-        local ok_state, full_state = pcall(nav_client.get_full_state, nav_client)
-        if ok_state and type(full_state) == "string" then
-            awaiting_path = string.find(full_state, "awaiting_path", 1, true) ~= nil
-        end
-    end
-
-    if not is_moving and not awaiting_path then
-        if self._pull_nav_last_dest == nil
-            or destination_changed
-            or (now - self._pull_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_pull_move_to(target_pos, now)
-        end
-        return
-    end
-
-    if not is_moving
-        or self._pull_nav_last_dest == nil
-        or not destination_changed
-        or self._pull_nav_repath_pending then
-        return
-    end
-
-    if (now - self._pull_nav_last_repath_at) < repath_cooldown then
-        return
-    end
-
-    local raw_nav_client = nav_client.nav_client
-    local nav_movement = nav_client.movement
-    if not raw_nav_client
-        or type(raw_nav_client.find_path) ~= "function"
-        or not nav_movement
-        or type(nav_movement.navigate) ~= "function" then
-        if (now - self._pull_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_pull_move_to(target_pos, now)
-        end
-        return
-    end
-
-    local nav_blackboard = nil
-    if type(nav_client.get_blackboard) == "function" then
-        local ok_bb, bb = pcall(nav_client.get_blackboard, nav_client)
-        if ok_bb then
-            nav_blackboard = bb
-        end
-    end
-    if not nav_blackboard or type(nav_blackboard.get) ~= "function" or type(nav_blackboard.set) ~= "function" then
-        if (now - self._pull_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_pull_move_to(target_pos, now)
-        end
-        return
-    end
-
-    local start_pos = nav_blackboard:get("player.position") or self._blackboard:get("player.position")
-    if not start_pos then
-        if (now - self._pull_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_pull_move_to(target_pos, now)
-        end
-        return
-    end
-
-    local path_opts = nil
-    if type(nav_client.get_path_opts) == "function" then
-        local ok_opts, opts = pcall(nav_client.get_path_opts, nav_client)
-        if ok_opts then
-            path_opts = opts
-        end
-    end
-
-    local requested_dest = copy_vec3(target_pos) or target_pos
-    self._pull_nav_repath_pending = true
-    self._pull_nav_last_repath_at = now
-    self._pull_nav_last_dest = copy_vec3(requested_dest)
-    raw_nav_client:find_path(start_pos, requested_dest, function(ok, data)
-        self._pull_nav_repath_pending = false
-        if self._state ~= "pull" then
-            return
-        end
-        if ok and type(data) == "table" and type(data.waypoints) == "table" and #data.waypoints > 0 then
-            nav_blackboard:set("path.destination", copy_vec3(requested_dest))
-            nav_blackboard:set("path.waypoints", data.waypoints)
-            nav_blackboard:set("path.index", 1)
-            nav_movement:navigate(data.waypoints)
-        end
-    end, path_opts)
 end
 
 ---@private
@@ -491,110 +388,64 @@ end
 function CombatService:_update_combat_navigation(target_pos, now)
     local destination_changed = self:_combat_destination_changed(target_pos)
     local move_to_cooldown = tonumber(self._cfg.combat_chase_move_to_cooldown) or 0.75
-    local repath_cooldown = tonumber(self._cfg.combat_chase_repath_cooldown) or 0.35
-    local nav_client = self:_resolve_nav_client()
+    local since_last = now - (tonumber(self._combat_nav_last_move_at) or 0)
+    local should_issue = false
 
-    if not nav_client then
-        if self._combat_nav_last_dest == nil
-            or destination_changed
-            or (now - self._combat_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_combat_move_to(target_pos, now)
-        end
+    if self._combat_nav_last_dest == nil then
+        should_issue = true
+    elseif destination_changed and since_last >= move_to_cooldown then
+        should_issue = true
+    elseif since_last >= (move_to_cooldown * 2.0) then
+        -- Keep chase alive if nav finished/failed without requiring direct path calls here.
+        should_issue = true
+    end
+
+    if should_issue then
+        self:_issue_combat_move_to(target_pos, now)
+    end
+end
+
+---@private
+---@param target game_object|nil
+---@param reason string|nil
+function CombatService:_mark_target_failed(target, reason)
+    if not target
+        or not self._targeting
+        or type(self._targeting.mark_target_failed) ~= "function" then
         return
     end
 
-    local is_moving = false
-    if type(nav_client.is_moving) == "function" then
-        local ok_moving, moving = pcall(nav_client.is_moving, nav_client)
-        is_moving = ok_moving and moving == true
+    local ttl
+    if reason == ErrorCodes.COMBAT_TIMEOUT then
+        ttl = tonumber(self._cfg.target_memory_ttl_combat_timeout) or 30.0
+    elseif reason == ErrorCodes.PULL_FAILED then
+        ttl = tonumber(self._cfg.target_memory_ttl_pull_failed) or 20.0
+    elseif reason == ErrorCodes.TARGET_LOST then
+        ttl = tonumber(self._cfg.target_memory_ttl_target_lost) or 10.0
+    elseif reason == ErrorCodes.NAV_MOVE_FAILED then
+        ttl = tonumber(self._cfg.target_memory_ttl_nav_failed) or 15.0
+    else
+        ttl = tonumber(self._cfg.target_memory_ttl_default) or 12.0
     end
 
-    local awaiting_path = false
-    if type(nav_client.get_full_state) == "function" then
-        local ok_state, full_state = pcall(nav_client.get_full_state, nav_client)
-        if ok_state and type(full_state) == "string" then
-            awaiting_path = string.find(full_state, "awaiting_path", 1, true) ~= nil
-        end
-    end
+    pcall(self._targeting.mark_target_failed, self._targeting, target, reason, ttl)
+end
 
-    if not is_moving and not awaiting_path then
-        if self._combat_nav_last_dest == nil
-            or destination_changed
-            or (now - self._combat_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_combat_move_to(target_pos, now)
-        end
-        return
-    end
-
-    if not is_moving
-        or self._combat_nav_last_dest == nil
-        or not destination_changed
-        or self._combat_nav_repath_pending then
-        return
-    end
-
-    if (now - self._combat_nav_last_repath_at) < repath_cooldown then
-        return
-    end
-
-    local raw_nav_client = nav_client.nav_client
-    local nav_movement = nav_client.movement
-    if not raw_nav_client
-        or type(raw_nav_client.find_path) ~= "function"
-        or not nav_movement
-        or type(nav_movement.navigate) ~= "function" then
-        if (now - self._combat_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_combat_move_to(target_pos, now)
-        end
-        return
-    end
-
-    local nav_blackboard = nil
-    if type(nav_client.get_blackboard) == "function" then
-        local ok_bb, bb = pcall(nav_client.get_blackboard, nav_client)
-        if ok_bb then
-            nav_blackboard = bb
-        end
-    end
-    if not nav_blackboard or type(nav_blackboard.get) ~= "function" or type(nav_blackboard.set) ~= "function" then
-        if (now - self._combat_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_combat_move_to(target_pos, now)
-        end
-        return
-    end
-
-    local start_pos = nav_blackboard:get("player.position") or self._blackboard:get("player.position")
-    if not start_pos then
-        if (now - self._combat_nav_last_move_at) >= move_to_cooldown then
-            self:_issue_combat_move_to(target_pos, now)
-        end
-        return
-    end
-
-    local path_opts = nil
-    if type(nav_client.get_path_opts) == "function" then
-        local ok_opts, opts = pcall(nav_client.get_path_opts, nav_client)
-        if ok_opts then
-            path_opts = opts
-        end
-    end
-
-    local requested_dest = copy_vec3(target_pos) or target_pos
-    self._combat_nav_repath_pending = true
-    self._combat_nav_last_repath_at = now
-    self._combat_nav_last_dest = copy_vec3(requested_dest)
-    raw_nav_client:find_path(start_pos, requested_dest, function(ok, data)
-        self._combat_nav_repath_pending = false
-        if self._state ~= "combat" then
-            return
-        end
-        if ok and type(data) == "table" and type(data.waypoints) == "table" and #data.waypoints > 0 then
-            nav_blackboard:set("path.destination", copy_vec3(requested_dest))
-            nav_blackboard:set("path.waypoints", data.waypoints)
-            nav_blackboard:set("path.index", 1)
-            nav_movement:navigate(data.waypoints)
-        end
-    end, path_opts)
+---@private
+---@param error_code string|nil
+---@param now number
+---@param target game_object|nil
+---@return boolean
+---@return string
+function CombatService:_fail_and_reset(error_code, now, target)
+    self._last_error = error_code or ErrorCodes.PULL_FAILED
+    self:_mark_target_failed(target or self._active_target, self._last_error)
+    self._event_bus:emit(Events.COMBAT_FAILED, {
+        timestamp = now,
+        error_code = self._last_error,
+    })
+    self:reset()
+    return false, self._last_error
 end
 
 ---@private
@@ -905,13 +756,7 @@ function CombatService:update()
     end
 
     if not target then
-        self._last_error = ErrorCodes.TARGET_LOST
-        self._event_bus:emit(Events.COMBAT_FAILED, {
-            timestamp = now,
-            error_code = self._last_error,
-        })
-        self:reset()
-        return false, self._last_error
+        return self:_fail_and_reset(ErrorCodes.TARGET_LOST, now, nil)
     end
 
     target = self:_maybe_switch_to_attacker(target, now)
@@ -928,45 +773,21 @@ function CombatService:update()
     end
 
     if target_dead == nil then
-        self._last_error = ErrorCodes.TARGET_LOST
-        self._event_bus:emit(Events.COMBAT_FAILED, {
-            timestamp = now,
-            error_code = self._last_error,
-        })
-        self:reset()
-        return false, self._last_error
+        return self:_fail_and_reset(ErrorCodes.TARGET_LOST, now, target)
     end
 
     if not self:_target_valid(target) then
-        self._last_error = ErrorCodes.TARGET_LOST
-        self._event_bus:emit(Events.COMBAT_FAILED, {
-            timestamp = now,
-            error_code = self._last_error,
-        })
-        self:reset()
-        return false, self._last_error
+        return self:_fail_and_reset(ErrorCodes.TARGET_LOST, now, target)
     end
 
     if now - self._started_at > timeout then
-        self._last_error = ErrorCodes.COMBAT_TIMEOUT
-        self._event_bus:emit(Events.COMBAT_FAILED, {
-            timestamp = now,
-            error_code = self._last_error,
-        })
-        self:reset()
-        return false, self._last_error
+        return self:_fail_and_reset(ErrorCodes.COMBAT_TIMEOUT, now, target)
     end
 
     if self._state == "pull" then
         local ok, err = self:_execute_pull(target)
         if not ok then
-            self._last_error = err or ErrorCodes.PULL_FAILED
-            self._event_bus:emit(Events.COMBAT_FAILED, {
-                timestamp = now,
-                error_code = self._last_error,
-            })
-            self:reset()
-            return false, self._last_error
+            return self:_fail_and_reset(err or ErrorCodes.PULL_FAILED, now, target)
         end
         return true, nil
     end
@@ -977,22 +798,10 @@ function CombatService:update()
         self:_maintain_combat_facing(target, now, distance)
         local ok_call, ok, err = pcall(self._rotation.tick_once, self._rotation)
         if not ok_call then
-            self._last_error = ErrorCodes.ROTATION_UNAVAILABLE
-            self._event_bus:emit(Events.COMBAT_FAILED, {
-                timestamp = now,
-                error_code = self._last_error,
-            })
-            self:reset()
-            return false, self._last_error
+            return self:_fail_and_reset(ErrorCodes.ROTATION_UNAVAILABLE, now, target)
         end
         if not ok and err ~= ErrorCodes.CAST_GUARD_BLOCKED then
-            self._last_error = err
-            self._event_bus:emit(Events.COMBAT_FAILED, {
-                timestamp = now,
-                error_code = err,
-            })
-            self:reset()
-            return false, err
+            return self:_fail_and_reset(err, now, target)
         end
         return true, nil
     end
