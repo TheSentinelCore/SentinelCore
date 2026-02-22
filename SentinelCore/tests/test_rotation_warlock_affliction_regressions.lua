@@ -225,14 +225,37 @@ local function run()
     })
 
     local summon_action = nil
+    local maintenance_food = nil
+    local maintenance_water = nil
     for i = 1, #maintenance do
         local action = maintenance[i]
+        if action.action_type == "use_item_self" and action.item_kind == "food" then
+            maintenance_food = action
+        end
+        if action.action_type == "use_item_self" and action.item_kind == "water" then
+            maintenance_water = action
+        end
         if action.action_type == "cast_spell_self" and tonumber(action.priority) == 255 then
             summon_action = action
-            break
         end
     end
     T.assert_true(type(summon_action) == "table", "maintenance plan should include summon action")
+    T.assert_true(type(maintenance_food) == "table" and type(maintenance_water) == "table",
+        "maintenance plan should include both food and water actions")
+    T.assert_true(maintenance_food.condition({
+        in_combat = false,
+        player_is_moving = false,
+        eating_or_drinking = true,
+        player_is_eating = false,
+        player_is_drinking = true,
+    }, maintenance_food) == true, "warlock food should still be allowed while drinking")
+    T.assert_true(maintenance_water.condition({
+        in_combat = false,
+        player_is_moving = false,
+        eating_or_drinking = true,
+        player_is_eating = true,
+        player_is_drinking = false,
+    }, maintenance_water) == true, "warlock water should still be allowed while eating")
 
     include_shards = false
     local no_shard_spell = summon_action.spell_id(base_ctx, summon_action)

@@ -101,6 +101,8 @@ local function run()
     player._mana = 20
     bb:set("player.in_combat", false)
     bb:set("rotation.rest.lock_until", 0)
+    bb:set("rotation.rest.lock_until.food", 0)
+    bb:set("rotation.rest.lock_until.water", 0)
     if core and core._set_time and core.time then
         core._set_time(core.time() + 1.0)
     end
@@ -113,6 +115,31 @@ local function run()
     T.assert_true(#entries_after_drink > before_entries, "drink maintenance should enqueue a new action")
     T.assert_true(type(drink_entry) == "table" and tonumber(drink_entry.item_id) == 159,
         "drink maintenance should queue a water consumable when HP is healthy and mana is low")
+
+    if core and core.time then
+        bb:set("rotation.rest.lock_until", 0)
+        bb:set("rotation.rest.lock_until.water", 0)
+        rotation:_on_action_executed({
+            action_type = "use_item_self",
+            item_kind = "food",
+            rest_lock_secs = 2.0,
+        }, { now = core.time() })
+    end
+    local water_allowed_under_food_lock, water_allowed_err = rotation:_action_allowed({
+        action_type = "use_item_self",
+        item_kind = "water",
+        item_id = 159,
+        allow_movement = true,
+    }, {
+        now = (core and core.time and core.time()) or 0,
+        player = player,
+        target = target,
+        player_is_moving = false,
+        player_health_pct = 1.0,
+        player_mana_pct = 0.20,
+    })
+    T.assert_true(water_allowed_under_food_lock == true and water_allowed_err == nil,
+        "rest locks should be scoped by consumable kind so food lock does not block water")
 
     local original_build_context = rotation._context_builder.build
     rotation._context_builder.build = function()

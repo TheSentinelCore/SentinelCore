@@ -286,8 +286,14 @@ function Client:move_to(target, callback, opts)
     end
 
     local current_dest = self._blackboard:get("path.destination")
-    local lateral_gate = math.max(2.5, (self._blackboard:get("config.waypoint_tolerance", 3.0) or 3.0) + 1.0)
-    local vertical_gate = math.max(3.0, (self._blackboard:get("config.deviation_vertical_threshold", 2.2) or 2.2) * 1.5)
+    local requested_lateral_gate = tonumber(opts and opts.destination_lateral_gate)
+    local requested_vertical_gate = tonumber(opts and opts.destination_vertical_gate)
+    local lateral_gate = requested_lateral_gate
+        and math.max(0.5, requested_lateral_gate)
+        or math.max(2.5, (self._blackboard:get("config.waypoint_tolerance", 3.0) or 3.0) + 1.0)
+    local vertical_gate = requested_vertical_gate
+        and math.max(0.5, requested_vertical_gate)
+        or math.max(3.0, (self._blackboard:get("config.deviation_vertical_threshold", 2.2) or 2.2) * 1.5)
     local is_same_destination = current_dest
         and Helpers.distance_2d(current_dest, destination) <= lateral_gate
         and math.abs((current_dest.z or 0) - (destination.z or 0)) <= vertical_gate

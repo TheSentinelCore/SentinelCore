@@ -259,6 +259,10 @@ function Config:validate_runtime()
     if min_pull_mana_pct ~= nil and (min_pull_mana_pct < 0 or min_pull_mana_pct > 1) then
         return false, ErrorCodes.CONFIG_INVALID
     end
+    local pull_engage_range_padding = tonumber(cfg.combat.pull_engage_range_padding)
+    if pull_engage_range_padding ~= nil and (pull_engage_range_padding < 0 or pull_engage_range_padding > 5) then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
     local min_pull_health_pct = tonumber(cfg.combat.min_pull_health_pct)
     if min_pull_health_pct ~= nil and (min_pull_health_pct < 0 or min_pull_health_pct > 1) then
         return false, ErrorCodes.CONFIG_INVALID
@@ -307,6 +311,25 @@ function Config:validate_runtime()
     local health_ceiling = tonumber(cfg.combat.recovery_health_ceiling_pct)
     if health_floor ~= nil and health_ceiling ~= nil and health_ceiling < health_floor then
         return false, ErrorCodes.CONFIG_INVALID
+    end
+    local combat_positive_fields = {
+        "pull_chase_repath_distance",
+        "pull_chase_repath_cooldown",
+        "pull_chase_move_to_cooldown",
+        "pull_chase_refresh_cooldown",
+        "combat_chase_repath_distance",
+        "combat_chase_repath_cooldown",
+        "combat_chase_move_to_cooldown",
+        "combat_chase_refresh_cooldown",
+        "chase_destination_lateral_gate",
+        "chase_destination_vertical_gate",
+    }
+    for i = 1, #combat_positive_fields do
+        local key = combat_positive_fields[i]
+        local value = tonumber(cfg.combat[key])
+        if value ~= nil and value <= 0 then
+            return false, ErrorCodes.CONFIG_INVALID
+        end
     end
 
     local objective_timeout = tonumber(cfg.objective.objective_timeout)

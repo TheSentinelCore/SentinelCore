@@ -2,6 +2,12 @@ local Helpers = require("lib/Helpers")
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
 
+local OBJECT_UNWRAP_KEYS = {
+    "object",
+    "raw_object",
+    "game_object",
+}
+
 ---@private
 ---@param obj any
 ---@param method string
@@ -145,6 +151,22 @@ local function is_same_unit(lhs, rhs)
     end
 
     return false
+end
+
+---@private
+---@param value any
+---@return any
+local function unwrap_game_object(value)
+    if type(value) ~= "table" then
+        return value
+    end
+    for i = 1, #OBJECT_UNWRAP_KEYS do
+        local candidate = rawget(value, OBJECT_UNWRAP_KEYS[i])
+        if candidate ~= nil then
+            return candidate
+        end
+    end
+    return value
 end
 
 ---@private
@@ -471,6 +493,87 @@ function CombatService:_resolve_movement_profile()
 end
 
 ---@private
+---@return table|nil
+function CombatService:_resolve_chase_move_opts()
+    local lateral_gate = tonumber(self._cfg.chase_destination_lateral_gate)
+    local vertical_gate = tonumber(self._cfg.chase_destination_vertical_gate)
+    if (lateral_gate == nil or lateral_gate <= 0) and (vertical_gate == nil or vertical_gate <= 0) then
+        return nil
+    end
+
+    local opts = {}
+    if lateral_gate and lateral_gate > 0 then
+        opts.destination_lateral_gate = lateral_gate
+    end
+    if vertical_gate and vertical_gate > 0 then
+        opts.destination_vertical_gate = vertical_gate
+    end
+    return opts
+end
+
+---@private
+---@param target game_object|nil
+---@return number
+function CombatService:_resolve_enemy_count(target)
+    local player = self._blackboard:get("player.object")
+    if not player then
+        return target and 1 or 0
+    end
+
+    local count = 0
+    local seen = {}
+    local function add_unit(unit)
+        if not unit then
+            return
+        end
+        if safe_method(unit, "is_valid") ~= true then
+            return
+        end
+        if safe_method(unit, "is_dead") == true or safe_method(unit, "is_ghost") == true then
+            return
+        end
+
+        local guid = tonumber(safe_method(unit, "get_guid"))
+            or tonumber(safe_method(unit, "get_object_guid"))
+        local key = guid and guid > 0 and ("guid:" .. tostring(guid)) or tostring(unit)
+        if seen[key] then
+            return
+        end
+        seen[key] = true
+        count = count + 1
+    end
+
+    add_unit(target)
+
+    if core and core.object_manager and core.object_manager.get_visible_objects then
+        local ok_objects, objects = pcall(core.object_manager.get_visible_objects)
+        if ok_objects and type(objects) == "table" then
+            for i = 1, #objects do
+                local candidate = unwrap_game_object(objects[i])
+                if candidate and not is_same_unit(candidate, target) then
+                    local candidate_in_combat = safe_method(candidate, "is_in_combat") == true
+                    if candidate_in_combat and is_defensive_target(candidate, player) then
+                        add_unit(candidate)
+                    end
+                end
+            end
+        end
+    end
+
+    if count <= 0 and target then
+        return 1
+    end
+    return count
+end
+
+---@private
+---@param target game_object|nil
+function CombatService:_sync_enemy_count(target)
+    local count = self:_resolve_enemy_count(target)
+    self._blackboard:set("combat.enemy_count", count)
+end
+
+---@private
 ---@param target_pos vec3
 ---@return boolean
 function CombatService:_pull_destination_changed(target_pos)
@@ -490,7 +593,7 @@ end
 function CombatService:_issue_pull_move_to(target_pos, now, reason)
     local destination = copy_vec3(target_pos) or target_pos
     if self._nav and self._nav.move_to then
-        self._nav:move_to(destination)
+        self._nav:move_to(destination, nil, self:_resolve_chase_move_opts())
     end
     self._event_bus:emit(Events.COMBAT_CHASE_UPDATE, {
         timestamp = now,
@@ -511,6 +614,7 @@ end
 function CombatService:_update_pull_navigation(target_pos, now)
     local destination_changed = self:_pull_destination_changed(target_pos)
     local move_to_cooldown = tonumber(self._cfg.pull_chase_move_to_cooldown) or 0.75
+    local refresh_cooldown = tonumber(self._cfg.pull_chase_refresh_cooldown) or (move_to_cooldown * 3.0)
     local since_last = now - (tonumber(self._pull_nav_last_move_at) or 0)
     local should_issue = false
 
@@ -518,8 +622,8 @@ function CombatService:_update_pull_navigation(target_pos, now)
         should_issue = true
     elseif destination_changed and since_last >= move_to_cooldown then
         should_issue = true
-    elseif since_last >= (move_to_cooldown * 2.0) then
-        -- Keep chase alive if nav finished/failed without requiring direct path calls here.
+    elseif not destination_changed and since_last >= refresh_cooldown then
+        -- Sparse keepalive refresh so moving-target chase can recover from stalled nav.
         should_issue = true
     end
 
@@ -554,7 +658,7 @@ end
 function CombatService:_issue_combat_move_to(target_pos, now, reason)
     local destination = copy_vec3(target_pos) or target_pos
     if self._nav and self._nav.move_to then
-        self._nav:move_to(destination)
+        self._nav:move_to(destination, nil, self:_resolve_chase_move_opts())
     end
     self._event_bus:emit(Events.COMBAT_CHASE_UPDATE, {
         timestamp = now,
@@ -576,6 +680,7 @@ end
 function CombatService:_update_combat_navigation(target_pos, now)
     local destination_changed = self:_combat_destination_changed(target_pos)
     local move_to_cooldown = tonumber(self._cfg.combat_chase_move_to_cooldown) or 0.75
+    local refresh_cooldown = tonumber(self._cfg.combat_chase_refresh_cooldown) or (move_to_cooldown * 3.0)
     local since_last = now - (tonumber(self._combat_nav_last_move_at) or 0)
     local should_issue = false
 
@@ -583,8 +688,8 @@ function CombatService:_update_combat_navigation(target_pos, now)
         should_issue = true
     elseif destination_changed and since_last >= move_to_cooldown then
         should_issue = true
-    elseif since_last >= (move_to_cooldown * 2.0) then
-        -- Keep chase alive if nav finished/failed without requiring direct path calls here.
+    elseif not destination_changed and since_last >= refresh_cooldown then
+        -- Sparse keepalive refresh so moving-target chase can recover from stalled nav.
         should_issue = true
     end
 
@@ -792,6 +897,7 @@ function CombatService:start(target)
     local now = (core and core.time and core.time()) or 0
     self._active_target = target
     self._blackboard:set("combat.target", target)
+    self:_sync_enemy_count(target)
     self._state = "pull"
     self._started_at = now
     self._pull_started_at = now
@@ -819,6 +925,7 @@ function CombatService:reset()
     self:_reset_pull_navigation()
     self:_reset_combat_navigation()
     self._blackboard:clear("combat.target")
+    self._blackboard:set("combat.enemy_count", 0)
     if self._targeting and self._targeting.clear_target then
         pcall(self._targeting.clear_target, self._targeting, "combat_reset")
     end
@@ -878,9 +985,11 @@ function CombatService:_execute_pull(target)
         pull_profile = {}
     end
     local pull_range = tonumber(pull_profile.max_pull_range) or 30
+    local engage_padding = tonumber(self._cfg.pull_engage_range_padding) or 0.35
+    local engage_range = math.max(1.0, pull_range - math.max(0, engage_padding))
     local distance = self:_distance_to_target(target)
 
-    if distance > pull_range then
+    if distance > engage_range then
         local target_pos = safe_method(target, "get_position")
         if not target_pos then
             return false, ErrorCodes.TARGET_LOST
@@ -951,6 +1060,7 @@ function CombatService:update()
     end
 
     target = self:_maybe_switch_to_attacker(target, now)
+    self:_sync_enemy_count(target)
 
     local target_dead = safe_method(target, "is_dead")
     if target_dead == true then

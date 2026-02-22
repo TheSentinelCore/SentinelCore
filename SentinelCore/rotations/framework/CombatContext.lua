@@ -253,37 +253,43 @@ end
 ---@private
 ---@param player game_object|nil
 ---@param enums table|nil
----@return boolean
-local function resolve_eating_or_drinking(player, enums)
+---@return table
+local function resolve_consuming_state(player, enums)
     local buff_db = enums and enums.buff_db or nil
     if buff_db == nil then
-        return false
+        return {
+            eating = false,
+            drinking = false,
+            either = false,
+        }
     end
 
-    if buff_db.EATING_OR_DRINKING and unit_has_aura(player, buff_db.EATING_OR_DRINKING) then
-        return true
-    end
+    local eating = buff_db.EATING and unit_has_aura(player, buff_db.EATING) or false
+    local drinking = buff_db.DRINKING and unit_has_aura(player, buff_db.DRINKING) or false
+    local either = buff_db.EATING_OR_DRINKING and unit_has_aura(player, buff_db.EATING_OR_DRINKING) or false
 
-    if buff_db.EATING and unit_has_aura(player, buff_db.EATING) then
-        return true
-    end
-
-    if buff_db.DRINKING and unit_has_aura(player, buff_db.DRINKING) then
-        return true
-    end
-
-    return false
+    return {
+        eating = eating == true,
+        drinking = drinking == true,
+        either = either == true or eating == true or drinking == true,
+    }
 end
 
 ---@private
 ---@param blackboard Blackboard|nil
 ---@param now number
+---@param kind? string
 ---@return number
-local function resolve_rest_lock_until(blackboard, now)
+local function resolve_rest_lock_until(blackboard, now, kind)
     if not blackboard or type(blackboard.get) ~= "function" then
         return 0
     end
-    local lock_until = tonumber(blackboard:get("rotation.rest.lock_until", 0)) or 0
+    local key = "rotation.rest.lock_until"
+    local normalized_kind = string.lower(tostring(kind or ""))
+    if normalized_kind ~= "" then
+        key = key .. "." .. normalized_kind
+    end
+    local lock_until = tonumber(blackboard:get(key, 0)) or 0
     if lock_until <= now then
         return 0
     end
@@ -425,7 +431,15 @@ function CombatContext:build(deps)
     local player_is_moving = resolve_player_moving(player)
     local now = (core and core.time and core.time()) or 0
     local rest_lock_until = resolve_rest_lock_until(bb, now)
-    local eating_or_drinking = resolve_eating_or_drinking(player, enums) or rest_lock_until > now
+    local rest_lock_food_until = resolve_rest_lock_until(bb, now, "food")
+    local rest_lock_water_until = resolve_rest_lock_until(bb, now, "water")
+    local consuming = resolve_consuming_state(player, enums)
+    local player_is_eating = consuming.eating == true or rest_lock_food_until > now
+    local player_is_drinking = consuming.drinking == true or rest_lock_water_until > now
+    local eating_or_drinking = consuming.either == true
+        or player_is_eating
+        or player_is_drinking
+        or rest_lock_until > now
 
     local function player_has_aura(spec)
         return unit_has_aura(player, spec)
@@ -479,8 +493,12 @@ function CombatContext:build(deps)
         target_is_undead = target_is_undead,
         target_is_undead_or_demon = target_is_demon or target_is_undead,
         player_is_moving = player_is_moving,
+        player_is_eating = player_is_eating,
+        player_is_drinking = player_is_drinking,
         eating_or_drinking = eating_or_drinking,
         rest_lock_until = rest_lock_until,
+        rest_lock_food_until = rest_lock_food_until,
+        rest_lock_water_until = rest_lock_water_until,
         routine_policy = bb:get("rotation.policy"),
         player_has_aura = player_has_aura,
         target_has_aura = target_has_aura,

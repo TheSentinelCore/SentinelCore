@@ -702,7 +702,8 @@ function Affliction:maintenance(ctx)
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
-                    and local_ctx.eating_or_drinking ~= true
+                    and local_ctx.player_is_drinking ~= true
+                    and (local_ctx.eating_or_drinking ~= true or local_ctx.player_is_eating == true)
             end,
         }),
         ActionBuilder.item_self(ConsumableCatalog.TBC_FOOD_ITEM_IDS, 970, {
@@ -712,7 +713,8 @@ function Affliction:maintenance(ctx)
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
-                    and local_ctx.eating_or_drinking ~= true
+                    and local_ctx.player_is_eating ~= true
+                    and (local_ctx.eating_or_drinking ~= true or local_ctx.player_is_drinking == true)
             end,
         }),
         self_spell(function(local_ctx)

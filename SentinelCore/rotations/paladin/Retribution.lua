@@ -469,7 +469,8 @@ function Retribution:maintenance(ctx)
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
-                    and local_ctx.eating_or_drinking ~= true
+                    and local_ctx.player_is_eating ~= true
+                    and (local_ctx.eating_or_drinking ~= true or local_ctx.player_is_drinking == true)
             end,
         }),
         ActionBuilder.item_self(ConsumableCatalog.TBC_WATER_ITEM_IDS, 980, {
@@ -480,7 +481,8 @@ function Retribution:maintenance(ctx)
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
-                    and local_ctx.eating_or_drinking ~= true
+                    and local_ctx.player_is_drinking ~= true
+                    and (local_ctx.eating_or_drinking ~= true or local_ctx.player_is_eating == true)
             end,
         }),
         self_spell(function()
@@ -659,12 +661,6 @@ function Retribution:combat(ctx)
             condition = function(local_ctx)
                 return should_reseal(local_ctx)
             end,
-        }),
-        self_spell(SPELLS.CONSECRATION, 515, {
-            max_target_distance = 8.0,
-            min_player_mana_pct = p.consecration_st_min_mana_pct,
-            intent = "burst",
-            combat_modes = { "burst", "sustain" },
         }),
         target_spell(SPELLS.EXORCISM, 500, {
             max_target_distance = 30.0,

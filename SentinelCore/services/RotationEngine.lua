@@ -724,8 +724,46 @@ function RotationEngine:_on_action_executed(action, ctx)
 
     local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
     if self._blackboard and self._blackboard.set then
-        self._blackboard:set("rotation.rest.lock_until", now + lock_secs)
+        local lock_until = now + lock_secs
+        local item_kind = string.lower(tostring(action.item_kind or ""))
+        if item_kind ~= "" then
+            self._blackboard:set("rotation.rest.lock_until." .. item_kind, lock_until)
+        else
+            self._blackboard:set("rotation.rest.lock_until", lock_until)
+        end
     end
+end
+
+---@private
+---@param action table|nil
+---@return string
+function RotationEngine:_rest_lock_key_for_action(action)
+    if type(action) == "table" then
+        local kind = string.lower(tostring(action.item_kind or ""))
+        if kind ~= "" then
+            return "rotation.rest.lock_until." .. kind
+        end
+    end
+    return "rotation.rest.lock_until"
+end
+
+---@private
+---@param action table|nil
+---@param now number
+---@return number
+function RotationEngine:_rest_lock_remaining(action, now)
+    if not self._blackboard or type(self._blackboard.get) ~= "function" then
+        return 0
+    end
+
+    local scoped_key = self:_rest_lock_key_for_action(action)
+    local scoped_until = tonumber(self._blackboard:get(scoped_key, 0)) or 0
+    local generic_until = tonumber(self._blackboard:get("rotation.rest.lock_until", 0)) or 0
+    local lock_until = math.max(scoped_until, generic_until)
+    if lock_until <= now then
+        return 0
+    end
+    return lock_until - now
 end
 
 ---@return boolean
@@ -953,10 +991,10 @@ function RotationEngine:_estimate_action_retry_backoff(action, ctx, reason, now)
         backoff = math.max(backoff, tonumber(self._cfg.action_retry_range_backoff) or 0.28)
     end
 
-    if action.action_type == "use_item_self" and self._blackboard and self._blackboard.get then
-        local lock_until = tonumber(self._blackboard:get("rotation.rest.lock_until", 0)) or 0
-        if lock_until > now then
-            backoff = math.max(backoff, lock_until - now)
+    if action.action_type == "use_item_self" then
+        local lock_remaining = self:_rest_lock_remaining(action, now)
+        if lock_remaining > 0 then
+            backoff = math.max(backoff, lock_remaining)
         end
     end
 
@@ -1366,9 +1404,9 @@ function RotationEngine:_action_allowed(action, ctx)
         return false, ErrorCodes.TARGET_NOT_FOUND
     end
 
-    if action.action_type == "use_item_self" and self._blackboard and self._blackboard.get then
-        local lock_until = tonumber(self._blackboard:get("rotation.rest.lock_until", 0)) or 0
-        if lock_until > now then
+    if action.action_type == "use_item_self" then
+        local lock_remaining = self:_rest_lock_remaining(action, now)
+        if lock_remaining > 0 then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
     end

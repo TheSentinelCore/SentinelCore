@@ -65,9 +65,6 @@ local function run()
         if action.action_type == "cast_spell_target" and tonumber(action.priority) == 500 then
             exorcism_action = action
         end
-        if action.action_type == "cast_spell_self" and tonumber(action.priority) == 515 then
-            consecration_action = action
-        end
         if action.action_type == "cast_spell_self" and tonumber(action.priority) == 545 then
             has_reseal = true
         end
@@ -77,11 +74,10 @@ local function run()
     T.assert_true(crusader_priority > judgement_priority,
         "combat plan should prioritize Crusader Strike before Judgement when both are available")
     T.assert_true(type(exorcism_action) == "table", "combat plan should include Exorcism action for valid targets")
-    T.assert_true(type(consecration_action) == "table", "combat plan should include Consecration action")
+    T.assert_true(type(consecration_action) ~= "table",
+        "single-target combat plan should not include Consecration when aoe threshold is not met")
     T.assert_true(type(exorcism_action.combat_modes) == "table" and exorcism_action.combat_modes[1] == "burst",
         "exorcism should be restricted to burst mana mode through scheduler metadata")
-    T.assert_true(type(consecration_action.combat_modes) == "table",
-        "consecration should carry scheduler combat mode metadata")
 
     local exorcism_invalid = exorcism_action.condition({
         player_mana_pct = 0.80,
@@ -190,28 +186,55 @@ local function run()
     local maintenance = provider:maintenance(base_ctx)
     local has_food = false
     local has_water = false
+    local food_action = nil
+    local water_action = nil
     for i = 1, #maintenance do
         local action = maintenance[i]
         if action.action_type == "use_item_self" and type(action.item_kind) == "string" then
             if action.item_kind == "food" and tonumber(action.priority) == 985 then
                 has_food = true
+                food_action = action
             elseif action.item_kind == "water" and tonumber(action.priority) == 980 then
                 has_water = true
+                water_action = action
             end
         end
     end
     T.assert_true(has_water, "maintenance plan should include water action")
     T.assert_true(has_food, "maintenance plan should include food action")
+    T.assert_true(type(food_action) == "table" and type(water_action) == "table",
+        "maintenance plan should expose both food and water actions")
+    T.assert_true(food_action.condition({
+        in_combat = false,
+        player_is_moving = false,
+        eating_or_drinking = true,
+        player_is_eating = false,
+        player_is_drinking = true,
+    }, food_action) == true, "food should still be allowed while already drinking")
+    T.assert_true(water_action.condition({
+        in_combat = false,
+        player_is_moving = false,
+        eating_or_drinking = true,
+        player_is_eating = true,
+        player_is_drinking = false,
+    }, water_action) == true, "water should still be allowed while already eating")
 
     local aoe = provider:aoe(base_ctx)
     local holy_wrath_action = nil
+    local aoe_consecration_action = nil
     for i = 1, #aoe do
         local action = aoe[i]
+        if action.action_type == "cast_spell_self" and tonumber(action.priority) == 580 then
+            aoe_consecration_action = action
+        end
         if action.action_type == "cast_spell_self" and tonumber(action.priority) == 560 then
             holy_wrath_action = action
             break
         end
     end
+    T.assert_true(type(aoe_consecration_action) == "table", "aoe plan should include Consecration action")
+    T.assert_true(type(aoe_consecration_action.combat_modes) == "table",
+        "aoe consecration should carry scheduler combat mode metadata")
     T.assert_true(type(holy_wrath_action) == "table", "aoe plan should include Holy Wrath action")
     local holy_wrath_invalid = holy_wrath_action.condition({
         target_is_undead_or_demon = false,

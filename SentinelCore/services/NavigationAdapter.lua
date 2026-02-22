@@ -78,7 +78,8 @@ end
 
 ---@param destination vec3
 ---@param callback? fun(ok: boolean, error_code: string|nil, detail: table|nil)
-function NavigationAdapter:move_to(destination, callback)
+---@param opts? table
+function NavigationAdapter:move_to(destination, callback, opts)
     local client = self:_resolve_client()
     if not client or type(client.move_to) ~= "function" then
         if callback then
@@ -95,7 +96,7 @@ function NavigationAdapter:move_to(destination, callback)
                 callback(false, reason or ErrorCodes.NAV_MOVE_FAILED, detail)
             end
         end
-    end)
+    end, opts)
 end
 
 function NavigationAdapter:stop()
