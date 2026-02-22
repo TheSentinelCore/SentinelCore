@@ -117,7 +117,7 @@ function Client:new(config)
     local targeting = config.targeting_service or TargetingService:new(o._event_bus, o._blackboard, runtime_cfg.targeting)
     local rotation = config.rotation_engine or RotationEngine:new(o._event_bus, o._blackboard, runtime_cfg.combat)
     local combat = config.combat_service or CombatService:new(o._event_bus, o._blackboard, navigation, targeting, rotation, runtime_cfg.combat)
-    local loot = config.loot_service or LootService:new(o._event_bus, o._blackboard, runtime_cfg.loot)
+    local loot = config.loot_service or LootService:new(o._event_bus, o._blackboard, runtime_cfg.loot, navigation)
 
     -- Policy/cache are loaded during start; seed with defaults for construction.
     local inventory = config.inventory_service or InventoryService:new(o._event_bus, o._blackboard, runtime_cfg.inventory, o._config:get_policy())

@@ -22,6 +22,7 @@ local function run()
     })
 
     local provider = require("rotations/paladin/Retribution")
+    provider._mana_mode = nil
 
     local function resolve_from_fallback(name, fallback_ids)
         if type(fallback_ids) == "table" and #fallback_ids > 0 then
@@ -47,6 +48,7 @@ local function run()
     local judgement_priority = 0
     local crusader_priority = 0
     local exorcism_action = nil
+    local consecration_action = nil
     for i = 1, #combat do
         local action = combat[i]
         if action.action_type == "cast_spell_target" and tonumber(action.spell_id) == 20271 then
@@ -63,6 +65,9 @@ local function run()
         if action.action_type == "cast_spell_target" and tonumber(action.priority) == 500 then
             exorcism_action = action
         end
+        if action.action_type == "cast_spell_self" and tonumber(action.priority) == 515 then
+            consecration_action = action
+        end
         if action.action_type == "cast_spell_self" and tonumber(action.priority) == 545 then
             has_reseal = true
         end
@@ -72,6 +77,11 @@ local function run()
     T.assert_true(crusader_priority > judgement_priority,
         "combat plan should prioritize Crusader Strike before Judgement when both are available")
     T.assert_true(type(exorcism_action) == "table", "combat plan should include Exorcism action for valid targets")
+    T.assert_true(type(consecration_action) == "table", "combat plan should include Consecration action")
+    T.assert_true(type(exorcism_action.combat_modes) == "table" and exorcism_action.combat_modes[1] == "burst",
+        "exorcism should be restricted to burst mana mode through scheduler metadata")
+    T.assert_true(type(consecration_action.combat_modes) == "table",
+        "consecration should carry scheduler combat mode metadata")
 
     local exorcism_invalid = exorcism_action.condition({
         player_mana_pct = 0.80,
@@ -84,6 +94,40 @@ local function run()
         target_is_undead_or_demon = true,
     }, exorcism_action)
     T.assert_true(exorcism_valid == true, "exorcism should be allowed on undead/demon targets")
+
+    local state_burst = provider:resolve_combat_state({
+        player_mana_pct = 0.70,
+        target_health_pct = 0.80,
+        routine_policy = base_ctx.routine_policy,
+    })
+    T.assert_eq(state_burst.combat_mode, "burst", "high mana should resolve burst mode")
+    local state_sustain = provider:resolve_combat_state({
+        player_mana_pct = 0.42,
+        target_health_pct = 0.80,
+        routine_policy = base_ctx.routine_policy,
+    })
+    T.assert_eq(state_sustain.combat_mode, "sustain", "mid mana should resolve sustain mode")
+    local state_recovery = provider:resolve_combat_state({
+        player_mana_pct = 0.20,
+        target_health_pct = 0.80,
+        routine_policy = base_ctx.routine_policy,
+    })
+    T.assert_eq(state_recovery.combat_mode, "recovery", "low mana should resolve recovery mode")
+    local state_recovery_hold = provider:resolve_combat_state({
+        player_mana_pct = 0.32,
+        target_health_pct = 0.80,
+        routine_policy = base_ctx.routine_policy,
+    })
+    T.assert_eq(state_recovery_hold.combat_mode, "recovery",
+        "recovery mode should hold until recovery exit threshold is crossed")
+    local state_execute = provider:resolve_combat_state({
+        player_mana_pct = 0.62,
+        target_health_pct = 0.20,
+        routine_policy = base_ctx.routine_policy,
+    })
+    T.assert_eq(state_execute.combat_mode, "burst", "high mana should return to burst mode after hysteresis exit")
+    T.assert_true(type(state_execute.planner_intents) == "table" and tonumber(state_execute.planner_intents.execute) >= 1,
+        "execute phase should raise execute intent weight in scheduler state")
 
     local defensive = provider:defensive(base_ctx)
     local has_health_potion = false

@@ -20,6 +20,11 @@ local function build_action(action_type, priority, opts)
         priority = priority,
         allow_movement = opts.allow_movement == true,
         target = target,
+        intent = opts.intent,
+        combat_modes = opts.combat_modes,
+        intent_bonus = opts.intent_bonus,
+        scheduler_group = opts.scheduler_group,
+        scheduler_bias = opts.scheduler_bias,
         item_kind = opts.item_kind,
         rest_lock_secs = opts.rest_lock_secs,
         requires_castable_check = opts.requires_castable_check ~= false and action_type ~= "use_item_self" and

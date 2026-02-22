@@ -64,6 +64,12 @@ local DEFAULT_POLICY = {
     consecration_aoe_min_mana_pct = 0.45,
     exorcism_min_mana_pct = 0.55,
     holy_wrath_aoe_min_mana_pct = 0.30,
+
+    mana_sustain_enter_pct = 0.48,
+    mana_sustain_exit_pct = 0.60,
+    mana_recovery_enter_pct = 0.24,
+    mana_recovery_exit_pct = 0.34,
+    holy_light_execute_hold_hp_pct = 0.45,
 }
 
 ---@private
@@ -270,6 +276,26 @@ end
 
 ---@private
 ---@param ctx table
+---@param p table
+---@return boolean
+local function should_hold_holy_light_for_execute(ctx, p)
+    local target_health_pct = tonumber(ctx and ctx.target_health_pct)
+    if not target_health_pct or target_health_pct > EXECUTE_TARGET_HEALTH_PCT then
+        return false
+    end
+
+    local player_health_pct = tonumber(ctx and ctx.player_health_pct) or 1.0
+    local hold_floor = tonumber(p and p.holy_light_execute_hold_hp_pct) or 0.45
+    local mana_mode = string.lower(tostring(ctx and (ctx.ret_mana_mode or ctx.mana_mode or ctx.combat_mode or "")))
+    if mana_mode == "burst" then
+        return false
+    end
+
+    return player_health_pct > hold_floor
+end
+
+---@private
+---@param ctx table
 ---@return boolean
 local function target_is_undead_or_demon(ctx)
     if type(ctx) ~= "table" then
@@ -334,6 +360,88 @@ function Retribution:spec()
     return Retribution.SPEC
 end
 
+---@private
+---@param ctx table
+---@param p table
+---@return string
+function Retribution:_resolve_mana_mode(ctx, p)
+    local mana_pct = tonumber(ctx and ctx.player_mana_pct) or 1.0
+    local mode = tostring(self._mana_mode or "burst")
+
+    local sustain_enter = tonumber(p and p.mana_sustain_enter_pct) or 0.48
+    local sustain_exit = tonumber(p and p.mana_sustain_exit_pct) or 0.60
+    local recovery_enter = tonumber(p and p.mana_recovery_enter_pct) or 0.24
+    local recovery_exit = tonumber(p and p.mana_recovery_exit_pct) or 0.34
+
+    if mode == "recovery" then
+        if mana_pct >= recovery_exit then
+            if mana_pct >= sustain_exit then
+                mode = "burst"
+            else
+                mode = "sustain"
+            end
+        end
+    elseif mode == "sustain" then
+        if mana_pct <= recovery_enter then
+            mode = "recovery"
+        elseif mana_pct >= sustain_exit then
+            mode = "burst"
+        end
+    else
+        if mana_pct <= recovery_enter then
+            mode = "recovery"
+        elseif mana_pct <= sustain_enter then
+            mode = "sustain"
+        else
+            mode = "burst"
+        end
+    end
+
+    self._mana_mode = mode
+    return mode
+end
+
+---@param ctx table
+---@return table
+function Retribution:resolve_combat_state(ctx)
+    local p = policy(ctx)
+    local mana_mode = self:_resolve_mana_mode(ctx, p)
+    local target_health_pct = tonumber(ctx and ctx.target_health_pct)
+    local execute = target_health_pct ~= nil and target_health_pct <= EXECUTE_TARGET_HEALTH_PCT
+
+    local intents = {
+        defensive = 1.0,
+        interrupt = 1.0,
+        utility = 0.4,
+        sustain = 0.8,
+        burst = 0.5,
+        recover = 0.2,
+        execute = execute and 1.0 or 0.0,
+    }
+
+    if mana_mode == "burst" then
+        intents.burst = 1.0
+        intents.sustain = 0.6
+        intents.recover = -1.0
+    elseif mana_mode == "sustain" then
+        intents.burst = 0.2
+        intents.sustain = 1.0
+        intents.recover = 0.4
+    else
+        intents.burst = -1.6
+        intents.sustain = 0.9
+        intents.recover = 1.0
+    end
+
+    return {
+        combat_mode = mana_mode,
+        mana_mode = mana_mode,
+        ret_mana_mode = mana_mode,
+        in_execute_phase = execute,
+        planner_intents = intents,
+    }
+end
+
 ---@param ctx table
 ---@return boolean
 function Retribution:can_run(ctx)
@@ -357,6 +465,7 @@ function Retribution:maintenance(ctx)
             max_player_health_pct = p.eat_health_pct,
             item_kind = "food",
             rest_lock_secs = 2.0,
+            intent = "recover",
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
@@ -367,6 +476,7 @@ function Retribution:maintenance(ctx)
             max_player_mana_pct = p.drink_mana_pct,
             item_kind = "water",
             rest_lock_secs = 2.0,
+            intent = "recover",
             condition = function(local_ctx)
                 return local_ctx.in_combat ~= true
                     and local_ctx.player_is_moving ~= true
@@ -412,31 +522,44 @@ function Retribution:defensive(ctx)
     return {
         self_spell(SPELLS.LAY_ON_HANDS, 1000, {
             max_player_health_pct = p.loh_hp_pct,
+            intent = "defensive",
+            combat_modes = { "burst", "sustain", "recovery" },
         }),
         ActionBuilder.best_health_potion(995, {
             max_player_health_pct = p.health_potion_hp_pct,
+            intent = "defensive",
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
             end,
         }),
         self_spell(SPELLS.DIVINE_SHIELD, 980, {
             max_player_health_pct = p.divine_shield_hp_pct,
+            intent = "defensive",
+            combat_modes = { "burst", "sustain", "recovery" },
         }),
         self_spell(SPELLS.DIVINE_PROTECTION, 965, {
             max_player_health_pct = p.divine_protection_hp_pct,
+            intent = "defensive",
+            combat_modes = { "burst", "sustain", "recovery" },
         }),
         self_spell(holy_light, 945, {
             max_player_health_pct = p.holy_light_hp_pct,
             min_player_mana_pct = p.holy_light_min_mana_pct,
             allow_movement = false,
+            intent = "defensive",
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
+                    and not should_hold_holy_light_for_execute(local_ctx, p)
             end,
         }),
         self_spell(flash_light, 935, {
             max_player_health_pct = p.flash_light_hp_pct,
             max_player_mana_pct = p.flash_light_very_oom_mana_pct,
             allow_movement = false,
+            intent = "recover",
+            combat_modes = { "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
                     and not should_hold_flash_for_execute(local_ctx, p)
@@ -445,6 +568,8 @@ function Retribution:defensive(ctx)
         ActionBuilder.best_mana_potion(620, {
             max_player_mana_pct = p.mana_potion_mana_pct,
             min_player_health_pct = p.mana_potion_min_hp_pct,
+            intent = "recover",
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
             end,
@@ -474,6 +599,8 @@ function Retribution:utility(ctx)
             min_player_health_pct = 0.45,
             min_target_health_pct = 0.25,
             max_target_distance = 20.0,
+            intent = "burst",
+            combat_modes = { "burst" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
             end,
@@ -481,6 +608,8 @@ function Retribution:utility(ctx)
         self_spell(function()
             return seal_id
         end, 670, {
+            intent = "sustain",
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true and should_reseal(local_ctx)
             end,
@@ -488,6 +617,7 @@ function Retribution:utility(ctx)
         self_spell(function()
             return aura_id
         end, 660, {
+            intent = "utility",
             condition = function(local_ctx)
                 return local_ctx.player_has_aura and local_ctx.player_has_aura(aura_id) ~= true
             end,
@@ -504,13 +634,19 @@ function Retribution:combat(ctx)
         target_spell(SPELLS.HAMMER_OF_WRATH, 560, {
             max_target_health_pct = 0.20,
             max_target_distance = 30.0,
+            intent = { "execute", "sustain" },
+            combat_modes = { "burst", "sustain", "recovery" },
         }),
         target_spell(SPELLS.CRUSADER_STRIKE, 555, {
             max_target_distance = MELEE_RANGE,
+            intent = "sustain",
+            combat_modes = { "burst", "sustain", "recovery" },
         }),
         target_spell(SPELLS.JUDGEMENT, 550, {
             max_target_distance = JUDGEMENT_CAST_RANGE,
             allow_movement = true,
+            intent = "sustain",
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return has_active_seal(local_ctx)
             end,
@@ -518,6 +654,8 @@ function Retribution:combat(ctx)
         self_spell(function(local_ctx)
             return preferred_seal_id(local_ctx)
         end, 545, {
+            intent = "utility",
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return should_reseal(local_ctx)
             end,
@@ -525,10 +663,14 @@ function Retribution:combat(ctx)
         self_spell(SPELLS.CONSECRATION, 515, {
             max_target_distance = 8.0,
             min_player_mana_pct = p.consecration_st_min_mana_pct,
+            intent = "burst",
+            combat_modes = { "burst", "sustain" },
         }),
         target_spell(SPELLS.EXORCISM, 500, {
             max_target_distance = 30.0,
             min_player_mana_pct = p.exorcism_min_mana_pct,
+            intent = "burst",
+            combat_modes = { "burst" },
             condition = function(local_ctx)
                 return target_is_undead_or_demon(local_ctx)
             end,
@@ -545,20 +687,28 @@ function Retribution:aoe(ctx)
         self_spell(SPELLS.CONSECRATION, 580, {
             max_target_distance = 8.0,
             min_player_mana_pct = p.consecration_aoe_min_mana_pct,
+            intent = { "burst", "sustain" },
+            combat_modes = { "burst", "sustain" },
         }),
         self_spell(SPELLS.HOLY_WRATH, 560, {
             max_target_distance = 10.0,
             min_player_mana_pct = p.holy_wrath_aoe_min_mana_pct,
+            intent = { "burst", "sustain" },
+            combat_modes = { "burst", "sustain" },
             condition = function(local_ctx)
                 return target_is_undead_or_demon(local_ctx)
             end,
         }),
         target_spell(SPELLS.CRUSADER_STRIKE, 555, {
             max_target_distance = MELEE_RANGE,
+            intent = "sustain",
+            combat_modes = { "burst", "sustain", "recovery" },
         }),
         target_spell(SPELLS.JUDGEMENT, 550, {
             max_target_distance = JUDGEMENT_CAST_RANGE,
             allow_movement = true,
+            intent = "sustain",
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return has_active_seal(local_ctx)
             end,
@@ -566,6 +716,8 @@ function Retribution:aoe(ctx)
         self_spell(function(local_ctx)
             return preferred_seal_id(local_ctx)
         end, 545, {
+            intent = "utility",
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return should_reseal(local_ctx)
             end,
@@ -573,6 +725,8 @@ function Retribution:aoe(ctx)
         target_spell(SPELLS.HAMMER_OF_WRATH, 520, {
             max_target_health_pct = 0.20,
             max_target_distance = 30.0,
+            intent = { "execute", "sustain" },
+            combat_modes = { "burst", "sustain", "recovery" },
         }),
     }
 end

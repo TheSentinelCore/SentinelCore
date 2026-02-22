@@ -115,6 +115,11 @@ Defaults.loot = {
     loot_timeout = 8.0,
     interaction_retry_limit = 3,
     interaction_retry_delay = 0.6,
+    loot_interact_range = 5.0,
+    loot_approach_max_distance = 45.0,
+    loot_approach_timeout = 2.5,
+    loot_approach_reissue_cooldown = 0.75,
+    zero_loot_confirm_delay = 0.2,
 }
 
 Defaults.inventory = {}  -- bag capacity computed dynamically from equipped bags
