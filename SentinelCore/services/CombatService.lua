@@ -287,6 +287,23 @@ function CombatService:_resolve_pull_melee_range(pull_profile)
 end
 
 ---@private
+---@param pull_profile table|nil
+---@param melee_range number
+---@return number
+function CombatService:_resolve_pull_auto_attack_commit_range(pull_profile, melee_range)
+    local profile_value = tonumber(pull_profile and pull_profile.auto_attack_commit_range)
+    local cfg_value = tonumber(self._cfg.pull_auto_attack_commit_range)
+    local commit_range = profile_value or cfg_value
+    if commit_range == nil or commit_range <= 0 then
+        commit_range = math.max(3.5, (tonumber(melee_range) or 5.5) - 1.0)
+    end
+
+    local max_commit = tonumber(melee_range) or 5.5
+    commit_range = clamp(commit_range, 1.5, max_commit)
+    return commit_range
+end
+
+---@private
 ---@param target game_object|nil
 ---@param now number
 ---@return boolean
@@ -1262,10 +1279,19 @@ function CombatService:_execute_pull(target)
 
     if not player_in_combat and not target_in_combat then
         local melee_range = self:_resolve_pull_melee_range(pull_profile)
-        if distance > melee_range then
-            local target_pos = safe_method(target, "get_position")
-            if not target_pos then
-                return false, ErrorCodes.TARGET_LOST
+        local commit_range = self:_resolve_pull_auto_attack_commit_range(pull_profile, melee_range)
+        local trigger_range = tonumber(self._cfg.pull_auto_attack_trigger_range) or melee_range
+        trigger_range = math.max(trigger_range, commit_range)
+
+        local target_pos = safe_method(target, "get_position")
+        if not target_pos then
+            return false, ErrorCodes.TARGET_LOST
+        end
+
+        if distance > commit_range then
+            if distance <= trigger_range then
+                -- Prime attack state while closing to reduce pull dead-time when Judgement is unavailable.
+                self:_try_start_auto_attack(target, now)
             end
             self:_update_pull_navigation(target_pos, now)
             return true, nil

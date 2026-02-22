@@ -70,13 +70,14 @@ local function run()
 
     local u1 = combat:update()
     T.assert_true(u1 == true, "combat update should run")
-    T.assert_eq(combat:get_state(), "combat",
-        "combat service should transition to combat once it reaches melee and can force auto-attack")
-    T.assert_eq(nav_calls.stop, 2, "in-range pull should stop nav once after committing to combat")
+    T.assert_eq(combat:get_state(), "pull",
+        "combat service should remain in pull while closing inside tight melee commit range")
+    T.assert_eq(nav_calls.stop, 1, "in-range pull should keep navigation active until pull commit")
 
+    target._in_combat = true
     local u1b = combat:update()
-    T.assert_true(u1b == true, "combat update should continue once combat state is active")
-    T.assert_eq(combat:get_state(), "combat", "combat service should remain in combat state after transition")
+    T.assert_true(u1b == true, "combat update should transition after pull engages")
+    T.assert_eq(combat:get_state(), "combat", "combat service should switch to combat state once target enters combat")
 
     target._dead = true
     local u2 = combat:update()

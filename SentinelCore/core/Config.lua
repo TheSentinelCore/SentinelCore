@@ -437,6 +437,8 @@ function Config:validate_runtime()
         "pull_chase_repath_cooldown",
         "pull_chase_move_to_cooldown",
         "pull_chase_refresh_cooldown",
+        "pull_auto_attack_commit_range",
+        "pull_auto_attack_trigger_range",
         "combat_chase_repath_distance",
         "combat_chase_repath_cooldown",
         "combat_chase_move_to_cooldown",
