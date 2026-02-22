@@ -780,7 +780,7 @@ function Client:update()
         self:_apply_recovery_command(recovery_command)
     end
 
-    -- 6) Telemetry + snapshot.
+    -- 7) Telemetry + snapshot.
     self._telemetry:update(now)
     local snapshot = self:get_snapshot()
     self._event_bus:emit(Events.SNAPSHOT_UPDATED, snapshot)

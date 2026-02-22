@@ -58,6 +58,7 @@ local function run()
 
     -- ── Test 1: Idle when alive ─────────────────────────────────────
     do
+        release_calls = 0; resurrect_calls = 0; corpse_pos = nil; resurrect_delay = 0
         local bus = EventBus:new()
         local bb = Blackboard:new(bus)
         local player = T.mock_object({ dead = false, ghost = false, position = { x = 10, y = 20, z = 30 } })
@@ -74,6 +75,7 @@ local function run()
 
     -- ── Test 2: Activates on death ──────────────────────────────────
     do
+        release_calls = 0; resurrect_calls = 0; corpse_pos = nil; resurrect_delay = 0
         local bus = EventBus:new()
         local bb = Blackboard:new(bus)
         local events = make_event_log(bus)
@@ -199,6 +201,7 @@ local function run()
 
     -- ── Test 6: Deactivation on resurrection ────────────────────────
     do
+        release_calls = 0; resurrect_calls = 0; corpse_pos = nil; resurrect_delay = 0
         local bus = EventBus:new()
         local bb = Blackboard:new(bus)
         local events = make_event_log(bus)
@@ -229,6 +232,7 @@ local function run()
 
     -- ── Test 7: Reset clears all state ──────────────────────────────
     do
+        release_calls = 0; resurrect_calls = 0; corpse_pos = nil; resurrect_delay = 0
         local bus = EventBus:new()
         local bb = Blackboard:new(bus)
         local player = T.mock_object({ dead = true, ghost = false, position = { x = 0, y = 0, z = 0 } })
@@ -299,6 +303,7 @@ local function run()
 
     -- ── Test 10: No player deactivates cleanly ──────────────────────
     do
+        release_calls = 0; resurrect_calls = 0; corpse_pos = nil; resurrect_delay = 0
         local bus = EventBus:new()
         local bb = Blackboard:new(bus)
 
