@@ -263,6 +263,14 @@ function Config:validate_runtime()
     if pull_engage_range_padding ~= nil and (pull_engage_range_padding < 0 or pull_engage_range_padding > 5) then
         return false, ErrorCodes.CONFIG_INVALID
     end
+    local pull_stability_window = tonumber(cfg.combat.pull_in_range_stability_window)
+    if pull_stability_window ~= nil and (pull_stability_window < 0 or pull_stability_window > 2) then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
+    local pull_stability_band = tonumber(cfg.combat.pull_in_range_stability_band)
+    if pull_stability_band ~= nil and (pull_stability_band < 0 or pull_stability_band > 8) then
+        return false, ErrorCodes.CONFIG_INVALID
+    end
     local min_pull_health_pct = tonumber(cfg.combat.min_pull_health_pct)
     if min_pull_health_pct ~= nil and (min_pull_health_pct < 0 or min_pull_health_pct > 1) then
         return false, ErrorCodes.CONFIG_INVALID
@@ -321,13 +329,22 @@ function Config:validate_runtime()
         "combat_chase_repath_cooldown",
         "combat_chase_move_to_cooldown",
         "combat_chase_refresh_cooldown",
-        "chase_destination_lateral_gate",
-        "chase_destination_vertical_gate",
     }
     for i = 1, #combat_positive_fields do
         local key = combat_positive_fields[i]
         local value = tonumber(cfg.combat[key])
         if value ~= nil and value <= 0 then
+            return false, ErrorCodes.CONFIG_INVALID
+        end
+    end
+    local combat_nonnegative_fields = {
+        "chase_destination_lateral_gate",
+        "chase_destination_vertical_gate",
+    }
+    for i = 1, #combat_nonnegative_fields do
+        local key = combat_nonnegative_fields[i]
+        local value = tonumber(cfg.combat[key])
+        if value ~= nil and value < 0 then
             return false, ErrorCodes.CONFIG_INVALID
         end
     end

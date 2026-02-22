@@ -261,6 +261,44 @@ local function run()
     player._mana = 100
     player._max_mana = 100
 
+    local boundary_target = T.mock_object({
+        name = "BoundaryTarget",
+        position = { x = 29.6, y = 0, z = 0 },
+        health = 100,
+        max_health = 100,
+    })
+    local boundary_nav_calls = { move_to = 0, stop = 0 }
+    local boundary_nav = {
+        move_to = function(_, _, cb)
+            boundary_nav_calls.move_to = boundary_nav_calls.move_to + 1
+            if cb then
+                cb(true, nil, nil)
+            end
+        end,
+        stop = function()
+            boundary_nav_calls.stop = boundary_nav_calls.stop + 1
+        end,
+    }
+    local boundary_combat = CombatService:new(bus, bb, boundary_nav, targeting, rotation, {
+        combat_timeout = 15,
+        pull_timeout = 5,
+        pull_engage_range_padding = 0.35,
+        pull_in_range_stability_window = 0.25,
+        pull_in_range_stability_band = 1.5,
+    })
+    local boundary_ok, boundary_err = boundary_combat:start(boundary_target)
+    T.assert_true(boundary_ok == true and boundary_err == nil, "boundary pull scenario should start")
+    local boundary_u1 = boundary_combat:update()
+    T.assert_true(boundary_u1 == true, "boundary pull first update should run")
+    T.assert_eq(boundary_nav_calls.stop, 1,
+        "boundary pull should not stop navigation immediately when target is only briefly in range edge")
+    boundary_target._position = { x = 31.0, y = 0, z = 0 }
+    local boundary_u2 = boundary_combat:update()
+    T.assert_true(boundary_u2 == true, "boundary pull second update should run")
+    T.assert_true(boundary_nav_calls.move_to >= 1,
+        "boundary pull should continue chasing when target drifts back out of range")
+    boundary_combat:reset()
+
     local resting_rotation = {
         should_hold_maintenance = function()
             return true
@@ -425,6 +463,7 @@ local function run()
         sc009_pull_chase_move_to_hysteresis = true,
         sc009_pull_start_rest_gate = true,
         sc009_adaptive_pull_rest_governor = true,
+        sc009_pull_boundary_stability = true,
         sc009_defensive_retarget = true,
         sc009_combat_chase = true,
         sc009_combat_reface = true,

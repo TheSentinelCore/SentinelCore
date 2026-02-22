@@ -207,6 +207,7 @@ end
 ---@field private _pull_nav_last_move_at number
 ---@field private _pull_nav_last_repath_at number
 ---@field private _pull_nav_repath_pending boolean
+---@field private _pull_in_range_since number
 ---@field private _combat_nav_last_dest vec3|nil
 ---@field private _combat_nav_last_move_at number
 ---@field private _combat_nav_last_repath_at number
@@ -242,6 +243,7 @@ function CombatService:new(event_bus, blackboard, navigation, targeting, rotatio
     o._pull_nav_last_move_at = 0
     o._pull_nav_last_repath_at = 0
     o._pull_nav_repath_pending = false
+    o._pull_in_range_since = 0
     o._combat_nav_last_dest = nil
     o._combat_nav_last_move_at = 0
     o._combat_nav_last_repath_at = 0
@@ -462,6 +464,7 @@ function CombatService:_reset_pull_navigation()
     self._pull_nav_last_move_at = 0
     self._pull_nav_last_repath_at = 0
     self._pull_nav_repath_pending = false
+    self._pull_in_range_since = 0
 end
 
 ---@private
@@ -990,12 +993,28 @@ function CombatService:_execute_pull(target)
     local distance = self:_distance_to_target(target)
 
     if distance > engage_range then
+        self._pull_in_range_since = 0
         local target_pos = safe_method(target, "get_position")
         if not target_pos then
             return false, ErrorCodes.TARGET_LOST
         end
         self:_update_pull_navigation(target_pos, now)
         return true, nil
+    end
+
+    local boundary_band = tonumber(self._cfg.pull_in_range_stability_band) or 1.25
+    local stability_window = tonumber(self._cfg.pull_in_range_stability_window) or 0.20
+    local near_boundary = distance >= math.max(0, engage_range - math.max(0, boundary_band))
+    if near_boundary and stability_window > 0 then
+        if self._pull_in_range_since <= 0 then
+            self._pull_in_range_since = now
+            return true, nil
+        end
+        if (now - self._pull_in_range_since) < stability_window then
+            return true, nil
+        end
+    else
+        self._pull_in_range_since = now
     end
 
     if self._nav and self._nav.stop then
