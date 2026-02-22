@@ -176,6 +176,61 @@ local function run()
     T.assert_true(moving_update_4 == true, "pull update should re-issue move_to after cooldown for shifted target")
     T.assert_eq(repath_calls.move_to, 2, "moved target should trigger move_to refresh after cooldown")
 
+    local smooth_target = T.mock_object({
+        name = "SmoothTarget",
+        position = { x = 40, y = 0, z = 0 },
+        health = 100,
+        max_health = 100,
+    })
+    local smooth_calls = { move_to = 0, soft_repath = 0 }
+    local nav_smooth = {
+        move_to = function(_, _, cb)
+            smooth_calls.move_to = smooth_calls.move_to + 1
+            if cb then
+                cb(true, nil, nil)
+            end
+        end,
+        soft_repath = function(_, _, cb)
+            smooth_calls.soft_repath = smooth_calls.soft_repath + 1
+            if cb then
+                cb(true, nil, nil)
+            end
+            return true
+        end,
+        is_moving = function()
+            return true
+        end,
+        get_full_state = function()
+            return "navigating.following_path"
+        end,
+        stop = function() end,
+    }
+    local smooth_targeting = {
+        get_target = function()
+            return smooth_target
+        end,
+    }
+    local combat_smooth = CombatService:new(bus, bb, nav_smooth, smooth_targeting, rotation, {
+        combat_timeout = 15,
+        pull_timeout = 5,
+        pull_chase_repath_distance = 3.0,
+        pull_chase_repath_cooldown = 0.35,
+        pull_chase_move_to_cooldown = 0.5,
+    })
+    local smooth_ok, smooth_err = combat_smooth:start(smooth_target)
+    T.assert_true(smooth_ok == true, "combat start should succeed for smooth-repath chase scenario")
+    local smooth_u1 = combat_smooth:update()
+    T.assert_true(smooth_u1 == true, "smooth-repath first update should issue initial navigation")
+    T.assert_eq(smooth_calls.move_to, 1, "smooth-repath first update should use move_to for initial chase")
+    smooth_target._position = { x = 46, y = 0, z = 0 }
+    if core and core.time and core._set_time then
+        core._set_time(core.time() + 0.4)
+    end
+    local smooth_u2 = combat_smooth:update()
+    T.assert_true(smooth_u2 == true, "smooth-repath update should run after target shift")
+    T.assert_eq(smooth_calls.move_to, 1, "smooth-repath target shift should avoid move_to reset while moving")
+    T.assert_eq(smooth_calls.soft_repath, 1, "smooth-repath target shift should use soft_repath while already moving")
+
     local low_mana_rotation = {
         should_hold_maintenance = function()
             return false

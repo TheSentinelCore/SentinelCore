@@ -515,6 +515,31 @@ function CombatService:_resolve_chase_move_opts()
 end
 
 ---@private
+---@return boolean|nil
+---@return boolean|nil
+---@return boolean
+function CombatService:_resolve_nav_motion_state()
+    local moving = nil
+    local awaiting = nil
+
+    if self._nav and type(self._nav.is_moving) == "function" then
+        local ok_moving, value = pcall(self._nav.is_moving, self._nav)
+        if ok_moving then
+            moving = value == true
+        end
+    end
+
+    if self._nav and type(self._nav.get_full_state) == "function" then
+        local ok_state, full_state = pcall(self._nav.get_full_state, self._nav)
+        if ok_state and type(full_state) == "string" then
+            awaiting = string.find(full_state, "awaiting_path", 1, true) ~= nil
+        end
+    end
+
+    return moving, awaiting, moving ~= nil or awaiting ~= nil
+end
+
+---@private
 ---@param target game_object|nil
 ---@return number
 function CombatService:_resolve_enemy_count(target)
@@ -595,13 +620,43 @@ end
 ---@param reason string|nil
 function CombatService:_issue_pull_move_to(target_pos, now, reason)
     local destination = copy_vec3(target_pos) or target_pos
-    if self._nav and self._nav.move_to then
-        self._nav:move_to(destination, nil, self:_resolve_chase_move_opts())
+    local mode = "move_to"
+    local prefer_soft_repath = reason == "target_shift"
+    local used_soft_repath = false
+
+    if prefer_soft_repath
+        and self._nav
+        and type(self._nav.soft_repath) == "function"
+        and self._pull_nav_repath_pending ~= true then
+        self._pull_nav_repath_pending = true
+        local ok_soft, started = pcall(
+            self._nav.soft_repath,
+            self._nav,
+            destination,
+            function()
+                self._pull_nav_repath_pending = false
+            end,
+            self:_resolve_chase_move_opts()
+        )
+        if ok_soft and started == true then
+            used_soft_repath = true
+            mode = "soft_repath"
+            self._pull_nav_last_repath_at = now
+        else
+            self._pull_nav_repath_pending = false
+        end
     end
+
+    if not used_soft_repath and self._nav and self._nav.move_to then
+        self._nav:move_to(destination, nil, self:_resolve_chase_move_opts())
+        self._pull_nav_repath_pending = false
+    end
+
     self._event_bus:emit(Events.COMBAT_CHASE_UPDATE, {
         timestamp = now,
         phase = "pull",
         reason = tostring(reason or "refresh"),
+        mode = mode,
         x = tonumber(destination and destination.x) or 0,
         y = tonumber(destination and destination.y) or 0,
         z = tonumber(destination and destination.z) or 0,
@@ -617,27 +672,46 @@ end
 function CombatService:_update_pull_navigation(target_pos, now)
     local destination_changed = self:_pull_destination_changed(target_pos)
     local move_to_cooldown = tonumber(self._cfg.pull_chase_move_to_cooldown) or 0.75
+    local repath_cooldown = tonumber(self._cfg.pull_chase_repath_cooldown) or math.max(0.20, move_to_cooldown * 0.5)
     local refresh_cooldown = tonumber(self._cfg.pull_chase_refresh_cooldown) or (move_to_cooldown * 3.0)
-    local since_last = now - (tonumber(self._pull_nav_last_move_at) or 0)
+    local since_last_move = now - (tonumber(self._pull_nav_last_move_at) or 0)
+    local since_last_repath = now - (tonumber(self._pull_nav_last_repath_at) or 0)
+    local repath_pending_timeout = math.max(1.5, repath_cooldown * 4.0)
+    if self._pull_nav_repath_pending == true and since_last_repath >= repath_pending_timeout then
+        self._pull_nav_repath_pending = false
+    end
+    local moving, awaiting, state_known = self:_resolve_nav_motion_state()
+    local can_soft_repath = self._nav
+        and type(self._nav.soft_repath) == "function"
+        and moving == true
+        and awaiting ~= true
+    local nav_stalled = state_known ~= true or (moving == false and awaiting ~= true)
     local should_issue = false
+    local issue_reason = "refresh"
 
     if self._pull_nav_last_dest == nil then
         should_issue = true
-    elseif destination_changed and since_last >= move_to_cooldown then
-        should_issue = true
-    elseif not destination_changed and since_last >= refresh_cooldown then
+        issue_reason = "initial"
+    elseif destination_changed then
+        if can_soft_repath
+            and self._pull_nav_repath_pending ~= true
+            and since_last_repath >= repath_cooldown then
+            should_issue = true
+            issue_reason = "target_shift"
+        elseif not can_soft_repath
+            and nav_stalled
+            and since_last_move >= move_to_cooldown then
+            should_issue = true
+            issue_reason = "target_shift"
+        end
+    elseif not destination_changed and since_last_move >= refresh_cooldown and nav_stalled then
         -- Sparse keepalive refresh so moving-target chase can recover from stalled nav.
         should_issue = true
+        issue_reason = "refresh"
     end
 
     if should_issue then
-        local reason = "refresh"
-        if self._pull_nav_last_dest == nil then
-            reason = "initial"
-        elseif destination_changed then
-            reason = "target_shift"
-        end
-        self:_issue_pull_move_to(target_pos, now, reason)
+        self:_issue_pull_move_to(target_pos, now, issue_reason)
     end
 end
 
@@ -660,13 +734,43 @@ end
 ---@param reason string|nil
 function CombatService:_issue_combat_move_to(target_pos, now, reason)
     local destination = copy_vec3(target_pos) or target_pos
-    if self._nav and self._nav.move_to then
-        self._nav:move_to(destination, nil, self:_resolve_chase_move_opts())
+    local mode = "move_to"
+    local prefer_soft_repath = reason == "target_shift"
+    local used_soft_repath = false
+
+    if prefer_soft_repath
+        and self._nav
+        and type(self._nav.soft_repath) == "function"
+        and self._combat_nav_repath_pending ~= true then
+        self._combat_nav_repath_pending = true
+        local ok_soft, started = pcall(
+            self._nav.soft_repath,
+            self._nav,
+            destination,
+            function()
+                self._combat_nav_repath_pending = false
+            end,
+            self:_resolve_chase_move_opts()
+        )
+        if ok_soft and started == true then
+            used_soft_repath = true
+            mode = "soft_repath"
+            self._combat_nav_last_repath_at = now
+        else
+            self._combat_nav_repath_pending = false
+        end
     end
+
+    if not used_soft_repath and self._nav and self._nav.move_to then
+        self._nav:move_to(destination, nil, self:_resolve_chase_move_opts())
+        self._combat_nav_repath_pending = false
+    end
+
     self._event_bus:emit(Events.COMBAT_CHASE_UPDATE, {
         timestamp = now,
         phase = "combat",
         reason = tostring(reason or "refresh"),
+        mode = mode,
         x = tonumber(destination and destination.x) or 0,
         y = tonumber(destination and destination.y) or 0,
         z = tonumber(destination and destination.z) or 0,
@@ -683,27 +787,46 @@ end
 function CombatService:_update_combat_navigation(target_pos, now)
     local destination_changed = self:_combat_destination_changed(target_pos)
     local move_to_cooldown = tonumber(self._cfg.combat_chase_move_to_cooldown) or 0.75
+    local repath_cooldown = tonumber(self._cfg.combat_chase_repath_cooldown) or math.max(0.20, move_to_cooldown * 0.5)
     local refresh_cooldown = tonumber(self._cfg.combat_chase_refresh_cooldown) or (move_to_cooldown * 3.0)
-    local since_last = now - (tonumber(self._combat_nav_last_move_at) or 0)
+    local since_last_move = now - (tonumber(self._combat_nav_last_move_at) or 0)
+    local since_last_repath = now - (tonumber(self._combat_nav_last_repath_at) or 0)
+    local repath_pending_timeout = math.max(1.5, repath_cooldown * 4.0)
+    if self._combat_nav_repath_pending == true and since_last_repath >= repath_pending_timeout then
+        self._combat_nav_repath_pending = false
+    end
+    local moving, awaiting, state_known = self:_resolve_nav_motion_state()
+    local can_soft_repath = self._nav
+        and type(self._nav.soft_repath) == "function"
+        and moving == true
+        and awaiting ~= true
+    local nav_stalled = state_known ~= true or (moving == false and awaiting ~= true)
     local should_issue = false
+    local issue_reason = "refresh"
 
     if self._combat_nav_last_dest == nil then
         should_issue = true
-    elseif destination_changed and since_last >= move_to_cooldown then
-        should_issue = true
-    elseif not destination_changed and since_last >= refresh_cooldown then
+        issue_reason = "initial"
+    elseif destination_changed then
+        if can_soft_repath
+            and self._combat_nav_repath_pending ~= true
+            and since_last_repath >= repath_cooldown then
+            should_issue = true
+            issue_reason = "target_shift"
+        elseif not can_soft_repath
+            and nav_stalled
+            and since_last_move >= move_to_cooldown then
+            should_issue = true
+            issue_reason = "target_shift"
+        end
+    elseif not destination_changed and since_last_move >= refresh_cooldown and nav_stalled then
         -- Sparse keepalive refresh so moving-target chase can recover from stalled nav.
         should_issue = true
+        issue_reason = "refresh"
     end
 
     if should_issue then
-        local reason = "refresh"
-        if self._combat_nav_last_dest == nil then
-            reason = "initial"
-        elseif destination_changed then
-            reason = "target_shift"
-        end
-        self:_issue_combat_move_to(target_pos, now, reason)
+        self:_issue_combat_move_to(target_pos, now, issue_reason)
     end
 end
 
