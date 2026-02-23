@@ -26,6 +26,7 @@ local tests = {
     "tests/test_sc021_death_recovery_service",
     "tests/test_sc023_vendor_sell_loop",
     "tests/test_sc024_durability_sensor",
+    "tests/test_ai001_response_curves",
 }
 
 ---@return table
