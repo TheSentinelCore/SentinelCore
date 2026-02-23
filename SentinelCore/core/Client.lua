@@ -29,6 +29,12 @@ local QuestMode = require("modes/QuestMode")
 local GatherMode = require("modes/GatherMode")
 local BgMode = require("modes/BgMode")
 
+local GrindTree = require("bt/GrindTree")
+local UtilityEvaluator = require("ai/UtilityEvaluator")
+local SwingTimer = require("ai/SwingTimer")
+local HumanTiming = require("ai/HumanTiming")
+local RetUtil = require("rotations/paladin/RetributionUtility")
+
 ---@class SentinelClient
 ---@field private _event_bus EventBus
 ---@field private _blackboard Blackboard
@@ -43,6 +49,10 @@ local BgMode = require("modes/BgMode")
 ---@field private _active_mode_id string|nil
 ---@field private _active_mode_definition table|nil
 ---@field private _active_tree table|nil
+---@field private _utility_evaluator table
+---@field private _swing_timer table
+---@field private _human_timing table
+---@field private _grind_tree table|nil
 ---@field private _started boolean
 ---@field private _context_pending boolean
 ---@field private _context_last_attempt number
@@ -164,6 +174,14 @@ function Client:new(config)
         "inventory",
         "vendor",
     }
+
+    -- AI components for BT-driven grind mode
+    o._utility_evaluator = UtilityEvaluator:new()
+    o._swing_timer = SwingTimer:new()
+    o._human_timing = HumanTiming:new()
+    RetUtil.register_actions(o._utility_evaluator)
+
+    o._grind_tree = nil
 
     o._modes = {
         grind = GrindMode:new(),
@@ -415,6 +433,29 @@ function Client:_dependency_health_check(force)
 end
 
 ---@private
+---@param action table Action from UtilityEvaluator (id, action_type, spell_id)
+function Client:_execute_action(action)
+    if not action then return end
+    local spell_queue = package.loaded["common/modules/spell_queue"]
+
+    if action.action_type == "cast_spell_target" then
+        local target = self._blackboard:get("combat.target")
+        if spell_queue and target then
+            spell_queue:queue_spell_target(action.spell_id, target, 5, "grind_bt")
+        end
+    elseif action.action_type == "cast_spell_self" then
+        if spell_queue then
+            spell_queue:queue_spell_self(action.spell_id, 5, "grind_bt")
+        end
+    elseif action.action_type == "auto_attack" then
+        local target = self._blackboard:get("combat.target")
+        if core.input and core.input.attack_target and target then
+            pcall(function() core.input.attack_target(target) end)
+        end
+    end
+end
+
+---@private
 function Client:_service_updates()
     for i = 1, #self._service_update_order do
         local key = self._service_update_order[i]
@@ -590,6 +631,22 @@ function Client:start(mode_id, opts)
     self:_configure_mode_objectives(mode, mode_definition)
 
     self._started = true
+
+    -- Build BT grind tree for grind mode
+    if mode_definition.id == "grind" then
+        self._grind_tree = GrindTree.build({
+            bb = self._blackboard,
+            evaluator = self._utility_evaluator,
+            swing_timer = self._swing_timer,
+            human_timing = self._human_timing,
+            spell_executor = function(action) self:_execute_action(action) end,
+            navigation = self._services.navigation,
+            targeting = self._services.targeting,
+            vendor_service = self._services.vendor,
+            exploration_service = self._services.exploration,
+        })
+    end
+
     self._event_bus:emit(Events.STARTED, {
         timestamp = (core and core.time and core.time()) or 0,
         mode = mode_definition.id,
@@ -632,6 +689,7 @@ function Client:stop(reason)
     end
 
     self._context_pending = false
+    self._grind_tree = nil
     self._active_tree = nil
     self._active_mode = nil
     self._active_mode_id = nil
@@ -734,46 +792,55 @@ function Client:update()
         -- 2) Dependency health checks (nav needed for corpse run).
         self:_dependency_health_check(false)
 
-        -- 3) Death recovery gate.
-        local was_dead = self._services.death_recovery:is_active()
-        self._services.death_recovery:update()
-        local is_dead = self._services.death_recovery:is_active()
+        if self._grind_tree then
+            -- BT-driven grind loop: tree handles death, combat, loot, rest, etc.
+            self:_resolve_context_if_due(false)
+            self._grind_tree:tick()
 
-        -- Post-resurrection cleanup: clear stale service state.
-        if was_dead and not is_dead then
-            self._services.combat:reset()
-            self._services.loot:reset()
-            self._services.targeting:clear_target("resurrected")
-        end
-
-        if is_dead then
-            -- While dead, skip mode tick + service updates.
             -- Recovery supervisor still runs for stuck detection.
             local recovery_command = self._services.recovery:update(now)
             self:_apply_recovery_command(recovery_command)
         else
-            -- 4) Normal operations.
-            self:_resolve_context_if_due(false)
-            if self._active_mode and self._active_tree and self._blackboard:has("context.canonical") then
-                local can_enter = self._active_mode:can_enter({
-                    dependencies_ok = true,
-                    canonical_context = self._blackboard:get("context.canonical"),
-                    mode_id = self._active_mode_id,
-                    mode_definition = self._active_mode_definition,
-                })
-                if not can_enter then
-                    self:_report_critical(ErrorCodes.MODE_CAN_ENTER_FAILED, { stage = "mode_tick" })
-                else
-                    self._active_mode:tick({})
-                end
+            -- Legacy pipeline for non-grind modes.
+            -- 3) Death recovery gate.
+            local was_dead = self._services.death_recovery:is_active()
+            self._services.death_recovery:update()
+            local is_dead = self._services.death_recovery:is_active()
+
+            -- Post-resurrection cleanup: clear stale service state.
+            if was_dead and not is_dead then
+                self._services.combat:reset()
+                self._services.loot:reset()
+                self._services.targeting:clear_target("resurrected")
             end
 
-            -- 5) Service updates.
-            self:_service_updates()
+            if is_dead then
+                local recovery_command = self._services.recovery:update(now)
+                self:_apply_recovery_command(recovery_command)
+            else
+                -- 4) Normal operations.
+                self:_resolve_context_if_due(false)
+                if self._active_mode and self._active_tree and self._blackboard:has("context.canonical") then
+                    local can_enter = self._active_mode:can_enter({
+                        dependencies_ok = true,
+                        canonical_context = self._blackboard:get("context.canonical"),
+                        mode_id = self._active_mode_id,
+                        mode_definition = self._active_mode_definition,
+                    })
+                    if not can_enter then
+                        self:_report_critical(ErrorCodes.MODE_CAN_ENTER_FAILED, { stage = "mode_tick" })
+                    else
+                        self._active_mode:tick({})
+                    end
+                end
 
-            -- 6) Recovery supervisor.
-            local recovery_command = self._services.recovery:update(now)
-            self:_apply_recovery_command(recovery_command)
+                -- 5) Service updates.
+                self:_service_updates()
+
+                -- 6) Recovery supervisor.
+                local recovery_command = self._services.recovery:update(now)
+                self:_apply_recovery_command(recovery_command)
+            end
         end
     elseif state == "paused" then
         local recovery_command = self._services.recovery:update(now)
