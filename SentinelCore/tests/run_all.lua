@@ -28,6 +28,7 @@ local tests = {
     "tests/test_sc024_durability_sensor",
     "tests/test_ai001_response_curves",
     "tests/test_ai002_utility_evaluator",
+    "tests/test_ai003_behavior_tree",
 }
 
 ---@return table
