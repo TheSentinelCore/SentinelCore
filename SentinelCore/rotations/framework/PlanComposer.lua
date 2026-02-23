@@ -53,12 +53,12 @@ local function action_mode_allowed(action, current_mode)
     end
 
     if type(modes) == "string" then
-        return modes == current_mode
+        return string.lower(modes) == current_mode
     end
 
     if type(modes) == "table" then
         for i = 1, #modes do
-            if tostring(modes[i]) == current_mode then
+            if string.lower(tostring(modes[i])) == current_mode then
                 return true
             end
         end
@@ -325,6 +325,20 @@ local function resolve_action_release_delay(action, ctx)
     if action.target_must_be_casting == true and target_casting ~= true then
         if 1.20 > release then
             release = 1.20
+        end
+    end
+
+    if action.target_must_be_casting == true and target_casting == true then
+        local cast_progress = tonumber(ctx and ctx.target_cast_progress) or 0
+        if cast_progress > 0 and cast_progress < 0.60 then
+            local cast_remaining = tonumber(ctx and ctx.target_cast_remaining_sec) or 0
+            if cast_remaining > 0 then
+                local total_cast = cast_remaining / math.max(0.01, 1.0 - cast_progress)
+                local time_to_60 = total_cast * (0.60 - cast_progress)
+                if time_to_60 > release then
+                    release = time_to_60
+                end
+            end
         end
     end
 

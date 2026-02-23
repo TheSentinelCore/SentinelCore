@@ -860,7 +860,10 @@ function Retribution:interrupt(ctx)
             intent = "interrupt",
             condition = function(local_ctx)
                 local hoj = resolve_spell(local_ctx, SPELLS.HAMMER_OF_JUSTICE)
-                return is_learned(hoj) and target_has_hard_cc(local_ctx) ~= true
+                if not is_learned(hoj) then return false end
+                if target_has_hard_cc(local_ctx) then return false end
+                if local_ctx.target_is_interruptable == false then return false end
+                return true
             end,
         }),
         target_spell(SPELLS.REPENTANCE, 750, {
@@ -868,6 +871,7 @@ function Retribution:interrupt(ctx)
             max_target_distance = REPENTANCE_CAST_RANGE,
             intent = "interrupt",
             condition = function(local_ctx)
+                if local_ctx.target_is_interruptable == false then return false end
                 return should_use_repentance_interrupt(local_ctx)
             end,
         }),
