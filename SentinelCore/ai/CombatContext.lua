@@ -1,3 +1,4 @@
+-- SentinelCore/ai/CombatContext.lua
 ---@class CombatContext
 local CombatContext = {}
 
@@ -51,12 +52,10 @@ function CombatContext.build(bb, swing_timer)
         local ok4, casting = pcall(function() return target:is_casting_spell() end)
         t_casting = ok4 and casting or false
         local ok5, cst = pcall(function()
-            if target.get_active_spell_cast_start_time and target.get_active_spell_cast_end_time then
-                local st = target:get_active_spell_cast_start_time()
-                local et = target:get_active_spell_cast_end_time()
-                if st and et and et > st and core then
-                    return (core.time() - st) / (et - st)
-                end
+            local st = target:get_active_spell_cast_start_time()
+            local et = target:get_active_spell_cast_end_time()
+            if st and et and et > st and core then
+                return (core.time() - st) / (et - st)
             end
             return 0
         end)

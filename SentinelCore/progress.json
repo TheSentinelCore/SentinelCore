@@ -1,12 +1,12 @@
 {
-  "current_task": 3,
+  "current_task": 6,
   "tasks": [
     {"id": 1, "name": "ResponseCurves", "status": "passing"},
     {"id": 2, "name": "UtilityEvaluator", "status": "passing"},
-    {"id": 3, "name": "BehaviorTree", "status": "in_progress"},
-    {"id": 4, "name": "SwingTimer", "status": "not_started"},
-    {"id": 5, "name": "HumanTiming", "status": "not_started"},
-    {"id": 6, "name": "CombatContext", "status": "not_started"},
+    {"id": 3, "name": "BehaviorTree", "status": "passing"},
+    {"id": 4, "name": "SwingTimer", "status": "passing"},
+    {"id": 5, "name": "HumanTiming", "status": "passing"},
+    {"id": 6, "name": "CombatContext", "status": "in_progress"},
     {"id": 7, "name": "RetributionUtility", "status": "not_started"},
     {"id": 8, "name": "CombatSubTree", "status": "not_started"},
     {"id": 9, "name": "DeathRecoverySubTree", "status": "not_started"},
