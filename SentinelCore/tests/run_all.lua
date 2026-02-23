@@ -31,6 +31,7 @@ local tests = {
     "tests/test_ai003_behavior_tree",
     "tests/test_ai004_swing_timer",
     "tests/test_ai005_human_timing",
+    "tests/test_ai006_combat_context",
 }
 
 ---@return table
