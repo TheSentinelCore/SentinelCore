@@ -6,6 +6,10 @@ AuraCatalog.PALADIN = {
         SEAL_OF_COMMAND = { 27174, 20920, 20919, 20918, 20915, 20375 },
         SEAL_OF_BLOOD = { 31892 },
         SANCTITY_AURA = { 20218 },
+        BLESSING_OF_MIGHT = { 25291, 19838, 19837, 19836, 19835, 19834, 19740 },
+        SEAL_OF_VENGEANCE = { 31801 },
+        BLESSING_OF_FREEDOM = { 1044 },
+        VENGEANCE_PROC = { 20059 },
     },
 }
 

@@ -45,11 +45,11 @@ SpellCatalog.PALADIN = {
         },
         EXORCISM = {
             name = "exorcism",
-            ids = { 27138, 10314, 10313, 5615, 879 },
+            ids = { 27138, 10314, 10313, 10312, 5615, 5614, 879 },
         },
         HOLY_WRATH = {
             name = "holy wrath",
-            ids = { 27139, 10318, 5588, 5589, 2812 },
+            ids = { 27139, 10318, 2812 },
         },
         HOLY_LIGHT = {
             name = "holy light",
@@ -71,6 +71,18 @@ SpellCatalog.PALADIN = {
         LAY_ON_HANDS = {
             name = "lay on hands",
             ids = { 633 },
+        },
+        BLESSING_OF_MIGHT = {
+            name = "blessing of might",
+            ids = { 25291, 19838, 19837, 19836, 19835, 19834, 19740 },
+        },
+        SEAL_OF_VENGEANCE = {
+            name = "seal of vengeance",
+            ids = { 31801 },
+        },
+        BLESSING_OF_FREEDOM = {
+            name = "blessing of freedom",
+            ids = { 1044 },
         },
     },
 }
