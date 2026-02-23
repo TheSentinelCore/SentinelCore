@@ -33,6 +33,7 @@ local tests = {
     "tests/test_ai005_human_timing",
     "tests/test_ai006_combat_context",
     "tests/test_ai007_retribution_utility",
+    "tests/test_ai008_combat_subtree",
 }
 
 ---@return table
