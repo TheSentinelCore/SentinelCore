@@ -139,12 +139,12 @@ local function scenario_inventory_threshold_triggers_vendor(env)
     -- 21841 = Netherweave Bag (16 slots each) in BAG_SIZES lookup.
     local bag_obj = T.mock_object({ item_id = 21841 })
 
-    -- Player with 4 Netherweave Bags equipped at slots 20-23.
+    -- Player with 4 Netherweave Bags equipped at slots 31-34.
     env.core.object_manager.get_local_player = function()
         return {
             is_valid = function() return true end,
             get_item_at_inventory_slot = function(_, slot_id)
-                if slot_id >= 20 and slot_id <= 23 then
+                if slot_id >= 31 and slot_id <= 34 then
                     return { object = bag_obj }
                 end
                 return nil
@@ -154,7 +154,7 @@ local function scenario_inventory_threshold_triggers_vendor(env)
 
     -- Fill bags nearly full: bag 0 = 16 items, bags 1-3 = 16 each, bag 4 = 15.
     -- Total capacity = 16 + 4*16 = 80, used = 79, free = 1.
-    -- Bag 0 items need slot_id >= 24 (backpack storage range).
+    -- Bag 0 items need slot_id in 36-51 (backpack storage range).
     env.core.inventory.get_items_in_bag = function(bag_id)
         local count = 16
         if bag_id == 4 then count = 15 end
@@ -162,7 +162,7 @@ local function scenario_inventory_threshold_triggers_vendor(env)
         for i = 1, count do
             local slot = { object = T.mock_object({ item_id = 9000 + (bag_id * 16) + i }) }
             if bag_id == 0 then
-                slot.slot_id = 23 + i  -- 24..39 = backpack storage
+                slot.slot_id = 35 + i  -- 36..51 = backpack storage
             end
             out[#out + 1] = slot
         end

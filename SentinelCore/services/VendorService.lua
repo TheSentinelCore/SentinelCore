@@ -22,6 +22,12 @@ local FactionResolver = require("lib/FactionResolver")
 ---@field private _active_candidate table|nil
 ---@field private _return_started_at number
 ---@field private _return_pending boolean
+---@field private _sub_state string
+---@field private _sell_queue table[]
+---@field private _sell_index number
+---@field private _sell_count number
+---@field private _last_sell_at number
+---@field private _sell_started_at number
 local VendorService = {}
 VendorService.__index = VendorService
 
@@ -52,6 +58,12 @@ function VendorService:new(event_bus, blackboard, navigation, world_data, invent
     o._active_candidate = nil
     o._return_started_at = 0
     o._return_pending = false
+    o._sub_state = ""
+    o._sell_queue = {}
+    o._sell_index = 0
+    o._sell_count = 0
+    o._last_sell_at = 0
+    o._sell_started_at = 0
     return o
 end
 
@@ -68,6 +80,11 @@ end
 ---@return string|nil
 function VendorService:get_last_error()
     return self._last_error
+end
+
+---@return string
+function VendorService:get_sub_state()
+    return self._sub_state
 end
 
 ---@return table
@@ -438,6 +455,7 @@ function VendorService:start(canonical_ctx)
 
                 self._state = "interact"
                 self._interaction_started_at = (core and core.time and core.time()) or 0
+                self._sub_state = ""
             end)
         end)
     end)
@@ -479,72 +497,178 @@ function VendorService:update()
     end
 
     local now = (core and core.time and core.time()) or 0
-    local timeout = tonumber(self._cfg.interaction_timeout) or 10
 
-    if now - self._interaction_started_at > timeout then
-        self._state = "failed"
-        self._last_error = ErrorCodes.VENDOR_INTERACTION_TIMEOUT
-        if self._active_candidate then
-            self:_update_cache(self._active_candidate, "interaction_timeout", self._active_candidate.path_cost)
-        end
-        self._event_bus:emit(Events.VENDOR_FAILED, {
-            timestamp = now,
-            error_code = self._last_error,
-        })
-        return false, self._last_error
-    end
-
-    local vendor_obj = self._active_candidate and self:_find_vendor_object(self._active_candidate) or nil
-    if not vendor_obj then
-        return true, nil
-    end
-
-    if core and core.input and core.input.interact_with_object then
-        core.input.interact_with_object(vendor_obj)
-    elseif core and core.input and core.input.use_object then
-        core.input.use_object(vendor_obj)
-    end
-
-    local return_enabled = self._cfg.return_to_anchor ~= false
-    local anchor = self._blackboard:get("core.mode_anchor") or self._blackboard:get("grind.anchor")
-    if return_enabled and anchor then
-        self._state = "returning"
-        self._return_started_at = now
-        self._return_pending = true
-
-        local return_dest = {
-            x = tonumber(anchor.x) or 0,
-            y = tonumber(anchor.y) or 0,
-            z = tonumber(anchor.z) or 0,
-        }
-
-        self._nav:move_to(return_dest, function(ok, reason)
-            self._return_pending = false
-            if self._state ~= "returning" then
-                return
-            end
-
-            if not ok then
+    -- Sub-state: initial interact — find and click the vendor NPC
+    if self._sub_state == "" then
+        local vendor_obj = self._active_candidate and self:_find_vendor_object(self._active_candidate) or nil
+        if not vendor_obj then
+            local timeout = tonumber(self._cfg.interaction_timeout) or 10
+            if now - self._interaction_started_at > timeout then
                 self._state = "failed"
-                self._last_error = reason or ErrorCodes.VENDOR_UNREACHABLE
-                if self._active_candidate then
-                    self:_update_cache(self._active_candidate, "return_failed", self._active_candidate.path_cost)
-                end
+                self._last_error = ErrorCodes.VENDOR_INTERACTION_TIMEOUT
+                self:_update_cache(self._active_candidate, "interaction_timeout", self._active_candidate and self._active_candidate.path_cost)
                 self._event_bus:emit(Events.VENDOR_FAILED, {
-                    timestamp = (core and core.time and core.time()) or 0,
+                    timestamp = now,
                     error_code = self._last_error,
                 })
-                return
+                return false, self._last_error
             end
+            return true, nil
+        end
 
-            self:_complete_vendor((core and core.time and core.time()) or 0, true)
-        end)
+        if core and core.input and core.input.interact_with_object then
+            core.input.interact_with_object(vendor_obj)
+        elseif core and core.input and core.input.use_object then
+            core.input.use_object(vendor_obj)
+        end
+
+        self._sub_state = "wait_window"
         return true, nil
     end
 
-    -- Selling/repair operations are bounded by available Sylvannas APIs.
-    -- We treat successful interaction as completion in this phase.
-    self:_complete_vendor(now, false)
+    -- Sub-state: wait for vendor window to open
+    if self._sub_state == "wait_window" then
+        local delay = tonumber(self._cfg.vendor_interact_delay) or 0.75
+        if now - self._interaction_started_at < delay then
+            return true, nil
+        end
+
+        -- Build sell queue
+        self._sell_queue = self._inventory and self._inventory.get_sell_candidates
+            and self._inventory:get_sell_candidates() or {}
+
+        -- Sort: highest bag first, then highest slot first
+        -- Prevents index shifting when items are removed from bags
+        table.sort(self._sell_queue, function(a, b)
+            if a.bag_id ~= b.bag_id then
+                return a.bag_id > b.bag_id
+            end
+            return a.slot_id > b.slot_id
+        end)
+
+        self._sell_index = 0
+        self._sell_count = 0
+        self._sell_started_at = now
+        self._last_sell_at = 0
+        self._sub_state = "selling"
+
+        if #self._sell_queue > 0 then
+            self._event_bus:emit(Events.VENDOR_SELL_STARTED, {
+                timestamp = now,
+                item_count = #self._sell_queue,
+            })
+        end
+        -- Fall through to selling
+    end
+
+    -- Sub-state: sell items one by one with throttle
+    if self._sub_state == "selling" then
+        -- Check sell timeout
+        local sell_timeout = tonumber(self._cfg.vendor_sell_timeout) or 30
+        if now - self._sell_started_at > sell_timeout then
+            self._state = "failed"
+            self._last_error = ErrorCodes.VENDOR_SELL_TIMEOUT
+            self:_update_cache(self._active_candidate, "sell_timeout", self._active_candidate and self._active_candidate.path_cost)
+            self._event_bus:emit(Events.VENDOR_FAILED, {
+                timestamp = now,
+                error_code = self._last_error,
+                items_sold = self._sell_count,
+            })
+            return false, self._last_error
+        end
+
+        -- Process next item if throttle allows
+        if self._sell_index < #self._sell_queue then
+            local delay = tonumber(self._cfg.vendor_sell_delay) or 0.30
+            if self._sell_count == 0 or (now - self._last_sell_at) >= delay then
+                self._sell_index = self._sell_index + 1
+                local item = self._sell_queue[self._sell_index]
+                if item and core and core.input and core.input.use_container_item then
+                    core.input.use_container_item(item.bag_id, item.slot_id)
+                end
+                self._sell_count = self._sell_count + 1
+                self._last_sell_at = now
+                self._event_bus:emit(Events.VENDOR_SELL_ITEM, {
+                    timestamp = now,
+                    item_id = item and item.item_id or 0,
+                    bag_id = item and item.bag_id or 0,
+                    slot_id = item and item.slot_id or 0,
+                    index = self._sell_index,
+                    total = #self._sell_queue,
+                })
+            end
+            return true, nil
+        end
+
+        -- All items sold
+        if self._sell_count > 0 then
+            self._event_bus:emit(Events.VENDOR_SELL_COMPLETED, {
+                timestamp = now,
+                items_sold = self._sell_count,
+            })
+        end
+
+        self._sub_state = "repairing"
+        -- Fall through to repairing
+    end
+
+    -- Sub-state: repair (placeholder until API discovery)
+    if self._sub_state == "repairing" then
+        local policy = self._inventory and self._inventory.get_policy
+            and self._inventory:get_policy() or {}
+        local can_repair = self._active_candidate and self._active_candidate.can_repair == true
+        if policy.repair_enabled == true and can_repair then
+            self._event_bus:emit(Events.VENDOR_REPAIR_COMPLETED, {
+                timestamp = now,
+                repaired = true,
+            })
+        end
+        self._sub_state = "done"
+        -- Fall through to done
+    end
+
+    -- Sub-state: done — begin return journey or complete
+    if self._sub_state == "done" then
+        local return_enabled = self._cfg.return_to_anchor ~= false
+        local anchor = self._blackboard:get("core.mode_anchor") or self._blackboard:get("grind.anchor")
+        if return_enabled and anchor then
+            self._state = "returning"
+            self._return_started_at = now
+            self._return_pending = true
+
+            local return_dest = {
+                x = tonumber(anchor.x) or 0,
+                y = tonumber(anchor.y) or 0,
+                z = tonumber(anchor.z) or 0,
+            }
+
+            self._nav:move_to(return_dest, function(ok, reason)
+                self._return_pending = false
+                if self._state ~= "returning" then
+                    return
+                end
+
+                if not ok then
+                    self._state = "failed"
+                    self._last_error = reason or ErrorCodes.VENDOR_UNREACHABLE
+                    if self._active_candidate then
+                        self:_update_cache(self._active_candidate, "return_failed", self._active_candidate.path_cost)
+                    end
+                    self._event_bus:emit(Events.VENDOR_FAILED, {
+                        timestamp = (core and core.time and core.time()) or 0,
+                        error_code = self._last_error,
+                    })
+                    return
+                end
+
+                self:_complete_vendor((core and core.time and core.time()) or 0, true)
+            end)
+            return true, nil
+        end
+
+        self:_complete_vendor(now, false)
+        return true, nil
+    end
 
     return true, nil
 end
@@ -558,6 +682,12 @@ function VendorService:reset()
     self._active_candidate = nil
     self._return_started_at = 0
     self._return_pending = false
+    self._sub_state = ""
+    self._sell_queue = {}
+    self._sell_index = 0
+    self._sell_count = 0
+    self._last_sell_at = 0
+    self._sell_started_at = 0
 end
 
 return VendorService

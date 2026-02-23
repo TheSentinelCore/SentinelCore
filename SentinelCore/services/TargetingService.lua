@@ -94,6 +94,29 @@ local function is_visible_unit(objects, unit)
 end
 
 ---@private
+---@param objects table|nil
+---@param guid number
+---@return game_object|nil
+local function find_visible_unit_by_guid(objects, guid)
+    local wanted = tonumber(guid) or 0
+    if wanted <= 0 or type(objects) ~= "table" then
+        return nil
+    end
+
+    for i = 1, #objects do
+        local candidate = unwrap_game_object(objects[i])
+        local candidate_guid = tonumber(safe_method(candidate, "get_guid"))
+            or tonumber(safe_method(candidate, "get_object_guid"))
+            or 0
+        if candidate_guid == wanted then
+            return candidate
+        end
+    end
+
+    return nil
+end
+
+---@private
 ---@param unit game_object|nil
 ---@return number
 local function safe_unit_guid(unit)
@@ -518,12 +541,12 @@ local function is_targeting_player_or_pet(unit, player)
         return false
     end
 
-    if unit_target == player then
+    if is_same_unit(unit_target, player) then
         return true
     end
 
     local player_pet = unwrap_game_object(safe_method(player, "get_pet"))
-    if player_pet and unit_target == player_pet then
+    if player_pet and is_same_unit(unit_target, player_pet) then
         return true
     end
 
@@ -536,6 +559,74 @@ end
 local function is_player_unit(unit)
     return safe_method(unit, "is_player") == true
         or safe_method(unit, "is_player_unit") == true
+end
+
+---@private
+---@param unit game_object
+---@return boolean
+local function is_pet_like_unit(unit)
+    return safe_method(unit, "is_pet") == true
+        or safe_method(unit, "is_player_pet") == true
+        or safe_method(unit, "is_guardian") == true
+        or safe_method(unit, "is_summon") == true
+end
+
+---@private
+---@param unit game_object
+---@param objects table|nil
+---@return game_object|nil
+---@return number
+local function resolve_unit_owner(unit, objects)
+    if not unit then
+        return nil, 0
+    end
+
+    local owner = nil
+    local owner_guid = 0
+    local owner_methods = {
+        "get_owner",
+        "get_owner_unit",
+        "get_master",
+        "get_master_unit",
+        "get_charmer",
+        "get_charmer_unit",
+        "get_pet_owner",
+    }
+    for i = 1, #owner_methods do
+        local value = unwrap_game_object(safe_method(unit, owner_methods[i]))
+        if type(value) == "table" then
+            owner = value
+            owner_guid = safe_unit_guid(owner)
+            break
+        end
+        local numeric = tonumber(value) or 0
+        if numeric > 0 then
+            owner_guid = numeric
+            break
+        end
+    end
+
+    if owner_guid <= 0 then
+        local owner_guid_methods = {
+            "get_owner_guid",
+            "get_master_guid",
+            "get_charmer_guid",
+            "get_pet_owner_guid",
+        }
+        for i = 1, #owner_guid_methods do
+            local numeric = tonumber(safe_method(unit, owner_guid_methods[i])) or 0
+            if numeric > 0 then
+                owner_guid = numeric
+                break
+            end
+        end
+    end
+
+    if not owner and owner_guid > 0 then
+        owner = find_visible_unit_by_guid(objects, owner_guid)
+    end
+
+    return owner, owner_guid
 end
 
 ---@private
@@ -586,10 +677,37 @@ local is_valid_target
 ---@param player game_object
 ---@param player_team string|nil
 ---@param cfg table|nil
+---@param objects table|nil
 ---@return boolean
-local function passes_faction_policy(unit, player, player_team, cfg)
+local function passes_faction_policy(unit, player, player_team, cfg, objects)
     if not cfg or cfg.only_engage_opposing_faction_if_attacked ~= true then
         return true
+    end
+
+    local owner, owner_guid = resolve_unit_owner(unit, objects)
+    if owner and is_player_unit(owner) then
+        local owner_team = FactionResolver.resolve_team(safe_method(owner, "get_faction_team"))
+            or FactionResolver.resolve_team(safe_method(owner, "get_faction_id"))
+        if owner_team == nil or player_team == nil or owner_team ~= player_team then
+            return is_targeting_player_or_pet(unit, player)
+        end
+        return false
+    end
+
+    if owner_guid > 0 and is_pet_like_unit(unit) then
+        local player_guid = safe_unit_guid(player)
+        local player_pet = unwrap_game_object(safe_method(player, "get_pet"))
+        local player_pet_guid = safe_unit_guid(player_pet)
+        if owner_guid ~= player_guid and owner_guid ~= player_pet_guid then
+            return is_targeting_player_or_pet(unit, player)
+        end
+        return false
+    end
+
+    -- Pet-like unit with no resolved owner (owner out of range / not visible).
+    -- Conservatively treat as enemy-controlled; only engage defensively.
+    if is_pet_like_unit(unit) then
+        return is_targeting_player_or_pet(unit, player)
     end
 
     -- Never proactively start fights with players; only defend when they engage us/pet.
@@ -627,7 +745,7 @@ local function find_defensive_target(objects, player, player_pos, radius, player
     if preferred
         and is_visible_unit(objects, preferred)
         and is_valid_target(preferred, player)
-        and passes_faction_policy(preferred, player, player_team, cfg)
+        and passes_faction_policy(preferred, player, player_team, cfg, objects)
         and is_targeting_player_or_pet(preferred, player) then
         local preferred_pos = safe_method(preferred, "get_position")
         local preferred_dist = Helpers.distance_3d(player_pos, preferred_pos)
@@ -641,7 +759,7 @@ local function find_defensive_target(objects, player, player_pos, radius, player
     for i = 1, #objects do
         local candidate = unwrap_game_object(objects[i])
         if is_valid_target(candidate, player)
-            and passes_faction_policy(candidate, player, player_team, cfg)
+            and passes_faction_policy(candidate, player, player_team, cfg, objects)
             and is_targeting_player_or_pet(candidate, player) then
             local candidate_pos = safe_method(candidate, "get_position")
             local dist = Helpers.distance_3d(player_pos, candidate_pos)
@@ -670,12 +788,12 @@ local function is_engaged_by_others(unit, player)
         return true
     end
 
-    if unit_target == player then
+    if is_same_unit(unit_target, player) then
         return false
     end
 
     local player_pet = unwrap_game_object(safe_method(player, "get_pet"))
-    if player_pet and unit_target == player_pet then
+    if player_pet and is_same_unit(unit_target, player_pet) then
         return false
     end
 
@@ -949,7 +1067,7 @@ function TargetingService:get_visible_candidates(opts)
                 and candidate ~= player
         end
 
-        if valid and passes_faction_policy(candidate, player, player_team, self._cfg) then
+        if valid and passes_faction_policy(candidate, player, player_team, self._cfg, objects) then
             local candidate_pos = safe_method(candidate, "get_position")
             local dist = Helpers.distance_3d(player_pos, candidate_pos)
             if dist <= max_distance then
@@ -1054,7 +1172,7 @@ function TargetingService:acquire_target()
     for i = 1, #objects do
         local candidate = unwrap_game_object(objects[i])
         if is_valid_target(candidate, player)
-            and passes_faction_policy(candidate, player, player_team, self._cfg) then
+            and passes_faction_policy(candidate, player, player_team, self._cfg, objects) then
             self:_warm_path_cost(candidate, player_pos, now)
             local blacklisted = self:_is_target_blacklisted(candidate, now)
             if blacklisted ~= true then

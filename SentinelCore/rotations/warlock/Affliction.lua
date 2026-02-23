@@ -110,25 +110,25 @@ local function refresh_spellbook_cache()
 end
 
 local DEFAULT_POLICY = {
-    drink_mana_pct = 0.40,
-    eat_health_pct = 0.65,
+    drink_mana_pct = 0.15,
+    eat_health_pct = 0.45,
     rest_until_full = true,
-    rest_resume_health_pct = 1.00,
-    rest_resume_mana_pct = 1.00,
-    life_tap_min_health_pct = 0.65,
-    life_tap_max_mana_pct = 0.60,
-    life_tap_ooc_max_mana_pct = 0.70,
+    rest_resume_health_pct = 0.80,
+    rest_resume_mana_pct = 0.55,
+    life_tap_min_health_pct = 0.50,
+    life_tap_max_mana_pct = 0.85,
+    life_tap_ooc_max_mana_pct = 0.90,
     death_coil_hp_pct = 0.35,
-    drain_life_hp_pct = 0.45,
+    drain_life_hp_pct = 0.55,
     health_funnel_pet_hp_pct = 0.30,
     health_potion_hp_pct = 0.25,
     mana_potion_mana_pct = 0.15,
     mana_potion_min_hp_pct = 0.35,
     wand_mana_pct = 0.05,
-    mana_sustain_enter_pct = 0.45,
-    mana_sustain_exit_pct = 0.58,
-    mana_recovery_enter_pct = 0.22,
-    mana_recovery_exit_pct = 0.32,
+    mana_sustain_enter_pct = 0.35,
+    mana_sustain_exit_pct = 0.50,
+    mana_recovery_enter_pct = 0.12,
+    mana_recovery_exit_pct = 0.22,
     ttd_alpha = 0.35,
     ttd_min_sample_secs = 0.20,
     ttd_memory_ttl_secs = 20.0,
@@ -607,6 +607,16 @@ local function best_summon_spell(ctx)
         return felguard
     end
 
+    local felhunter = resolve_spell(ctx, SPELLS.SUMMON_FELHUNTER)
+    if is_learned(felhunter) and has_soul_shard(ctx) then
+        return felhunter
+    end
+
+    local succubus = resolve_spell(ctx, SPELLS.SUMMON_SUCCUBUS)
+    if is_learned(succubus) and has_soul_shard(ctx) then
+        return succubus
+    end
+
     local voidwalker = resolve_spell(ctx, SPELLS.SUMMON_VOIDWALKER)
     if is_learned(voidwalker) and has_soul_shard(ctx) then
         return voidwalker
@@ -711,6 +721,23 @@ local function player_is_busy(ctx)
         end
     end
 
+    return false
+end
+
+---@private
+---@param ctx table
+---@return boolean
+local function is_wanding(ctx)
+    local shoot_id = resolve_spell(ctx, SPELLS.SHOOT)
+    if not shoot_id or shoot_id <= 0 then
+        return false
+    end
+    if core and core.spell_book and type(core.spell_book.is_current_spell) == "function" then
+        local ok, active = pcall(core.spell_book.is_current_spell, shoot_id)
+        if ok and active == true then
+            return true
+        end
+    end
     return false
 end
 
@@ -1148,11 +1175,35 @@ function Affliction:maintenance(ctx)
                     and soul_shard_count(local_ctx) >= 2
             end,
         }),
+        self_spell(SPELLS.DARK_PACT, 251, {
+            max_player_mana_pct = p.life_tap_ooc_max_mana_pct,
+            condition = function(local_ctx)
+                return local_ctx.in_combat ~= true
+                    and local_ctx.eating_or_drinking ~= true
+                    and local_ctx.pet ~= nil
+                    and resolve_spell(local_ctx, SPELLS.DARK_PACT) ~= nil
+                    and not player_is_busy(local_ctx)
+            end,
+        }),
         self_spell(SPELLS.LIFE_TAP, 250, {
             max_player_mana_pct = p.life_tap_ooc_max_mana_pct,
             min_player_health_pct = p.life_tap_min_health_pct,
             condition = function(local_ctx)
-                return local_ctx.in_combat ~= true and not player_is_busy(local_ctx)
+                return local_ctx.in_combat ~= true
+                    and local_ctx.eating_or_drinking ~= true
+                    and not player_is_busy(local_ctx)
+            end,
+        }),
+        self_spell(SPELLS.HEALTH_FUNNEL, 240, {
+            min_player_health_pct = 0.60,
+            requires_castable_check = false,
+            intent = "utility",
+            condition = function(local_ctx)
+                return local_ctx.in_combat ~= true
+                    and local_ctx.player_is_moving ~= true
+                    and local_ctx.pet ~= nil
+                    and (tonumber(local_ctx.pet_health_pct) or 1.0) < p.health_funnel_pet_hp_pct
+                    and not player_is_busy(local_ctx)
             end,
         }),
     }
@@ -1211,7 +1262,9 @@ function Affliction:defensive(ctx)
             max_target_distance = CAST_RANGE,
             intent = "defensive",
             condition = function(local_ctx)
-                return local_ctx.in_combat == true and not player_is_busy(local_ctx)
+                return local_ctx.in_combat == true
+                    and not player_is_busy(local_ctx)
+                    and not is_wanding(local_ctx)
             end,
         }),
         self_spell(SPELLS.SHADOW_WARD, 935, {
@@ -1362,6 +1415,7 @@ function Affliction:combat(ctx)
             max_target_distance = CAST_RANGE,
             intent = "execute",
             max_target_health_pct = p.execute_target_health_pct,
+            min_player_mana_pct = p.wand_mana_pct,
             condition = function(local_ctx)
                 return resolve_spell(local_ctx, SPELLS.DRAIN_SOUL) ~= nil
                     and local_ctx.in_combat == true
@@ -1378,6 +1432,16 @@ function Affliction:combat(ctx)
                     and target_lives_long_enough(local_ctx, p.corruption_min_ttd_sec)
             end,
         }),
+        -- Amplify Curse: talent, instant, 3-min CD, +50% next curse damage
+        self_spell(SPELLS.AMPLIFY_CURSE, 554, {
+            intent = "sustain",
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+                    and resolve_spell(local_ctx, SPELLS.AMPLIFY_CURSE) ~= nil
+                    and local_ctx.player_has_aura
+                    and local_ctx.player_has_aura(WL_AURAS.AMPLIFY_CURSE[1]) ~= true
+            end,
+        }),
         -- Curse: prefer Curse of Elements (caster damage buff), fallback to Curse of Agony
         target_spell(SPELLS.CURSE_OF_THE_ELEMENTS, 552, {
             allow_movement = true,
@@ -1385,7 +1449,7 @@ function Affliction:combat(ctx)
             intent = "sustain",
             condition = function(local_ctx)
                 return resolve_spell(local_ctx, SPELLS.CURSE_OF_THE_ELEMENTS) ~= nil
-                    and not target_has_any_aura(local_ctx, WL_AURAS.CURSE_OF_THE_ELEMENTS)
+                    and dot_needs_refresh(local_ctx, WL_AURAS.CURSE_OF_THE_ELEMENTS, p.dot_refresh_window_sec)
                     and target_lives_long_enough(local_ctx, p.curse_of_agony_min_ttd_sec)
             end,
         }),
@@ -1423,7 +1487,7 @@ function Affliction:combat(ctx)
                     and target_lives_long_enough(local_ctx, p.unstable_affliction_min_ttd_sec)
             end,
         }),
-        -- Immolate (cast time)
+        -- Immolate (cast time, stacks with UA for more DoT damage while wanding)
         target_spell(SPELLS.IMMOLATE, 535, {
             max_target_distance = CAST_RANGE,
             intent = "sustain",
@@ -1433,11 +1497,11 @@ function Affliction:combat(ctx)
             end,
         }),
         -- Shadow Bolt filler (skip in recovery mode)
-        target_spell(SPELLS.SHADOW_BOLT, 520, {
+        target_spell(SPELLS.SHADOW_BOLT, 450, {
             min_player_mana_pct = p.wand_mana_pct,
             max_target_distance = CAST_RANGE,
             intent = "burst",
-            combat_modes = { "burst", "sustain" },
+            combat_modes = { "burst" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
             end,
@@ -1448,7 +1512,9 @@ function Affliction:combat(ctx)
             requires_castable_check = false,
             intent = "recover",
             condition = function(local_ctx)
-                return local_ctx.in_combat == true and not player_is_busy(local_ctx)
+                return local_ctx.in_combat == true
+                    and not player_is_busy(local_ctx)
+                    and not is_wanding(local_ctx)
             end,
         }),
     }
@@ -1460,6 +1526,24 @@ function Affliction:aoe(ctx)
     local p = policy(ctx)
 
     return {
+        -- Nightfall proc: instant Shadow Bolt (free damage during AoE)
+        target_spell(SPELLS.SHADOW_BOLT, 590, {
+            max_target_distance = CAST_RANGE,
+            intent = "burst",
+            condition = function(local_ctx)
+                return local_ctx.player_has_aura
+                    and local_ctx.player_has_aura(WL_AURAS.SHADOW_TRANCE[1]) == true
+            end,
+        }),
+        -- Backlash proc: instant Shadow Bolt (free damage during AoE)
+        target_spell(SPELLS.SHADOW_BOLT, 585, {
+            max_target_distance = CAST_RANGE,
+            intent = "burst",
+            condition = function(local_ctx)
+                return local_ctx.player_has_aura
+                    and local_ctx.player_has_aura(WL_AURAS.BACKLASH[1]) == true
+            end,
+        }),
         -- Seed of Corruption: 3+ targets, primary AoE
         target_spell(SPELLS.SEED_OF_CORRUPTION, 580, {
             max_target_distance = CAST_RANGE,
@@ -1486,20 +1570,21 @@ function Affliction:aoe(ctx)
                     and local_ctx.target_position ~= nil
             end,
         }),
-        -- Corruption: always spread DoTs even in AoE (instant, cheap)
+        -- Corruption: spread DoTs in AoE (instant, cheap)
         target_spell(SPELLS.CORRUPTION, 555, {
             allow_movement = true,
             max_target_distance = CAST_RANGE,
             intent = "sustain",
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
-                    and not target_has_any_aura(local_ctx, WL_AURAS.CORRUPTION)
+                    and dot_needs_refresh(local_ctx, WL_AURAS.CORRUPTION, p.dot_refresh_window_sec)
+                    and target_lives_long_enough(local_ctx, p.corruption_min_ttd_sec)
             end,
         }),
         -- Curse: spread to AoE targets (CoE if available, else CoA)
         target_spell(function(local_ctx)
             local spell, _ = select_curse(local_ctx)
-            return spell
+            return resolve_spell(local_ctx, spell)
         end, 548, {
             allow_movement = true,
             max_target_distance = CAST_RANGE,
@@ -1507,14 +1592,16 @@ function Affliction:aoe(ctx)
             condition = function(local_ctx)
                 local _, aura = select_curse(local_ctx)
                 return local_ctx.in_combat == true
-                    and not target_has_any_aura(local_ctx, aura)
+                    and dot_needs_refresh(local_ctx, aura, p.dot_refresh_window_sec)
+                    and target_lives_long_enough(local_ctx, p.curse_of_agony_min_ttd_sec)
             end,
         }),
-        -- Shadow Bolt filler
-        target_spell(SPELLS.SHADOW_BOLT, 520, {
+        -- Shadow Bolt filler (skip in recovery mode)
+        target_spell(SPELLS.SHADOW_BOLT, 450, {
             max_target_distance = CAST_RANGE,
             min_player_mana_pct = p.wand_mana_pct,
             intent = "burst",
+            combat_modes = { "burst" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
             end,
@@ -1525,7 +1612,9 @@ function Affliction:aoe(ctx)
             requires_castable_check = false,
             intent = "recover",
             condition = function(local_ctx)
-                return local_ctx.in_combat == true and not player_is_busy(local_ctx)
+                return local_ctx.in_combat == true
+                    and not player_is_busy(local_ctx)
+                    and not is_wanding(local_ctx)
             end,
         }),
     }
@@ -1534,15 +1623,16 @@ end
 ---@param ctx table
 ---@return table
 function Affliction:get_pull_profile(ctx)
-    -- Shadow Bolt preferred: direct damage avoids DoT double-cast from aura detection lag.
-    -- The combat rotation applies DoTs in priority order after combat starts.
-    local bolt = resolve_spell(ctx, SPELLS.SHADOW_BOLT)
-    if bolt then
+    -- Corruption preferred: instant cast, starts DoT ticking immediately, zero cast time.
+    -- Combat rotation applies remaining DoTs (Immolate, CoA, UA) after combat starts.
+    -- disable_auto_attack: ranged class, never start melee auto-attack.
+    local corruption = resolve_spell(ctx, SPELLS.CORRUPTION)
+    if corruption then
         return {
-            pull_spell_id = bolt,
+            pull_spell_id = corruption,
             max_pull_range = CAST_RANGE,
             melee_engage_range = CAST_RANGE,
-            auto_attack_commit_range = CAST_RANGE,
+            disable_auto_attack = true,
         }
     end
 
@@ -1552,7 +1642,17 @@ function Affliction:get_pull_profile(ctx)
             pull_spell_id = immolate,
             max_pull_range = CAST_RANGE,
             melee_engage_range = CAST_RANGE,
-            auto_attack_commit_range = CAST_RANGE,
+            disable_auto_attack = true,
+        }
+    end
+
+    local bolt = resolve_spell(ctx, SPELLS.SHADOW_BOLT)
+    if bolt then
+        return {
+            pull_spell_id = bolt,
+            max_pull_range = CAST_RANGE,
+            melee_engage_range = CAST_RANGE,
+            disable_auto_attack = true,
         }
     end
 
@@ -1560,7 +1660,7 @@ function Affliction:get_pull_profile(ctx)
         pull_spell_id = nil,
         max_pull_range = CAST_RANGE,
         melee_engage_range = CAST_RANGE,
-        auto_attack_commit_range = CAST_RANGE,
+        disable_auto_attack = true,
     }
 end
 

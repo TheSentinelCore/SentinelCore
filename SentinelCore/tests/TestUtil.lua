@@ -105,6 +105,7 @@ function TestUtil.install_core_stub(overrides)
             loot_item = function() end,
             close_loot = function() end,
             interact_with_object = function() end,
+            use_container_item = function() end,
             is_key_pressed = function() return false end,
             cursor_has_spell = function() return false end,
         },

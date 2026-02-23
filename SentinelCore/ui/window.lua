@@ -1,7 +1,7 @@
 --[[
     SentinelCore UI Window Orchestrator
 
-    Uses AstroUI (same base library as SentinelNavClient) to provide a
+    Uses AstroUI (Apple HIG card-based design) to provide a
     dedicated runtime control and diagnostics window for SentinelCore.
 ]]
 
@@ -26,12 +26,6 @@ local _runtime_feed_filter = "all"
 local _selected_runtime_mode = "grind"
 local PALADIN_CLASS_ID = 2
 local WARLOCK_CLASS_ID = 9
-
-local FEED_FILTER_LABELS = {
-    all = "All",
-    warn = "Warn+Error",
-    error = "Error",
-}
 
 local MODE_LABELS = {
     grind = "Grind",
@@ -134,194 +128,6 @@ local function lighten_color(base_color, amount)
     )
 end
 
----@param window any
----@param colors table
----@param x number
----@param y number
----@param w number
----@param h number
----@param label string
----@param enabled? boolean
----@return boolean
-local function render_button(window, colors, x, y, w, h, label, enabled)
-    enabled = enabled ~= false
-    local start = vec2.new(x, y)
-    local finish = vec2.new(x + w, y + h)
-
-    local hovered = window:is_mouse_hovering_rect(start, finish)
-    window:is_mouse_hovering_rect_block_movement(start, finish)
-
-    local bg = enabled and (hovered and lighten_color(colors.primary_accent, 15) or colors.primary_accent)
-        or colors.checkbox_inactive
-
-    window:render_rect_filled(start, finish, bg, 6)
-
-    local text_size = window:get_text_size(label)
-    local tx = x + (w - text_size.x) / 2
-    local ty = y + (h - text_size.y) / 2
-    local tcolor = enabled and colors.text_primary or colors.text_disabled
-    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(tx, ty), tcolor, label)
-
-    return enabled and hovered and window:is_rect_clicked(start, finish)
-end
-
----@param ui_ctx any
----@param window any
----@param start vec2
----@param finish vec2
----@param hint string|nil
-local function attach_tooltip(ui_ctx, window, start, finish, hint)
-    if not hint or hint == "" then
-        return
-    end
-    if ui_ctx and window:is_mouse_hovering_rect(start, finish) then
-        ui_ctx._tooltip = hint
-    end
-end
-
----@param ui_ctx any
----@param window any
----@param colors table
----@param x number
----@param y number
----@param hint string|nil
----@return number
-local function render_help_badge(ui_ctx, window, colors, x, y, hint)
-    local label = "?"
-    local text_size = window:get_text_size(label)
-    local pad_x = 5
-    local pad_y = 1
-    local w = text_size.x + (pad_x * 2)
-    local h = text_size.y + (pad_y * 2)
-    local start = vec2.new(x, y)
-    local finish = vec2.new(x + w, y + h)
-    local hovered = window:is_mouse_hovering_rect(start, finish)
-    window:is_mouse_hovering_rect_block_movement(start, finish)
-
-    local bg = hovered and lighten_color(colors.primary_accent, 10) or colors.section_bg
-    local fg = hovered and colors.text_primary or colors.text_secondary
-    window:render_rect_filled(start, finish, bg, 6)
-    window:render_rect(start, finish, colors.section_border, 6, 1)
-    window:render_text(
-        enums.window_enums.font_id.FONT_SMALL,
-        vec2.new(x + pad_x, y + pad_y),
-        fg,
-        label
-    )
-
-    attach_tooltip(ui_ctx, window, start, finish, hint)
-    return w
-end
-
----@param window any
----@param colors table
----@param x number
----@param y number
----@param label string
----@param value any
----@return number
-local function render_line(window, colors, x, y, label, value)
-    local text = string.format("%s: %s", label, tostring(value))
-    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x, y), colors.text_secondary, text)
-    return y + window:get_text_size(text).y + 2
-end
-
----@param value number
----@param min number
----@param max number
----@return number
-local function clamp(value, min, max)
-    if value < min then return min end
-    if value > max then return max end
-    return value
-end
-
----@param window any
----@param colors table
----@param x number
----@param y number
----@param width number
----@param label string
----@param value boolean
----@param on_toggle fun(new_value: boolean)
----@param tooltip? string
----@param ui_ctx? any
----@return number
-local function render_toggle(window, colors, x, y, width, label, value, on_toggle, tooltip, ui_ctx)
-    local button_text = string.format("%s: %s", label, value and "ON" or "OFF")
-    local start = vec2.new(x, y)
-    local finish = vec2.new(x + width, y + 20)
-    if render_button(window, colors, x, y, width, 20, button_text, true) then
-        on_toggle(not value)
-    end
-    attach_tooltip(ui_ctx, window, start, finish, tooltip)
-    return y + 24
-end
-
----@param window any
----@param colors table
----@param x number
----@param y number
----@param width number
----@param label string
----@return number
-local function render_section_title(window, colors, x, y, width, label)
-    local text_h = window:get_text_size(label).y
-    local line_y = y + text_h + 4
-    window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG, vec2.new(x, y), colors.text_secondary, label)
-    window:render_rect_filled(vec2.new(x, line_y), vec2.new(x + width, line_y + 1), colors.section_border, 0)
-    return line_y + 8
-end
-
----@param window any
----@param colors table
----@param x number
----@param y number
----@param width number
----@param label string
----@param checked boolean
----@param tooltip? string
----@param ui_ctx? any
----@return boolean
-local function render_checkbox_button(window, colors, x, y, width, label, checked, tooltip, ui_ctx)
-    local row_h = 20
-    local box_size = 14
-    local start = vec2.new(x, y)
-    local finish = vec2.new(x + width, y + row_h)
-
-    local hovered = window:is_mouse_hovering_rect(start, finish)
-    window:is_mouse_hovering_rect_block_movement(start, finish)
-
-    local bg = hovered and lighten_color(colors.section_bg, 8) or colors.section_bg
-    window:render_rect_filled(start, finish, bg, 4)
-
-    local box_x = x + 4
-    local box_y = y + (row_h - box_size) / 2
-    local box_start = vec2.new(box_x, box_y)
-    local box_end = vec2.new(box_x + box_size, box_y + box_size)
-    local box_bg = checked and colors.checkbox_active or colors.checkbox_inactive
-    window:render_rect_filled(box_start, box_end, box_bg, 3)
-    window:render_rect(box_start, box_end, colors.checkbox_border, 3, 1)
-
-    if checked then
-        local check_pad = 3
-        window:render_rect_filled(
-            vec2.new(box_x + check_pad, box_y + check_pad),
-            vec2.new(box_x + box_size - check_pad, box_y + box_size - check_pad),
-            color.white(255),
-            2
-        )
-    end
-
-    local label_x = box_x + box_size + 8
-    local label_y = y + (row_h - window:get_text_size(label).y) / 2
-    local label_color = checked and colors.text_primary or colors.text_secondary
-    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(label_x, label_y), label_color, label)
-
-    attach_tooltip(ui_ctx, window, start, finish, tooltip)
-    return hovered and window:is_rect_clicked(start, finish)
-end
-
 ---@param level string
 ---@return number
 local function severity_rank(level)
@@ -353,95 +159,13 @@ local function feed_entry_allowed(entry)
     return true
 end
 
----@param window any
----@param colors table
----@param x number
----@param y number
----@param text string
----@param bg color
----@return number
-local function render_chip(window, colors, x, y, text, bg)
-    local pad_x = 8
-    local pad_y = 3
-    local text_size = window:get_text_size(text)
-    local w = text_size.x + (pad_x * 2)
-    local h = text_size.y + (pad_y * 2)
-    window:render_rect_filled(vec2.new(x, y), vec2.new(x + w, y + h), bg, 6)
-    window:render_text(
-        enums.window_enums.font_id.FONT_SMALL,
-        vec2.new(x + pad_x, y + pad_y),
-        colors.text_primary,
-        text
-    )
-    return w + 6
-end
-
----@param window any
----@param colors table
----@param x number
----@param y number
----@param width number
----@param label string
----@param value string
----@param state "good"|"warn"|"bad"|"neutral"
----@return number
-local function render_status_card(window, colors, x, y, width, label, value, state)
-    local h = 44
-    local bg = colors.section_bg
-    if state == "good" then
-        bg = color.new(48, 140, 88, 170)
-    elseif state == "warn" then
-        bg = color.new(170, 120, 30, 170)
-    elseif state == "bad" then
-        bg = color.new(160, 65, 65, 170)
-    end
-
-    window:render_rect_filled(vec2.new(x, y), vec2.new(x + width, y + h), bg, 6)
-    window:render_rect(vec2.new(x, y), vec2.new(x + width, y + h), colors.section_border, 6, 1)
-    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x + 8, y + 6), colors.text_secondary, label)
-    window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG, vec2.new(x + 8, y + 22), colors.text_primary, value)
-    return y + h + 6
-end
-
----@param window any
----@param colors table
----@param x number
----@param y number
----@param width number
----@param modes string[]
----@param active string
----@param labels? table<string, string>
+---@param entry table
 ---@return string
-local function render_mode_selector(window, colors, x, y, width, modes, active, labels)
-    labels = labels or FEED_FILTER_LABELS
-    local count = #modes
-    if count < 1 then
-        return active
-    end
-    local gap = 4
-    local btn_w = (width - ((count - 1) * gap)) / count
-    local next_active = active
-
-    for i = 1, count do
-        local mode = tostring(modes[i])
-        local label = labels[mode] or mode
-        local bx = x + ((i - 1) * (btn_w + gap))
-        if mode == active then
-            window:render_rect_filled(vec2.new(bx, y), vec2.new(bx + btn_w, y + 18), lighten_color(colors.primary_accent, 10), 6)
-            window:render_text(
-                enums.window_enums.font_id.FONT_SMALL,
-                vec2.new(bx + 8, y + 2),
-                colors.text_primary,
-                label
-            )
-        else
-            if render_button(window, colors, bx, y, btn_w, 18, label, true) then
-                next_active = mode
-            end
-        end
-    end
-
-    return next_active
+local function format_feed_entry(entry)
+    local ts = tonumber(entry and entry.timestamp) or 0
+    local level = tostring(entry and entry.level or "info"):upper()
+    local message = tostring(entry and entry.message or "")
+    return string.format("[%.1f] %-5s %s", ts, level, message)
 end
 
 ---@param client SentinelClient
@@ -472,61 +196,241 @@ local function apply_quality_preset(client, enabled_gray, enabled_white, enabled
     return true, nil
 end
 
----@param window any
----@param colors table
----@param x number
----@param y number
----@param width number
----@param label string
----@param value number
----@param step number
----@param min number
----@param max number
----@param decimals number
----@param on_change fun(new_value: number)
----@param tooltip? string
----@param ui_ctx? any
----@return number
-local function render_stepper(window, colors, x, y, width, label, value, step, min, max, decimals, on_change, tooltip, ui_ctx)
-    local row_h = 20
-    local btn_w = 24
-    local gap = 4
-    local value_w = 70
+-- ============================================================================
+-- LIGHTWEIGHT WRAPPER OBJECTS FOR ROW_LIST
+-- ============================================================================
 
-    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x, y + 2), colors.text_secondary, label)
-
-    local bx = x + width - (btn_w + gap + value_w + gap + btn_w)
-    local label_end_x = math.max(x + window:get_text_size(label).x + 8, bx - 8)
-    attach_tooltip(ui_ctx, window, vec2.new(x, y), vec2.new(label_end_x, y + row_h), tooltip)
-    if render_button(window, colors, bx, y, btn_w, row_h, "-", true) then
-        on_change(clamp((tonumber(value) or 0) - step, min, max))
-    end
-
-    local value_text = string.format("%." .. tostring(decimals) .. "f", tonumber(value) or 0)
-    local tx = bx + btn_w + gap + ((value_w - window:get_text_size(value_text).x) / 2)
-    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(tx, y + 2), colors.text_primary, value_text)
-
-    local px = bx + btn_w + gap + value_w + gap
-    if render_button(window, colors, px, y, btn_w, row_h, "+", true) then
-        on_change(clamp((tonumber(value) or 0) + step, min, max))
-    end
-
-    return y + row_h + 4
+--- Creates a toggle wrapper that reads/writes a policy setting via the client.
+---@param key string
+---@return table element with get_state/set
+local function policy_toggle(key)
+    return {
+        get_state = function()
+            local p = _client and _client.get_policy_config and _client:get_policy_config() or {}
+            return p[key] == true
+        end,
+        set = function(_, v)
+            local ok, err = _client:set_policy_setting(key, v, false)
+            _last_settings_result = ok and ("Updated " .. key) or ("Update failed: " .. tostring(err))
+        end,
+    }
 end
 
----@param entry table
----@return string
-local function format_feed_entry(entry)
-    local ts = tonumber(entry and entry.timestamp) or 0
-    local level = tostring(entry and entry.level or "info"):upper()
-    local message = tostring(entry and entry.message or "")
-    return string.format("[%.1f] %-5s %s", ts, level, message)
+--- Creates a toggle wrapper that reads/writes a policy setting, defaulting to true.
+---@param key string
+---@return table element with get_state/set
+local function policy_toggle_default_on(key)
+    return {
+        get_state = function()
+            local p = _client and _client.get_policy_config and _client:get_policy_config() or {}
+            return p[key] ~= false
+        end,
+        set = function(_, v)
+            local ok, err = _client:set_policy_setting(key, v, true)
+            _last_settings_result = ok and ("Updated " .. key) or ("Update failed: " .. tostring(err))
+        end,
+    }
 end
+
+--- Creates a toggle wrapper for a runtime setting path.
+---@param domain string
+---@param key string
+---@param default boolean
+---@return table element with get_state/set
+local function runtime_toggle(domain, key, default)
+    return {
+        get_state = function()
+            local rt = _client and _client.get_runtime_config and _client:get_runtime_config() or {}
+            local section = rt[domain] or {}
+            if section[key] == nil then return default end
+            return section[key] == true
+        end,
+        set = function(_, v)
+            local ok, err = _client:set_runtime_setting(domain, key, v, false)
+            _last_settings_result = ok and ("Updated " .. domain .. "." .. key)
+                or ("Update failed: " .. tostring(err))
+        end,
+    }
+end
+
+--- Creates a stepper wrapper for a policy integer setting.
+---@param key string
+---@param default number
+---@return table element with get/set
+local function policy_stepper(key, default)
+    return {
+        get = function()
+            local p = _client and _client.get_policy_config and _client:get_policy_config() or {}
+            return tonumber(p[key]) or default
+        end,
+        set = function(_, v)
+            local ok, err = _client:set_policy_setting(key, math.floor(v), false)
+            _last_settings_result = ok and ("Updated " .. key) or ("Update failed: " .. tostring(err))
+        end,
+    }
+end
+
+--- Creates a stepper wrapper for a runtime setting.
+---@param domain string
+---@param key string
+---@param default number
+---@return table element with get/set
+local function runtime_stepper(domain, key, default)
+    return {
+        get = function()
+            local rt = _client and _client.get_runtime_config and _client:get_runtime_config() or {}
+            local section = rt[domain] or {}
+            return tonumber(section[key]) or default
+        end,
+        set = function(_, v)
+            local ok, err = _client:set_runtime_setting(domain, key, v, false)
+            _last_settings_result = ok and ("Updated " .. domain .. "." .. key)
+                or ("Update failed: " .. tostring(err))
+        end,
+    }
+end
+
+--- Creates a stepper wrapper for a nested rotation setting (paladin.retribution.*).
+---@param key string
+---@param default number
+---@return table element with get/set
+local function retri_stepper(key, default)
+    return {
+        get = function()
+            local rt = _client and _client.get_runtime_config and _client:get_runtime_config() or {}
+            local rotation = rt.rotation or {}
+            local paladin = rotation.paladin or {}
+            local retri = paladin.retribution or {}
+            return tonumber(retri[key]) or default
+        end,
+        set = function(_, v)
+            local rt = _client and _client.get_runtime_config and _client:get_runtime_config() or {}
+            local rotation = rt.rotation or {}
+            local paladin_src = rotation.paladin or {}
+            local retri_src = paladin_src.retribution or {}
+
+            -- Shallow copy to avoid mutating cached config
+            local new_paladin = {}
+            for k2, v2 in pairs(paladin_src) do new_paladin[k2] = v2 end
+            local new_retri = {}
+            for k2, v2 in pairs(retri_src) do new_retri[k2] = v2 end
+            new_retri[key] = v
+            new_paladin.retribution = new_retri
+
+            local ok, err = _client:set_runtime_setting("rotation", "paladin", new_paladin, false)
+            _last_settings_result = ok and ("Updated retribution." .. key)
+                or ("Update failed: " .. tostring(err))
+        end,
+    }
+end
+
+--- Creates a stepper wrapper for a nested rotation setting (warlock.affliction.*).
+---@param key string
+---@param default number
+---@return table element with get/set
+local function affli_stepper(key, default)
+    return {
+        get = function()
+            local rt = _client and _client.get_runtime_config and _client:get_runtime_config() or {}
+            local rotation = rt.rotation or {}
+            local warlock = rotation.warlock or {}
+            local affli = warlock.affliction or {}
+            return tonumber(affli[key]) or default
+        end,
+        set = function(_, v)
+            local rt = _client and _client.get_runtime_config and _client:get_runtime_config() or {}
+            local rotation = rt.rotation or {}
+            local warlock_src = rotation.warlock or {}
+            local affli_src = warlock_src.affliction or {}
+
+            local new_warlock = {}
+            for k2, v2 in pairs(warlock_src) do new_warlock[k2] = v2 end
+            local new_affli = {}
+            for k2, v2 in pairs(affli_src) do new_affli[k2] = v2 end
+            new_affli[key] = v
+            new_warlock.affliction = new_affli
+
+            local ok, err = _client:set_runtime_setting("rotation", "warlock", new_warlock, false)
+            _last_settings_result = ok and ("Updated affliction." .. key)
+                or ("Update failed: " .. tostring(err))
+        end,
+    }
+end
+
+--- Creates a stepper for targeting settings with clamping against the paired bound.
+---@param key string "base_radius" or "max_radius"
+---@param paired_key string the other key
+---@param default number
+---@return table element with get/set
+local function targeting_stepper(key, paired_key, default)
+    return {
+        get = function()
+            local rt = _client and _client.get_runtime_config and _client:get_runtime_config() or {}
+            local targeting = rt.targeting or {}
+            return tonumber(targeting[key]) or default
+        end,
+        set = function(_, v)
+            local rt = _client and _client.get_runtime_config and _client:get_runtime_config() or {}
+            local targeting = rt.targeting or {}
+            local paired = tonumber(targeting[paired_key]) or v
+            local clamped = v
+            if key == "base_radius" then
+                clamped = math.min(v, paired)
+            else
+                clamped = math.max(v, paired)
+            end
+            local ok, err = _client:set_runtime_setting("targeting", key, clamped, false)
+            _last_settings_result = ok and ("Updated targeting." .. key)
+                or ("Update failed: " .. tostring(err))
+        end,
+    }
+end
+
+-- ============================================================================
+-- HELPER: sorted blocked spells for Cast Guard section
+-- ============================================================================
+
+---@param client SentinelClient
+---@return table[]|nil
+local function _get_sorted_blocked_spells(client)
+    local snap = client and client.get_snapshot and client:get_snapshot() or nil
+    if not snap or not snap.telemetry or not snap.telemetry.rates then return nil end
+    local by_spell = snap.telemetry.rates.cast_guard_blocked_per_min_by_spell
+    if not by_spell then return nil end
+
+    local rows = {}
+    for spell_id, rate in pairs(by_spell) do
+        local sid = tonumber(spell_id)
+        local per_min = tonumber(rate) or 0
+        if sid and sid > 0 and per_min > 0 then
+            rows[#rows + 1] = { spell_id = sid, per_min = per_min }
+        end
+    end
+    if #rows == 0 then return nil end
+
+    table.sort(rows, function(a, b)
+        if a.per_min == b.per_min then
+            return a.spell_id < b.spell_id
+        end
+        return a.per_min > b.per_min
+    end)
+    return rows
+end
+
+-- ============================================================================
+-- TAB REGISTRATION
+-- ============================================================================
 
 ---@param ui any
 ---@param client SentinelClient
 local function register_tabs(ui, client)
-    ui:add_tab({ id = "runtime", label = "Runtime" }, function(t)
+
+    -- ================================================================
+    -- TAB 1: DASHBOARD
+    -- ================================================================
+    ui:add_tab({ id = "dashboard", label = "Dashboard" }, function(t)
+
+        -- 1. Status (custom_render, card=false)
         t:custom_render({
             render_fn = function(self, y_offset)
                 local window = self.window
@@ -535,95 +439,146 @@ local function register_tabs(ui, client)
                 local width = window:get_size().x - (2 * LAYOUT.padding_side)
 
                 local state = client and client.get_state and client:get_state() or "unknown"
-                local snapshot = client and client.get_snapshot and client:get_snapshot() or nil
-                local substate = snapshot and snapshot.substate or "-"
-                local mode = snapshot and snapshot.mode
-                    or (client and client.get_active_mode_id and client:get_active_mode_id())
-                    or _selected_runtime_mode
-                local fail_reason = snapshot and snapshot.fail_reason or "-"
-                local deps = snapshot and snapshot.dependencies or {}
-                local context = snapshot and snapshot.context or {}
-                local inventory = snapshot and snapshot.inventory or {}
-                local objective = snapshot and snapshot.objective or {}
+                local full_state = client and client.get_full_state and client:get_full_state() or ""
 
-                if state == "running" or state == "paused" then
-                    _selected_runtime_mode = tostring(mode or _selected_runtime_mode)
-                end
-
-                local section_y = y_offset
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Control Center")
-                render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.runtime_state)
-
-                local chip_x = x
-                local state_label = "State: " .. tostring(state)
-                local state_bg = colors.section_bg
+                -- Status dot color
+                local dot_color = colors.text_disabled
                 if state == "running" then
-                    state_bg = color.new(48, 140, 88, 170)
+                    dot_color = color.new(48, 209, 88, 255)
                 elseif state == "paused" then
-                    state_bg = color.new(170, 120, 30, 170)
+                    dot_color = color.new(255, 214, 10, 255)
                 elseif state == "failed" then
-                    state_bg = color.new(160, 65, 65, 170)
-                end
-                chip_x = chip_x + render_chip(window, colors, chip_x, y_offset, state_label, state_bg)
-                chip_x = chip_x + render_chip(window, colors, chip_x, y_offset, "Mode: " .. tostring(mode or "-"), colors.section_bg)
-                chip_x = chip_x + render_chip(window, colors, chip_x, y_offset, "Sub: " .. tostring(substate), colors.section_bg)
-                if fail_reason and tostring(fail_reason) ~= "" and tostring(fail_reason) ~= "-" then
-                    chip_x = chip_x + render_chip(window, colors, chip_x, y_offset, "Fail: " .. tostring(fail_reason), color.new(160, 65, 65, 170))
-                end
-                y_offset = y_offset + 24
-
-                local card_gap = 8
-                local card_w = math.floor((width - (card_gap * 2)) / 3)
-                local card_h = 44
-                local world_ok = deps.world_data_healthy == true and deps.world_dataset_ok == true
-                local nav_ok = deps.nav_available == true and deps.nav_server_available == true
-                local inv_state = inventory.needs_vendor and "Need Vendor" or "Stable"
-
-                local world_state = world_ok and "good" or "bad"
-                local nav_state = nav_ok and "good" or "bad"
-                local inv_card_state = inventory.needs_vendor and "warn" or "good"
-
-                local cards_y = y_offset
-                render_status_card(window, colors, x, y_offset, card_w,
-                    "World Data", world_ok and "Healthy" or "Unavailable", world_state)
-                render_status_card(window, colors, x + card_w + card_gap, y_offset, card_w,
-                    "Navigation", nav_ok and "Ready" or "Unavailable", nav_state)
-                local free_display = (inventory.free_slots and inventory.free_slots >= 0)
-                    and tostring(inventory.free_slots)
-                    or "?"
-                render_status_card(window, colors, x + (card_w * 2) + (card_gap * 2), y_offset, card_w,
-                    "Inventory", string.format("%s (%s free)", inv_state, free_display), inv_card_state)
-                attach_tooltip(self, window, vec2.new(x, cards_y), vec2.new(x + width, cards_y + card_h), TOOLTIPS.runtime_health)
-                y_offset = y_offset + card_h + 8
-
-                local location_text = string.format(
-                    "Map %s | Zone %s | Area %s",
-                    tostring(context.map_id or "-"),
-                    tostring(context.zone_id or "-"),
-                    tostring(context.area_id or "-")
-                )
-                y_offset = render_line(window, colors, x, y_offset, "Location", location_text)
-                local objective_state = tostring(objective.state or "idle")
-                local objective_label = tostring(
-                    (objective.objective and (objective.objective.label or objective.objective.id))
-                    or "none"
-                )
-                y_offset = render_line(window, colors, x, y_offset, "Objective", objective_state .. " (" .. objective_label .. ")")
-                if client and client.get_mode_objective_queue then
-                    local queue, meta = client:get_mode_objective_queue(mode or _selected_runtime_mode)
-                    local queue_count = type(queue) == "table" and #queue or 0
-                    local queue_index = tonumber(meta and meta.index) or 1
-                    local queue_loop = meta and meta.loop == true and "loop" or "once"
-                    y_offset = render_line(window, colors, x, y_offset, "Objective Queue",
-                        string.format("%d nodes | idx %d | %s", queue_count, queue_index, queue_loop))
+                    dot_color = color.new(255, 69, 58, 255)
                 end
 
-                y_offset = y_offset + 4
+                -- Dot
+                local dot_size = 10
+                local dot_y = y_offset + 2
+                window:render_rect_filled(
+                    vec2.new(x, dot_y),
+                    vec2.new(x + dot_size, dot_y + dot_size),
+                    dot_color, dot_size / 2)
 
-                local button_h = 22
-                local gap = 6
-                local button_w = (width - (gap * 3)) / 4
+                -- State text
+                local state_text = tostring(state):upper()
+                window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG,
+                    vec2.new(x + dot_size + 8, y_offset),
+                    colors.text_primary, state_text)
 
+                -- Full state on same line, offset right
+                local state_w = window:get_text_size(state_text).x
+                if full_state and full_state ~= "" then
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x + dot_size + 8 + state_w + 12, y_offset + 2),
+                        colors.text_secondary, tostring(full_state))
+                end
+
+                -- Tooltip
+                if self.window:is_mouse_hovering_rect(vec2.new(x, y_offset), vec2.new(x + width, y_offset + 18)) then
+                    self._tooltip = TOOLTIPS.runtime_state
+                end
+
+                return y_offset + 22
+            end,
+        })
+
+        -- 2. Resources (progress_bar_list)
+        t:progress_bar_list({
+            label = "Resources",
+            elements = {
+                {
+                    label = "Health",
+                    tooltip = "Current health percentage",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.resources then return 0 end
+                        return tonumber(snap.resources.health_pct) or 0
+                    end,
+                    color = color.new(48, 209, 88, 255),
+                },
+                {
+                    label = "Mana",
+                    tooltip = "Current mana percentage",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.resources then return 0 end
+                        return tonumber(snap.resources.mana_pct) or 0
+                    end,
+                    color = color.new(10, 132, 255, 255),
+                },
+                {
+                    label = "XP",
+                    tooltip = "Experience progress to next level",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.resources then return 0 end
+                        return tonumber(snap.resources.xp_pct) or 0
+                    end,
+                    color = color.new(191, 90, 242, 255),
+                },
+                {
+                    label = "Durability",
+                    tooltip = "Average equipment durability",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.resources then return 1 end
+                        return tonumber(snap.resources.durability_pct) or 1
+                    end,
+                    color = color.new(255, 159, 10, 255),
+                },
+            },
+        })
+
+        -- 3. Dependencies (row_list type=info)
+        local dep_color = function(val) return val == "Connected" and "status_green" or "status_red" end
+        t:row_list({
+            label = "Dependencies",
+            elements = {
+                {
+                    type = "info",
+                    label = "Navigation Server",
+                    tooltip = TOOLTIPS.runtime_health,
+                    color_fn = dep_color,
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        local deps = snap and snap.dependencies or {}
+                        return deps.nav_server_available and "Connected" or "Offline"
+                    end,
+                },
+                {
+                    type = "info",
+                    label = "World Data",
+                    tooltip = TOOLTIPS.runtime_health,
+                    color_fn = dep_color,
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        local deps = snap and snap.dependencies or {}
+                        return deps.world_data_healthy and "Connected" or "Offline"
+                    end,
+                },
+                {
+                    type = "info",
+                    label = "Dataset",
+                    tooltip = TOOLTIPS.runtime_health,
+                    color_fn = dep_color,
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        local deps = snap and snap.dependencies or {}
+                        return deps.world_dataset_ok and "Connected" or "Offline"
+                    end,
+                },
+            },
+        })
+
+        -- 4. Mode (custom_render segmented pill, rebuilt each frame for dynamic modes)
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local width = window:get_size().x - (2 * LAYOUT.padding_side)
+
+                -- Build mode list dynamically
                 local mode_options = {}
                 local mode_labels = {}
                 if client and client.list_modes then
@@ -643,63 +598,184 @@ local function register_tabs(ui, client)
                     mode_labels.grind = MODE_LABELS.grind
                 end
                 table.sort(mode_options)
-                local mode_valid = false
+
+                -- Validate current selection
+                local valid = false
                 for i = 1, #mode_options do
                     if mode_options[i] == _selected_runtime_mode then
-                        mode_valid = true
+                        valid = true
                         break
                     end
                 end
-                if not mode_valid then
+                if not valid then
                     _selected_runtime_mode = mode_options[1]
                 end
-                y_offset = render_line(window, colors, x, y_offset, "Selected Mode", _selected_runtime_mode)
-                _selected_runtime_mode = render_mode_selector(
-                    window,
-                    colors,
-                    x,
-                    y_offset,
-                    width,
-                    mode_options,
-                    _selected_runtime_mode,
-                    mode_labels
-                )
-                y_offset = y_offset + 24
+
+                -- Sync to running mode if bot is active
+                local state = client and client.get_state and client:get_state() or "idle"
+                if state == "running" or state == "paused" then
+                    local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                    local active_mode = snap and snap.mode
+                        or (client and client.get_active_mode_id and client:get_active_mode_id())
+                    if active_mode then
+                        _selected_runtime_mode = tostring(active_mode)
+                    end
+                end
+
+                -- Draw segmented pill
+                local seg_h = 30
+                local count = #mode_options
+                local seg_w = width / count
+
+                -- Background pill
+                window:render_rect_filled(
+                    vec2.new(x, y_offset), vec2.new(x + width, y_offset + seg_h),
+                    colors.slider_bg, 8)
+
+                for i = 1, count do
+                    local seg_x = x + (i - 1) * seg_w
+                    local seg_start = vec2.new(seg_x, y_offset)
+                    local seg_end = vec2.new(seg_x + seg_w, y_offset + seg_h)
+                    local is_selected = (mode_options[i] == _selected_runtime_mode)
+                    local is_hovered = window:is_mouse_hovering_rect(seg_start, seg_end)
+                    window:is_mouse_hovering_rect_block_movement(seg_start, seg_end)
+
+                    if is_selected then
+                        window:render_rect_filled(
+                            vec2.new(seg_x + 2, y_offset + 2),
+                            vec2.new(seg_x + seg_w - 2, y_offset + seg_h - 2),
+                            colors.primary_accent, 6)
+                    elseif is_hovered then
+                        window:render_rect_filled(
+                            vec2.new(seg_x + 1, y_offset + 1),
+                            vec2.new(seg_x + seg_w - 1, y_offset + seg_h - 1),
+                            lighten_color(colors.slider_bg, 15), 6)
+                    end
+
+                    -- Divider
+                    if i < count then
+                        local next_selected = (mode_options[i + 1] == _selected_runtime_mode)
+                        if not is_selected and not next_selected then
+                            window:render_rect_filled(
+                                vec2.new(seg_x + seg_w, y_offset + 6),
+                                vec2.new(seg_x + seg_w + 1, y_offset + seg_h - 6),
+                                colors.section_border, 0)
+                        end
+                    end
+
+                    -- Label
+                    local label = mode_labels[mode_options[i]] or mode_options[i]
+                    local text_color = is_selected and colors.text_primary or colors.text_secondary
+                    local ts = window:get_text_size(label)
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(seg_x + (seg_w - ts.x) / 2, y_offset + (seg_h - ts.y) / 2),
+                        text_color, label)
+
+                    -- Click
+                    if not is_selected and window:is_rect_clicked(seg_start, seg_end) then
+                        _selected_runtime_mode = mode_options[i]
+                    end
+                end
+
+                -- Tooltip
+                if window:is_mouse_hovering_rect(vec2.new(x, y_offset), vec2.new(x + width, y_offset + seg_h)) then
+                    self._tooltip = "Select the bot operating mode."
+                end
+
+                return y_offset + seg_h + 6
+            end,
+        })
+
+        -- 5. Controls (custom_render)
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local width = window:get_size().x - (2 * LAYOUT.padding_side)
+
+                local state = client and client.get_state and client:get_state() or "unknown"
 
                 local start_enabled = state == "idle" or state == "failed"
                 local pause_enabled = state == "running"
                 local resume_enabled = state == "paused"
                 local stop_enabled = (state == "running" or state == "paused")
-                attach_tooltip(self, window, vec2.new(x, y_offset), vec2.new(x + width, y_offset + button_h), TOOLTIPS.runtime_actions)
+
+                local button_h = 28
+                local gap = 8
+                local button_w = (width - (gap * 3)) / 4
+
+                -- Tooltip row
+                if window:is_mouse_hovering_rect(vec2.new(x, y_offset), vec2.new(x + width, y_offset + button_h)) then
+                    self._tooltip = TOOLTIPS.runtime_actions
+                end
+
+                local function render_action_button(bx, bw, label, enabled, accent)
+                    local start_pos = vec2.new(bx, y_offset)
+                    local end_pos = vec2.new(bx + bw, y_offset + button_h)
+                    local hovered = window:is_mouse_hovering_rect(start_pos, end_pos)
+                    if hovered then
+                        window:is_mouse_hovering_rect_block_movement(start_pos, end_pos)
+                    end
+
+                    local bg = enabled
+                        and (hovered and lighten_color(accent, 20) or accent)
+                        or colors.checkbox_inactive
+                    window:render_rect_filled(start_pos, end_pos, bg, 8)
+
+                    local text_size = window:get_text_size(label)
+                    local tx = bx + (bw - text_size.x) / 2
+                    local ty = y_offset + (button_h - text_size.y) / 2
+                    local tc = enabled and colors.text_primary or colors.text_disabled
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(tx, ty), tc, label)
+
+                    return enabled and hovered and window:is_rect_clicked(start_pos, end_pos)
+                end
 
                 local bx = x
-                if render_button(window, colors, bx, y_offset, button_w, button_h, "Start", start_enabled) then
+                if render_action_button(bx, button_w, "Start", start_enabled, colors.primary_accent) then
                     local ok, err = client:start(_selected_runtime_mode)
                     _last_action_result = ok and "Start: ok" or ("Start: " .. tostring(err))
                 end
 
                 bx = bx + button_w + gap
-                if render_button(window, colors, bx, y_offset, button_w, button_h, "Pause", pause_enabled) then
+                if render_action_button(bx, button_w, "Pause", pause_enabled, color.new(255, 159, 10, 255)) then
                     local ok = client:pause("ui_pause")
                     _last_action_result = ok and "Pause: ok" or "Pause: rejected"
                 end
 
                 bx = bx + button_w + gap
-                if render_button(window, colors, bx, y_offset, button_w, button_h, "Resume", resume_enabled) then
+                if render_action_button(bx, button_w, "Resume", resume_enabled, color.new(48, 209, 88, 255)) then
                     local ok = client:resume()
                     _last_action_result = ok and "Resume: ok" or "Resume: rejected"
                 end
 
                 bx = bx + button_w + gap
-                if render_button(window, colors, bx, y_offset, button_w, button_h, "Stop", stop_enabled) then
+                if render_action_button(bx, button_w, "Stop", stop_enabled, color.new(255, 69, 58, 255)) then
                     local ok = client:stop("ui_stop")
                     _last_action_result = ok and "Stop: ok" or "Stop: rejected"
                 end
 
-                y_offset = y_offset + button_h + 8
+                y_offset = y_offset + button_h + 6
 
+                -- Run Tests button
                 local run_tests_enabled = _G and _G.SentinelCore and type(_G.SentinelCore.run_tests) == "function"
-                if render_button(window, colors, x, y_offset, width, button_h, "Run SentinelCore Tests", run_tests_enabled) then
+                local test_start = vec2.new(x, y_offset)
+                local test_end = vec2.new(x + width, y_offset + button_h)
+                local test_hovered = window:is_mouse_hovering_rect(test_start, test_end)
+                if test_hovered then
+                    window:is_mouse_hovering_rect_block_movement(test_start, test_end)
+                end
+                local test_bg = run_tests_enabled
+                    and (test_hovered and lighten_color(colors.primary_accent, 15) or colors.primary_accent)
+                    or colors.checkbox_inactive
+                window:render_rect_filled(test_start, test_end, test_bg, 8)
+                local test_label = "Run SentinelCore Tests"
+                local test_ts = window:get_text_size(test_label)
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x + (width - test_ts.x) / 2, y_offset + (button_h - test_ts.y) / 2),
+                    run_tests_enabled and colors.text_primary or colors.text_disabled, test_label)
+                if run_tests_enabled and test_hovered and window:is_rect_clicked(test_start, test_end) then
                     local ok, result = pcall(_G.SentinelCore.run_tests)
                     if ok and type(result) == "table" then
                         _last_action_result = string.format("Tests: passed=%s failed=%s",
@@ -708,187 +784,223 @@ local function register_tabs(ui, client)
                         _last_action_result = "Tests: failed to execute"
                     end
                 end
-
                 y_offset = y_offset + button_h + 6
 
+                -- Last action feedback
                 if _last_action_result then
-                    y_offset = render_line(window, colors, x, y_offset, "Last Action", _last_action_result)
+                    local fb_text = "Last: " .. tostring(_last_action_result)
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.text_secondary, fb_text)
+                    y_offset = y_offset + window:get_text_size(fb_text).y + 4
                 end
 
-                y_offset = y_offset + 6
-                section_y = y_offset
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Runtime Feed")
-                render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.runtime_feed)
+                return y_offset
+            end,
+        })
 
-                local clear_w = 70
-                local clear_h = 18
+        -- 6a. Feed filter + clear (custom_render, card=false)
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local width = window:get_size().x - (2 * LAYOUT.padding_side)
+
+                local filter_h = 24
+                local clear_w = 60
+                local filter_area_w = width - clear_w - 8
+                local filters = { "all", "warn", "error" }
+                local filter_labels = { all = "All", warn = "Warn+", error = "Error" }
+                local seg_w = filter_area_w / #filters
+
+                -- Filter pills
+                window:render_rect_filled(
+                    vec2.new(x, y_offset), vec2.new(x + filter_area_w, y_offset + filter_h),
+                    colors.slider_bg, 6)
+
+                for i = 1, #filters do
+                    local fx = x + (i - 1) * seg_w
+                    local f_start = vec2.new(fx, y_offset)
+                    local f_end = vec2.new(fx + seg_w, y_offset + filter_h)
+                    local is_sel = (filters[i] == _runtime_feed_filter)
+                    local is_hov = window:is_mouse_hovering_rect(f_start, f_end)
+                    window:is_mouse_hovering_rect_block_movement(f_start, f_end)
+
+                    if is_sel then
+                        window:render_rect_filled(
+                            vec2.new(fx + 2, y_offset + 2),
+                            vec2.new(fx + seg_w - 2, y_offset + filter_h - 2),
+                            colors.primary_accent, 4)
+                    elseif is_hov then
+                        window:render_rect_filled(
+                            vec2.new(fx + 1, y_offset + 1),
+                            vec2.new(fx + seg_w - 1, y_offset + filter_h - 1),
+                            lighten_color(colors.slider_bg, 15), 4)
+                    end
+
+                    local label = filter_labels[filters[i]] or filters[i]
+                    local tc = is_sel and colors.text_primary or colors.text_secondary
+                    local ts = window:get_text_size(label)
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(fx + (seg_w - ts.x) / 2, y_offset + (filter_h - ts.y) / 2),
+                        tc, label)
+
+                    if not is_sel and window:is_rect_clicked(f_start, f_end) then
+                        _runtime_feed_filter = filters[i]
+                    end
+                end
+
+                -- Clear button
                 local clear_x = x + width - clear_w
-                _runtime_feed_filter = render_mode_selector(
-                    window,
-                    colors,
-                    x,
-                    y_offset,
-                    width - clear_w - 8,
-                    { "all", "warn", "error" },
-                    _runtime_feed_filter
-                )
-                attach_tooltip(self, window, vec2.new(x, y_offset), vec2.new(x + width - clear_w - 8, y_offset + clear_h), TOOLTIPS.runtime_feed)
-                if render_button(window, colors, clear_x, y_offset, clear_w, clear_h, "Clear", true) then
+                local cs = vec2.new(clear_x, y_offset)
+                local ce = vec2.new(clear_x + clear_w, y_offset + filter_h)
+                local ch = window:is_mouse_hovering_rect(cs, ce)
+                if ch then window:is_mouse_hovering_rect_block_movement(cs, ce) end
+                local cbg = ch and lighten_color(colors.primary_accent, 15) or colors.primary_accent
+                window:render_rect_filled(cs, ce, cbg, 6)
+                local cl = "Clear"
+                local cls = window:get_text_size(cl)
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(clear_x + (clear_w - cls.x) / 2, y_offset + (filter_h - cls.y) / 2),
+                    colors.text_primary, cl)
+                if ch and window:is_rect_clicked(cs, ce) then
                     if client and client.clear_log_feed then
                         client:clear_log_feed()
                     end
                 end
 
-                y_offset = y_offset + clear_h + 6
-                local raw_entries = client and client.get_log_feed and client:get_log_feed(40) or {}
-                local entries = {}
-                for i = 1, #raw_entries do
-                    if feed_entry_allowed(raw_entries[i]) then
-                        entries[#entries + 1] = raw_entries[i]
-                    end
+                -- Tooltip
+                if window:is_mouse_hovering_rect(vec2.new(x, y_offset), vec2.new(x + filter_area_w, y_offset + filter_h)) then
+                    self._tooltip = TOOLTIPS.runtime_feed
                 end
 
-                if #entries < 1 then
-                    y_offset = render_line(window, colors, x, y_offset, "Feed", "No events yet")
-                    return y_offset + 6
-                end
+                return y_offset + filter_h + 4
+            end,
+        })
 
-                local max_lines = 14
-                local start_index = math.max(1, #entries - max_lines + 1)
-                for i = start_index, #entries do
-                    local line = format_feed_entry(entries[i])
-                    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x, y_offset), colors.text_secondary, line)
-                    y_offset = y_offset + window:get_text_size(line).y + 2
-                end
-
-                return y_offset + 6
-            end
+        -- 6b. Recent Events (listbox)
+        t:listbox({
+            label = "Recent Events",
+            id = "dashboard_events",
+            elements = {
+                {
+                    id = "event_feed",
+                    visible_rows = 12,
+                    entries_fn = function()
+                        local raw_entries = client and client.get_log_feed and client:get_log_feed(40) or {}
+                        local entries = {}
+                        for i = 1, #raw_entries do
+                            if feed_entry_allowed(raw_entries[i]) then
+                                local lvl = tostring(raw_entries[i].level or "info"):lower()
+                                local entry_color = nil
+                                if lvl == "error" then
+                                    entry_color = color.new(255, 69, 58, 255)
+                                elseif lvl == "warn" or lvl == "warning" then
+                                    entry_color = color.new(255, 214, 10, 255)
+                                end
+                                entries[#entries + 1] = {
+                                    label = format_feed_entry(raw_entries[i]),
+                                    color = entry_color,
+                                }
+                            end
+                        end
+                        -- Show most recent at top (reverse)
+                        local reversed = {}
+                        for i = #entries, 1, -1 do
+                            reversed[#reversed + 1] = entries[i]
+                        end
+                        return reversed
+                    end,
+                    on_select = function() end,
+                },
+            },
         })
     end)
 
-    ui:add_tab({ id = "snapshot", label = "Snapshot" }, function(t)
-        t:custom_render({
-            render_fn = function(self, y_offset)
-                local window = self.window
-                local colors = self.colors
-                local x = LAYOUT.padding_side
-                local width = window:get_size().x - (2 * LAYOUT.padding_side)
-
-                local snapshot = client and client.get_snapshot and client:get_snapshot() or nil
-                if not snapshot then
-                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                        vec2.new(x, y_offset), colors.text_secondary, "Snapshot unavailable")
-                    return y_offset + 20
-                end
-
-                local section_y = y_offset
-                y_offset = render_section_title(window, colors, x, y_offset, width, "World Snapshot")
-                render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.snapshot_world)
-                y_offset = render_line(window, colors, x, y_offset, "Session", snapshot.session_id or "-")
-                y_offset = render_line(window, colors, x, y_offset, "State", snapshot.full_state or "-")
-                y_offset = render_line(window, colors, x, y_offset, "Timestamp", string.format("%.1f", tonumber(snapshot.timestamp) or 0))
-
-                y_offset = y_offset + 6
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Context")
-
-                y_offset = render_line(window, colors, x, y_offset, "Map", snapshot.context and snapshot.context.map_id or "-")
-                y_offset = render_line(window, colors, x, y_offset, "Zone", snapshot.context and snapshot.context.zone_id or "-")
-                y_offset = render_line(window, colors, x, y_offset, "Area", snapshot.context and snapshot.context.area_id or "-")
-
-                local deps = snapshot.dependencies or {}
-                y_offset = y_offset + 6
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Dependencies")
-                local deps_chip_x = x
-                deps_chip_x = deps_chip_x + render_chip(window, colors, deps_chip_x, y_offset,
-                    "Nav: " .. (deps.nav_available and "OK" or "Down"),
-                    deps.nav_available and color.new(48, 140, 88, 170) or color.new(160, 65, 65, 170))
-                deps_chip_x = deps_chip_x + render_chip(window, colors, deps_chip_x, y_offset,
-                    "Nav Server: " .. (deps.nav_server_available and "OK" or "Down"),
-                    deps.nav_server_available and color.new(48, 140, 88, 170) or color.new(160, 65, 65, 170))
-                deps_chip_x = deps_chip_x + render_chip(window, colors, deps_chip_x, y_offset,
-                    "World: " .. (deps.world_data_healthy and "Healthy" or "Down"),
-                    deps.world_data_healthy and color.new(48, 140, 88, 170) or color.new(160, 65, 65, 170))
-                deps_chip_x = deps_chip_x + render_chip(window, colors, deps_chip_x, y_offset,
-                    "Dataset: " .. (deps.world_dataset_ok and "OK" or "Mismatch"),
-                    deps.world_dataset_ok and color.new(48, 140, 88, 170) or color.new(160, 65, 65, 170))
-                y_offset = y_offset + 24
-
-                local inventory = snapshot.inventory or {}
-                y_offset = y_offset + 6
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Inventory")
-
-                y_offset = render_line(window, colors, x, y_offset, "Free Slots", inventory.free_slots)
-                y_offset = render_line(window, colors, x, y_offset, "Needs Vendor", inventory.needs_vendor)
-
-                local telemetry = snapshot.telemetry or {}
-                local rates = telemetry.rates or {}
-                local counters = telemetry.counters or {}
-                local cast_guard_by_spell = rates.cast_guard_blocked_per_min_by_spell or {}
-
-                y_offset = y_offset + 6
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Telemetry")
-
-                y_offset = render_line(window, colors, x, y_offset, "Uptime (s)", string.format("%.1f", tonumber(telemetry.uptime_secs) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "XP/hr", string.format("%.1f", tonumber(rates.xp_per_hour) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Kills/hr", string.format("%.1f", tonumber(rates.kills_per_hour) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Deaths/hr", string.format("%.2f", tonumber(rates.deaths_per_hour) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Gold/hr", string.format("%.1f", tonumber(rates.gold_per_hour) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Combat Gap Avg (s)",
-                    string.format("%.2f", tonumber(rates.combat_downtime_avg_secs) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Idle Full Resource (%)",
-                    string.format("%.1f", (tonumber(rates.idle_full_resource_pct) or 0) * 100.0))
-                y_offset = render_line(window, colors, x, y_offset, "Cast Guard/min",
-                    string.format("%.2f", tonumber(rates.cast_guard_blocked_per_min) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Chase Repaths/min",
-                    string.format("%.2f", tonumber(rates.chase_repaths_per_min) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Chase Updates/min",
-                    string.format("%.2f", tonumber(rates.chase_updates_per_min) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Failed Pulls/hr",
-                    string.format("%.2f", tonumber(rates.failed_pulls_per_hour) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Unreachable/hr",
-                    string.format("%.2f", tonumber(rates.unreachable_targets_per_hour) or 0))
-                y_offset = render_line(window, colors, x, y_offset, "Kills", counters.kills or 0)
-                y_offset = render_line(window, colors, x, y_offset, "Deaths", counters.deaths or 0)
-                y_offset = render_line(window, colors, x, y_offset, "Loot Events", counters.loot_events or 0)
-                y_offset = render_line(window, colors, x, y_offset, "Vendor Trips", counters.vendor_trips or 0)
-                y_offset = render_line(window, colors, x, y_offset, "Cast Guard Blocked", counters.cast_guard_blocked or 0)
-                y_offset = render_line(window, colors, x, y_offset, "Failed Pulls", counters.failed_pulls or 0)
-                y_offset = render_line(window, colors, x, y_offset, "Unreachable Targets", counters.unreachable_targets or 0)
-                y_offset = render_line(window, colors, x, y_offset, "Failures", counters.failures or 0)
-
-                local blocked_spell_rows = {}
-                for spell_id, rate in pairs(cast_guard_by_spell) do
-                    local sid = tonumber(spell_id)
-                    local per_min = tonumber(rate) or 0
-                    if sid and sid > 0 and per_min > 0 then
-                        blocked_spell_rows[#blocked_spell_rows + 1] = { spell_id = sid, per_min = per_min }
-                    end
-                end
-                table.sort(blocked_spell_rows, function(a, b)
-                    if a.per_min == b.per_min then
-                        return a.spell_id < b.spell_id
-                    end
-                    return a.per_min > b.per_min
-                end)
-                local top_rows = math.min(3, #blocked_spell_rows)
-                for i = 1, top_rows do
-                    local row = blocked_spell_rows[i]
-                    y_offset = render_line(
-                        window,
-                        colors,
-                        x,
-                        y_offset,
-                        string.format("Cast Guard Top %d", i),
-                        string.format("Spell %d (%.2f/min)", row.spell_id, row.per_min)
-                    )
-                end
-
-                return y_offset + 8
-            end
-        })
-    end)
-
+    -- ================================================================
+    -- TAB 2: SETTINGS
+    -- ================================================================
     ui:add_tab({ id = "settings", label = "Settings" }, function(t)
+
+        -- 1. Vendoring (row_list)
+        t:row_list({
+            label = "Vendoring",
+            footer = "Controls when the bot visits a vendor and which items are sold.",
+            elements = {
+                {
+                    type = "toggle",
+                    label = "Auto-Vendor",
+                    tooltip = TOOLTIPS.vendor_enabled,
+                    element = policy_toggle_default_on("vendor_enabled"),
+                },
+                {
+                    type = "toggle",
+                    label = "Repair Gear",
+                    tooltip = TOOLTIPS.repair_enabled,
+                    element = policy_toggle("repair_enabled"),
+                },
+                {
+                    type = "toggle",
+                    label = "Return to Anchor",
+                    tooltip = TOOLTIPS.return_to_anchor,
+                    element = runtime_toggle("vendor", "return_to_anchor", true),
+                },
+                {
+                    type = "stepper",
+                    label = "Min Free Slots",
+                    tooltip = TOOLTIPS.min_free_slots,
+                    element = policy_stepper("min_free_slots", 2),
+                    min = 0, max = 20, step = 1, decimals = 0,
+                },
+                {
+                    type = "stepper",
+                    label = "Search Radius",
+                    tooltip = TOOLTIPS.search_radius,
+                    element = runtime_stepper("vendor", "search_radius", 250),
+                    min = 50, max = 1000, step = 10, decimals = 0,
+                },
+            },
+        })
+
+        -- 2. Quality Filters (row_list type=toggle)
+        t:row_list({
+            label = "Quality Filters",
+            footer = "Items matching enabled qualities will be sold at vendors.",
+            elements = {
+                {
+                    type = "toggle",
+                    label = "Gray (Trash)",
+                    tooltip = TOOLTIPS.quality_filters,
+                    element = policy_toggle("sell_gray"),
+                },
+                {
+                    type = "toggle",
+                    label = "White (Common)",
+                    tooltip = TOOLTIPS.quality_filters,
+                    element = policy_toggle("sell_white"),
+                },
+                {
+                    type = "toggle",
+                    label = "Green (Uncommon)",
+                    tooltip = TOOLTIPS.quality_filters,
+                    element = policy_toggle("sell_green"),
+                },
+                {
+                    type = "toggle",
+                    label = "Blue (Rare)",
+                    tooltip = TOOLTIPS.quality_filters,
+                    element = policy_toggle("sell_blue"),
+                },
+                {
+                    type = "toggle",
+                    label = "Epic",
+                    tooltip = TOOLTIPS.quality_filters,
+                    element = policy_toggle("sell_epic"),
+                },
+            },
+        })
+
+        -- Quality presets (custom_render, compact row of buttons)
         t:custom_render({
             render_fn = function(self, y_offset)
                 local window = self.window
@@ -896,326 +1008,272 @@ local function register_tabs(ui, client)
                 local x = LAYOUT.padding_side
                 local width = window:get_size().x - (2 * LAYOUT.padding_side)
 
-                local runtime = client and client.get_runtime_config and client:get_runtime_config() or {}
-                local targeting = runtime.targeting or {}
-                local vendor = runtime.vendor or {}
-                local rotation = runtime.rotation or {}
-                local paladin_rotation = rotation.paladin or {}
-                local retri_rotation = paladin_rotation.retribution or {}
-                local warlock_rotation = rotation.warlock or {}
-                local affli_rotation = warlock_rotation.affliction or {}
-                local class_id = get_active_class_id(client)
-                local policy = client and client.get_policy_config and client:get_policy_config() or {}
-                local active_profile_id = client and client.get_active_profile_id and client:get_active_profile_id() or "default"
-
-                local function shallow_copy(value)
-                    local out = {}
-                    for k, v in pairs(value or {}) do
-                        out[k] = v
-                    end
-                    return out
-                end
-
-                local function set_retri_policy(key, value)
-                    local new_paladin = shallow_copy(rotation.paladin or {})
-                    local new_retri = shallow_copy(new_paladin.retribution or {})
-                    new_retri[key] = value
-                    new_paladin.retribution = new_retri
-
-                    local ok, err = client:set_runtime_setting("rotation", "paladin", new_paladin, false)
-                    _last_settings_result = ok and ("Updated retribution." .. tostring(key)) or
-                        ("Update failed: " .. tostring(err))
-                end
-
-                local function set_affliction_policy(key, value)
-                    local new_warlock = shallow_copy(rotation.warlock or {})
-                    local new_affli = shallow_copy(new_warlock.affliction or {})
-                    new_affli[key] = value
-                    new_warlock.affliction = new_affli
-
-                    local ok, err = client:set_runtime_setting("rotation", "warlock", new_warlock, false)
-                    _last_settings_result = ok and ("Updated affliction." .. tostring(key)) or
-                        ("Update failed: " .. tostring(err))
-                end
-
-                y_offset = render_line(window, colors, x, y_offset, "Active Profile", active_profile_id)
-                y_offset = y_offset + 4
-
-                local section_y = y_offset
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Vendoring Policy")
-                render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.settings_profile)
-                y_offset = render_toggle(window, colors, x, y_offset, width, "Auto-Vendor Enabled",
-                    policy.vendor_enabled ~= false,
-                    function(new_value)
-                        local ok, err = client:set_policy_setting("vendor_enabled", new_value, true)
-                        _last_settings_result = ok and "Updated vendor_enabled" or ("Update failed: " .. tostring(err))
-                    end,
-                    TOOLTIPS.vendor_enabled, self)
-
-                y_offset = render_stepper(window, colors, x, y_offset, width,
-                    "Min Free Slots", tonumber(policy.min_free_slots) or 2, 1.0, 0.0, 20.0, 0,
-                    function(new_value)
-                        local ok, err = client:set_policy_setting("min_free_slots", math.floor(new_value), false)
-                        _last_settings_result = ok and "Updated min_free_slots" or ("Update failed: " .. tostring(err))
-                    end,
-                    TOOLTIPS.min_free_slots, self)
-
-                y_offset = render_toggle(window, colors, x, y_offset, width, "Return To Grind Anchor",
-                    vendor.return_to_anchor ~= false,
-                    function(new_value)
-                        local ok, err = client:set_runtime_setting("vendor", "return_to_anchor", new_value, false)
-                        _last_settings_result = ok and "Updated return_to_anchor" or ("Update failed: " .. tostring(err))
-                    end,
-                    TOOLTIPS.return_to_anchor, self)
-
-                y_offset = render_toggle(window, colors, x, y_offset, width, "Repair Gear At Vendor",
-                    policy.repair_enabled == true,
-                    function(new_value)
-                        local ok, err = client:set_policy_setting("repair_enabled", new_value, false)
-                        _last_settings_result = ok and "Updated repair_enabled" or ("Update failed: " .. tostring(err))
-                    end,
-                    TOOLTIPS.repair_enabled, self)
-
-                y_offset = y_offset + 2
-                y_offset = render_line(window, colors, x, y_offset, "Quality Filters", "Tick qualities to auto-sell")
-                render_help_badge(self, window, colors, x + width - 18, y_offset - 14, TOOLTIPS.quality_filters)
-                y_offset = render_line(window, colors, x, y_offset, "Preset", "One click updates all quality checkboxes")
-                render_help_badge(self, window, colors, x + width - 18, y_offset - 14, TOOLTIPS.quality_preset)
-                y_offset = y_offset + 2
-
-                local preset_gap = 6
+                local preset_gap = 8
+                local preset_h = 28
                 local preset_w = math.floor((width - (preset_gap * 2)) / 3)
-                local preset_h = 20
 
-                if render_button(window, colors, x, y_offset, preset_w, preset_h, "Trash Only", true) then
+                local function render_preset_btn(bx, bw, label)
+                    local s = vec2.new(bx, y_offset)
+                    local e = vec2.new(bx + bw, y_offset + preset_h)
+                    local hov = window:is_mouse_hovering_rect(s, e)
+                    if hov then window:is_mouse_hovering_rect_block_movement(s, e) end
+                    local bg = hov and lighten_color(colors.primary_accent, 15) or colors.primary_accent
+                    window:render_rect_filled(s, e, bg, 8)
+                    local ts = window:get_text_size(label)
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(bx + (bw - ts.x) / 2, y_offset + (preset_h - ts.y) / 2),
+                        colors.text_primary, label)
+                    return hov and window:is_rect_clicked(s, e)
+                end
+
+                if render_preset_btn(x, preset_w, "Trash Only") then
                     local ok, err = apply_quality_preset(client, true, false, false, false, false)
                     _last_settings_result = ok and "Applied preset: Trash Only" or ("Update failed: " .. tostring(err))
                 end
-                if render_button(window, colors, x + preset_w + preset_gap, y_offset, preset_w, preset_h, "Common+", true) then
+                if render_preset_btn(x + preset_w + preset_gap, preset_w, "Common+") then
                     local ok, err = apply_quality_preset(client, true, true, false, false, false)
                     _last_settings_result = ok and "Applied preset: Common+" or ("Update failed: " .. tostring(err))
                 end
-                if render_button(window, colors, x + (preset_w * 2) + (preset_gap * 2), y_offset, preset_w, preset_h, "Uncommon+", true) then
+                if render_preset_btn(x + (preset_w * 2) + (preset_gap * 2), preset_w, "Uncommon+") then
                     local ok, err = apply_quality_preset(client, true, true, true, false, false)
                     _last_settings_result = ok and "Applied preset: Uncommon+" or ("Update failed: " .. tostring(err))
                 end
-                attach_tooltip(self, window, vec2.new(x, y_offset), vec2.new(x + width, y_offset + preset_h), TOOLTIPS.quality_preset)
-                y_offset = y_offset + preset_h + 6
 
-                local col_gap = 8
-                local col_w = math.floor((width - (col_gap * 2)) / 3)
-                local row_h = 22
-
-                if render_checkbox_button(window, colors, x, y_offset, col_w, "Gray", policy.sell_gray == true, TOOLTIPS.quality_filters, self) then
-                    local ok, err = client:set_policy_setting("sell_gray", policy.sell_gray ~= true, false)
-                    _last_settings_result = ok and "Updated sell_gray" or ("Update failed: " .. tostring(err))
-                end
-                if render_checkbox_button(window, colors, x + col_w + col_gap, y_offset, col_w, "White", policy.sell_white == true, TOOLTIPS.quality_filters, self) then
-                    local ok, err = client:set_policy_setting("sell_white", policy.sell_white ~= true, false)
-                    _last_settings_result = ok and "Updated sell_white" or ("Update failed: " .. tostring(err))
-                end
-                if render_checkbox_button(window, colors, x + (col_w * 2) + (col_gap * 2), y_offset, col_w, "Green", policy.sell_green == true, TOOLTIPS.quality_filters, self) then
-                    local ok, err = client:set_policy_setting("sell_green", policy.sell_green ~= true, false)
-                    _last_settings_result = ok and "Updated sell_green" or ("Update failed: " .. tostring(err))
-                end
-                y_offset = y_offset + row_h + 4
-
-                if render_checkbox_button(window, colors, x, y_offset, col_w, "Blue", policy.sell_blue == true, TOOLTIPS.quality_filters, self) then
-                    local ok, err = client:set_policy_setting("sell_blue", policy.sell_blue ~= true, false)
-                    _last_settings_result = ok and "Updated sell_blue" or ("Update failed: " .. tostring(err))
-                end
-                if render_checkbox_button(window, colors, x + col_w + col_gap, y_offset, col_w, "Epic", policy.sell_epic == true, TOOLTIPS.quality_filters, self) then
-                    local ok, err = client:set_policy_setting("sell_epic", policy.sell_epic ~= true, false)
-                    _last_settings_result = ok and "Updated sell_epic" or ("Update failed: " .. tostring(err))
-                end
-                y_offset = y_offset + row_h + 4
-                y_offset = render_line(window, colors, x, y_offset, "Legacy Fallback", "sell_quality_max applies only if explicit toggle missing")
-                y_offset = y_offset + 8
-
-                section_y = y_offset
-                if class_id == PALADIN_CLASS_ID then
-                    y_offset = render_section_title(window, colors, x, y_offset, width, "Retribution Combat")
-                    render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.ret_section)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Holy Light HP", tonumber(retri_rotation.holy_light_hp_pct) or 0.60, 0.02, 0.10, 0.90, 2,
-                        function(new_value)
-                            set_retri_policy("holy_light_hp_pct", new_value)
-                        end,
-                        TOOLTIPS.ret_holy_hp, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Flash Heal HP", tonumber(retri_rotation.flash_light_hp_pct) or 0.45, 0.02, 0.10, 0.80, 2,
-                        function(new_value)
-                            set_retri_policy("flash_light_hp_pct", new_value)
-                        end,
-                        TOOLTIPS.ret_flash_hp, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Flash OOM Mana", tonumber(retri_rotation.flash_light_very_oom_mana_pct) or 0.12, 0.01, 0.03, 0.40, 2,
-                        function(new_value)
-                            set_retri_policy("flash_light_very_oom_mana_pct", new_value)
-                        end,
-                        TOOLTIPS.ret_flash_oom, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Low Mana Downrank", tonumber(retri_rotation.heal_low_mana_threshold) or 0.22, 0.01, 0.05, 0.60, 2,
-                        function(new_value)
-                            set_retri_policy("heal_low_mana_threshold", new_value)
-                        end,
-                        TOOLTIPS.ret_low_mana, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Health Potion HP", tonumber(retri_rotation.health_potion_hp_pct) or 0.30, 0.02, 0.10, 0.90, 2,
-                        function(new_value)
-                            set_retri_policy("health_potion_hp_pct", new_value)
-                        end,
-                        TOOLTIPS.ret_health_pot, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Mana Potion Mana", tonumber(retri_rotation.mana_potion_mana_pct) or 0.15, 0.01, 0.05, 0.80, 2,
-                        function(new_value)
-                            set_retri_policy("mana_potion_mana_pct", new_value)
-                        end,
-                        TOOLTIPS.ret_mana_pot, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Consecration ST Mana", tonumber(retri_rotation.consecration_st_min_mana_pct) or 0.35, 0.02, 0.10, 0.90, 2,
-                        function(new_value)
-                            set_retri_policy("consecration_st_min_mana_pct", new_value)
-                        end,
-                        TOOLTIPS.ret_consec, self)
-                    y_offset = y_offset + 4
-                elseif class_id == WARLOCK_CLASS_ID then
-                    y_offset = render_section_title(window, colors, x, y_offset, width, "Affliction Combat")
-                    render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.wl_section)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Drink Mana", tonumber(affli_rotation.drink_mana_pct) or 0.40, 0.01, 0.05, 0.95, 2,
-                        function(new_value)
-                            set_affliction_policy("drink_mana_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_drink, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Eat Health", tonumber(affli_rotation.eat_health_pct) or 0.65, 0.01, 0.10, 0.95, 2,
-                        function(new_value)
-                            set_affliction_policy("eat_health_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_eat, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Life Tap Min HP", tonumber(affli_rotation.life_tap_min_health_pct) or 0.50, 0.01, 0.10, 0.95, 2,
-                        function(new_value)
-                            set_affliction_policy("life_tap_min_health_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_lifetap_min_hp, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Life Tap Max Mana", tonumber(affli_rotation.life_tap_max_mana_pct) or 0.60, 0.01, 0.05, 0.95, 2,
-                        function(new_value)
-                            set_affliction_policy("life_tap_max_mana_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_lifetap_max_mana, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Life Tap OOC Mana", tonumber(affli_rotation.life_tap_ooc_max_mana_pct) or 0.85, 0.01, 0.10, 0.99, 2,
-                        function(new_value)
-                            set_affliction_policy("life_tap_ooc_max_mana_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_lifetap_ooc_max_mana, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Death Coil HP", tonumber(affli_rotation.death_coil_hp_pct) or 0.25, 0.01, 0.05, 0.80, 2,
-                        function(new_value)
-                            set_affliction_policy("death_coil_hp_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_death_coil_hp, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Drain Life HP", tonumber(affli_rotation.drain_life_hp_pct) or 0.45, 0.01, 0.10, 0.90, 2,
-                        function(new_value)
-                            set_affliction_policy("drain_life_hp_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_drain_life_hp, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Health Funnel Pet HP", tonumber(affli_rotation.health_funnel_pet_hp_pct) or 0.30, 0.01, 0.05, 0.90, 2,
-                        function(new_value)
-                            set_affliction_policy("health_funnel_pet_hp_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_funnel_pet_hp, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Health Potion HP", tonumber(affli_rotation.health_potion_hp_pct) or 0.25, 0.01, 0.05, 0.90, 2,
-                        function(new_value)
-                            set_affliction_policy("health_potion_hp_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_health_pot, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Mana Potion Mana", tonumber(affli_rotation.mana_potion_mana_pct) or 0.15, 0.01, 0.05, 0.80, 2,
-                        function(new_value)
-                            set_affliction_policy("mana_potion_mana_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_mana_pot, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Mana Potion Min HP", tonumber(affli_rotation.mana_potion_min_hp_pct) or 0.35, 0.01, 0.05, 0.90, 2,
-                        function(new_value)
-                            set_affliction_policy("mana_potion_min_hp_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_mana_pot_min_hp, self)
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Wand Mana Floor", tonumber(affli_rotation.wand_mana_pct) or 0.08, 0.01, 0.00, 0.50, 2,
-                        function(new_value)
-                            set_affliction_policy("wand_mana_pct", new_value)
-                        end,
-                        TOOLTIPS.wl_wand_mana, self)
-                    y_offset = y_offset + 4
-                else
-                    y_offset = render_section_title(window, colors, x, y_offset, width, "Combat Routine")
-                    y_offset = render_line(window, colors, x, y_offset, "Active Class", class_label(class_id))
-                    if class_id <= 0 then
-                        y_offset = render_line(window, colors, x, y_offset, "Routine Settings", "Waiting for class context")
-                    else
-                        y_offset = render_line(window, colors, x, y_offset, "Routine Settings", "No settings for current class")
-                    end
-                    y_offset = y_offset + 4
+                if window:is_mouse_hovering_rect(vec2.new(x, y_offset), vec2.new(x + width, y_offset + preset_h)) then
+                    self._tooltip = TOOLTIPS.quality_preset
                 end
 
-                section_y = y_offset
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Navigation & Targeting")
-                render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.expert_panel)
-                y_offset = render_stepper(window, colors, x, y_offset, width,
-                    "Vendor Search Radius", tonumber(vendor.search_radius) or 250.0, 10.0, 50.0, 1000.0, 1,
-                    function(new_value)
-                        local ok, err = client:set_runtime_setting("vendor", "search_radius", new_value, false)
-                        _last_settings_result = ok and "Updated vendor.search_radius" or ("Update failed: " .. tostring(err))
+                return y_offset + preset_h + 4
+            end,
+        })
+
+        -- 3. Combat -- Paladin (Retribution)
+        t:row_list({
+            label = "Combat -- Paladin",
+            footer = "Thresholds for healing, potions, and resource management.",
+            visible_when = function()
+                return get_active_class_id(client) == PALADIN_CLASS_ID
+            end,
+            elements = {
+                {
+                    type = "stepper", label = "Holy Light HP",
+                    tooltip = TOOLTIPS.ret_holy_hp,
+                    element = retri_stepper("holy_light_hp_pct", 0.60),
+                    min = 0.10, max = 0.90, step = 0.02, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Flash Heal HP",
+                    tooltip = TOOLTIPS.ret_flash_hp,
+                    element = retri_stepper("flash_light_hp_pct", 0.45),
+                    min = 0.10, max = 0.80, step = 0.02, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Flash OOM Mana",
+                    tooltip = TOOLTIPS.ret_flash_oom,
+                    element = retri_stepper("flash_light_very_oom_mana_pct", 0.12),
+                    min = 0.03, max = 0.40, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Low Mana Downrank",
+                    tooltip = TOOLTIPS.ret_low_mana,
+                    element = retri_stepper("heal_low_mana_threshold", 0.22),
+                    min = 0.05, max = 0.60, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Health Potion HP",
+                    tooltip = TOOLTIPS.ret_health_pot,
+                    element = retri_stepper("health_potion_hp_pct", 0.30),
+                    min = 0.10, max = 0.90, step = 0.02, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Mana Potion Mana",
+                    tooltip = TOOLTIPS.ret_mana_pot,
+                    element = retri_stepper("mana_potion_mana_pct", 0.15),
+                    min = 0.05, max = 0.80, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Consecration ST Mana",
+                    tooltip = TOOLTIPS.ret_consec,
+                    element = retri_stepper("consecration_st_min_mana_pct", 0.35),
+                    min = 0.10, max = 0.90, step = 0.02, decimals = 2,
+                },
+            },
+        })
+
+        -- 3b. Combat -- Warlock (Affliction)
+        t:row_list({
+            label = "Combat -- Warlock",
+            footer = "Thresholds for healing, potions, and resource management.",
+            visible_when = function()
+                return get_active_class_id(client) == WARLOCK_CLASS_ID
+            end,
+            elements = {
+                {
+                    type = "stepper", label = "Drink Mana",
+                    tooltip = TOOLTIPS.wl_drink,
+                    element = affli_stepper("drink_mana_pct", 0.40),
+                    min = 0.05, max = 0.95, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Eat Health",
+                    tooltip = TOOLTIPS.wl_eat,
+                    element = affli_stepper("eat_health_pct", 0.65),
+                    min = 0.10, max = 0.95, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Life Tap Min HP",
+                    tooltip = TOOLTIPS.wl_lifetap_min_hp,
+                    element = affli_stepper("life_tap_min_health_pct", 0.50),
+                    min = 0.10, max = 0.95, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Life Tap Max Mana",
+                    tooltip = TOOLTIPS.wl_lifetap_max_mana,
+                    element = affli_stepper("life_tap_max_mana_pct", 0.60),
+                    min = 0.05, max = 0.95, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Life Tap OOC Mana",
+                    tooltip = TOOLTIPS.wl_lifetap_ooc_max_mana,
+                    element = affli_stepper("life_tap_ooc_max_mana_pct", 0.85),
+                    min = 0.10, max = 0.99, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Death Coil HP",
+                    tooltip = TOOLTIPS.wl_death_coil_hp,
+                    element = affli_stepper("death_coil_hp_pct", 0.25),
+                    min = 0.05, max = 0.80, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Drain Life HP",
+                    tooltip = TOOLTIPS.wl_drain_life_hp,
+                    element = affli_stepper("drain_life_hp_pct", 0.45),
+                    min = 0.10, max = 0.90, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Health Funnel Pet HP",
+                    tooltip = TOOLTIPS.wl_funnel_pet_hp,
+                    element = affli_stepper("health_funnel_pet_hp_pct", 0.30),
+                    min = 0.05, max = 0.90, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Health Potion HP",
+                    tooltip = TOOLTIPS.wl_health_pot,
+                    element = affli_stepper("health_potion_hp_pct", 0.25),
+                    min = 0.05, max = 0.90, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Mana Potion Mana",
+                    tooltip = TOOLTIPS.wl_mana_pot,
+                    element = affli_stepper("mana_potion_mana_pct", 0.15),
+                    min = 0.05, max = 0.80, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Mana Potion Min HP",
+                    tooltip = TOOLTIPS.wl_mana_pot_min_hp,
+                    element = affli_stepper("mana_potion_min_hp_pct", 0.35),
+                    min = 0.05, max = 0.90, step = 0.01, decimals = 2,
+                },
+                {
+                    type = "stepper", label = "Wand Mana Floor",
+                    tooltip = TOOLTIPS.wl_wand_mana,
+                    element = affli_stepper("wand_mana_pct", 0.08),
+                    min = 0.00, max = 0.50, step = 0.01, decimals = 2,
+                },
+            },
+        })
+
+        -- 3c. Combat -- unsupported class placeholder
+        t:row_list({
+            label = "Combat",
+            visible_when = function()
+                local cid = get_active_class_id(client)
+                return cid ~= PALADIN_CLASS_ID and cid ~= WARLOCK_CLASS_ID
+            end,
+            elements = {
+                {
+                    type = "info", label = "Active Class",
+                    value_fn = function()
+                        return class_label(get_active_class_id(client))
                     end,
-                    TOOLTIPS.search_radius, self)
-
-                y_offset = render_toggle(window, colors, x, y_offset, width, "Expert Panel",
-                    _show_expert_settings == true,
-                    function(new_value)
-                        _show_expert_settings = new_value == true
+                },
+                {
+                    type = "info", label = "Routine Settings",
+                    value_fn = function()
+                        local cid = get_active_class_id(client)
+                        if cid <= 0 then
+                            return "Waiting for class context"
+                        end
+                        return "No settings for current class"
                     end,
-                    TOOLTIPS.expert_panel, self)
+                },
+            },
+        })
 
-                if _show_expert_settings then
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Target Base Radius", tonumber(targeting.base_radius) or 45.0, 1.0, 10.0, 100.0, 1,
-                        function(new_value)
-                            local max_radius = tonumber(targeting.max_radius) or new_value
-                            local clamped = math.min(new_value, max_radius)
-                            local ok, err = client:set_runtime_setting("targeting", "base_radius", clamped, false)
-                            _last_settings_result = ok and "Updated targeting.base_radius" or ("Update failed: " .. tostring(err))
-                        end,
-                        TOOLTIPS.target_base, self)
+        -- 4. Advanced (row_list)
+        t:row_list({
+            label = "Advanced",
+            elements = {
+                {
+                    type = "toggle",
+                    label = "Show Advanced",
+                    tooltip = TOOLTIPS.expert_panel,
+                    element = {
+                        get_state = function() return _show_expert_settings == true end,
+                        set = function(_, v) _show_expert_settings = v == true end,
+                    },
+                },
+                {
+                    type = "stepper", label = "Target Base Radius",
+                    tooltip = TOOLTIPS.target_base,
+                    element = targeting_stepper("base_radius", "max_radius", 45),
+                    min = 10, max = 100, step = 1, decimals = 0,
+                    visible_when = function() return _show_expert_settings end,
+                },
+                {
+                    type = "stepper", label = "Target Max Radius",
+                    tooltip = TOOLTIPS.target_max,
+                    element = targeting_stepper("max_radius", "base_radius", 75),
+                    min = 10, max = 140, step = 1, decimals = 0,
+                    visible_when = function() return _show_expert_settings end,
+                },
+                {
+                    type = "stepper", label = "Legacy Sell Quality",
+                    tooltip = TOOLTIPS.legacy_quality,
+                    element = policy_stepper("sell_quality_max", 1),
+                    min = 0, max = 6, step = 1, decimals = 0,
+                    visible_when = function() return _show_expert_settings end,
+                },
+            },
+        })
 
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Target Max Radius", tonumber(targeting.max_radius) or 75.0, 1.0, 10.0, 140.0, 1,
-                        function(new_value)
-                            local base_radius = tonumber(targeting.base_radius) or 10
-                            local clamped = math.max(new_value, base_radius)
-                            local ok, err = client:set_runtime_setting("targeting", "max_radius", clamped, false)
-                            _last_settings_result = ok and "Updated targeting.max_radius" or ("Update failed: " .. tostring(err))
-                        end,
-                        TOOLTIPS.target_max, self)
+        -- 5. Save (custom_render)
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local width = window:get_size().x - (2 * LAYOUT.padding_side)
+                local button_h = 32
 
-                    y_offset = render_stepper(window, colors, x, y_offset, width,
-                        "Legacy Sell Quality Max", tonumber(policy.sell_quality_max) or 1, 1.0, 0.0, 6.0, 0,
-                        function(new_value)
-                            local ok, err = client:set_policy_setting("sell_quality_max", math.floor(new_value), false)
-                            _last_settings_result = ok and "Updated sell_quality_max" or ("Update failed: " .. tostring(err))
-                        end,
-                        TOOLTIPS.legacy_quality, self)
+                local btn_start = vec2.new(x, y_offset)
+                local btn_end = vec2.new(x + width, y_offset + button_h)
+                local hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
+                if hovered then
+                    window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
+                    self._tooltip = TOOLTIPS.save_settings
                 end
 
-                local button_h = 22
-                if render_button(window, colors, x, y_offset, width, button_h, "Save Settings To Active Profile", true) then
+                local bg = hovered and lighten_color(colors.primary_accent, 15) or colors.primary_accent
+                window:render_rect_filled(btn_start, btn_end, bg, 8)
+
+                local label = "Save to Active Profile"
+                local ts = window:get_text_size(label)
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x + (width - ts.x) / 2, y_offset + (button_h - ts.y) / 2),
+                    colors.text_primary, label)
+
+                if hovered and window:is_rect_clicked(btn_start, btn_end) then
                     local active = client and client.get_active_profile_id and client:get_active_profile_id() or ""
                     local ok, err = false, "not_available"
                     if client and client.save_profile then
@@ -1223,19 +1281,274 @@ local function register_tabs(ui, client)
                     end
                     _last_settings_result = ok and "Settings saved" or ("Save failed: " .. tostring(err))
                 end
-                attach_tooltip(self, window, vec2.new(x, y_offset), vec2.new(x + width, y_offset + button_h), TOOLTIPS.save_settings)
 
-                y_offset = y_offset + button_h + 8
+                y_offset = y_offset + button_h + 6
+
                 if _last_settings_result then
-                    y_offset = render_line(window, colors, x, y_offset, "Settings", _last_settings_result)
+                    local fb = "Status: " .. tostring(_last_settings_result)
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.text_secondary, fb)
+                    y_offset = y_offset + window:get_text_size(fb).y + 4
                 end
 
-                return y_offset + 8
-            end
+                return y_offset
+            end,
         })
     end)
 
+    -- ================================================================
+    -- TAB 3: TELEMETRY
+    -- ================================================================
+    ui:add_tab({ id = "telemetry", label = "Telemetry" }, function(t)
+
+        -- 1. Performance (metric_grid)
+        t:metric_grid({
+            label = "Performance",
+            elements = {
+                {
+                    label = "XP/hr",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.rates then return 0 end
+                        return tonumber(snap.telemetry.rates.xp_per_hour) or 0
+                    end,
+                    format_fn = function(v) return string.format("%.0f", v) end,
+                },
+                {
+                    label = "Kills/hr",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.rates then return 0 end
+                        return tonumber(snap.telemetry.rates.kills_per_hour) or 0
+                    end,
+                    format_fn = function(v) return string.format("%.1f", v) end,
+                },
+                {
+                    label = "Deaths/hr",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.rates then return 0 end
+                        return tonumber(snap.telemetry.rates.deaths_per_hour) or 0
+                    end,
+                    format_fn = function(v) return string.format("%.2f", v) end,
+                    color = color.new(255, 69, 58, 255),
+                },
+                {
+                    label = "Gold/hr",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.rates then return 0 end
+                        return tonumber(snap.telemetry.rates.gold_per_hour) or 0
+                    end,
+                    format_fn = function(v) return string.format("%.1f", v) end,
+                    color = color.new(255, 214, 10, 255),
+                },
+                {
+                    label = "Combat Gap",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.rates then return 0 end
+                        return tonumber(snap.telemetry.rates.combat_downtime_avg_secs) or 0
+                    end,
+                    format_fn = function(v) return string.format("%.1fs", v) end,
+                },
+                {
+                    label = "Loot Events",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return 0 end
+                        return tonumber(snap.telemetry.counters.loot_events) or 0
+                    end,
+                    format_fn = function(v) return string.format("%d", v) end,
+                },
+            },
+        })
+
+        -- 2. Uptime (progress_bar_list)
+        t:progress_bar_list({
+            label = "Uptime",
+            elements = {
+                {
+                    label = "Combat",
+                    tooltip = "Fraction of session spent in active combat",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.rates then return 0 end
+                        return tonumber(snap.telemetry.rates.combat_uptime_pct) or 0
+                    end,
+                    color = color.new(255, 69, 58, 230),
+                },
+                {
+                    label = "Idle (Full Res)",
+                    tooltip = "Fraction of idle time at full resources (wasted regen)",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.rates then return 0 end
+                        return tonumber(snap.telemetry.rates.idle_full_resource_pct) or 0
+                    end,
+                    color = color.new(255, 214, 10, 230),
+                },
+            },
+        })
+
+        -- 3. Counters (row_list type=info)
+        t:row_list({
+            label = "Counters",
+            elements = {
+                {
+                    type = "info", label = "Kills",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.kills or 0)
+                    end,
+                },
+                {
+                    type = "info", label = "Deaths",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.deaths or 0)
+                    end,
+                },
+                {
+                    type = "info", label = "Vendor Trips",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.vendor_trips or 0)
+                    end,
+                },
+                {
+                    type = "info", label = "Failed Pulls",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.failed_pulls or 0)
+                    end,
+                },
+                {
+                    type = "info", label = "Cast Guard Blocks",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.cast_guard_blocked or 0)
+                    end,
+                },
+                {
+                    type = "info", label = "Unreachable Targets",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.unreachable_targets or 0)
+                    end,
+                },
+            },
+        })
+
+        -- 4. Cast Guard Top Blocks (row_list type=info, visible when data exists)
+        t:row_list({
+            label = "Cast Guard -- Top Blocks",
+            visible_when = function()
+                local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                if not snap or not snap.telemetry or not snap.telemetry.rates then return false end
+                local by_spell = snap.telemetry.rates.cast_guard_blocked_per_min_by_spell
+                if not by_spell then return false end
+                for _ in pairs(by_spell) do return true end
+                return false
+            end,
+            elements = {
+                {
+                    type = "info", label = "#1",
+                    value_fn = function()
+                        local rows = _get_sorted_blocked_spells(client)
+                        if not rows or #rows < 1 then return "-" end
+                        return string.format("Spell %d  %.2f/min", rows[1].spell_id, rows[1].per_min)
+                    end,
+                    visible_when = function()
+                        local rows = _get_sorted_blocked_spells(client)
+                        return rows and #rows >= 1
+                    end,
+                },
+                {
+                    type = "info", label = "#2",
+                    value_fn = function()
+                        local rows = _get_sorted_blocked_spells(client)
+                        if not rows or #rows < 2 then return "-" end
+                        return string.format("Spell %d  %.2f/min", rows[2].spell_id, rows[2].per_min)
+                    end,
+                    visible_when = function()
+                        local rows = _get_sorted_blocked_spells(client)
+                        return rows and #rows >= 2
+                    end,
+                },
+                {
+                    type = "info", label = "#3",
+                    value_fn = function()
+                        local rows = _get_sorted_blocked_spells(client)
+                        if not rows or #rows < 3 then return "-" end
+                        return string.format("Spell %d  %.2f/min", rows[3].spell_id, rows[3].per_min)
+                    end,
+                    visible_when = function()
+                        local rows = _get_sorted_blocked_spells(client)
+                        return rows and #rows >= 3
+                    end,
+                },
+            },
+        })
+    end)
+
+    -- ================================================================
+    -- TAB 4: PROFILES
+    -- ================================================================
     ui:add_tab({ id = "profiles", label = "Profiles" }, function(t)
+
+        -- 1. Active Profile (row_list type=info)
+        t:row_list({
+            label = "Active Profile",
+            elements = {
+                {
+                    type = "info",
+                    label = "Profile ID",
+                    tooltip = TOOLTIPS.profile_manager,
+                    value_fn = function()
+                        return client and client.get_active_profile_id and client:get_active_profile_id() or "default"
+                    end,
+                },
+            },
+        })
+
+        -- 2. Saved Profiles (listbox)
+        t:listbox({
+            label = "Saved Profiles",
+            id = "profiles_list",
+            elements = {
+                {
+                    id = "profile_listbox",
+                    visible_rows = 8,
+                    entries_fn = function()
+                        local profiles = client and client.list_profiles and client:list_profiles() or {}
+                        local entries = {}
+                        for i = 1, #profiles do
+                            local p = profiles[i]
+                            local active_id = client and client.get_active_profile_id and client:get_active_profile_id() or ""
+                            local is_active = tostring(p.profile_id) == tostring(active_id)
+                            entries[#entries + 1] = {
+                                label = tostring(p.name or p.profile_id),
+                                sublabel = is_active and "Active" or "",
+                                color = is_active and color.new(48, 209, 88, 255) or nil,
+                            }
+                        end
+                        return entries
+                    end,
+                    on_select = function(idx, _entry)
+                        _selected_profile_index = idx
+                    end,
+                },
+            },
+        })
+
+        -- 3. Actions (custom_render)
         t:custom_render({
             render_fn = function(self, y_offset)
                 local window = self.window
@@ -1252,49 +1565,49 @@ local function register_tabs(ui, client)
 
                 if _selected_profile_index < 1 then _selected_profile_index = 1 end
                 if _selected_profile_index > #profiles then _selected_profile_index = #profiles end
-
                 local selected = profiles[_selected_profile_index]
-                local active_id = client and client.get_active_profile_id and client:get_active_profile_id() or ""
 
-                local section_y = y_offset
-                y_offset = render_section_title(window, colors, x, y_offset, width, "Profile Manager")
-                render_help_badge(self, window, colors, x + width - 18, section_y, TOOLTIPS.profile_manager)
+                local button_h = 28
+                local gap = 8
+                local btn_w = math.floor((width - gap * 4) / 5)
 
-                y_offset = render_line(window, colors, x, y_offset, "Active", active_id)
-                y_offset = render_line(window, colors, x, y_offset, "Selected", string.format("%s (%s)", tostring(selected.name), tostring(selected.profile_id)))
-                y_offset = render_line(window, colors, x, y_offset, "Index", string.format("%d/%d", _selected_profile_index, #profiles))
-                y_offset = y_offset + 4
-
-                local button_h = 22
-                local gap = 6
-                local btn_w = (width - gap) / 2
-
-                if render_button(window, colors, x, y_offset, btn_w, button_h, "Prev", _selected_profile_index > 1) then
-                    _selected_profile_index = _selected_profile_index - 1
+                local function make_btn(bx, bw, label, enabled)
+                    local s = vec2.new(bx, y_offset)
+                    local e = vec2.new(bx + bw, y_offset + button_h)
+                    local hov = enabled and window:is_mouse_hovering_rect(s, e) or false
+                    if hov then window:is_mouse_hovering_rect_block_movement(s, e) end
+                    local bg = enabled
+                        and (hov and lighten_color(colors.primary_accent, 15) or colors.primary_accent)
+                        or colors.checkbox_inactive
+                    window:render_rect_filled(s, e, bg, 8)
+                    local ts = window:get_text_size(label)
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(bx + (bw - ts.x) / 2, y_offset + (button_h - ts.y) / 2),
+                        enabled and colors.text_primary or colors.text_disabled, label)
+                    return enabled and hov and window:is_rect_clicked(s, e)
                 end
-                if render_button(window, colors, x + btn_w + gap, y_offset, btn_w, button_h, "Next", _selected_profile_index < #profiles) then
-                    _selected_profile_index = _selected_profile_index + 1
-                end
-                attach_tooltip(self, window, vec2.new(x, y_offset), vec2.new(x + width, y_offset + button_h), TOOLTIPS.profile_manager)
 
-                y_offset = y_offset + button_h + 6
-
-                if render_button(window, colors, x, y_offset, btn_w, button_h, "Load Selected", true) then
+                local bx = x
+                if make_btn(bx, btn_w, "Load", true) then
                     local ok, err = client:load_profile(selected.profile_id)
-                    _last_profile_result = ok and ("Loaded " .. tostring(selected.name)) or ("Load failed: " .. tostring(err))
+                    _last_profile_result = ok and ("Loaded " .. tostring(selected.name))
+                        or ("Load failed: " .. tostring(err))
                 end
-                if render_button(window, colors, x + btn_w + gap, y_offset, btn_w, button_h, "Save Selected", true) then
+
+                bx = bx + btn_w + gap
+                if make_btn(bx, btn_w, "Save", true) then
                     local ok, err = client:save_profile(selected.profile_id, selected.name)
-                    _last_profile_result = ok and ("Saved " .. tostring(selected.name)) or ("Save failed: " .. tostring(err))
+                    _last_profile_result = ok and ("Saved " .. tostring(selected.name))
+                        or ("Save failed: " .. tostring(err))
                 end
 
-                y_offset = y_offset + button_h + 6
-
-                if render_button(window, colors, x, y_offset, btn_w, button_h, "Create New", true) then
+                bx = bx + btn_w + gap
+                if make_btn(bx, btn_w, "Create", true) then
                     local stamp = math.floor((core and core.time and core.time()) or 0)
                     local name = "Profile " .. tostring(stamp)
                     local ok, err, new_id = client:create_profile(name)
-                    _last_profile_result = ok and ("Created " .. tostring(name)) or ("Create failed: " .. tostring(err))
+                    _last_profile_result = ok and ("Created " .. tostring(name))
+                        or ("Create failed: " .. tostring(err))
                     if ok then
                         local refreshed = client:list_profiles()
                         for i = 1, #refreshed do
@@ -1305,18 +1618,21 @@ local function register_tabs(ui, client)
                         end
                     end
                 end
-                if render_button(window, colors, x + btn_w + gap, y_offset, btn_w, button_h, "Rename Selected", true) then
+
+                bx = bx + btn_w + gap
+                if make_btn(bx, btn_w, "Rename", true) then
                     local stamp = math.floor((core and core.time and core.time()) or 0)
                     local new_name = string.format("%s %d", tostring(selected.name), stamp)
                     local ok, err = client:rename_profile(selected.profile_id, new_name)
-                    _last_profile_result = ok and ("Renamed to " .. tostring(new_name)) or ("Rename failed: " .. tostring(err))
+                    _last_profile_result = ok and ("Renamed to " .. tostring(new_name))
+                        or ("Rename failed: " .. tostring(err))
                 end
 
-                y_offset = y_offset + button_h + 6
-
-                if render_button(window, colors, x, y_offset, width, button_h, "Delete Selected", #profiles > 1) then
+                bx = bx + btn_w + gap
+                if make_btn(bx, btn_w, "Delete", #profiles > 1) then
                     local ok, err = client:delete_profile(selected.profile_id)
-                    _last_profile_result = ok and ("Deleted " .. tostring(selected.name)) or ("Delete failed: " .. tostring(err))
+                    _last_profile_result = ok and ("Deleted " .. tostring(selected.name))
+                        or ("Delete failed: " .. tostring(err))
                     if ok then
                         local refreshed = client:list_profiles()
                         if _selected_profile_index > #refreshed then
@@ -1326,15 +1642,23 @@ local function register_tabs(ui, client)
                 end
 
                 y_offset = y_offset + button_h + 8
+
                 if _last_profile_result then
-                    y_offset = render_line(window, colors, x, y_offset, "Profiles", _last_profile_result)
+                    local fb = "Status: " .. tostring(_last_profile_result)
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.text_secondary, fb)
+                    y_offset = y_offset + window:get_text_size(fb).y + 4
                 end
 
-                return y_offset + 8
-            end
+                return y_offset
+            end,
         })
     end)
 end
+
+-- ============================================================================
+-- MODULE API
+-- ============================================================================
 
 ---@param client SentinelClient
 function Window.init(client)

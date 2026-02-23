@@ -25,3 +25,4 @@ SentinelFollower
 *.sql
 SentinelQueryServer/data/world.db
 .db
+tools

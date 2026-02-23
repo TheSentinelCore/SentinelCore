@@ -2,8 +2,9 @@
     SentinelNavClient UI Window Orchestrator
 
     Creates and manages the AstroUI settings window, registers all tabs,
-    renders the "Show Advanced" toggle above the tab bar, and syncs menu
-    element values into the Client config every frame.
+    renders the Apple HIG control bar (status cards + pill toggle) above
+    the tab bar, and syncs menu element values into the Client config
+    every frame.
 ]]
 
 local color = require("common/color")
@@ -51,16 +52,6 @@ local UI_TOOLTIPS = {
     destination = "Active move target and current distance from player position.",
 }
 
-local function lighten_color(base_color, amount)
-    local r, g, b, a = base_color:get()
-    return color.new(
-        math.min(255, r + amount),
-        math.min(255, g + amount),
-        math.min(255, b + amount),
-        a
-    )
-end
-
 local function attach_tooltip(ui, window, start_pos, end_pos, hint)
     if not hint or hint == "" then
         return
@@ -68,49 +59,6 @@ local function attach_tooltip(ui, window, start_pos, end_pos, hint)
     if ui and window:is_mouse_hovering_rect(start_pos, end_pos) then
         ui._tooltip = hint
     end
-end
-
-local function render_help_badge(ui, window, colors, x, y, hint)
-    local label = "?"
-    local text_size = window:get_text_size(label)
-    local pad_x = 5
-    local pad_y = 1
-    local w = text_size.x + (pad_x * 2)
-    local h = text_size.y + (pad_y * 2)
-    local start_pos = vec2.new(x, y)
-    local end_pos = vec2.new(x + w, y + h)
-    local hovered = window:is_mouse_hovering_rect(start_pos, end_pos)
-    window:is_mouse_hovering_rect_block_movement(start_pos, end_pos)
-
-    local bg = hovered and lighten_color(colors.primary_accent, 10) or colors.section_bg
-    local fg = hovered and colors.text_primary or colors.text_secondary
-    window:render_rect_filled(start_pos, end_pos, bg, 6)
-    window:render_rect(start_pos, end_pos, colors.section_border, 6, 1)
-    window:render_text(
-        enums.window_enums.font_id.FONT_SMALL,
-        vec2.new(x + pad_x, y + pad_y),
-        fg,
-        label
-    )
-    attach_tooltip(ui, window, start_pos, end_pos, hint)
-end
-
-local function render_status_card(window, colors, x, y, width, label, value, state)
-    local h = 44
-    local bg = colors.section_bg
-    if state == "good" then
-        bg = color.new(48, 140, 88, 170)
-    elseif state == "warn" then
-        bg = color.new(170, 120, 30, 170)
-    elseif state == "bad" then
-        bg = color.new(160, 65, 65, 170)
-    end
-
-    window:render_rect_filled(vec2.new(x, y), vec2.new(x + width, y + h), bg, 6)
-    window:render_rect(vec2.new(x, y), vec2.new(x + width, y + h), colors.section_border, 6, 1)
-    window:render_text(enums.window_enums.font_id.FONT_SMALL, vec2.new(x + 8, y + 6), colors.text_secondary, label)
-    window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG, vec2.new(x + 8, y + 22), colors.text_primary, value)
-    return y + h + 6
 end
 
 local function refresh_health_if_due()
@@ -267,16 +215,96 @@ local function create_menu_elements()
 end
 
 --------------------------------------------------------------------------------
--- Before-tabs hook: "Show Advanced" toggle
+-- Before-tabs hook: Apple HIG control bar (status cards + pill toggle)
 --------------------------------------------------------------------------------
 
-local function render_advanced_toggle(ui, y_offset)
+--- Render a single status card with Apple HIG rounded-rect styling
+local function render_status_card(window, colors, x, y, width, label, value, state)
+    local h = 44
+    local bg
+    if state == "good" then
+        bg = color.new(48, 140, 88, 170)
+    elseif state == "warn" then
+        bg = color.new(170, 120, 30, 170)
+    elseif state == "bad" then
+        bg = color.new(160, 65, 65, 170)
+    else
+        bg = colors.bg_card or colors.section_bg
+    end
+
+    local card_start = vec2.new(x, y)
+    local card_end = vec2.new(x + width, y + h)
+    window:render_rect_filled(card_start, card_end, bg, LAYOUT.card_corner_radius)
+    window:render_rect(card_start, card_end, colors.section_border, LAYOUT.card_corner_radius, 1)
+
+    -- Label (small, top)
+    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+        vec2.new(x + 10, y + 6), colors.text_secondary, label)
+
+    -- Value (larger, bottom)
+    window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG,
+        vec2.new(x + 10, y + 22), colors.text_primary, value)
+
+    return y + h + 6
+end
+
+--- Render an Apple-style pill toggle (track + sliding thumb + label)
+---@return boolean|nil new_state if clicked, nil if not
+local function render_pill_toggle(window, colors, x, y, is_on, label)
+    local w = LAYOUT.toggle_width
+    local h = LAYOUT.toggle_height
+    local thumb_size = LAYOUT.toggle_thumb_size
+    local margin = LAYOUT.toggle_thumb_margin
+    local radius = h / 2
+
+    -- Track
+    local track_start = vec2.new(x, y)
+    local track_end = vec2.new(x + w, y + h)
+    local track_color = is_on
+        and (colors.toggle_track_on or colors.secondary_accent)
+        or (colors.toggle_track_off or colors.checkbox_inactive)
+    window:render_rect_filled(track_start, track_end, track_color, radius)
+
+    -- Thumb
+    local thumb_x = is_on and (x + w - thumb_size - margin) or (x + margin)
+    local thumb_y = y + margin
+    local thumb_color = colors.toggle_thumb or color.new(255, 255, 255, 255)
+    window:render_rect_filled(
+        vec2.new(thumb_x, thumb_y),
+        vec2.new(thumb_x + thumb_size, thumb_y + thumb_size),
+        thumb_color, thumb_size / 2)
+
+    -- Label to the right of the toggle
+    local label_x = x + w + 6
+    local label_y = y + (h - 12) / 2
+    local label_color = is_on and colors.text_primary or colors.text_secondary
+    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+        vec2.new(label_x, label_y), label_color, label)
+
+    -- Hit area covers toggle + label
+    local label_w = window:get_text_size(label).x
+    local hit_start = vec2.new(x, y)
+    local hit_end = vec2.new(label_x + label_w, y + h)
+    local hovered = window:is_mouse_hovering_rect(hit_start, hit_end)
+    if hovered then
+        window:is_mouse_hovering_rect_block_movement(hit_start, hit_end)
+    end
+
+    local clicked = hovered and window:is_rect_clicked(hit_start, hit_end)
+    if clicked then
+        return not is_on
+    end
+    return nil
+end
+
+local function render_control_bar(ui, y_offset)
     local window = ui.window
     local colors = ui.colors
     local x_start = LAYOUT.padding_side
     local window_size = window:get_size()
     local content_width = window_size.x - (2 * LAYOUT.padding_side)
 
+    -- Gather live data
     local destination = _client and _client.get_destination and _client:get_destination() or nil
     local path = _client and _client.get_current_path and _client:get_current_path() or nil
     local path_index = _client and _client.get_path_index and _client:get_path_index() or 0
@@ -290,17 +318,15 @@ local function render_advanced_toggle(ui, y_offset)
         end
     end
 
+    -- Layout: 3 cards + pill toggle on the right
     local card_gap = 8
-    local cb_size = 14
-    local advanced_label = "Advanced"
-    local advanced_label_w = window:get_text_size(advanced_label).x
-    local advanced_w = cb_size + 6 + advanced_label_w
-    local help_w = window:get_text_size("?").x + 10
-    local control_w = advanced_w + 12 + help_w
-    local cards_width = content_width - control_w - card_gap
-    local card_w = math.floor((cards_width - (card_gap * 2)) / 3)
     local card_h = 44
+    local toggle_label = "Advanced"
+    local toggle_w = LAYOUT.toggle_width + 6 + window:get_text_size(toggle_label).x
+    local cards_width = content_width - toggle_w - card_gap * 2
+    local card_w = math.floor((cards_width - (card_gap * 2)) / 3)
 
+    -- Status values
     local nav_state = _health_cache.server_up and "good" or "bad"
     local nav_value = _health_cache.server_up and "Online" or "Offline"
 
@@ -314,45 +340,34 @@ local function render_advanced_toggle(ui, y_offset)
     local dest_value = destination and distance_text or "No Target"
     local dest_state = destination and "good" or "warn"
 
-    render_status_card(window, colors, x_start, y_offset, card_w, "Nav Server", nav_value, nav_state)
-    render_status_card(window, colors, x_start + card_w + card_gap, y_offset, card_w, "Path", path_value, path_state)
-    render_status_card(window, colors, x_start + (card_w * 2) + (card_gap * 2), y_offset, card_w, "Destination", dest_value, dest_state)
-    attach_tooltip(ui, window, vec2.new(x_start, y_offset), vec2.new(x_start + card_w, y_offset + card_h), UI_TOOLTIPS.nav_server)
-    attach_tooltip(ui, window, vec2.new(x_start + card_w + card_gap, y_offset), vec2.new(x_start + (card_w * 2) + card_gap, y_offset + card_h), UI_TOOLTIPS.path_progress)
-    attach_tooltip(ui, window, vec2.new(x_start + (card_w * 2) + (card_gap * 2), y_offset), vec2.new(x_start + (card_w * 3) + (card_gap * 2), y_offset + card_h), UI_TOOLTIPS.destination)
+    -- Render 3 status cards
+    local cx = x_start
+    render_status_card(window, colors, cx, y_offset, card_w, "Nav Server", nav_value, nav_state)
+    attach_tooltip(ui, window, vec2.new(cx, y_offset), vec2.new(cx + card_w, y_offset + card_h), UI_TOOLTIPS.nav_server)
 
-    local control_x = x_start + (card_w * 3) + (card_gap * 3)
+    cx = cx + card_w + card_gap
+    render_status_card(window, colors, cx, y_offset, card_w, "Path", path_value, path_state)
+    attach_tooltip(ui, window, vec2.new(cx, y_offset), vec2.new(cx + card_w, y_offset + card_h), UI_TOOLTIPS.path_progress)
+
+    cx = cx + card_w + card_gap
+    render_status_card(window, colors, cx, y_offset, card_w, "Destination", dest_value, dest_state)
+    attach_tooltip(ui, window, vec2.new(cx, y_offset), vec2.new(cx + card_w, y_offset + card_h), UI_TOOLTIPS.destination)
+
+    -- Render pill toggle (vertically centered with cards)
     local is_on = _menu.show_advanced:get_state()
-    local cb_y = y_offset + math.floor((card_h - cb_size) / 2)
-    local cb_start = vec2.new(control_x, cb_y)
-    local cb_end = vec2.new(control_x + cb_size, cb_y + cb_size)
-    local cb_bg = is_on and colors.checkbox_active or colors.checkbox_inactive
-    window:render_rect_filled(cb_start, cb_end, cb_bg, 3.0)
-    window:render_rect(cb_start, cb_end, colors.checkbox_border, 3.0, 1.0)
-    if is_on then
-        local pad = 3
-        window:render_rect_filled(
-            vec2.new(control_x + pad, cb_y + pad),
-            vec2.new(control_x + cb_size - pad, cb_y + cb_size - pad),
-            color.white(255),
-            2.0
-        )
-    end
-    window:render_text(
-        enums.window_enums.font_id.FONT_SMALL,
-        vec2.new(control_x + cb_size + 6, cb_y - 1),
-        is_on and colors.text_primary or colors.text_secondary,
-        advanced_label
-    )
-    local adv_click_start = vec2.new(control_x, cb_y)
-    local adv_click_end = vec2.new(control_x + advanced_w, cb_y + cb_size)
-    window:is_mouse_hovering_rect_block_movement(adv_click_start, adv_click_end)
-    attach_tooltip(ui, window, adv_click_start, adv_click_end, UI_TOOLTIPS.show_advanced)
-    if window:is_rect_clicked(adv_click_start, adv_click_end) then
-        _menu.show_advanced:set(not is_on)
-    end
-    render_help_badge(ui, window, colors, control_x + control_w - help_w, cb_y, UI_TOOLTIPS.control_center)
+    local toggle_x = x_start + content_width - toggle_w
+    local toggle_y = y_offset + math.floor((card_h - LAYOUT.toggle_height) / 2)
 
+    local new_state = render_pill_toggle(window, colors, toggle_x, toggle_y, is_on, toggle_label)
+    if new_state ~= nil then
+        _menu.show_advanced:set(new_state)
+    end
+    attach_tooltip(ui, window,
+        vec2.new(toggle_x, toggle_y),
+        vec2.new(toggle_x + toggle_w, toggle_y + LAYOUT.toggle_height),
+        UI_TOOLTIPS.show_advanced)
+
+    -- Separator below control bar
     y_offset = y_offset + card_h + 6
     local sep_start = vec2.new(x_start, y_offset)
     local sep_end = vec2.new(x_start + content_width, y_offset + LAYOUT.separator_height)
@@ -528,8 +543,8 @@ function Window.init(client)
         },
     }
 
-    -- "Show Advanced" toggle above tab bar
-    _ui._before_tabs_fn = render_advanced_toggle
+    -- Apple HIG control bar above tab bar
+    _ui._before_tabs_fn = render_control_bar
 
     -- Register tabs
     MovementTab.register(_ui, _menu)

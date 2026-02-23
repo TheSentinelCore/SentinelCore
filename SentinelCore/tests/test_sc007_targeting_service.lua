@@ -158,6 +158,42 @@ local function run()
         "targeting should still defend against opposing-faction attackers when faction team key is missing")
     bb:set("player.faction_team", "horde")
 
+    local hostile_pet_owner = T.mock_object({
+        name = "HostilePetOwner",
+        level = 12,
+        position = { x = 8, y = 0, z = 0 },
+        faction_id = 469, -- alliance
+        is_enemy = true,
+    })
+    function hostile_pet_owner:is_player() return true end
+
+    local hostile_pet_idle = T.mock_object({
+        name = "HostilePetIdle",
+        level = 12,
+        health = 100,
+        max_health = 100,
+        position = { x = 4, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+        faction_id = 35, -- neutral pet faction; owner is authoritative for policy
+        target = nil,
+    })
+    function hostile_pet_idle:is_pet() return true end
+    function hostile_pet_idle:get_owner() return hostile_pet_owner end
+
+    core.object_manager.get_visible_objects = function()
+        return { hostile_pet_owner, hostile_pet_idle }
+    end
+    local target_pet_idle, err_pet_idle = targeting:acquire_target()
+    T.assert_true(target_pet_idle == nil and err_pet_idle ~= nil,
+        "targeting should skip opposing-faction player pets when they are not attacking us")
+
+    hostile_pet_idle._in_combat = true
+    hostile_pet_idle._target = player
+    local target_pet_def, err_pet_def = targeting:acquire_target()
+    T.assert_true(target_pet_def ~= nil and target_pet_def:get_name() == "HostilePetIdle",
+        "targeting should defend against opposing-faction player pets when they attack us")
+
     local passive_pull_target = T.mock_object({
         name = "PassivePullTarget",
         level = 10,

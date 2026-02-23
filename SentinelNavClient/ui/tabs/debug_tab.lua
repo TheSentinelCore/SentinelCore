@@ -1,5 +1,6 @@
 --[[
     Debug Tab - Live status, logging, waypoint testing, all pathfinding modes
+    Apple HIG card-based design using AstroUI row_list, listbox, and custom_render widgets.
 ]]
 
 local color    = require("common/color")
@@ -25,8 +26,10 @@ local DebugTab = {}
 local TOOLTIPS = {
     avoid_zone_add = "Adds a temporary avoidance zone at your current player position.",
     avoid_zone_clear = "Clears all remembered avoidance zones.",
+    avoid_zone_remove = "Removes this avoidance zone.",
     waypoint_add = "Appends your current player position to the waypoint list.",
     waypoint_clear = "Stops navigation and clears all waypoints and preview state.",
+    waypoint_remove = "Removes this waypoint.",
     preview_generate = "Builds a preview path for supported modes without starting movement.",
     mode_start = "Starts the selected debug mode with current waypoint inputs.",
     mode_stop = "Stops active debug navigation immediately.",
@@ -327,7 +330,7 @@ local function dispatch_go(mode_idx, client, waypoints)
         end
     end
 
-    -- Shared callback for raw-path modes (nav_client → follow_path)
+    -- Shared callback for raw-path modes (nav_client -> follow_path)
     local function raw_path_callback(ok, data, err)
         if not ok or not data then
             _last_result = "ERROR: " .. tostring(err)
@@ -415,7 +418,7 @@ local function dispatch_go(mode_idx, client, waypoints)
         nav_client:kite(player_pos, waypoints[1], raw_path_callback, client:get_path_opts({ kite_radius = 8.0, avoid_zones = zones }))
 
     elseif mode_idx == 9 then
-        -- Random Point → navigate to it
+        -- Random Point -> navigate to it
         nav_client:random_point(function(ok, data, err)
             if not ok or not data or not data.point then
                 _last_result = "ERROR: " .. tostring(err)
@@ -491,7 +494,9 @@ function DebugTab.register(ui, menu, client, reset_mappings)
 
     ui:add_tab({ id = "debug", label = "Debug" }, function(t)
 
-        -- Live Status (custom rendered)
+        ----------------------------------------------------------------
+        -- 1. Live Status (custom_render)
+        ----------------------------------------------------------------
         t:custom_render({
             render_fn = function(self, y_offset)
                 local window = self.window
@@ -540,45 +545,108 @@ function DebugTab.register(ui, menu, client, reset_mappings)
             end
         })
 
-        -- Verbose Logging toggle
-        t:checkbox_grid({
+        ----------------------------------------------------------------
+        -- 2. Logging (row_list)
+        ----------------------------------------------------------------
+        t:row_list({
             label = "Logging",
-            columns = 1,
             elements = {
-                { element = menu.debug_verbose, label = "Verbose Logging",
-                  tooltip = "Enables detailed movement and pathfinding log output" },
-            }
+                {
+                    type = "toggle",
+                    label = "Verbose Logging",
+                    element = menu.debug_verbose,
+                    tooltip = "Enables detailed movement and pathfinding log output",
+                },
+                {
+                    type = "stepper",
+                    label = "Severity",
+                    element = menu.log_severity,
+                    min = M.log_severity.min,
+                    max = M.log_severity.max,
+                    step = 1,
+                    decimals = 0,
+                    tooltip = "Minimum severity: 0=Error, 1=Warn, 2=Info, 3=Debug",
+                },
+            },
         })
 
-        t:slider_list({
-            elements = {
-                { element = menu.log_severity, label = "Severity", min = M.log_severity.min, max = M.log_severity.max,
-                  step = 1, integer = true, use_stepper = true,
-                  tooltip = "Minimum severity: 0=Error, 1=Warn, 2=Info, 3=Debug" },
-            }
-        })
-
-        -- Visualization Toggles
-        t:checkbox_grid({
+        ----------------------------------------------------------------
+        -- 3. Visualization (row_list with 6 toggles)
+        ----------------------------------------------------------------
+        t:row_list({
             label = "Visualization",
-            columns = 2,
             elements = {
-                { element = menu.viz_master,      label = "Enable 3D Overlay",
-                  tooltip = "Master toggle for all in-world 3D visualization" },
-                { element = menu.viz_path,        label = "Path + Waypoints",
-                  tooltip = "Show path lines and waypoint markers in-world" },
-                { element = menu.viz_destination,  label = "Destination",
-                  tooltip = "Show circle and distance text at final destination" },
-                { element = menu.viz_obstacles,    label = "Obstacle Zones",
-                  tooltip = "Show avoidance zone circles around detected obstacles" },
-                { element = menu.viz_corridor,     label = "Corridor Bounds",
-                  tooltip = "Show corridor width boundaries when indoors" },
-                { element = menu.viz_state,        label = "State Indicators",
-                  tooltip = "Show stuck/requesting/arrived/failed indicators" },
-            }
+                {
+                    type = "toggle",
+                    label = "Enable 3D Overlay",
+                    element = menu.viz_master,
+                    tooltip = "Master toggle for all in-world 3D visualization",
+                },
+                {
+                    type = "toggle",
+                    label = "Path + Waypoints",
+                    element = menu.viz_path,
+                    tooltip = "Show path lines and waypoint markers in-world",
+                },
+                {
+                    type = "toggle",
+                    label = "Destination",
+                    element = menu.viz_destination,
+                    tooltip = "Show circle and distance text at final destination",
+                },
+                {
+                    type = "toggle",
+                    label = "Obstacle Zones",
+                    element = menu.viz_obstacles,
+                    tooltip = "Show avoidance zone circles around detected obstacles",
+                },
+                {
+                    type = "toggle",
+                    label = "Corridor Bounds",
+                    element = menu.viz_corridor,
+                    tooltip = "Show corridor width boundaries when indoors",
+                },
+                {
+                    type = "toggle",
+                    label = "State Indicators",
+                    element = menu.viz_state,
+                    tooltip = "Show stuck/requesting/arrived/failed indicators",
+                },
+            },
         })
 
-        -- Avoid Zones (custom rendered)
+        ----------------------------------------------------------------
+        -- 4. Avoid Zones (listbox + custom_render buttons)
+        ----------------------------------------------------------------
+        t:listbox({
+            label = "Avoid Zones",
+            elements = {
+                {
+                    entries_fn = function()
+                        if not client then return {} end
+                        local obstacle = client.obstacle
+                        if not obstacle then return {} end
+                        local zones = obstacle:get_avoidance_zones()
+                        local entries = {}
+                        for i, zone in ipairs(zones) do
+                            entries[i] = {
+                                label = string.format("#%d: %.0f, %.0f, %.0f (r=%.1f)",
+                                    i, zone.x, zone.y, zone.z, zone.radius),
+                            }
+                        end
+                        if #entries == 0 then
+                            entries[1] = { label = "(no zones)", color = color.new(140, 140, 140, 200) }
+                        end
+                        return entries
+                    end,
+                    visible_rows = 4,
+                    on_select = function(idx, entry)
+                        -- selection tracking only
+                    end,
+                },
+            },
+        })
+
         t:custom_render({
             render_fn = function(self, y_offset)
                 if not client then return y_offset end
@@ -590,50 +658,14 @@ function DebugTab.register(ui, menu, client, reset_mappings)
                 local x = LAYOUT.padding_side
                 local window_size = window:get_size()
                 local content_width = window_size.x - (2 * LAYOUT.padding_side)
-                local btn_w = (content_width - 4) / 2
-                local btn_h = 20
+                local btn_w = (content_width - 8) / 3
+                local btn_h = 22
 
-                -- Section label with count
                 local zones = obstacle:get_avoidance_zones()
-                local header = "Avoid Zones (" .. #zones .. ")"
-                window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG,
-                    vec2.new(x, y_offset), colors.text_secondary, header)
-                y_offset = y_offset + window:get_text_size(header).y + 10
 
-                -- Zone list with inline remove buttons
-                for i, zone in ipairs(zones) do
-                    local zone_text = string.format("#%d: %.0f, %.0f, %.0f (r=%.1f)",
-                        i, zone.x, zone.y, zone.z, zone.radius)
-                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                        vec2.new(x, y_offset), colors.text_secondary, zone_text)
-
-                    -- Per-zone remove button
-                    local rm_w = 16
-                    local rm_x = x + content_width - rm_w
-                    local rm_start = vec2.new(rm_x, y_offset)
-                    local rm_end = vec2.new(rm_x + rm_w, y_offset + 14)
-                    window:is_mouse_hovering_rect_block_movement(rm_start, rm_end)
-                    if window:is_rect_clicked(rm_start, rm_end) then
-                        obstacle:remove_zone(i)
-                    end
-                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                        vec2.new(rm_x + 3, y_offset), colors.text_secondary, "X")
-
-                    y_offset = y_offset + 16
-                end
-
-                if #zones == 0 then
-                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                        vec2.new(x, y_offset), colors.text_secondary, "(no zones)")
-                    y_offset = y_offset + 16
-                end
-
-                y_offset = y_offset + 4
-
-                -- Button row: Add Zone Here / Clear Zones
-                local clicked_add_zone = render_button(window, colors, x, y_offset,
-                    btn_w, btn_h, "Add Zone Here", true, self, TOOLTIPS.avoid_zone_add)
-                if clicked_add_zone then
+                local clicked_add = render_button(window, colors, x, y_offset,
+                    btn_w, btn_h, "Add Here", true, self, TOOLTIPS.avoid_zone_add)
+                if clicked_add then
                     local player = core.object_manager.get_local_player()
                     if player then
                         obstacle:add_zone(player:get_position())
@@ -641,20 +673,29 @@ function DebugTab.register(ui, menu, client, reset_mappings)
                     end
                 end
 
-                local clicked_clear_zones = render_button(window, colors, x + btn_w + 4, y_offset,
-                    btn_w, btn_h, "Clear Zones", #zones > 0, self, TOOLTIPS.avoid_zone_clear)
-                if clicked_clear_zones then
+                local selected_idx = self._listbox_selected and self._listbox_selected["debug_g4_lb_1"] or nil
+                local remove_enabled = selected_idx and selected_idx <= #zones
+                local clicked_remove = render_button(window, colors, x + btn_w + 4, y_offset,
+                    btn_w, btn_h, "Remove", remove_enabled, self, TOOLTIPS.avoid_zone_remove)
+                if clicked_remove and selected_idx and selected_idx <= #zones then
+                    obstacle:remove_zone(selected_idx)
+                end
+
+                local clicked_clear = render_button(window, colors, x + (btn_w * 2) + 8, y_offset,
+                    btn_w, btn_h, "Clear All", #zones > 0, self, TOOLTIPS.avoid_zone_clear)
+                if clicked_clear then
                     obstacle:clear()
                     core.log("[SentinelNavClient Debug] Cleared all avoid zones")
                 end
 
                 y_offset = y_offset + btn_h + 4
-
                 return y_offset + 4
             end
         })
 
-        -- Waypoint Management + Mode Selector (custom rendered)
+        ----------------------------------------------------------------
+        -- 5. Waypoints (custom_render: mode selector + list + buttons)
+        ----------------------------------------------------------------
         t:custom_render({
             render_fn = function(self, y_offset)
                 local window = self.window
@@ -829,7 +870,9 @@ function DebugTab.register(ui, menu, client, reset_mappings)
             end
         })
 
-        -- Reset All Defaults (custom rendered)
+        ----------------------------------------------------------------
+        -- 6. Reset All Defaults (custom_render)
+        ----------------------------------------------------------------
         t:custom_render({
             render_fn = function(self, y_offset)
                 if not reset_mappings then return y_offset end
@@ -857,7 +900,7 @@ function DebugTab.register(ui, menu, client, reset_mappings)
 end
 
 --------------------------------------------------------------------------------
--- Sequential navigation update — call from Window.on_render()
+-- Sequential navigation update -- call from Window.on_render()
 --------------------------------------------------------------------------------
 
 function DebugTab.update(client, menu)

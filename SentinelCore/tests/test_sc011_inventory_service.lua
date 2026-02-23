@@ -15,8 +15,8 @@ local function run()
     local player = {
         is_valid = function() return true end,
         get_item_at_inventory_slot = function(_, slot_id)
-            -- Bag equip slots: 20=bag1, 21=bag2, 22=bag3, 23=bag4
-            if slot_id == 20 then
+            -- Bag equip slots: 31=bag1, 32=bag2, 33=bag3, 34=bag4
+            if slot_id == 31 then
                 return { object = bag_netherweave }
             end
             return nil
@@ -31,18 +31,23 @@ local function run()
             get_items_in_bag = function(bag_id)
                 if bag_id == 0 then
                     return {
-                        -- Equipment items (slot_id < 24) — must be filtered out
-                        { object = T.mock_object({ item_id = 100 }), slot_id = 0 },
+                        -- Equipment items (slot_id < 36) — must be filtered out
+                        { object = T.mock_object({ item_id = 100 }), slot_id = 1 },
                         { object = T.mock_object({ item_id = 101 }), slot_id = 5 },
                         { object = T.mock_object({ item_id = 102 }), slot_id = 15 },
-                        -- Actual backpack items (slot_id >= 24)
-                        { object = item_keep, slot_id = 24 },
-                        { object = item_sell, slot_id = 25 },
-                        { object = item_rule_keep, slot_id = 26 },
-                        { object = item_rule_sell, slot_id = 27 },
-                        { object = item_white_keep, slot_id = 28 },
-                        { object = item_blue_sell, slot_id = 29 },
-                        { object = item_epic_keep, slot_id = 30 },
+                        -- Bag equip slot (31) — must be filtered out
+                        { object = bag_netherweave, slot_id = 31 },
+                        -- Actual backpack items (slots 36-51)
+                        { object = item_keep, slot_id = 36 },
+                        { object = item_sell, slot_id = 37 },
+                        { object = item_rule_keep, slot_id = 38 },
+                        { object = item_rule_sell, slot_id = 39 },
+                        { object = item_white_keep, slot_id = 40 },
+                        { object = item_blue_sell, slot_id = 41 },
+                        { object = item_epic_keep, slot_id = 42 },
+                        -- Bank/keyring slots (60+) — must be filtered out
+                        { object = T.mock_object({ item_id = 200 }), slot_id = 60 },
+                        { object = T.mock_object({ item_id = 201 }), slot_id = 86 },
                     }
                 end
                 return {}
@@ -126,6 +131,17 @@ local function run()
         local service2 = InventoryService2:new(bus, bb, {}, service:get_policy())
         T.assert_eq(service2:get_free_slots(), -1, "missing core.inventory returns unknown (-1)")
         core.inventory = saved_inventory
+
+        -- needs_repair_trip tests
+        local repair_policy = service:get_policy()
+        repair_policy.repair_enabled = true
+        service:set_policy(repair_policy)
+
+        bb:set("player.durability_pct", 0.20)
+        T.assert_true(service:needs_repair_trip() == true, "should need repair at 20% durability")
+
+        bb:set("player.durability_pct", 0.50)
+        T.assert_true(service:needs_repair_trip() == false, "should not need repair at 50% durability")
 
         result = {
             sc011_inventory_policy = true,

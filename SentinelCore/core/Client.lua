@@ -807,6 +807,22 @@ function Client:get_snapshot()
         objective_snapshot = self._services.objective:get_snapshot()
     end
 
+    -- Compute player resource percentages from blackboard / player object
+    local bb = self._blackboard
+    local health_pct = (bb:get("player.health") or 0) / math.max(1, bb:get("player.max_health") or 1)
+    local xp_pct = (bb:get("player.xp") or 0) / math.max(1, bb:get("player.max_xp") or 1)
+    local durability_pct = bb:get("player.durability_pct") or 1.0
+    local mana_pct = 0
+    local player_obj = bb:get("player.object")
+    if player_obj and player_obj.get_power then
+        local ok_m, m_val = pcall(function()
+            local p = player_obj:get_power(0) or 0
+            local mp = player_obj:get_max_power(0) or 1
+            return p / math.max(1, mp)
+        end)
+        if ok_m and type(m_val) == "number" then mana_pct = m_val end
+    end
+
     return {
         timestamp = self._blackboard:get("_time", 0),
         session_id = telemetry.session_id,
@@ -829,8 +845,14 @@ function Client:get_snapshot()
             world_dataset_ok = self._blackboard:get("deps.world_data.dataset_ok", false),
         },
         inventory = {
-            free_slots = self._blackboard:get("inventory.free_slots", 0),
-            needs_vendor = self._blackboard:get("inventory.needs_vendor", false),
+            free_slots = self._services.inventory and self._services.inventory:get_free_slots() or 0,
+            needs_vendor = self._services.inventory and self._services.inventory:needs_vendor_trip() or false,
+        },
+        resources = {
+            health_pct = health_pct,
+            mana_pct = mana_pct,
+            xp_pct = xp_pct,
+            durability_pct = durability_pct,
         },
         death = {
             active = self._blackboard:get("death.active", false),

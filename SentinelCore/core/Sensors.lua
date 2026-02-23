@@ -26,6 +26,7 @@ end
 
 ---@class SentinelSensors
 ---@field private _blackboard Blackboard
+---@field private _was_dead boolean
 local Sensors = {}
 Sensors.__index = Sensors
 
@@ -34,6 +35,7 @@ Sensors.__index = Sensors
 function Sensors:new(blackboard)
     local o = setmetatable({}, Sensors)
     o._blackboard = blackboard
+    o._was_dead = false
     return o
 end
 
@@ -93,6 +95,30 @@ function Sensors:update()
     local faction_id = player:get_faction_id()
     bb:set("player.faction_id", faction_id)
     bb:set("player.faction_team", FactionResolver.resolve_team(faction_id))
+
+    local dur_ok, dur_pct = pcall(function()
+        if player.get_durability_pct then
+            return player:get_durability_pct()
+        end
+        return 1.0
+    end)
+    bb:set("player.durability_pct", (dur_ok and tonumber(dur_pct)) or 1.0)
+
+    -- Death state tracking: cache death position on alive→dead transition
+    local is_dead = player.is_dead and player:is_dead() or false
+    local is_ghost = player.is_ghost and player:is_ghost() or false
+    bb:set("player.is_dead", is_dead)
+    bb:set("player.is_ghost", is_ghost)
+
+    if is_dead and not self._was_dead and pos then
+        bb:set("player.death_position", { x = pos.x, y = pos.y, z = pos.z })
+    elseif not is_dead and not is_ghost then
+        self._was_dead = false
+        bb:clear("player.death_position")
+    end
+    if is_dead or is_ghost then
+        self._was_dead = true
+    end
 
     bb:set("context.ui_map_id", map_id)
     bb:set("context.instance_type", instance_type)

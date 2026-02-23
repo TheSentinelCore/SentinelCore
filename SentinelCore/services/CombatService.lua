@@ -1045,10 +1045,6 @@ function CombatService:_apply_combat_chase(target, now, distance)
     if distance > chase_range then
         local target_pos = safe_method(target, "get_position")
         if target_pos then
-            local predicted = safe_method(target, "predict_position", 1.0)
-            if predicted and type(predicted) == "table" and predicted.x then
-                target_pos = predicted
-            end
             self:_update_combat_navigation(target_pos, now)
         end
         return

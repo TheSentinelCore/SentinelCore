@@ -1,41 +1,40 @@
 --[[
-    Safety Tab - TabBuilder configuration for safety settings
-    Uses slider_list and checkbox_grid widgets, plus custom render for debug section.
+    Safety Tab - AstroUI card-based safety settings
+    Uses row_list (toggle, stepper) with conditional visibility and custom debug section.
 ]]
 
-local color = require("common/color")
 local vec2 = require("common/geometry/vector_2")
 local enums = require("common/enums")
+local AstroUI = require("lib/AstroUI")
+
+local LAYOUT = AstroUI.LAYOUT
 
 local SafetyTab = {}
 
 ---Render debug section (custom render callback)
----@param ui rotation_settings_ui The UI instance
+---@param ui_inst table The AstroUI instance
 ---@param y_offset number Current y position
 ---@return number New y_offset
-function SafetyTab.render_debug(ui, y_offset)
+function SafetyTab.render_debug(ui_inst, y_offset)
     local SentinelGather = require("init")
-    local window = ui.window
-    local colors = ui.colors
-    local LAYOUT = require("shared/rotation_settings_ui").LAYOUT
-    local x_start = LAYOUT.padding_side
-    local window_size = window:get_size()
-    local content_width = window_size.x - (2 * LAYOUT.padding_side)
+    local window = ui_inst.window
+    local colors = ui_inst.colors
+    local x_start = LAYOUT.padding_side + LAYOUT.card_padding_h
 
-    y_offset = y_offset + LAYOUT.section_padding_top
-
-    -- Run Tests button
+    -- Run Tests button (Apple HIG rounded rect)
     local btn_width = 120
-    local btn_height = 24
+    local btn_height = 26
     local btn_start = vec2.new(x_start, y_offset)
     local btn_end = vec2.new(x_start + btn_width, y_offset + btn_height)
 
     local is_hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
     window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
 
-    local btn_color = is_hovered and colors.primary_accent or colors.section_bg
-    window:render_rect_filled(btn_start, btn_end, btn_color, 2.0)
-    window:render_rect(btn_start, btn_end, colors.section_border, 2.0, 1.0)
+    local btn_color = is_hovered
+        and colors.primary_accent
+        or (colors.bg_elevated or colors.section_bg)
+    window:render_rect_filled(btn_start, btn_end, btn_color, 8.0)
+    window:render_rect(btn_start, btn_end, colors.primary_accent, 8.0, 1.0)
 
     local btn_text = "Run Tests"
     local text_size = window:get_text_size(btn_text)
@@ -48,7 +47,7 @@ function SafetyTab.render_debug(ui, y_offset)
         SentinelGather:run_tests()
     end
 
-    y_offset = y_offset + btn_height + LAYOUT.element_spacing
+    y_offset = y_offset + btn_height + 10
 
     -- Module count
     local bot_mgr = SentinelGather:get_bot_manager()
@@ -60,58 +59,78 @@ function SafetyTab.render_debug(ui, y_offset)
         y_offset = y_offset + LAYOUT.element_height
     end
 
-    return y_offset + LAYOUT.section_padding_bottom
+    return y_offset
 end
 
 ---Register the safety tab with the UI
----@param ui any RotationSettingsUI instance
+---@param ui any AstroUI instance
 ---@param menu_elements table Menu elements table
 function SafetyTab.register(ui, menu_elements)
     ui:add_tab({ id = "safety", label = "Safety" }, function(t)
-        -- Enemy detection
-        t:slider_list({
+        -- Enemy detection (stepper)
+        t:row_list({
             label = "Enemy Detection",
             elements = {
-                { element = menu_elements.enemy_scan_radius_slider, label = "Scan Radius", suffix = " yd" },
-            }
+                {
+                    type = "stepper", label = "Scan Radius",
+                    element = menu_elements.enemy_scan_radius_slider,
+                    min = 10, max = 60, step = 5, suffix = " yd",
+                },
+            },
         })
 
-        t:checkbox_grid({
+        -- Avoidance (toggle)
+        t:row_list({
             label = "Avoidance",
-            columns = 1,
             elements = {
-                { element = menu_elements.skip_if_enemies_cb, label = "Skip Node if Enemies Near" },
-            }
+                { type = "toggle", label = "Skip Node if Enemies Near", element = menu_elements.skip_if_enemies_cb },
+            },
         })
 
-        -- Combat response
-        t:slider_list({
+        -- Combat response (stepper)
+        t:row_list({
             label = "Combat Response",
             elements = {
-                { element = menu_elements.flee_health_slider, label = "Flee Health", suffix = "%" },
-            }
+                {
+                    type = "stepper", label = "Flee Health",
+                    element = menu_elements.flee_health_slider,
+                    min = 10, max = 50, step = 5, suffix = "%",
+                },
+            },
         })
 
-        -- Anti-detection pauses (SentinelGather-specific)
-        t:checkbox_grid({
+        -- Anti-detection (toggles)
+        t:row_list({
             label = "Anti-Detection",
-            columns = 1,
             elements = {
-                { element = menu_elements.random_pause_cb, label = "Random Pauses" },
-                { element = menu_elements.random_jump_cb, label = "Random Jumps" },
-            }
+                { type = "toggle", label = "Random Pauses", element = menu_elements.random_pause_cb },
+                { type = "toggle", label = "Random Jumps", element = menu_elements.random_jump_cb },
+            },
         })
 
-        t:slider_list({
+        -- Pause intervals (conditional on random_pause being on)
+        t:row_list({
+            label = "Pause Intervals",
             visible_when = function() return menu_elements.random_pause_cb:get_state() end,
             elements = {
-                { element = menu_elements.pause_interval_min_slider, label = "Pause Min", suffix = "s" },
-                { element = menu_elements.pause_interval_max_slider, label = "Pause Max", suffix = "s" },
-            }
+                {
+                    type = "stepper", label = "Min Seconds",
+                    element = menu_elements.pause_interval_min_slider,
+                    min = 15, max = 120, step = 5, suffix = "s",
+                },
+                {
+                    type = "stepper", label = "Max Seconds",
+                    element = menu_elements.pause_interval_max_slider,
+                    min = 30, max = 180, step = 5, suffix = "s",
+                },
+            },
         })
 
         -- Debug section
-        t:custom_render({ render_fn = SafetyTab.render_debug })
+        t:custom_render({
+            label = "Debug",
+            render_fn = SafetyTab.render_debug,
+        })
     end)
 end
 

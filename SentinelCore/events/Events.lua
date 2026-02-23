@@ -46,6 +46,10 @@ local Events = {
     VENDOR_STARTED = "vendor.started",
     VENDOR_COMPLETED = "vendor.completed",
     VENDOR_FAILED = "vendor.failed",
+    VENDOR_SELL_STARTED = "vendor.sell_started",
+    VENDOR_SELL_ITEM = "vendor.sell_item",
+    VENDOR_SELL_COMPLETED = "vendor.sell_completed",
+    VENDOR_REPAIR_COMPLETED = "vendor.repair_completed",
 
     -- Recovery
     RECOVERY_STARTED = "recovery.started",

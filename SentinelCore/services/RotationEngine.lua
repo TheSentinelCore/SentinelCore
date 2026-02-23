@@ -1295,7 +1295,13 @@ function RotationEngine:_execute_guarded_fallback(action, ctx)
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
 
-    if not ctx.player or (ctx.player.is_casting_spell and ctx.player:is_casting_spell()) then
+    if not ctx.player then
+        return false, ErrorCodes.CAST_GUARD_BLOCKED
+    end
+    if ctx.player.is_casting_spell and ctx.player:is_casting_spell() then
+        return false, ErrorCodes.CAST_GUARD_BLOCKED
+    end
+    if ctx.player.is_channelling_spell and ctx.player:is_channelling_spell() then
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
 
@@ -1677,24 +1683,32 @@ function RotationEngine:_execute_plan(plan, ctx, opts)
     local blocked = {}
     for i = 1, #plan do
         local action = plan[i]
-        local allowed, guard_err = self:_action_allowed(action, ctx)
-        if allowed then
-            local executed, exec_err = self:execute_action(action, ctx)
-            if executed then
-                return true, nil
-            end
-            local normalized_exec_err = self:_normalize_block_reason(exec_err or guard_err) or ErrorCodes.CAST_GUARD_BLOCKED
-            last_err = normalized_exec_err or last_err
-            self:_schedule_action_retry(action, ctx, normalized_exec_err, now)
+        local release = tonumber(action._scheduler_release) or 0
+        if release > 0.08 then
+            -- Action not yet ready (GCD, spell cooldown, or travel time remaining)
             if #blocked < 4 then
-                blocked[#blocked + 1] = self:_blocked_entry(action, normalized_exec_err, i)
+                blocked[#blocked + 1] = self:_blocked_entry(action, ErrorCodes.CAST_GUARD_BLOCKED, i)
             end
         else
-            local normalized_guard_err = self:_normalize_block_reason(guard_err) or ErrorCodes.CAST_GUARD_BLOCKED
-            last_err = normalized_guard_err or last_err
-            self:_schedule_action_retry(action, ctx, guard_err, now)
-            if #blocked < 4 then
-                blocked[#blocked + 1] = self:_blocked_entry(action, normalized_guard_err, i)
+            local allowed, guard_err = self:_action_allowed(action, ctx)
+            if allowed then
+                local executed, exec_err = self:execute_action(action, ctx)
+                if executed then
+                    return true, nil
+                end
+                local normalized_exec_err = self:_normalize_block_reason(exec_err or guard_err) or ErrorCodes.CAST_GUARD_BLOCKED
+                last_err = normalized_exec_err or last_err
+                self:_schedule_action_retry(action, ctx, normalized_exec_err, now)
+                if #blocked < 4 then
+                    blocked[#blocked + 1] = self:_blocked_entry(action, normalized_exec_err, i)
+                end
+            else
+                local normalized_guard_err = self:_normalize_block_reason(guard_err) or ErrorCodes.CAST_GUARD_BLOCKED
+                last_err = normalized_guard_err or last_err
+                self:_schedule_action_retry(action, ctx, guard_err, now)
+                if #blocked < 4 then
+                    blocked[#blocked + 1] = self:_blocked_entry(action, normalized_guard_err, i)
+                end
             end
         end
     end

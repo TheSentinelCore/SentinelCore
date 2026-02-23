@@ -96,7 +96,9 @@ local function run()
 
     local ok2 = vendor2:start({ map_id = 530, zone_id = 1, area_id = 2 })
     T.assert_true(ok2 == true, "same-map vendor start should initiate")
-    local update_ok, update_err = vendor2:update()
+    vendor2:update() -- interact -> wait_window
+    core._set_time(1001) -- advance past vendor_interact_delay (default 0.75s)
+    local update_ok, update_err = vendor2:update() -- wait_window -> selling -> repairing -> done -> returning -> completed
     T.assert_true(update_ok == true, "vendor update should complete without failure: " .. tostring(update_err))
     T.assert_eq(vendor2:get_state(), "completed", "vendor flow should complete")
     T.assert_eq(#nav_calls, 2, "expected move_to vendor and move_to anchor")

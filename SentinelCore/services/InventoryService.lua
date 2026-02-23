@@ -12,10 +12,12 @@ local InventoryService = {}
 InventoryService.__index = InventoryService
 
 local BACKPACK_SLOTS = 16
-local BAG_EQUIP_SLOT_BASE = 19  -- inventory slots 20-23 = bags 1-4
--- get_items_in_bag(0) returns ALL occupied inventory slots including equipment (0-19)
--- and bag equip slots (20-23). Only slots 24-39 are actual backpack storage.
-local BACKPACK_FIRST_SLOT = 24
+local BAG_EQUIP_SLOT_BASE = 30  -- inventory slots 31-34 = bags 1-4
+-- get_items_in_bag(0) returns ALL occupied inventory slots including equipment (1-18),
+-- bag equip slots (31-34), backpack storage (36-51), and bank/keyring/other (60+).
+-- Only slots 36-51 are actual backpack storage.
+local BACKPACK_FIRST_SLOT = 36
+local BACKPACK_LAST_SLOT = 51
 
 -- All TBC non-special bags: item_id → slot_count
 -- Source: tbcmangos.item_template WHERE class=1 AND subclass=0
@@ -45,6 +47,24 @@ local BAG_SIZES = {
 ---@private
 ---@return number total_capacity
 ---@return number used_count
+---@private
+---@param obj any
+---@return boolean
+local function is_valid_object(obj)
+    if obj == nil then return false end
+    local ok, valid = pcall(function() return obj:is_valid() end)
+    return ok and valid == true
+end
+
+---@private
+---@param obj any
+---@return number
+local function safe_item_id(obj)
+    if obj == nil then return 0 end
+    local ok, id = pcall(function() return obj:get_item_id() end)
+    return ok and tonumber(id) or 0
+end
+
 local function compute_bag_counts()
     if not core or not core.inventory or not core.inventory.get_items_in_bag then
         return -1, -1
@@ -53,48 +73,47 @@ local function compute_bag_counts()
     local total = BACKPACK_SLOTS
     local used = 0
 
-    -- Bag 0 (backpack): filter to slot_id >= 24 (skip equipment/bag equip slots).
-    -- Pattern matched from ext_plugin_lx_grinder/core/InventoryManager.lua:86-99.
+    -- Bag 0 (backpack): only count actual backpack storage (slots 36-51).
     local bag0_items = core.inventory.get_items_in_bag(0)
     if bag0_items then
         for i = 1, #bag0_items do
             local slot = bag0_items[i]
-            if slot and slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT then
-                if slot.object and slot.object:is_valid() then
-                    local item_id = slot.object:get_item_id()
-                    if item_id and item_id > 0 then
-                        used = used + 1
-                    end
+            if slot and slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT and slot.slot_id <= BACKPACK_LAST_SLOT then
+                if is_valid_object(slot.object) and safe_item_id(slot.object) > 0 then
+                    used = used + 1
                 end
             end
         end
     end
 
-    -- Bags 1-4: get player DIRECTLY from object_manager (no .object unwrapping).
+    -- Bags 1-4: detect equipped bags and count their contents.
     local player = core.object_manager and core.object_manager.get_local_player
         and core.object_manager.get_local_player() or nil
-    if player and player.is_valid and player:is_valid() then
+    if player and is_valid_object(player) then
         for bag_id = 1, 4 do
             local ok, result = pcall(function()
                 return player:get_item_at_inventory_slot(BAG_EQUIP_SLOT_BASE + bag_id)
             end)
-            local has_bag = ok and result and result.object
-                and result.object.is_valid and result.object:is_valid()
-            if has_bag then
-                local bag_item_id = result.object:get_item_id()
-                if bag_item_id and bag_item_id > 0 then
-                    local capacity = BAG_SIZES[bag_item_id] or 0
+            if ok and result and result.object and is_valid_object(result.object) then
+                local bag_item_id = safe_item_id(result.object)
+                if bag_item_id > 0 then
+                    local capacity = 0
+                    local dyn_ok, dyn_size = pcall(function()
+                        return result.object:get_bag_num_slots()
+                    end)
+                    if dyn_ok and tonumber(dyn_size) and tonumber(dyn_size) > 0 then
+                        capacity = tonumber(dyn_size) or 0
+                    else
+                        capacity = BAG_SIZES[bag_item_id] or 0
+                    end
                     if capacity > 0 then
                         total = total + capacity
                         local items = core.inventory.get_items_in_bag(bag_id)
                         if items then
                             for i = 1, #items do
                                 local slot = items[i]
-                                if slot and slot.object and slot.object:is_valid() then
-                                    local item_id = slot.object:get_item_id()
-                                    if item_id and item_id > 0 then
-                                        used = used + 1
-                                    end
+                                if slot and is_valid_object(slot.object) and safe_item_id(slot.object) > 0 then
+                                    used = used + 1
                                 end
                             end
                         end
@@ -206,17 +225,19 @@ function InventoryService:collect_items()
         local bag_items = core.inventory.get_items_in_bag(bag_id) or {}
         for i = 1, #bag_items do
             local slot = bag_items[i]
-            -- Bag 0: skip equipment (0-19) and bag equip slots (20-23)
-            if bag_id ~= 0 or (slot and slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT) then
+            -- Bag 0: only include actual backpack storage (slots 36-51)
+            if bag_id ~= 0 or (slot and slot.slot_id and slot.slot_id >= BACKPACK_FIRST_SLOT and slot.slot_id <= BACKPACK_LAST_SLOT) then
                 local obj = slot and slot.object or nil
-                if obj and obj.is_valid and obj:is_valid() then
-                    local item_id = tonumber(obj:get_item_id()) or 0
+                if is_valid_object(obj) then
+                    local item_id = safe_item_id(obj)
                     if item_id > 0 then
+                        local ok_stack, stack = pcall(function() return obj:get_item_stack_count() end)
+                        local ok_quality, quality = pcall(function() return obj:get_quality() end)
                         items[#items + 1] = {
                             object = obj,
                             item_id = item_id,
-                            stack_count = tonumber(obj.get_item_stack_count and obj:get_item_stack_count() or 1) or 1,
-                            quality = tonumber(obj.get_quality and obj:get_quality() or 0) or 0,
+                            stack_count = tonumber(ok_stack and stack or 1) or 1,
+                            quality = tonumber(ok_quality and quality or 0) or 0,
                             bag_id = bag_id,
                             slot_id = tonumber(slot.slot_id) or -1,
                         }
@@ -331,16 +352,25 @@ function InventoryService:set_vendor_enabled(enabled)
 end
 
 ---@return boolean
+function InventoryService:needs_repair_trip()
+    if not self._policy.repair_enabled then
+        return false
+    end
+    local dur = self._blackboard:get("player.durability_pct", 1.0)
+    local threshold = tonumber(self._cfg.repair_threshold) or 0.25
+    return dur < threshold
+end
+
+---@return boolean
 function InventoryService:needs_vendor_trip()
     if not self:is_vendor_enabled() then
         return false
     end
     local free = self:get_free_slots()
-    if free < 0 then
-        return false
-    end
     local min_free_slots = tonumber(self._policy.min_free_slots) or 2
-    return free <= min_free_slots
+    local bags_full = free >= 0 and free <= min_free_slots
+    local repair_needed = self:needs_repair_trip()
+    return bags_full or repair_needed
 end
 
 ---@return boolean

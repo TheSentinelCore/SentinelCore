@@ -1,18 +1,22 @@
 --[[
-    Profile Tab - Custom rendered profile management
+    Profile Tab - AstroUI card-based profile management
     Handles profile selection, loading, waypoint editing, and saving.
+    Uses row_list (info), custom_render for interactive elements.
 ]]
 
 local color = require("common/color")
 local vec2 = require("common/geometry/vector_2")
 local enums = require("common/enums")
+local AstroUI = require("lib/AstroUI")
+
+local LAYOUT = AstroUI.LAYOUT
 
 local ProfileTab = {}
 
 -- Local state for the profile editor collapse
 local _editor_open = false
 
----Render a styled button and return true if clicked
+---Render a styled button and return true if clicked (Apple HIG rounded rect)
 ---@param window any Window object
 ---@param x number X position
 ---@param y number Y position
@@ -29,9 +33,9 @@ local function render_button(window, x, y, width, height, text, colors, accent_c
     local is_hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
     window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
 
-    local bg = is_hovered and (accent_color or colors.primary_accent) or colors.section_bg
-    window:render_rect_filled(btn_start, btn_end, bg, 2.0)
-    window:render_rect(btn_start, btn_end, accent_color or colors.section_border, 2.0, 1.0)
+    local bg = is_hovered and (accent_color or colors.primary_accent) or (colors.bg_elevated or colors.section_bg)
+    window:render_rect_filled(btn_start, btn_end, bg, 8.0)
+    window:render_rect(btn_start, btn_end, accent_color or colors.primary_accent, 8.0, 1.0)
 
     local text_size = window:get_text_size(text)
     local text_x = x + (width - text_size.x) / 2
@@ -42,31 +46,25 @@ local function render_button(window, x, y, width, height, text, colors, accent_c
     return window:is_rect_clicked(btn_start, btn_end)
 end
 
----Render the profile tab content
----@param ui rotation_settings_ui The UI instance
+---Render the profile selector (dropdown + Load button) as custom_render
+---@param ui_inst table The AstroUI instance
 ---@param y_offset number Current y position
 ---@return number New y_offset
-function ProfileTab.render(ui, y_offset)
-    local SentinelGather = require("init")
-    local window = ui.window
-    local colors = ui.colors
-    local lib = require("shared/rotation_settings_ui")
-    local LAYOUT = lib.LAYOUT
-    local x_start = LAYOUT.padding_side
-    local window_size = window:get_size()
-    local content_width = window_size.x - (2 * LAYOUT.padding_side)
-
-    -- Access shared state from window module
+local function render_profile_selector(ui_inst, y_offset)
+    local window = ui_inst.window
+    local colors = ui_inst.colors
     local ui_state = ProfileTab._ui_state
     local menu_elements = ProfileTab._menu_elements
     if not ui_state or not menu_elements then
         return y_offset
     end
 
-    y_offset = y_offset + LAYOUT.section_padding_top
+    local window_size = window:get_size()
+    local x_start = LAYOUT.padding_side + LAYOUT.card_padding_h
+    local content_width = window_size.x - 2 * (LAYOUT.padding_side + LAYOUT.card_padding_h)
 
     -- Profile selector row: [dropdown area] [Load button]
-    local load_btn_width = 60
+    local load_btn_width = 64
     local combo_width = content_width - load_btn_width - 8
 
     local profiles = ui_state.profiles or {}
@@ -81,17 +79,19 @@ function ProfileTab.render(ui, y_offset)
 
     -- Combo box (click to cycle)
     local combo_start = vec2.new(x_start, y_offset)
-    local combo_end = vec2.new(x_start + combo_width, y_offset + LAYOUT.element_height)
+    local combo_end = vec2.new(x_start + combo_width, y_offset + LAYOUT.row_height)
 
     local combo_hovered = window:is_mouse_hovering_rect(combo_start, combo_end)
     window:is_mouse_hovering_rect_block_movement(combo_start, combo_end)
 
-    local combo_bg = combo_hovered and colors.section_bg or colors.slider_bg
-    window:render_rect_filled(combo_start, combo_end, combo_bg, 2.0)
-    window:render_rect(combo_start, combo_end, colors.section_border, 2.0, 1.0)
+    local combo_bg = combo_hovered
+        and (colors.bg_hover or colors.section_bg)
+        or (colors.bg_input or colors.slider_bg)
+    window:render_rect_filled(combo_start, combo_end, combo_bg, 8.0)
+    window:render_rect(combo_start, combo_end, colors.border_input or colors.section_border, 8.0, 1.0)
 
     -- Truncate name if needed
-    local max_text_w = combo_width - 20
+    local max_text_w = combo_width - 28
     local display_name = selected_name
     local name_size = window:get_text_size(display_name)
     if name_size.x > max_text_w then
@@ -104,13 +104,13 @@ function ProfileTab.render(ui, y_offset)
         end
     end
 
-    local name_y = y_offset + (LAYOUT.element_height - window:get_text_size(display_name).y) / 2
+    local name_y = y_offset + (LAYOUT.row_height - window:get_text_size(display_name).y) / 2
     window:render_text(enums.window_enums.font_id.FONT_SMALL,
-        vec2.new(x_start + 8, name_y), colors.text_primary, display_name)
+        vec2.new(x_start + 12, name_y), colors.text_primary, display_name)
 
-    -- Arrow indicator
+    -- Chevron indicator
     window:render_text(enums.window_enums.font_id.FONT_SMALL,
-        vec2.new(x_start + combo_width - 18, name_y), colors.text_secondary, "v")
+        vec2.new(x_start + combo_width - 22, name_y), colors.text_secondary, "v")
 
     -- Click to cycle
     if window:is_rect_clicked(combo_start, combo_end) and #profiles > 0 then
@@ -120,52 +120,66 @@ function ProfileTab.render(ui, y_offset)
 
     -- Load button
     local load_x = x_start + combo_width + 8
-    if render_button(window, load_x, y_offset, load_btn_width, LAYOUT.element_height,
+    if render_button(window, load_x, y_offset, load_btn_width, LAYOUT.row_height,
         "Load", colors, colors.primary_accent) then
+        local SentinelGather = require("init")
         if profile and profile.path then
             SentinelGather:load_profile(profile.path)
         end
     end
 
-    y_offset = y_offset + LAYOUT.element_height + LAYOUT.element_spacing
+    y_offset = y_offset + LAYOUT.row_height + 8
 
-    -- Profile info
+    -- Profile info row
     if profile and profile.path then
         local info_text = string.format("Zone: %s  |  Waypoints: %d",
             profile.zone or "Unknown", profile.waypoint_count or 0)
         window:render_text(enums.window_enums.font_id.FONT_SMALL,
             vec2.new(x_start, y_offset), colors.text_secondary, info_text)
-        y_offset = y_offset + LAYOUT.element_height + 4
+        y_offset = y_offset + 22
     end
 
-    -- Separator
-    local sep_start = vec2.new(x_start, y_offset)
-    local sep_end = vec2.new(x_start + content_width, y_offset + 2)
-    window:render_rect_filled(sep_start, sep_end, colors.separator, 0)
-    y_offset = y_offset + 6
+    return y_offset
+end
 
-    -- Profile Editor header (collapsible)
+---Render the waypoint editor as custom_render
+---@param ui_inst table The AstroUI instance
+---@param y_offset number Current y position
+---@return number New y_offset
+local function render_waypoint_editor(ui_inst, y_offset)
+    local SentinelGather = require("init")
+    local window = ui_inst.window
+    local colors = ui_inst.colors
+    local menu_elements = ProfileTab._menu_elements
+    if not menu_elements then return y_offset end
+
+    local window_size = window:get_size()
+    local x_start = LAYOUT.padding_side + LAYOUT.card_padding_h
+    local content_width = window_size.x - 2 * (LAYOUT.padding_side + LAYOUT.card_padding_h)
+
+    -- Collapsible header
     local header_start = vec2.new(x_start, y_offset)
-    local header_end = vec2.new(x_start + content_width, y_offset + LAYOUT.element_height)
+    local header_end = vec2.new(x_start + content_width, y_offset + LAYOUT.row_height)
 
     local header_hovered = window:is_mouse_hovering_rect(header_start, header_end)
     window:is_mouse_hovering_rect_block_movement(header_start, header_end)
 
-    local header_bg = header_hovered and colors.section_bg or colors.slider_bg
-    window:render_rect_filled(header_start, header_end, header_bg, 2.0)
-    window:render_rect(header_start, header_end, colors.section_border, 2.0, 1.0)
+    local header_bg = header_hovered
+        and (colors.bg_hover or colors.section_bg)
+        or (colors.bg_elevated or colors.slider_bg)
+    window:render_rect_filled(header_start, header_end, header_bg, 8.0)
 
     local arrow = _editor_open and "v" or ">"
-    local header_text = arrow .. "  Profile Editor"
-    local ht_y = y_offset + (LAYOUT.element_height - window:get_text_size(header_text).y) / 2
+    local header_text = arrow .. "  Waypoint Editor"
+    local ht_y = y_offset + (LAYOUT.row_height - window:get_text_size(header_text).y) / 2
     window:render_text(enums.window_enums.font_id.FONT_SMALL,
-        vec2.new(x_start + 8, ht_y), colors.text_primary, header_text)
+        vec2.new(x_start + 12, ht_y), colors.text_primary, header_text)
 
     if window:is_rect_clicked(header_start, header_end) then
         _editor_open = not _editor_open
     end
 
-    y_offset = y_offset + LAYOUT.element_height + LAYOUT.element_spacing
+    y_offset = y_offset + LAYOUT.row_height + 8
 
     -- Editor content (if open)
     if _editor_open then
@@ -190,7 +204,9 @@ function ProfileTab.render(ui, y_offset)
                 if wp then
                     local wp_text = string.format("%d: (%.0f, %.0f, %.0f) [%s]",
                         i, wp.x, wp.y, wp.z, wp.type or "path")
-                    local wp_color = (i == current_idx_wp) and color.yellow(255) or colors.text_disabled
+                    local wp_color = (i == current_idx_wp)
+                        and (colors.status_yellow or color.yellow(255))
+                        or colors.text_disabled
                     window:render_text(enums.window_enums.font_id.FONT_SMALL,
                         vec2.new(x_start + 16, y_offset), wp_color, wp_text)
                     y_offset = y_offset + 18
@@ -205,17 +221,19 @@ function ProfileTab.render(ui, y_offset)
             y_offset = y_offset + 4
         end
 
-        -- Add Waypoints section
+        -- Add Waypoints section label
         window:render_text(enums.window_enums.font_id.FONT_SMALL,
-            vec2.new(x_start + 8, y_offset), color.new(100, 200, 100, 255), "Add Waypoints")
+            vec2.new(x_start + 8, y_offset),
+            colors.status_green or color.new(48, 209, 88, 255), "Add Waypoints")
         y_offset = y_offset + LAYOUT.element_height
 
         local btn_w = (content_width - 16) / 2
-        local btn_h = 22
+        local btn_h = 26
 
         -- Add Path Waypoint button
+        local add_path_color = colors.status_green or color.new(48, 209, 88, 255)
         if render_button(window, x_start + 8, y_offset, btn_w - 4, btn_h,
-            "Add Path WP", colors, color.new(100, 200, 100, 200)) then
+            "Add Path WP", colors, add_path_color) then
             if player and player:is_valid() and profile_mgr then
                 local pos = player:get_position()
                 local id = profile_mgr:add_waypoint_at_position(pos, "path")
@@ -225,7 +243,7 @@ function ProfileTab.render(ui, y_offset)
 
         -- Add Hotspot button
         if render_button(window, x_start + 8 + btn_w + 4, y_offset, btn_w - 4, btn_h,
-            "Add Hotspot", colors, color.new(100, 200, 100, 200)) then
+            "Add Hotspot", colors, add_path_color) then
             if player and player:is_valid() and profile_mgr then
                 local pos = player:get_position()
                 local radius = menu_elements.hotspot_radius_slider:get()
@@ -234,9 +252,9 @@ function ProfileTab.render(ui, y_offset)
             end
         end
 
-        y_offset = y_offset + btn_h + LAYOUT.element_spacing
+        y_offset = y_offset + btn_h + 8
 
-        -- Hotspot radius slider (simple inline)
+        -- Hotspot radius display
         local slider_label = "Hotspot Radius"
         window:render_text(enums.window_enums.font_id.FONT_SMALL,
             vec2.new(x_start + 8, y_offset + 1), colors.text_secondary, slider_label)
@@ -245,13 +263,14 @@ function ProfileTab.render(ui, y_offset)
             vec2.new(x_start + content_width - 40, y_offset + 1), colors.text_primary, slider_val)
         y_offset = y_offset + LAYOUT.element_height
 
-        -- Manage Waypoints section
+        -- Manage Waypoints section label
         window:render_text(enums.window_enums.font_id.FONT_SMALL,
-            vec2.new(x_start + 8, y_offset), color.new(255, 100, 100, 255), "Manage Waypoints")
+            vec2.new(x_start + 8, y_offset),
+            colors.status_red or color.new(255, 69, 58, 255), "Manage Waypoints")
         y_offset = y_offset + LAYOUT.element_height
 
         -- Remove / Clear buttons
-        local danger_color = color.new(200, 60, 60, 200)
+        local danger_color = colors.status_red or color.new(255, 69, 58, 255)
         if render_button(window, x_start + 8, y_offset, btn_w - 4, btn_h,
             "Remove Current", colors, danger_color) then
             if profile_mgr then
@@ -271,9 +290,9 @@ function ProfileTab.render(ui, y_offset)
             end
         end
 
-        y_offset = y_offset + btn_h + LAYOUT.element_spacing + 4
+        y_offset = y_offset + btn_h + 10
 
-        -- Save button (full width)
+        -- Save button (full width, accent)
         if render_button(window, x_start + 8, y_offset, content_width - 16, btn_h,
             "Save Profile", colors, colors.primary_accent) then
             if profile_mgr then
@@ -286,14 +305,14 @@ function ProfileTab.render(ui, y_offset)
             end
         end
 
-        y_offset = y_offset + btn_h + LAYOUT.element_spacing
+        y_offset = y_offset + btn_h + 8
     end
 
-    return y_offset + LAYOUT.section_padding_bottom
+    return y_offset
 end
 
 ---Register the profile tab with the UI
----@param ui any RotationSettingsUI instance
+---@param ui any AstroUI instance
 ---@param menu_elements table Menu elements table
 ---@param ui_state table UI state table (profiles, selected_profile_index, etc.)
 function ProfileTab.register(ui, menu_elements, ui_state)
@@ -301,7 +320,34 @@ function ProfileTab.register(ui, menu_elements, ui_state)
     ProfileTab._ui_state = ui_state
 
     ui:add_tab({ id = "profile", label = "Profile" }, function(t)
-        t:custom_render({ render_fn = ProfileTab.render })
+        -- Current profile info
+        t:row_list({
+            label = "Current Profile",
+            elements = {
+                {
+                    type = "info",
+                    label = "Profile",
+                    value_fn = function()
+                        local SentinelGather = require("init")
+                        local bot_mgr = SentinelGather:get_bot_manager()
+                        local pm = bot_mgr and bot_mgr._modules and bot_mgr._modules.ProfileManager
+                        return pm and pm._profile_name or "None"
+                    end,
+                },
+            },
+        })
+
+        -- Profile selector (custom render for dropdown + Load button)
+        t:custom_render({
+            label = "Profile Selector",
+            render_fn = render_profile_selector,
+        })
+
+        -- Waypoint editor (custom render for collapsible editor)
+        t:custom_render({
+            render_fn = render_waypoint_editor,
+            card = false,
+        })
     end)
 end
 

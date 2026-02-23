@@ -68,13 +68,6 @@ function RankPolicy.select_max_rank(ctx, spell_name, fallback_ids)
         return learned
     end
 
-    if type(fallback_ids) == "table" and #fallback_ids > 0 then
-        local id = spell_id(fallback_ids[1])
-        if id > 0 then
-            return id
-        end
-    end
-
     return nil
 end
 

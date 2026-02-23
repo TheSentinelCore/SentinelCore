@@ -1,4 +1,20 @@
 # CLAUDE.md - Scripts Workspace
+## SDK Reference (scripts/.api/)
+
+The `.api/` directory contains IntelliSense type stubs -- not runtime code. Key files:
+
+- `core.lua` (~76KB) -- Main engine API: logging, timing, HTTP, object manager, spell book, graphics, menu, input, file I/O
+- `game_object.lua` -- All game object methods (position, health, auras, casting, movement, targeting)
+- `menu.lua` -- Menu element types and the window 2D drawing API
+- `common/izi_sdk.lua` (~92KB) -- Extended game_object methods (health%, buff/debuff helpers, damage prediction, role helpers, time_to_die, position prediction, unit lists)
+- `common/enums.lua` -- `class_id`, `power_type`, `group_role`, `collision_flags`, `schools_flag`
+- `common/geometry/vec3.lua` -- Vector3 with operators, normalize, lerp, dist_to, rotate
+- `common/modules/spell_queue.lua` -- Priority-based spell queue
+- `common/modules/buff_manager.lua` -- Cached aura lookups
+- `common/modules/spell_prediction.lua` -- Cast position prediction, AoE geometry
+- `common/utility/simple_movement.lua` -- Built-in locomotion: `move_to_position`, `navigate(waypoints)`, Catmull-Rom smoothing
+- `common/utility/spell_helper.lua` -- `is_spell_castable`, range/LoS checks
+- `common/utility/cooldown_tracker.lua` -- Enemy spell tracking
 
 > **Purpose**: High-level context for the multi-project workspace.
 
