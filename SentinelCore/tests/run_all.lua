@@ -39,6 +39,7 @@ local tests = {
     "tests/test_ai011_rest_maintenance",
     "tests/test_ai012_vendor_subtree",
     "tests/test_ai013_flee_interrupt",
+    "tests/test_ai014_pull_find_explore",
 }
 
 ---@return table
