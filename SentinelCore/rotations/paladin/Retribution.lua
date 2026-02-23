@@ -31,6 +31,9 @@ local SPELLS = {
     HOLY_WRATH = RET_SPELLS.HOLY_WRATH,
     HOLY_LIGHT = RET_SPELLS.HOLY_LIGHT,
     FLASH_OF_LIGHT = RET_SPELLS.FLASH_OF_LIGHT,
+    BLESSING_OF_MIGHT = RET_SPELLS.BLESSING_OF_MIGHT,
+    BLESSING_OF_FREEDOM = RET_SPELLS.BLESSING_OF_FREEDOM,
+    SEAL_OF_VENGEANCE = RET_SPELLS.SEAL_OF_VENGEANCE,
 
     DIVINE_PROTECTION = RET_SPELLS.DIVINE_PROTECTION.ids[1],
     DIVINE_SHIELD = RET_SPELLS.DIVINE_SHIELD.ids[1],
@@ -86,6 +89,8 @@ local DEFAULT_POLICY = {
     repentance_defensive_hp_pct = 0.34,
     repentance_defensive_min_ttd_sec = 4.5,
     repentance_defensive_min_distance = 6.0,
+    blessing_of_might_refresh_sec = 30.0,
+    divine_shield_cc_hp_pct = 0.35,
 }
 
 ---@private
@@ -207,6 +212,11 @@ local function preferred_seal_id(ctx)
         return command
     end
 
+    local vengeance = resolve_spell(ctx, SPELLS.SEAL_OF_VENGEANCE)
+    if is_learned(vengeance) then
+        return vengeance
+    end
+
     return command or blood
 end
 
@@ -232,7 +242,9 @@ end
 ---@param ctx table
 ---@return boolean
 local function has_active_seal(ctx)
-    return has_any_aura(ctx, RET_AURAS.SEAL_OF_COMMAND) or has_any_aura(ctx, RET_AURAS.SEAL_OF_BLOOD)
+    return has_any_aura(ctx, RET_AURAS.SEAL_OF_COMMAND)
+        or has_any_aura(ctx, RET_AURAS.SEAL_OF_BLOOD)
+        or has_any_aura(ctx, RET_AURAS.SEAL_OF_VENGEANCE)
 end
 
 ---@private
@@ -266,6 +278,11 @@ local function should_reseal(ctx)
         return not has_any_aura(ctx, RET_AURAS.SEAL_OF_COMMAND)
     end
 
+    local vengeance = resolve_spell(ctx, SPELLS.SEAL_OF_VENGEANCE)
+    if vengeance and seal_id == vengeance then
+        return not has_any_aura(ctx, RET_AURAS.SEAL_OF_VENGEANCE)
+    end
+
     return ctx.player_has_aura(seal_id) ~= true
 end
 
@@ -285,6 +302,11 @@ local function current_seal_id(ctx)
     local blood = resolve_spell(ctx, SPELLS.SEAL_OF_BLOOD)
     if blood and has_any_aura(ctx, RET_AURAS.SEAL_OF_BLOOD) then
         return blood
+    end
+
+    local vengeance = resolve_spell(ctx, SPELLS.SEAL_OF_VENGEANCE)
+    if vengeance and has_any_aura(ctx, RET_AURAS.SEAL_OF_VENGEANCE) then
+        return vengeance
     end
 
     return nil
@@ -752,6 +774,16 @@ function Retribution:maintenance(ctx)
                 return local_ctx.player_has_aura and local_ctx.player_has_aura(aura_id) ~= true
             end,
         }),
+        self_spell(SPELLS.BLESSING_OF_MIGHT, 260, {
+            intent = "utility",
+            condition = function(local_ctx)
+                if type(local_ctx.player_aura_remaining) ~= "function" then
+                    return not has_any_aura(local_ctx, RET_AURAS.BLESSING_OF_MIGHT)
+                end
+                local remaining = local_ctx.player_aura_remaining(RET_AURAS.BLESSING_OF_MIGHT)
+                return remaining < (tonumber(p and p.blessing_of_might_refresh_sec) or 30.0)
+            end,
+        }),
     }
 end
 
@@ -791,9 +823,19 @@ function Retribution:defensive(ctx)
             end,
         }),
         self_spell(SPELLS.DIVINE_SHIELD, 980, {
-            max_player_health_pct = p.divine_shield_hp_pct,
             intent = "defensive",
             combat_modes = { "burst", "sustain", "recovery" },
+            condition = function(local_ctx)
+                local hp = tonumber(local_ctx.player_health_pct) or 1.0
+                if hp <= (tonumber(p.divine_shield_hp_pct) or 0.20) then
+                    return true
+                end
+                local cc_hp = tonumber(p.divine_shield_cc_hp_pct) or 0.35
+                if hp <= cc_hp and (local_ctx.player_is_stunned == true or local_ctx.player_is_feared == true) then
+                    return true
+                end
+                return false
+            end,
         }),
         self_spell(SPELLS.DIVINE_PROTECTION, 965, {
             max_player_health_pct = p.divine_protection_hp_pct,
@@ -814,6 +856,14 @@ function Retribution:defensive(ctx)
             combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return should_use_repentance_defensive(local_ctx, p)
+            end,
+        }),
+        self_spell(SPELLS.BLESSING_OF_FREEDOM, 950, {
+            intent = "defensive",
+            combat_modes = { "burst", "sustain", "recovery" },
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+                    and local_ctx.player_is_rooted == true
             end,
         }),
         self_spell(holy_light, 945, {
@@ -961,8 +1011,9 @@ function Retribution:combat(ctx)
         target_spell(SPELLS.EXORCISM, 500, {
             max_target_distance = 30.0,
             min_player_mana_pct = p.exorcism_min_mana_pct,
-            intent = "burst",
-            combat_modes = { "burst" },
+            allow_movement = false,
+            intent = { "burst", "sustain" },
+            combat_modes = { "burst", "sustain" },
             condition = function(local_ctx)
                 return target_is_undead_or_demon(local_ctx)
             end,
