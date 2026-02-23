@@ -35,6 +35,10 @@ local tests = {
     "tests/test_ai007_retribution_utility",
     "tests/test_ai008_combat_subtree",
     "tests/test_ai009_death_recovery_subtree",
+    "tests/test_ai010_loot_subtree",
+    "tests/test_ai011_rest_maintenance",
+    "tests/test_ai012_vendor_subtree",
+    "tests/test_ai013_flee_interrupt",
 }
 
 ---@return table
