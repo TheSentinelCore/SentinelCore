@@ -86,10 +86,6 @@ local DEFAULT_POLICY = {
     repentance_defensive_hp_pct = 0.34,
     repentance_defensive_min_ttd_sec = 4.5,
     repentance_defensive_min_distance = 6.0,
-    ttd_alpha = 0.35,
-    ttd_min_sample_secs = 0.20,
-    ttd_memory_ttl_secs = 20.0,
-    ttd_max_seconds = 120.0,
 }
 
 ---@private
@@ -103,72 +99,7 @@ local function spell_id(value)
     return id
 end
 
----@private
----@param value number
----@param low number
----@param high number
----@return number
-local function clamp(value, low, high)
-    if value < low then
-        return low
-    end
-    if value > high then
-        return high
-    end
-    return value
-end
 
----@private
----@param unit any
----@param method string
----@param ... any
----@return any
-local function safe_unit_call(unit, method, ...)
-    if not unit then
-        return nil
-    end
-    local fn = unit[method]
-    if type(fn) ~= "function" then
-        return nil
-    end
-    local ok, value = pcall(fn, unit, ...)
-    if not ok then
-        return nil
-    end
-    return value
-end
-
----@private
----@param unit any
----@return number
-local function safe_unit_guid(unit)
-    local guid = tonumber(safe_unit_call(unit, "get_guid"))
-        or tonumber(safe_unit_call(unit, "get_object_guid"))
-        or 0
-    return guid
-end
-
----@private
----@param unit any
----@return string
-local function target_key(unit)
-    if not unit then
-        return "none"
-    end
-
-    local guid = safe_unit_guid(unit)
-    if guid > 0 then
-        return "guid:" .. tostring(guid)
-    end
-
-    local npc_id = tonumber(safe_unit_call(unit, "get_npc_id")) or 0
-    local pos = safe_unit_call(unit, "get_position")
-    local x = tonumber(pos and pos.x) or 0
-    local y = tonumber(pos and pos.y) or 0
-    local z = tonumber(pos and pos.z) or 0
-    local name = tostring(safe_unit_call(unit, "get_name") or "unknown")
-    return string.format("fallback:%d:%s:%.1f:%.1f:%.1f", npc_id, name, x, y, z)
-end
 
 ---@private
 ---@param ctx table
@@ -366,121 +297,6 @@ local function flash_of_light_max_rank(ctx)
     return RankPolicy.select_max_rank(ctx, SpellCatalog.name(SPELLS.FLASH_OF_LIGHT), SpellCatalog.ids(SPELLS.FLASH_OF_LIGHT))
 end
 
----@private
----@param now number
----@param ttl number
-function Retribution:_prune_ttd_state(now, ttl)
-    if type(self._ttd_state) ~= "table" then
-        self._ttd_state = {}
-        return
-    end
-
-    for key, entry in pairs(self._ttd_state) do
-        local updated_at = tonumber(entry and entry.updated_at) or 0
-        if updated_at <= 0 or (now - updated_at) > ttl then
-            self._ttd_state[key] = nil
-        end
-    end
-end
-
----@private
----@param ctx table
----@param p table
----@return number|nil
----@return number|nil
-function Retribution:_estimate_target_ttd(ctx, p)
-    local target = ctx and ctx.target
-    if not target then
-        return nil, nil
-    end
-
-    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
-    local ttl = tonumber(p and p.ttd_memory_ttl_secs) or 20.0
-    if ttl <= 0 then
-        ttl = 20.0
-    end
-    self:_prune_ttd_state(now, ttl)
-
-    self._ttd_state = self._ttd_state or {}
-    local key = target_key(target)
-    local entry = self._ttd_state[key] or {}
-
-    local hp = tonumber(safe_unit_call(target, "get_health"))
-    local max_hp = tonumber(safe_unit_call(target, "get_max_health"))
-    if hp == nil then
-        local pct = tonumber(ctx and ctx.target_health_pct)
-        if pct ~= nil and max_hp and max_hp > 0 then
-            hp = pct * max_hp
-        end
-    end
-    if max_hp == nil or max_hp <= 0 then
-        max_hp = hp or 0
-    end
-    if hp == nil then
-        return nil, nil
-    end
-    if hp <= 0 then
-        entry.last_hp = 0
-        entry.last_ttd = 0
-        entry.updated_at = now
-        self._ttd_state[key] = entry
-        return 0, nil
-    end
-
-    local alpha = clamp(tonumber(p and p.ttd_alpha) or 0.35, 0.05, 0.95)
-    local min_sample = tonumber(p and p.ttd_min_sample_secs) or 0.20
-    if min_sample <= 0 then
-        min_sample = 0.20
-    end
-    local max_ttd = tonumber(p and p.ttd_max_seconds) or 120.0
-    if max_ttd <= 0 then
-        max_ttd = 120.0
-    end
-
-    local last_hp = tonumber(entry.last_hp)
-    local last_ts = tonumber(entry.last_ts)
-    if last_hp ~= nil and last_ts ~= nil then
-        local dt = now - last_ts
-        if dt >= min_sample then
-            local delta = last_hp - hp
-            if delta > 0 then
-                local inst_dps = delta / dt
-                if inst_dps > 0 then
-                    local ema = tonumber(entry.ema_dps)
-                    if ema == nil or ema <= 0 then
-                        ema = inst_dps
-                    else
-                        ema = (ema * (1.0 - alpha)) + (inst_dps * alpha)
-                    end
-                    entry.ema_dps = ema
-                end
-            end
-        end
-    end
-
-    entry.last_hp = hp
-    entry.last_max_hp = max_hp
-    entry.last_ts = now
-    entry.updated_at = now
-
-    local hazard = nil
-    local ttd = nil
-    local ema_dps = tonumber(entry.ema_dps)
-    if ema_dps and ema_dps > 0 then
-        hazard = ema_dps / math.max(1.0, hp)
-        if hazard > 0 then
-            ttd = 1.0 / hazard
-        end
-    end
-
-    if ttd ~= nil then
-        ttd = clamp(ttd, 0, max_ttd)
-    end
-    entry.last_ttd = ttd
-    self._ttd_state[key] = entry
-
-    return ttd, hazard
-end
 
 ---@private
 ---@param ctx table
@@ -839,7 +655,7 @@ function Retribution:resolve_combat_state(ctx)
     local p = policy(ctx)
     local mana_mode = self:_resolve_mana_mode(ctx, p)
     local target_health_pct = tonumber(ctx and ctx.target_health_pct)
-    local target_ttd, target_hazard = self:_estimate_target_ttd(ctx, p)
+    local target_ttd = tonumber(ctx and ctx.target_ttd_seconds)
     local execute = target_health_pct ~= nil and target_health_pct <= EXECUTE_TARGET_HEALTH_PCT
     if not execute then
         local execute_horizon = tonumber(p and p.execute_ttd_horizon_sec) or 8.0
@@ -879,7 +695,6 @@ function Retribution:resolve_combat_state(ctx)
         in_execute_phase = execute,
         ret_target_ttd_seconds = target_ttd,
         target_ttd_seconds = target_ttd,
-        ret_target_hazard_rate = target_hazard,
         planner_intents = intents,
     }
 end
