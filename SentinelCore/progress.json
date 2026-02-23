@@ -1,9 +1,9 @@
 {
-  "current_task": 1,
+  "current_task": 3,
   "tasks": [
-    {"id": 1, "name": "ResponseCurves", "status": "not_started"},
-    {"id": 2, "name": "UtilityEvaluator", "status": "not_started"},
-    {"id": 3, "name": "BehaviorTree", "status": "not_started"},
+    {"id": 1, "name": "ResponseCurves", "status": "passing"},
+    {"id": 2, "name": "UtilityEvaluator", "status": "passing"},
+    {"id": 3, "name": "BehaviorTree", "status": "in_progress"},
     {"id": 4, "name": "SwingTimer", "status": "not_started"},
     {"id": 5, "name": "HumanTiming", "status": "not_started"},
     {"id": 6, "name": "CombatContext", "status": "not_started"},
