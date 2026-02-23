@@ -42,6 +42,7 @@ local tests = {
     "tests/test_ai014_pull_find_explore",
     "tests/test_ai015_grind_tree",
     "tests/test_ai016_anti_detection",
+    "tests/test_ai017_client_integration",
     "tests/test_ai018_integration_smoke",
 }
 

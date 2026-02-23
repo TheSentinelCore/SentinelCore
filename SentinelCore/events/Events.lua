@@ -63,6 +63,15 @@ local Events = {
     DEATH_RESURRECT_ATTEMPT = "death.resurrect_attempt",
     DEATH_RESURRECTED = "death.resurrected",
 
+    -- Behavior Tree
+    BT_TICK = "bt.tick",
+    BT_SUBTREE_ENTERED = "bt.subtree_entered",
+    BT_SUBTREE_EXITED = "bt.subtree_exited",
+
+    -- Utility AI
+    UTILITY_EVALUATED = "utility.evaluated",
+    UTILITY_ACTION_SELECTED = "utility.action_selected",
+
     -- Telemetry
     TELEMETRY_FLUSHED = "telemetry.flushed",
 
