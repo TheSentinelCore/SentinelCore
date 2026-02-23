@@ -377,6 +377,55 @@ local function unit_has_aura(unit, spec)
 end
 
 ---@private
+---@param unit game_object|nil
+---@param spec any
+---@return number
+local function unit_aura_remaining(unit, spec)
+    if not unit or spec == nil then
+        return 0
+    end
+
+    if type(spec) == "table" then
+        local best = 0
+        for i = 1, #spec do
+            local r = unit_aura_remaining(unit, spec[i])
+            if r > best then
+                best = r
+            end
+        end
+        return best
+    end
+
+    local remaining_methods = {
+        "get_debuff_remaining", "get_buff_remaining",
+        "get_aura_remaining",
+    }
+    for i = 1, #remaining_methods do
+        local value = safe_unit_call(unit, remaining_methods[i], spec)
+        local n = normalize_seconds(value)
+        if n > 0 then
+            return n
+        end
+    end
+
+    local obj_methods = { "get_debuff", "get_buff", "get_aura" }
+    for i = 1, #obj_methods do
+        local obj = safe_unit_call(unit, obj_methods[i], spec)
+        if type(obj) == "table" then
+            local r = normalize_seconds(obj.remaining or obj.time_left or obj.duration_left or obj.expires_at)
+            if r > 0 then
+                return r
+            end
+        end
+    end
+
+    if unit_has_aura(unit, spec) then
+        return 999
+    end
+    return 0
+end
+
+---@private
 ---@param player game_object|nil
 ---@param enums table|nil
 ---@return table
@@ -649,12 +698,59 @@ function CombatContext:build(deps)
         or player_is_drinking
         or rest_lock_until > now
 
+    -- Player CC state
+    local player_is_stunned = safe_unit_call(player, "is_stunned") == true
+    local player_is_rooted = safe_unit_call(player, "is_rooted") == true
+    local player_is_silenced = safe_unit_call(player, "is_silenced") == true
+    local player_is_feared = safe_unit_call(player, "is_feared") == true
+    local player_is_casting = safe_unit_call(player, "is_casting_spell") == true
+
+    -- Player stats
+    local player_attack_speed = to_number(safe_unit_call(player, "get_attack_speed")) or 0
+
+    -- Loss of control
+    local player_loss_of_control = safe_unit_call(player, "get_loss_of_control_info")
+
+    -- Target interrupt data
+    local target_is_interruptable = safe_unit_call(target, "is_active_spell_interruptable") == true
+    local target_active_spell_id = to_number(safe_unit_call(target, "get_active_spell_id"))
+
+    -- Target cast timing
+    local target_cast_remaining_sec = 0
+    local target_cast_end = to_number(safe_unit_call(target, "get_active_spell_cast_end_time"))
+    if target_cast_end and target_cast_end > 0 then
+        target_cast_remaining_sec = normalize_seconds(math.max(0, target_cast_end - now))
+    end
+    local target_cast_progress = 0
+    local target_cast_start = to_number(safe_unit_call(target, "get_active_spell_cast_start_time"))
+    if target_cast_start and target_cast_end and target_cast_end > target_cast_start then
+        target_cast_progress = math.max(0, math.min(1.0, (now - target_cast_start) / (target_cast_end - target_cast_start)))
+    end
+
+    -- Target TTD (izi_sdk)
+    local target_ttd_seconds = nil
+    if target then
+        local ttd = to_number(safe_unit_call(target, "time_to_die"))
+        if ttd and ttd >= 0 then
+            target_ttd_seconds = ttd
+        end
+    end
+
+    -- Player aura remaining
+    local function player_aura_remaining(spec)
+        return unit_aura_remaining(player, spec)
+    end
+
     local function player_has_aura(spec)
         return unit_has_aura(player, spec)
     end
 
     local function target_has_aura(spec)
         return unit_has_aura(target, spec)
+    end
+
+    local function target_aura_remaining(spec)
+        return unit_aura_remaining(target, spec)
     end
 
     local function target_is_creature_type(spec)
@@ -722,11 +818,25 @@ function CombatContext:build(deps)
         routine_policy = bb:get("rotation.policy"),
         player_has_aura = player_has_aura,
         target_has_aura = target_has_aura,
+        target_aura_remaining = target_aura_remaining,
         target_is_creature_type = target_is_creature_type,
         pet = pet,
         pet_health_pct = pet_health_pct,
         resolve_spell_id = resolve_spell_id,
         spell_cooldown_remaining = spell_cooldown_remaining,
+        player_is_stunned = player_is_stunned,
+        player_is_rooted = player_is_rooted,
+        player_is_silenced = player_is_silenced,
+        player_is_feared = player_is_feared,
+        player_is_casting = player_is_casting,
+        player_attack_speed = player_attack_speed,
+        player_loss_of_control = player_loss_of_control,
+        target_is_interruptable = target_is_interruptable,
+        target_active_spell_id = target_active_spell_id,
+        target_cast_remaining_sec = target_cast_remaining_sec,
+        target_cast_progress = target_cast_progress,
+        target_ttd_seconds = target_ttd_seconds,
+        player_aura_remaining = player_aura_remaining,
     }
 end
 

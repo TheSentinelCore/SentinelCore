@@ -211,6 +211,57 @@ local function run()
     T.assert_eq(ctx5.player_mana_pct, 0.22,
         "mana normalization should use helper fallback when direct resource APIs are incomplete")
 
+    -- ── New context fields: CC, interrupt, TTD, attack speed ─────
+    do
+        local player2 = T.mock_object({ health = 800, max_health = 1000, in_combat = true })
+        local target2 = T.mock_object({ health = 500, max_health = 1000, casting = true })
+        player2._stunned = false
+        player2._rooted = true
+        player2._silenced = false
+        player2._feared = false
+        function player2:is_stunned() return self._stunned end
+        function player2:is_rooted() return self._rooted end
+        function player2:is_silenced() return self._silenced end
+        function player2:is_feared() return self._feared end
+        function player2:get_attack_speed() return 3.8 end
+        function player2:get_loss_of_control_info() return { valid = false } end
+        function player2:get_power(pt) return 800 end
+        function player2:get_max_power(pt) return 1000 end
+
+        function target2:is_active_spell_interruptable() return true end
+        function target2:get_active_spell_id() return 12345 end
+        function target2:get_active_spell_cast_end_time() return 1002.0 end
+        function target2:get_active_spell_cast_start_time() return 999.0 end
+        function target2:time_to_die() return 15.5 end
+
+        local bus2 = EventBus:new()
+        local bb2 = Blackboard:new(bus2)
+        bb2:set("player.object", player2)
+        bb2:set("player.position", { x = 0, y = 0, z = 0 })
+        bb2:set("combat.target", target2)
+        bb2:set("player.class_id", 2)
+        bb2:set("player.in_combat", true)
+        bb2:set("combat.enemy_count", 1)
+
+        local ctx_builder2 = CombatContext:new(bb2)
+        local ctx_new = ctx_builder2:build({
+            enums = enums,
+            helpers = { distance_3d = function(_, _) return 5 end },
+        })
+
+        T.assert_eq(ctx_new.player_is_stunned, false, "player_is_stunned should be false")
+        T.assert_eq(ctx_new.player_is_rooted, true, "player_is_rooted should be true")
+        T.assert_eq(ctx_new.player_is_silenced, false, "player_is_silenced should be false")
+        T.assert_eq(ctx_new.player_is_feared, false, "player_is_feared should be false")
+        T.assert_eq(ctx_new.player_is_casting, false, "player_is_casting should be false when not casting")
+        T.assert_eq(ctx_new.player_attack_speed, 3.8, "player_attack_speed should be 3.8")
+        T.assert_eq(ctx_new.target_is_interruptable, true, "target_is_interruptable should be true")
+        T.assert_eq(ctx_new.target_active_spell_id, 12345, "target_active_spell_id should be 12345")
+        T.assert_true(ctx_new.target_ttd_seconds == 15.5, "target_ttd_seconds should be 15.5")
+        T.assert_true(type(ctx_new.player_aura_remaining) == "function", "player_aura_remaining should be a function")
+        T.assert_true(ctx_new.target_cast_progress > 0, "target_cast_progress should be > 0 during active cast")
+    end
+
     return {
         rotation_context_normalization = true,
     }
