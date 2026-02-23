@@ -254,6 +254,10 @@ function CombatService:new(event_bus, blackboard, navigation, targeting, rotatio
     o._combat_face_last_at = 0
     o._combat_face_last_target_pos = nil
     o._last_error = nil
+    o._combat_target_last_health_pct = nil
+    o._combat_target_was_in_combat = false
+    o._los_check_at = 0
+    o._los_blocked = false
     o:_set_state("idle")
     return o
 end
@@ -645,6 +649,23 @@ function CombatService:_resolve_enemy_count(target)
         return target and 1 or 0
     end
 
+    if player.get_enemies_in_range then
+        local ok_enemies, enemies = pcall(player.get_enemies_in_range, player, 30)
+        if ok_enemies and type(enemies) == "table" then
+            local fast_count = 0
+            for i = 1, #enemies do
+                local enemy = enemies[i]
+                if safe_method(enemy, "is_valid") == true
+                    and safe_method(enemy, "is_dead") ~= true then
+                    fast_count = fast_count + 1
+                end
+            end
+            if fast_count > 0 then
+                return fast_count
+            end
+        end
+    end
+
     local count = 0
     local seen = {}
     local function add_unit(unit)
@@ -944,6 +965,8 @@ function CombatService:_mark_target_failed(target, reason)
         ttl = tonumber(self._cfg.target_memory_ttl_pull_failed) or 20.0
     elseif reason == ErrorCodes.TARGET_LOST then
         ttl = tonumber(self._cfg.target_memory_ttl_target_lost) or 10.0
+    elseif reason == "TARGET_EVADED" then
+        ttl = tonumber(self._cfg.target_memory_ttl_target_evaded) or 8.0
     elseif reason == ErrorCodes.NAV_MOVE_FAILED then
         ttl = tonumber(self._cfg.target_memory_ttl_nav_failed) or 15.0
     else
@@ -973,6 +996,35 @@ end
 ---@private
 ---@param target game_object
 ---@param now number
+function CombatService:_update_los_state(target, now)
+    local los_interval = tonumber(self._cfg.los_check_interval) or 0.50
+    if (now - self._los_check_at) < los_interval then
+        return
+    end
+    self._los_check_at = now
+
+    if not core or not core.graphics or type(core.graphics.is_line_of_sight) ~= "function" then
+        self._los_blocked = false
+        return
+    end
+
+    local player = self._blackboard:get("player.object")
+    if not player then
+        self._los_blocked = false
+        return
+    end
+
+    local ok, has_los = pcall(core.graphics.is_line_of_sight, player, target)
+    if ok then
+        self._los_blocked = (has_los ~= true)
+    else
+        self._los_blocked = false
+    end
+end
+
+---@private
+---@param target game_object
+---@param now number
 ---@param distance number|nil
 function CombatService:_apply_combat_chase(target, now, distance)
     local profile = self:_resolve_movement_profile()
@@ -993,6 +1045,10 @@ function CombatService:_apply_combat_chase(target, now, distance)
     if distance > chase_range then
         local target_pos = safe_method(target, "get_position")
         if target_pos then
+            local predicted = safe_method(target, "predict_position", 1.0)
+            if predicted and type(predicted) == "table" and predicted.x then
+                target_pos = predicted
+            end
             self:_update_combat_navigation(target_pos, now)
         end
         return
@@ -1030,6 +1086,11 @@ function CombatService:_maintain_combat_facing(target, now, distance)
 
     local player = self._blackboard:get("player.object")
     if safe_method(player, "is_casting_spell") == true or safe_method(player, "is_channelling_spell") == true then
+        return
+    end
+
+    local ok_facing, already_facing = pcall(player.is_looking_at_unit, player, target)
+    if ok_facing and already_facing == true then
         return
     end
 
@@ -1137,6 +1198,11 @@ function CombatService:start(target)
     self:_reset_combat_navigation()
     self._last_error = nil
 
+    -- Cancel eating/drinking so the pull cast isn't blocked by the food/water buff
+    if core and core.input and type(core.input.cancel_spells) == "function" then
+        pcall(core.input.cancel_spells)
+    end
+
     self._event_bus:emit(Events.PULL_STARTED, {
         timestamp = now,
         target_name = safe_target_name(target),
@@ -1157,6 +1223,10 @@ function CombatService:reset()
     self:_reset_combat_navigation()
     self._blackboard:clear("combat.target")
     self._blackboard:set("combat.enemy_count", 0)
+    self._combat_target_last_health_pct = nil
+    self._combat_target_was_in_combat = false
+    self._los_check_at = 0
+    self._los_blocked = false
     if self._targeting and self._targeting.clear_target then
         pcall(self._targeting.clear_target, self._targeting, "combat_reset")
     end
@@ -1262,6 +1332,11 @@ function CombatService:_execute_pull(target)
         pcall(core.input.set_target, target)
     end
 
+    local target_pos_for_face = safe_method(target, "get_position")
+    if target_pos_for_face and core and core.input and type(core.input.look_at) == "function" then
+        pcall(core.input.look_at, target_pos_for_face)
+    end
+
     if pull_profile.pull_spell_id then
         local ok_call, ok, err = pcall(self._rotation.tick_once, self._rotation)
         if not ok_call then
@@ -1285,7 +1360,8 @@ function CombatService:_execute_pull(target)
         or self._blackboard:get("player.in_combat", false) == true
     local target_in_combat = safe_method(target, "is_in_combat") == true
 
-    if not player_in_combat and not target_in_combat then
+    if not player_in_combat and not target_in_combat
+        and pull_profile.disable_auto_attack ~= true then
         local melee_range = self:_resolve_pull_melee_range(pull_profile)
         local commit_range = self:_resolve_pull_auto_attack_commit_range(pull_profile, melee_range)
         local trigger_range = tonumber(self._cfg.pull_auto_attack_trigger_range) or melee_range
@@ -1298,14 +1374,12 @@ function CombatService:_execute_pull(target)
 
         if distance > commit_range then
             if distance <= trigger_range then
-                -- Prime attack state while closing to reduce pull dead-time when Judgement is unavailable.
                 self:_try_start_auto_attack(target, now)
             end
             self:_update_pull_navigation(target_pos, now)
             return true, nil
         end
 
-        -- Fallback: once in melee, force auto-attack so pull cannot stall on cooldowns.
         self:_try_start_auto_attack(target, now)
     end
 
@@ -1346,6 +1420,26 @@ function CombatService:update()
     target = self:_maybe_switch_to_attacker(target, now)
     self:_sync_enemy_count(target)
 
+    -- Evade/leash detection
+    local target_hp = resolve_unit_health_pct(target)
+    local target_in_combat_now = safe_method(target, "is_in_combat") == true
+    if target_hp ~= nil and self._combat_target_last_health_pct ~= nil then
+        if target_hp - self._combat_target_last_health_pct > 0.15 then
+            return self:_fail_and_reset("TARGET_EVADED", now, target)
+        end
+    end
+    if self._combat_target_was_in_combat and not target_in_combat_now then
+        if safe_method(target, "is_dead") ~= true then
+            return self:_fail_and_reset("TARGET_EVADED", now, target)
+        end
+    end
+    if target_hp ~= nil then
+        self._combat_target_last_health_pct = target_hp
+    end
+    if target_in_combat_now then
+        self._combat_target_was_in_combat = true
+    end
+
     local target_dead = safe_method(target, "is_dead")
     if target_dead == true then
         self._blackboard:set("loot.pending_target", target)
@@ -1379,7 +1473,15 @@ function CombatService:update()
 
     if self._state == "combat" then
         local distance = self:_distance_to_target(target)
-        self:_apply_combat_chase(target, now, distance)
+        self:_update_los_state(target, now)
+        if self._los_blocked then
+            local los_target_pos = safe_method(target, "get_position")
+            if los_target_pos then
+                self:_update_combat_navigation(los_target_pos, now)
+            end
+        else
+            self:_apply_combat_chase(target, now, distance)
+        end
         self:_maintain_combat_facing(target, now, distance)
         local ok_call, ok, err = pcall(self._rotation.tick_once, self._rotation)
         if not ok_call then
