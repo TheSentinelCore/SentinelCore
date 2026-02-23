@@ -14,6 +14,17 @@ local function run()
         get_resurrect_corpse_delay = function()
             return resurrect_delay
         end,
+        game_ui = {
+            get_corpse_position = function()
+                return corpse_pos
+            end,
+            get_resurrect_corpse_delay = function()
+                return resurrect_delay
+            end,
+            get_loot_item_count = function() return 0 end,
+            is_map_open = function() return false end,
+            is_rendering_kick_warning = function() return false end,
+        },
         input = {
             release_spirit = function()
                 release_calls = release_calls + 1
@@ -313,6 +324,78 @@ local function run()
         T.assert_eq(svc:is_active(), false, "t10: should not activate without player")
     end
 
+    -- ── Test 11: Ghost-first with blackboard death position fallback ─
+    -- Covers the case where core.get_corpse_position doesn't exist and
+    -- the "dead but not ghost" frame was missed. The sensor-cached
+    -- player.death_position in the blackboard should be used as fallback.
+    do
+        release_calls = 0; resurrect_calls = 0; resurrect_delay = 0
+        corpse_pos = nil  -- simulate core.get_corpse_position not existing
+
+        local bus = EventBus:new()
+        local bb = Blackboard:new(bus)
+        local nav = make_mock_nav()
+
+        -- Player is already a ghost at graveyard (missed "dead" frame)
+        local player = T.mock_object({ dead = false, ghost = true, position = { x = 0, y = 0, z = 0 } })
+        bb:set("player.object", player)
+        bb:set("player.position", player:get_position())
+
+        -- Simulate sensor-cached death position (where the body is)
+        bb:set("player.death_position", { x = 200, y = 100, z = 0 })
+
+        local svc = DeathRecoveryService:new(bus, bb, {
+            death_resurrect_distance = 10.0,
+            death_move_to_cooldown = 0.1,
+        }, nav)
+
+        svc:update(900)
+        T.assert_eq(svc:get_state(), "corpse_run", "t11: state should be 'corpse_run'")
+        T.assert_true(nav.move_to_calls >= 1, "t11: nav.move_to should be called using bb death position")
+        T.assert_true(nav.last_dest ~= nil, "t11: nav destination should be set")
+        T.assert_eq(nav.last_dest.x, 200, "t11: destination x should match death position")
+        T.assert_eq(nav.last_dest.y, 100, "t11: destination y should match death position")
+    end
+
+    -- ── Test 12: Uses core.game_ui.get_corpse_position path ──────────
+    do
+        release_calls = 0; resurrect_calls = 0; resurrect_delay = 0
+        local saved_get_corpse = core.get_corpse_position
+        local saved_get_delay = core.get_resurrect_corpse_delay
+        core.get_corpse_position = nil
+        core.get_resurrect_corpse_delay = nil
+        local gui_corpse_pos = { x = 300, y = 150, z = 50 }
+        core.game_ui.get_corpse_position = function()
+            return gui_corpse_pos
+        end
+        core.game_ui.get_resurrect_corpse_delay = function()
+            return resurrect_delay
+        end
+
+        local bus = EventBus:new()
+        local bb = Blackboard:new(bus)
+        local nav = make_mock_nav()
+        local player = T.mock_object({ dead = false, ghost = true, position = { x = 0, y = 0, z = 0 } })
+        bb:set("player.object", player)
+        bb:set("player.position", player:get_position())
+
+        local svc = DeathRecoveryService:new(bus, bb, {
+            death_resurrect_distance = 10.0,
+            death_move_to_cooldown = 0.1,
+        }, nav)
+
+        svc:update(1000)
+        T.assert_eq(svc:get_state(), "corpse_run", "t12: state should be 'corpse_run'")
+        T.assert_true(nav.move_to_calls >= 1, "t12: nav.move_to should be called using game_ui corpse position")
+        T.assert_eq(nav.last_dest.x, 300, "t12: destination x should match game_ui corpse position")
+        T.assert_eq(nav.last_dest.y, 150, "t12: destination y should match game_ui corpse position")
+
+        core.get_corpse_position = saved_get_corpse
+        core.get_resurrect_corpse_delay = saved_get_delay
+        core.game_ui.get_corpse_position = nil
+        core.game_ui.get_resurrect_corpse_delay = nil
+    end
+
     return {
         idle_when_alive = true,
         activates_on_death = true,
@@ -324,6 +407,8 @@ local function run()
         config_overrides = true,
         resurrect_delay_gate = true,
         no_player_deactivates = true,
+        ghost_first_bb_fallback = true,
+        game_ui_corpse_path = true,
     }
 end
 
