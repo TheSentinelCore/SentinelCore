@@ -46,6 +46,7 @@ local curves = {
     bell = function(x, p)
         local center = p.center or 0.5
         local width = p.width or 0.2
+        if width < 0.001 then width = 0.001 end
         local d = x - center
         return math.exp(-(d * d) / (2 * width * width))
     end,

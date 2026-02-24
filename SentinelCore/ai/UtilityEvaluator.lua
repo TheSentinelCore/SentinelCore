@@ -10,6 +10,28 @@ function UE:new()
     return o
 end
 
+--- Check if a spell is on cooldown (including GCD for non-bypass actions).
+---@param action table
+---@return boolean true if spell is unavailable
+local function is_on_cooldown(action)
+    if not action.spell_id then return false end
+    if not core or not core.spell_book then return false end
+
+    -- Check spell-specific cooldown
+    if core.spell_book.get_spell_cooldown then
+        local ok, cd = pcall(core.spell_book.get_spell_cooldown, action.spell_id)
+        if ok and cd and cd > 0 then return true end
+    end
+
+    -- Check GCD for actions that don't bypass it
+    if not action.bypasses_gcd and core.spell_book.get_global_cooldown then
+        local ok, gcd = pcall(core.spell_book.get_global_cooldown)
+        if ok and gcd and gcd > 0 then return true end
+    end
+
+    return false
+end
+
 ---Register an action with utility considerations.
 ---@param action table { id, weight, considerations[], hard_gate?, action_type?, spell_id?, ... }
 function UE:register(action)
@@ -37,6 +59,7 @@ function UE:_score(action, ctx)
         local c = considerations[i]
         local input_val = ctx[c.input] or 0
         local score = RC.evaluate(c.curve, input_val, c.params)
+        if score ~= score then return 0 end  -- NaN guard
         if score <= 0 then
             return 0
         end
@@ -53,7 +76,7 @@ end
 ---@return table|nil  { action, utility } or nil if no valid actions
 function UE:evaluate(ctx)
     local best_action = nil
-    local best_utility = -1
+    local best_utility = 0
 
     for i = 1, #self._actions do
         local action = self._actions[i]
@@ -61,6 +84,19 @@ function UE:evaluate(ctx)
 
         -- Hard gate check
         if action.hard_gate and not action.hard_gate(ctx) then
+            skip = true
+        end
+
+        -- Skip unlearned spells
+        if not skip and action.spell_id and core and core.spell_book
+            and core.spell_book.is_spell_learned then
+            if not core.spell_book.is_spell_learned(action.spell_id) then
+                skip = true
+            end
+        end
+
+        -- Skip spells on cooldown (including GCD)
+        if not skip and is_on_cooldown(action) then
             skip = true
         end
 
@@ -85,7 +121,15 @@ function UE:get_top_k(ctx, k)
     local scored = {}
     for i = 1, #self._actions do
         local action = self._actions[i]
-        if not action.hard_gate or action.hard_gate(ctx) then
+        if action.hard_gate and not action.hard_gate(ctx) then
+            -- skip
+        elseif action.spell_id and core and core.spell_book
+            and core.spell_book.is_spell_learned
+            and not core.spell_book.is_spell_learned(action.spell_id) then
+            -- skip unlearned
+        elseif is_on_cooldown(action) then
+            -- skip on cooldown
+        else
             local utility = self:_score(action, ctx)
             if utility > 0 then
                 scored[#scored + 1] = { action = action, utility = utility }

@@ -19,7 +19,7 @@ function SwingTimer:set_weapon_speed(speed)
 end
 
 function SwingTimer:set_haste_modifier(mod)
-    self._haste_modifier = mod
+    self._haste_modifier = (mod and mod > 0.01) and mod or 0.01
 end
 
 function SwingTimer:record_swing()
