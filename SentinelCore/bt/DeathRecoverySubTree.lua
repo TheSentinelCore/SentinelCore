@@ -6,9 +6,10 @@ local DeathRecoverySubTree = {}
 function DeathRecoverySubTree.build(bb, navigation)
     local release_time = nil
     local RELEASE_DELAY = 2.0  -- wait before releasing spirit
+    local corpse_nav_started = false
 
-    return BT.Sequence:new("death_recovery", {
-        -- Gate: must be dead or ghost
+    return BT.ReactiveSequence:new("death_recovery", {
+        -- Gate: must be dead or ghost (re-evaluated every tick)
         BT.Condition:new("is_dead_or_ghost", function()
             return bb:get("player.is_dead", false)
                 or bb:get("player.is_ghost", false)
@@ -31,8 +32,9 @@ function DeathRecoverySubTree.build(bb, navigation)
 
             -- Release spirit
             release_time = nil
-            if core.game_ui and core.game_ui.repop_me then
-                pcall(function() core.game_ui.repop_me() end)
+            corpse_nav_started = false
+            if core.input and core.input.release_spirit then
+                pcall(function() core.input.release_spirit() end)
             end
             return S.RUNNING  -- wait for ghost state
         end),
@@ -40,16 +42,19 @@ function DeathRecoverySubTree.build(bb, navigation)
         -- Phase: corpse run
         BT.Action:new("corpse_run", function()
             if not bb:get("player.is_ghost", false) then
+                corpse_nav_started = false
                 return S.SUCCESS  -- not a ghost anymore
             end
 
-            local corpse_pos = bb:get("player.corpse_position")
+            local corpse_pos = bb:get("death.corpse_position")
+                or bb:get("player.death_position")
             if not corpse_pos then
                 return S.RUNNING  -- waiting for corpse position
             end
 
-            -- Navigate toward corpse
-            if navigation and navigation.move_to then
+            -- Navigate toward corpse (once — corpse doesn't move)
+            if not corpse_nav_started and navigation then
+                corpse_nav_started = true
                 pcall(function() navigation:move_to(corpse_pos) end)
             end
 
@@ -60,9 +65,8 @@ function DeathRecoverySubTree.build(bb, navigation)
                 local dy = (corpse_pos.y or 0) - (player_pos.y or 0)
                 local dist = math.sqrt(dx*dx + dy*dy)
                 if dist < 30 then
-                    -- Attempt resurrect
-                    if core.game_ui and core.game_ui.retrieve_corpse then
-                        pcall(function() core.game_ui.retrieve_corpse() end)
+                    if core.input and core.input.resurrect_corpse then
+                        pcall(function() core.input.resurrect_corpse() end)
                     end
                 end
             end

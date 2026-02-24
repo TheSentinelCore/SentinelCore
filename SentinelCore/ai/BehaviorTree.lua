@@ -233,4 +233,93 @@ function BT.Cooldown:reset()
     self._child:reset()
 end
 
+--------------------------------------------------------------------------------
+-- Reactive composites: re-evaluate from child 1 every tick.
+-- Use these when conditions can change between ticks (combat state, death, etc).
+-- Standard Sequence/Selector with _running_idx "memory" should only be used
+-- for multi-step procedures that must not restart (e.g. sequential actions).
+--------------------------------------------------------------------------------
+
+-- ReactiveSequence: re-evaluates ALL children from index 1 every tick.
+-- If a previously-succeeded condition now fails, returns FAILURE immediately
+-- and resets whatever child was previously RUNNING.
+BT.ReactiveSequence = setmetatable({}, { __index = Node })
+BT.ReactiveSequence.__index = BT.ReactiveSequence
+
+function BT.ReactiveSequence:new(name, children)
+    local o = Node.new(self, name)
+    o._children = children or {}
+    o._running_idx = nil
+    return o
+end
+
+function BT.ReactiveSequence:tick()
+    for i = 1, #self._children do
+        local status = self._children[i]:tick()
+        if status == S.FAILURE then
+            if self._running_idx and self._running_idx ~= i then
+                self._children[self._running_idx]:reset()
+            end
+            self._running_idx = nil
+            return S.FAILURE
+        elseif status == S.RUNNING then
+            if self._running_idx and self._running_idx ~= i then
+                self._children[self._running_idx]:reset()
+            end
+            self._running_idx = i
+            return S.RUNNING
+        end
+    end
+    self._running_idx = nil
+    return S.SUCCESS
+end
+
+function BT.ReactiveSequence:reset()
+    if self._running_idx then
+        self._children[self._running_idx]:reset()
+    end
+    self._running_idx = nil
+end
+
+-- ReactiveSelector: re-evaluates ALL children from index 1 every tick.
+-- Higher-priority children preempt lower ones. If child 1 was FAILURE last
+-- tick but now returns SUCCESS, it preempts whatever lower child was RUNNING.
+BT.ReactiveSelector = setmetatable({}, { __index = Node })
+BT.ReactiveSelector.__index = BT.ReactiveSelector
+
+function BT.ReactiveSelector:new(name, children)
+    local o = Node.new(self, name)
+    o._children = children or {}
+    o._running_idx = nil
+    return o
+end
+
+function BT.ReactiveSelector:tick()
+    for i = 1, #self._children do
+        local status = self._children[i]:tick()
+        if status == S.SUCCESS then
+            if self._running_idx and self._running_idx ~= i then
+                self._children[self._running_idx]:reset()
+            end
+            self._running_idx = nil
+            return S.SUCCESS
+        elseif status == S.RUNNING then
+            if self._running_idx and self._running_idx ~= i then
+                self._children[self._running_idx]:reset()
+            end
+            self._running_idx = i
+            return S.RUNNING
+        end
+    end
+    self._running_idx = nil
+    return S.FAILURE
+end
+
+function BT.ReactiveSelector:reset()
+    if self._running_idx then
+        self._children[self._running_idx]:reset()
+    end
+    self._running_idx = nil
+end
+
 return BT

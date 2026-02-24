@@ -18,9 +18,17 @@ function M.run()
     env.core.time = function() return now end
 
     local nav_calls = {}
+    local nav_moving = false
     local mock_nav = {
         move_to = function(_, pos)
             nav_calls[#nav_calls + 1] = { action = "move_to", pos = pos }
+            nav_moving = true
+        end,
+        is_moving = function() return nav_moving end,
+        stop = function() nav_moving = false end,
+        soft_repath = function(_, pos, cb)
+            nav_calls[#nav_calls + 1] = { action = "soft_repath", pos = pos }
+            if cb then cb(true) end
         end,
     }
 
@@ -31,6 +39,7 @@ function M.run()
 
     -- Test 1: FAILURE when no target
     bb:set("combat.target", nil)
+    bb:set("player.in_combat", false)
     assert(pull:tick() == S.FAILURE, "pull should fail with no target")
 
     -- Test 2: RUNNING when target far away (navigate)
@@ -52,11 +61,11 @@ function M.run()
     now = now + 0.1
     assert(pull:tick() == S.RUNNING, "pull should run when in pull range")
 
-    -- Test 4: SUCCESS when entering combat
+    -- Test 4: FAILURE when entering combat (gate blocks in-combat pull)
     bb:set("player.in_combat", true)
     pull:reset()
     now = now + 0.1
-    assert(pull:tick() == S.SUCCESS, "pull should succeed on combat entry")
+    assert(pull:tick() == S.FAILURE, "pull gate should block when in combat")
 
     -- Test 5: FAILURE on timeout
     bb:set("player.in_combat", false)
@@ -142,13 +151,14 @@ function M.run()
     assert(explore:tick() == S.FAILURE, "explore should fail with valid target")
 
     -- Test 13: RUNNING when idle and exploring
+    -- ExploreSubTree delegates navigation to ExplorationService internally,
+    -- so we only verify exploration_service:tick() is called and dest exists.
     bb:set("combat.target", nil)
     bb:set("exploration.destination", { x = 100, y = 200, z = 0 })
     explore:reset()
-    nav_calls = {}
+    explore_ticks = 0
     assert(explore:tick() == S.RUNNING, "explore should run when idle")
     assert(explore_ticks > 0, "should tick exploration service")
-    assert(#nav_calls > 0, "should navigate to exploration destination")
 
     env.restore()
     return true

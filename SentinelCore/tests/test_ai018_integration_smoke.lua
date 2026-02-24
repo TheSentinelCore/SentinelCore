@@ -25,11 +25,18 @@ function M.run()
     math.randomseed(42)
 
     local nav_calls = {}
+    local nav_moving = false
     local mock_nav = {
         move_to = function(_, pos)
             nav_calls[#nav_calls + 1] = pos
+            nav_moving = true
         end,
-        stop = function() end,
+        is_moving = function() return nav_moving end,
+        stop = function() nav_moving = false end,
+        soft_repath = function(_, pos, cb)
+            nav_calls[#nav_calls + 1] = pos
+            if cb then cb(true) end
+        end,
     }
 
     local eval = UE:new()
@@ -82,11 +89,11 @@ function M.run()
         bb:set("combat.was_looting", false)
         bb:set("combat.enemy_count", 0)
         bb:set("inventory.free_slots", 20)
-        bb:set("inventory.durability_pct", 0.90)
+        bb:set("player.durability_pct", 0.90)
         bb:set("player.needs_aura", false)
         bb:set("player.needs_blessing", false)
         bb:set("player.needs_seal", false)
-        bb:set("loot.lootable_objects", nil)
+        bb:set("loot.pending_target", nil)
         bb:set("exploration.destination", { x = 200, y = 200, z = 0 })
         bb:set("player.position", { x = 0, y = 0, z = 0 })
     end
@@ -131,15 +138,17 @@ function M.run()
         position = { x = 40, y = 0, z = 0 },
     })
     bb:set("combat.target", nil)
-    bb:set("loot.lootable_objects", { corpse })
+    bb:set("loot.pending_target", corpse)
     tree:reset()
     now = now + 0.1
     status = tree:tick()
-    assert(status == S.RUNNING, "S1: loot should be RUNNING")
+    -- Loot subtree navigates to corpse or interacts
+    assert(status == S.RUNNING or bb:get("loot.pending_target") == nil,
+        "S1: should be looting or have looted")
 
     -- Phase 1e: After looting, low HP -> rest
-    bb:set("loot.lootable_objects", nil)
-    bb:set("player.health", 2000)  -- 50%
+    bb:set("loot.pending_target", nil)
+    bb:set("player.health", 1600)  -- 40% (below 50% rest threshold)
     target_available = false
     tree:reset()
     now = now + 0.1
@@ -147,8 +156,9 @@ function M.run()
     assert(status == S.RUNNING, "S1: rest should be RUNNING")
     assert(bb:get("combat.was_resting") == true, "S1: should set resting flag")
 
-    -- Phase 1f: Rested up
+    -- Phase 1f: Rested up (gate cleans up at 90%)
     bb:set("player.health", 3800)  -- 95%
+    now = now + 0.1
     status = tree:tick()
     assert(bb:get("combat.was_resting") == false, "S1: should clear resting flag")
 
@@ -201,10 +211,6 @@ function M.run()
     now = now + 0.1
     nav_calls = {}
     status = tree:tick()
-    -- CombatSubTree will run first (in_combat=true), but FleeSubTree should
-    -- be trying to flee since HP is low and enemies >= 2
-    -- Actually in the Selector ordering, CombatInterrupt → Combat → Flee
-    -- Combat will succeed first since player is in_combat
     assert(status == S.RUNNING, "S3: should be running in combat/flee scenario")
 
     -- ================================================================

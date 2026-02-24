@@ -16,13 +16,13 @@ local GrindTree = {}
 ---@param deps table { bb, evaluator, swing_timer, human_timing, spell_executor, navigation, targeting, vendor_service, exploration_service }
 ---@return table BT Selector node
 function GrindTree.build(deps)
-    return BT.Selector:new("grind_root", {
+    return BT.ReactiveSelector:new("grind_root", {
         DeathRecoverySubTree.build(deps.bb, deps.navigation),
         CombatInterruptSubTree.build(deps.bb),
-        CombatSubTree.build(deps.bb, deps.evaluator, deps.swing_timer, deps.human_timing, deps.spell_executor),
+        CombatSubTree.build(deps.bb, deps.evaluator, deps.swing_timer, deps.human_timing, deps.spell_executor, deps.navigation),
         FleeSubTree.build(deps.bb, deps.navigation),
         LootSubTree.build(deps.bb, deps.navigation),
-        RestSubTree.build(deps.bb),
+        RestSubTree.build(deps.bb, deps.navigation),
         VendorSubTree.build(deps.bb, deps.vendor_service),
         MaintenanceSubTree.build(deps.bb),
         PullSubTree.build(deps.bb, deps.navigation),

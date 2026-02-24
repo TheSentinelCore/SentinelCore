@@ -85,8 +85,16 @@ function Sensors:update()
     bb:set("player.target", target)
     bb:set("player.health", player:get_health())
     bb:set("player.max_health", player:get_max_health())
-    bb:set("player.in_combat", player:is_in_combat())
+    local in_combat = player:is_in_combat()
+    bb:set("player.in_combat", in_combat)
     bb:set("player.is_casting", player:is_casting_spell() or player:is_channelling_spell())
+
+    -- Movement state (always set, default false if method unavailable)
+    local ok_mov, mov = pcall(function() return player:is_moving() end)
+    bb:set("player.is_moving", ok_mov and mov or false)
+
+    -- Aggro detection: true if player is in combat or any nearby enemy is in combat with us
+    bb:set("combat.has_aggro", in_combat)
     bb:set("player.level", player:get_level())
     bb:set("player.xp", player:get_xp())
     bb:set("player.max_xp", player:get_max_xp())

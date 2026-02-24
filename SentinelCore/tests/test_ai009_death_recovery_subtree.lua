@@ -16,12 +16,20 @@ function M.run()
     env.core.time = function() return now end
 
     local nav_calls = {}
+    local nav_moving = false
     local mock_nav = {
         move_to = function(_, pos)
             nav_calls[#nav_calls + 1] = { action = "move_to", pos = pos }
+            nav_moving = true
         end,
+        is_moving = function() return nav_moving end,
         stop = function(_)
             nav_calls[#nav_calls + 1] = { action = "stop" }
+            nav_moving = false
+        end,
+        soft_repath = function(_, pos, cb)
+            nav_calls[#nav_calls + 1] = { action = "soft_repath", pos = pos }
+            if cb then cb(true) end
         end,
     }
 

@@ -19,11 +19,18 @@ function M.run()
     math.randomseed(42)
 
     local nav_calls = {}
+    local nav_moving = false
     local mock_nav = {
         move_to = function(_, pos)
             nav_calls[#nav_calls + 1] = pos
+            nav_moving = true
         end,
-        stop = function() end,
+        is_moving = function() return nav_moving end,
+        stop = function() nav_moving = false end,
+        soft_repath = function(_, pos, cb)
+            nav_calls[#nav_calls + 1] = pos
+            if cb then cb(true) end
+        end,
     }
 
     local eval = UE:new()

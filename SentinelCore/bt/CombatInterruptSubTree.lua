@@ -16,9 +16,9 @@ function CombatInterruptSubTree.build(bb)
         BT.Action:new("cancel_and_stand", function()
             bb:set("combat.was_resting", false)
             bb:set("combat.was_looting", false)
-            -- Stop any movement/channeling
-            if core.input and core.input.stop_casting then
-                pcall(function() core.input.stop_casting() end)
+            -- Stop any casting/channeling
+            if core.input and core.input.cancel_spells then
+                pcall(function() core.input.cancel_spells() end)
             end
             return S.SUCCESS
         end),

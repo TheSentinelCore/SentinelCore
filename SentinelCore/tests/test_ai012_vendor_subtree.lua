@@ -15,15 +15,26 @@ function M.run()
     local now = 1000
     env.core.time = function() return now end
 
+    -- VendorSubTree uses a state-machine vendor service:
+    -- get_state(), is_active(), start(ctx), update(), reset()
+    local vendor_state = "idle"
+    local start_calls = 0
     local update_calls = 0
-    local is_complete_val = false
     local mock_vendor = {
-        update = function()
-            update_calls = update_calls + 1
+        get_state = function() return vendor_state end,
+        is_active = function()
+            return vendor_state == "active" or vendor_state == "running"
+        end,
+        start = function(_, ctx)
+            start_calls = start_calls + 1
+            vendor_state = "active"
             return true
         end,
-        is_complete = function()
-            return is_complete_val
+        update = function()
+            update_calls = update_calls + 1
+        end,
+        reset = function()
+            vendor_state = "idle"
         end,
     }
 
@@ -32,7 +43,7 @@ function M.run()
     -- Test 1: FAILURE when bags have space and durability ok
     bb:set("player.in_combat", false)
     bb:set("inventory.free_slots", 20)
-    bb:set("inventory.durability_pct", 0.90)
+    bb:set("player.durability_pct", 0.90)
     assert(tree:tick() == S.FAILURE, "should fail when no vendor needed")
 
     -- Test 2: FAILURE when in combat
@@ -40,28 +51,43 @@ function M.run()
     bb:set("inventory.free_slots", 1)
     assert(tree:tick() == S.FAILURE, "should fail when in combat")
 
-    -- Test 3: RUNNING when bags nearly full
+    -- Test 3: RUNNING when bags nearly full (triggers start then active)
     bb:set("player.in_combat", false)
     bb:set("inventory.free_slots", 2)
+    bb:set("player.durability_pct", 0.90)
+    vendor_state = "idle"
+    start_calls = 0
     tree:reset()
+    now = now + 0.1
     assert(tree:tick() == S.RUNNING, "should run when bags near full")
-    assert(update_calls > 0, "should have called vendor update")
+    assert(start_calls > 0, "should have called vendor start")
 
     -- Test 4: RUNNING when durability low
     bb:set("inventory.free_slots", 20)
-    bb:set("inventory.durability_pct", 0.15)
-    update_calls = 0
+    bb:set("player.durability_pct", 0.15)
+    vendor_state = "idle"
+    start_calls = 0
     tree:reset()
+    now = now + 0.1
     assert(tree:tick() == S.RUNNING, "should run when durability low")
 
-    -- Test 5: SUCCESS when vendor trip completes
-    bb:set("inventory.free_slots", 2)
-    is_complete_val = true
+    -- Test 5: RUNNING while vendor is active (updating)
+    vendor_state = "active"
+    update_calls = 0
     tree:reset()
+    now = now + 0.1
+    bb:set("inventory.free_slots", 2)
+    bb:set("player.durability_pct", 0.90)
+    assert(tree:tick() == S.RUNNING, "should run while vendor active")
+
+    -- Test 6: SUCCESS when vendor trip completes
+    vendor_state = "completed"
+    tree:reset()
+    now = now + 0.1
     assert(tree:tick() == S.SUCCESS, "should succeed when vendor trip complete")
 
-    -- Test 6: FAILURE on timeout (120s)
-    is_complete_val = false
+    -- Test 7: FAILURE on timeout (120s)
+    vendor_state = "active"
     tree:reset()
     now = now + 0.1
     tree:tick()  -- start the timeout

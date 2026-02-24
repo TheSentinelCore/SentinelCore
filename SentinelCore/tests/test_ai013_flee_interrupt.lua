@@ -17,9 +17,17 @@ function M.run()
     env.core.time = function() return now end
 
     local nav_calls = {}
+    local nav_moving = false
     local mock_nav = {
         move_to = function(_, pos)
             nav_calls[#nav_calls + 1] = { action = "move_to", pos = pos }
+            nav_moving = true
+        end,
+        is_moving = function() return nav_moving end,
+        stop = function() nav_moving = false end,
+        soft_repath = function(_, pos, cb)
+            nav_calls[#nav_calls + 1] = { action = "soft_repath", pos = pos }
+            if cb then cb(true) end
         end,
     }
 
@@ -59,9 +67,9 @@ function M.run()
     local flee_pos = nav_calls[#nav_calls].pos
     assert(flee_pos.x < 0, "should flee opposite direction from enemy")
 
-    -- Test 5: SUCCESS when out of combat during flee
+    -- Test 5: FAILURE when out of combat during flee (gate re-evaluates)
     bb:set("player.in_combat", false)
-    assert(flee:tick() == S.SUCCESS, "should succeed when out of combat")
+    assert(flee:tick() == S.FAILURE, "should fail when out of combat (gate blocks)")
 
     -- =====================
     -- CombatInterruptSubTree tests

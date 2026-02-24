@@ -436,21 +436,29 @@ end
 ---@param action table Action from UtilityEvaluator (id, action_type, spell_id)
 function Client:_execute_action(action)
     if not action then return end
-    local spell_queue = package.loaded["common/modules/spell_queue"]
 
     if action.action_type == "cast_spell_target" then
         local target = self._blackboard:get("combat.target")
-        if spell_queue and target then
-            spell_queue:queue_spell_target(action.spell_id, target, 5, "grind_bt")
+        if core.input and core.input.cast_target_spell and target then
+            pcall(function() core.input.cast_target_spell(action.spell_id, target) end)
         end
     elseif action.action_type == "cast_spell_self" then
-        if spell_queue then
-            spell_queue:queue_spell_self(action.spell_id, 5, "grind_bt")
+        local player = self._blackboard:get("player.object")
+        if core.input and core.input.cast_target_spell and player then
+            pcall(function() core.input.cast_target_spell(action.spell_id, player) end)
         end
     elseif action.action_type == "auto_attack" then
-        local target = self._blackboard:get("combat.target")
-        if core.input and core.input.attack_target and target then
-            pcall(function() core.input.attack_target(target) end)
+        -- Only send auto-attack once per target (6603 is a toggle — spamming flips it on/off)
+        if not self._auto_attack_sent then
+            local target = self._blackboard:get("combat.target")
+            if core.input and target then
+                pcall(function()
+                    if core.input.set_target then core.input.set_target(target) end
+                    if core.input.cast_target_spell then core.input.cast_target_spell(6603, target) end
+                end)
+                self._auto_attack_sent = true
+                self._auto_attack_target = target
+            end
         end
     end
 end
@@ -795,6 +803,26 @@ function Client:update()
         if self._grind_tree then
             -- BT-driven grind loop: tree handles death, combat, loot, rest, etc.
             self:_resolve_context_if_due(false)
+
+            -- Essential service updates: maintain BB state for BT decisions.
+            -- TargetingService: validates current target, updates combat.enemy_count.
+            -- InventoryService: refreshes inventory.free_slots, inventory.needs_vendor.
+            -- DeathRecoveryService: manages death state machine, death.corpse_position.
+            pcall(function() self._services.targeting:update() end)
+            pcall(function() self._services.inventory:update() end)
+            pcall(function() self._services.death_recovery:update() end)
+
+            -- Reset auto-attack toggle guard when out of combat or target changed
+            if not self._blackboard:get("player.in_combat", false) then
+                self._auto_attack_sent = false
+                self._auto_attack_target = nil
+            else
+                local cur_target = self._blackboard:get("combat.target")
+                if cur_target ~= self._auto_attack_target then
+                    self._auto_attack_sent = false
+                end
+            end
+
             self._grind_tree:tick()
 
             -- Recovery supervisor still runs for stuck detection.
