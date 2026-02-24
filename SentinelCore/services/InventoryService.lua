@@ -1,6 +1,7 @@
 local Defaults = require("core/Defaults")
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
+local get_now = require("lib/TimeHelper").get_now
 
 ---@class InventoryService
 ---@field private _event_bus EventBus
@@ -398,7 +399,7 @@ function InventoryService:update()
     if needs_vendor and not self._threshold_emitted then
         self._threshold_emitted = true
         self._event_bus:emit(Events.INVENTORY_THRESHOLD_REACHED, {
-            timestamp = (core and core.time and core.time()) or 0,
+            timestamp = get_now(),
             free_slots = self._blackboard:get("inventory.free_slots", 0),
             min_free_slots = tonumber(self._policy.min_free_slots) or 2,
             error_code = ErrorCodes.INVENTORY_THRESHOLD_REACHED,

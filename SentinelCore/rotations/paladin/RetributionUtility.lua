@@ -65,6 +65,7 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_self",
         spell_id = S.DIVINE_SHIELD,
         weight = 5.0,
+        bucket = 0,
         considerations = {
             { input = "player_health_pct", curve = "step_below", params = { threshold = 0.20 } },
             { input = "player_health_pct", curve = "inverse_linear", params = { min = 0, max = 0.20 } },
@@ -77,20 +78,22 @@ function RetUtil.register_actions(evaluator)
         id = "lay_on_hands",
         action_type = "cast_spell_self",
         spell_id = S.LAY_ON_HANDS,
-        weight = 4.0,
+        weight = 4.5,
+        bucket = 0,
         considerations = {
             { input = "player_health_pct", curve = "step_below", params = { threshold = 0.12 } },
         },
     })
 
-    -- Holy Light (big self-heal)
+    -- Holy Light (big self-heal — only when critical, FoL preferred in combat)
     register_if_learned(evaluator, {
         id = "holy_light",
         action_type = "cast_spell_self",
         spell_id = S.HOLY_LIGHT,
-        weight = 1.8,
+        weight = 1.5,
+        bucket = 3,
         considerations = {
-            { input = "player_health_pct", curve = "inverse_linear", params = { min = 0.30, max = 0.65 } },
+            { input = "player_health_pct", curve = "inverse_linear", params = { min = 0.15, max = 0.45 } },
             { input = "player_mana_pct", curve = "linear", params = { min = 0.22, max = 0.60 } },
             { input = "player_is_moving", curve = "step_below", params = { threshold = 0.5 } },
         },
@@ -102,6 +105,7 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_self",
         spell_id = S.FLASH_OF_LIGHT,
         weight = 2.0,
+        bucket = 3,
         considerations = {
             { input = "player_health_pct", curve = "inverse_linear", params = { min = 0.25, max = 0.55 } },
             { input = "player_mana_pct", curve = "linear", params = { min = 0.10, max = 0.40 } },
@@ -119,6 +123,7 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_target",
         spell_id = S.HAMMER_OF_JUSTICE,
         weight = 3.5,
+        bucket = 1,
         intent = "interrupt",
         considerations = {
             { input = "target_is_casting", curve = "step_above", params = { threshold = 0.5 } },
@@ -133,6 +138,7 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_target",
         spell_id = S.REPENTANCE,
         weight = 2.5,
+        bucket = 1,
         intent = "interrupt",
         considerations = {
             { input = "target_is_casting", curve = "step_above", params = { threshold = 0.5 } },
@@ -183,6 +189,7 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_self",
         spell_id = S.SEAL_OF_BLOOD,
         weight = 1.0,
+        bucket = 5,
         considerations = {
             { input = "has_seal_of_blood", curve = "step_below", params = { threshold = 0.5 } },
             { input = "seal_twist_enabled", curve = "step_below", params = { threshold = 0.5 } },
@@ -196,6 +203,7 @@ function RetUtil.register_actions(evaluator)
             action_type = "cast_spell_self",
             spell_id = S.SEAL_OF_COMMAND,
             weight = 1.0,
+            bucket = 5,
             considerations = {
                 { input = "has_any_seal", curve = "step_below", params = { threshold = 0.5 } },
             },
@@ -206,16 +214,17 @@ function RetUtil.register_actions(evaluator)
     -- Cooldowns
     ----------------------------------------------------------------
 
-    -- Avenging Wrath (+30% dmg)
+    -- Avenging Wrath (+30% dmg, major cooldown)
     register_if_learned(evaluator, {
         id = "avenging_wrath",
         action_type = "cast_spell_self",
         spell_id = S.AVENGING_WRATH,
-        weight = 1.5,
+        weight = 2.5,
+        bucket = 3,
         considerations = {
             { input = "target_health_pct", curve = "linear", params = { min = 0.40, max = 1.0 } },
             { input = "player_mana_pct", curve = "step_above", params = { threshold = 0.30 } },
-            { input = "enemy_count", curve = "linear", params = { min = 1, max = 4 } },
+            { input = "player_health_pct", curve = "step_above", params = { threshold = 0.40 } },
         },
     })
 
@@ -223,29 +232,29 @@ function RetUtil.register_actions(evaluator)
     -- Core Rotation
     ----------------------------------------------------------------
 
-    -- Judgement (off-GCD, 8s CD with talent, 10yd range)
+    -- Judgement (on GCD, 8s CD with talent, 10yd range, consumes active seal)
     register_if_learned(evaluator, {
         id = "judgement",
         action_type = "cast_spell_target",
         spell_id = S.JUDGEMENT,
         weight = 1.8,
-        bypasses_gcd = true,
         considerations = {
             { input = "has_any_seal", curve = "step_above", params = { threshold = 0.5 } },
             { input = "target_distance", curve = "step_below", params = { threshold = 10.5 } },
-            { input = "player_mana_pct", curve = "linear", params = { min = 0.05, max = 0.25 } },
+            { input = "player_mana_pct", curve = "step_above", params = { threshold = 0.08 } },
         },
     })
 
-    -- Crusader Strike (6s CD, core filler)
+    -- Crusader Strike (6s CD, core rotational ability)
     register_if_learned(evaluator, {
         id = "crusader_strike",
         action_type = "cast_spell_target",
         spell_id = S.CRUSADER_STRIKE,
-        weight = 1.5,
+        weight = 2.0,
         considerations = {
             { input = "target_distance", curve = "inverse_linear", params = { min = 0, max = 5.5 } },
-            { input = "player_mana_pct", curve = "linear", params = { min = 0.08, max = 0.35 } },
+            { input = "player_mana_pct", curve = "step_above", params = { threshold = 0.10 } },
+            { input = "target_health_pct", curve = "inverse_linear", params = { min = 0, max = 1.0 } },
         },
     })
 
@@ -255,9 +264,9 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_target",
         spell_id = S.HAMMER_OF_WRATH,
         weight = 2.2,
+        bucket = 3,
         considerations = {
             { input = "target_health_pct", curve = "step_below", params = { threshold = 0.20 } },
-            { input = "target_health_pct", curve = "inverse_linear", params = { min = 0, max = 0.20 } },
             { input = "target_distance", curve = "inverse_linear", params = { min = 0, max = 30 } },
             { input = "player_mana_pct", curve = "step_above", params = { threshold = 0.06 } },
         },
@@ -269,6 +278,7 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_target",
         spell_id = S.EXORCISM,
         weight = 1.3,
+        bucket = 4,
         considerations = {
             { input = "target_is_undead_demon", curve = "step_above", params = { threshold = 0.5 } },
             { input = "player_mana_pct", curve = "linear", params = { min = 0.15, max = 0.55 } },
@@ -283,6 +293,7 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_self",
         spell_id = S.CONSECRATION,
         weight = 1.1,
+        bucket = 4,
         considerations = {
             { input = "enemy_count", curve = "linear", params = { min = 2, max = 5 } },
             { input = "player_mana_pct", curve = "linear", params = { min = 0.25, max = 0.70 } },
@@ -296,6 +307,7 @@ function RetUtil.register_actions(evaluator)
         action_type = "cast_spell_self",
         spell_id = S.HOLY_WRATH,
         weight = 1.0,
+        bucket = 4,
         considerations = {
             { input = "target_is_undead_demon", curve = "step_above", params = { threshold = 0.5 } },
             { input = "enemy_count", curve = "linear", params = { min = 2, max = 6 } },
@@ -308,9 +320,53 @@ function RetUtil.register_actions(evaluator)
     evaluator:register({
         id = "auto_attack",
         action_type = "auto_attack",
-        weight = 0.3,
+        weight = 0.5,
+        bucket = 5,
         considerations = {
             { input = "target_distance", curve = "inverse_linear", params = { min = 0, max = 5.5 } },
+        },
+    })
+
+    ----------------------------------------------------------------
+    -- Racial Abilities (gated by is_spell_learned at cooldown check)
+    ----------------------------------------------------------------
+
+    -- Blood Fury (Orc, +AP for 15s) — only when Avenging Wrath active (stack CDs)
+    evaluator:register({
+        id = "blood_fury",
+        action_type = "cast_spell_self",
+        spell_id = 33697,
+        weight = 1.5,
+        bucket = 3,
+        considerations = {
+            { input = "in_combat", curve = "step_above", params = { threshold = 0.5 } },
+            { input = "has_avenging_wrath", curve = "step_above", params = { threshold = 0.5 } },
+            { input = "player_health_pct", curve = "step_above", params = { threshold = 0.40 } },
+        },
+    })
+
+    -- Stoneform (Dwarf, removes bleeds/poisons + armor)
+    evaluator:register({
+        id = "stoneform",
+        action_type = "cast_spell_self",
+        spell_id = 20594,
+        weight = 3.0,
+        bucket = 0,
+        considerations = {
+            { input = "player_health_pct", curve = "step_below", params = { threshold = 0.30 } },
+        },
+    })
+
+    -- Arcane Torrent (Blood Elf, AoE silence + mana restore)
+    evaluator:register({
+        id = "arcane_torrent",
+        action_type = "cast_spell_self",
+        spell_id = 28730,
+        weight = 2.0,
+        bucket = 1,
+        considerations = {
+            { input = "target_is_casting", curve = "step_above", params = { threshold = 0.5 } },
+            { input = "target_distance", curve = "inverse_linear", params = { min = 0, max = 8 } },
         },
     })
 end

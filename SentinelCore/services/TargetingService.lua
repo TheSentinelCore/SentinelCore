@@ -1,76 +1,16 @@
+local BT = require("ai/BehaviorTree")
+local BTStatus = BT.Status
 local Helpers = require("lib/Helpers")
 local FactionResolver = require("lib/FactionResolver")
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
-
-local OBJECT_UNWRAP_KEYS = {
-    "object",
-    "raw_object",
-    "game_object",
-}
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local safe_method = UnitQueries.safe_method
+local unwrap_game_object = UnitQueries.unwrap_game_object
+local is_same_unit = UnitQueries.is_same_unit
 
 local CRITTER_CREATURE_TYPE_ID = 8
-
----@param obj any
----@param method string
----@param ... any
----@return any
-local function safe_method(obj, method, ...)
-    if not obj then
-        return nil
-    end
-    local fn = obj[method]
-    if type(fn) ~= "function" then
-        return nil
-    end
-    local ok, value = pcall(fn, obj, ...)
-    if not ok then
-        return nil
-    end
-    return value
-end
-
----@param value any
----@return any
-local function unwrap_game_object(value)
-    if type(value) ~= "table" then
-        return value
-    end
-
-    for i = 1, #OBJECT_UNWRAP_KEYS do
-        local candidate = rawget(value, OBJECT_UNWRAP_KEYS[i])
-        if candidate ~= nil then
-            return candidate
-        end
-    end
-
-    return value
-end
-
----@private
----@param lhs game_object|nil
----@param rhs game_object|nil
----@return boolean
-local function is_same_unit(lhs, rhs)
-    if not lhs or not rhs then
-        return false
-    end
-    if lhs == rhs then
-        return true
-    end
-
-    local lhs_guid = tonumber(safe_method(lhs, "get_guid"))
-        or tonumber(safe_method(lhs, "get_object_guid"))
-        or 0
-    local rhs_guid = tonumber(safe_method(rhs, "get_guid"))
-        or tonumber(safe_method(rhs, "get_object_guid"))
-        or 0
-    if lhs_guid > 0 and rhs_guid > 0 then
-        return lhs_guid == rhs_guid
-    end
-
-    return false
-end
 
 ---@private
 ---@param objects table
@@ -126,26 +66,6 @@ local function safe_unit_guid(unit)
     return guid
 end
 
----@private
----@return number
-local function now_seconds()
-    return (core and core.time and core.time()) or 0
-end
-
----@private
----@param value number
----@param min_value number
----@param max_value number
----@return number
-local function clamp(value, min_value, max_value)
-    if value < min_value then
-        return min_value
-    end
-    if value > max_value then
-        return max_value
-    end
-    return value
-end
 
 ---@class TargetingService
 ---@field private _event_bus EventBus
@@ -240,7 +160,7 @@ function TargetingService:_is_target_blacklisted(target, now)
     if not target then
         return false, nil
     end
-    now = tonumber(now) or now_seconds()
+    now = tonumber(now) or get_now()
     local key = self:_target_memory_key(target)
     local entry = self._target_memory[key]
     if type(entry) ~= "table" then
@@ -264,7 +184,7 @@ function TargetingService:mark_target_failed(target, reason, ttl)
         return
     end
 
-    local now = now_seconds()
+    local now = get_now()
     self:_prune_target_memory(now)
 
     local resolved_ttl = tonumber(ttl) or tonumber(self._cfg.target_memory_default_ttl) or 12.0
@@ -290,7 +210,7 @@ end
 ---@param target game_object|nil
 ---@return boolean
 function TargetingService:is_target_blacklisted(target)
-    local blocked = self:_is_target_blacklisted(target, now_seconds())
+    local blocked = self:_is_target_blacklisted(target, get_now())
     return blocked == true
 end
 
@@ -412,7 +332,7 @@ function TargetingService:_warm_path_cost(target, player_pos, now)
         end
 
         current.pending = false
-        current.updated_at = now_seconds()
+        current.updated_at = get_now()
         if ok == true and tonumber(cost) and tonumber(cost) > 0 then
             current.ok = true
             current.cost = tonumber(cost)
@@ -489,10 +409,10 @@ function TargetingService:_resolve_pull_risk_budget()
 
     local min_scale = tonumber(self._cfg.pull_risk_budget_min_scale) or 0.45
     local max_scale = tonumber(self._cfg.pull_risk_budget_max_scale) or 1.00
-    min_scale = clamp(min_scale, 0.05, 2.00)
-    max_scale = clamp(max_scale, min_scale, 2.00)
+    min_scale = Helpers.clamp(min_scale, 0.05, 2.00)
+    max_scale = Helpers.clamp(max_scale, min_scale, 2.00)
 
-    local t = clamp((deaths_per_hour - low) / (high - low), 0.0, 1.0)
+    local t = Helpers.clamp((deaths_per_hour - low) / (high - low), 0.0, 1.0)
     local scale = max_scale + ((min_scale - max_scale) * t)
     local effective = base_budget * scale
 
@@ -894,7 +814,7 @@ function TargetingService:_commit_target(target, score, nearby_combat_count, rea
     self._blackboard:set("combat.enemy_count", math.max(1, nearby_combat_count))
     if changed then
         self._event_bus:emit(Events.TARGET_ACQUIRED, {
-            timestamp = (core and core.time and core.time()) or 0,
+            timestamp = get_now(),
             target_name = tostring(safe_method(target, "get_name") or "unknown"),
             target_level = tonumber(safe_method(target, "get_level")) or 0,
             score = score,
@@ -922,7 +842,7 @@ function TargetingService:score_target(target, opts)
         player_pos = opts.player_pos
     end
 
-    local now = type(opts) == "table" and tonumber(opts.now) or now_seconds()
+    local now = type(opts) == "table" and tonumber(opts.now) or get_now()
     local distance = Helpers.distance_3d(player_pos, target_pos)
     local path_distance = distance
     local path_info = self:_path_cost_snapshot(target, now)
@@ -944,7 +864,7 @@ function TargetingService:score_target(target, opts)
     local weights = self._cfg.score_weights or {}
     local w_kill = tonumber(weights.kill_speed) or 0.40
     local w_loot = tonumber(weights.loot_value) or 0.20
-    local w_travel = tonumber(weights.travel_cost) or 0.30
+    local w_travel = tonumber(weights.travel_cost) or 0.45
     local w_risk = tonumber(weights.risk) or 0.10
 
     local kill_speed = 1.0 - hp_ratio
@@ -1034,7 +954,7 @@ function TargetingService:get_visible_candidates(opts)
         return {}
     end
 
-    local now = type(opts) == "table" and tonumber(opts.now) or now_seconds()
+    local now = type(opts) == "table" and tonumber(opts.now) or get_now()
     self:_prune_target_memory(now)
     self:_prune_path_cost_cache(now)
 
@@ -1127,7 +1047,7 @@ function TargetingService:acquire_target()
     if not player or safe_method(player, "is_valid") ~= true then
         return nil, ErrorCodes.TARGET_NOT_FOUND
     end
-    local now = now_seconds()
+    local now = get_now()
     self:_prune_target_memory(now)
     local player_team = self:_resolve_player_team(player)
 
@@ -1192,6 +1112,13 @@ function TargetingService:acquire_target()
                             pull_risk_scale = pull_risk_meta and pull_risk_meta.scale,
                             pull_risk_deaths_per_hour = pull_risk_meta and pull_risk_meta.deaths_per_hour,
                         })
+                        -- Stickiness: strongly prefer current target to prevent
+                        -- flip-flopping between similarly-scored mobs. A new target
+                        -- must score significantly higher to override the current one.
+                        if self._current_target and candidate == self._current_target then
+                            local sticky_bonus = tonumber(self._cfg.target_sticky_bonus) or 0.25
+                            score = score + sticky_bonus
+                        end
                         local risk = tonumber(meta and meta.risk) or 0
                         local over_budget = pull_risk_budget > 0 and risk > pull_risk_budget
                         if not over_budget and score > best_score then
@@ -1265,7 +1192,7 @@ end
 function TargetingService:clear_target(reason)
     if self._current_target then
         self._event_bus:emit(Events.TARGET_LOST, {
-            timestamp = (core and core.time and core.time()) or 0,
+            timestamp = get_now(),
             reason = reason,
         })
     end
@@ -1276,6 +1203,16 @@ end
 
 function TargetingService:update()
     local target = self:get_target()
+    -- When current target is dead/invalid but player is in combat, proactively
+    -- acquire a replacement so the combat BT has a valid target this same tick.
+    -- Without this, a 1-2 frame gap lets exploration issue move_to(waypoint) in
+    -- the opposite direction before combat re-acquires.
+    if not target and self._blackboard:get("player.in_combat", false) then
+        local ok, new_target = pcall(self.acquire_target, self)
+        if ok and new_target then
+            target = new_target
+        end
+    end
     if target then
         self._blackboard:set("combat.target", target)
         local current_count = tonumber(self._blackboard:get("combat.enemy_count", 0)) or 0
@@ -1283,6 +1220,37 @@ function TargetingService:update()
             self._blackboard:set("combat.enemy_count", 1)
         end
     end
+end
+
+--- Build BT node for target acquisition (used by GrindService).
+---@return table BT node
+function TargetingService:build()
+    local bb = self._blackboard
+
+    return BT.Sequence:new("find_target", {
+        -- Gate: no valid target currently
+        BT.Condition:new("no_target", function()
+            local target = bb:get("combat.target")
+            if not target then return true end
+            local ok, hp = pcall(function() return target:get_health() end)
+            if not ok or not hp or hp <= 0 then return true end
+            return false
+        end),
+
+        -- Scan and select
+        BT.Action:new("scan_score_select", function()
+            local ok, target = pcall(function()
+                return self:acquire_target()
+            end)
+
+            if ok and target then
+                bb:set("combat.target", target)
+                return BTStatus.SUCCESS
+            end
+
+            return BTStatus.FAILURE
+        end),
+    })
 end
 
 return TargetingService

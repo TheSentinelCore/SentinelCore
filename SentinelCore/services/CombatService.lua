@@ -1,43 +1,16 @@
+local BT = require("ai/BehaviorTree")
+local BTStatus = BT.Status
+local CombatContext = require("ai/CombatContext")
 local Helpers = require("lib/Helpers")
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
-
-local OBJECT_UNWRAP_KEYS = {
-    "object",
-    "raw_object",
-    "game_object",
-}
-
----@private
----@param obj any
----@param method string
----@param ... any
----@return any
-local function safe_method(obj, method, ...)
-    if not obj then
-        return nil
-    end
-    local fn = obj[method]
-    if type(fn) ~= "function" then
-        return nil
-    end
-    local ok, value = pcall(fn, obj, ...)
-    if not ok then
-        return nil
-    end
-    return value
-end
-
----@private
----@param target game_object|nil
----@return string
-local function safe_target_name(target)
-    local name = safe_method(target, "get_name")
-    if type(name) == "string" and name ~= "" then
-        return name
-    end
-    return "unknown"
-end
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local safe_method = UnitQueries.safe_method
+local safe_target_name = UnitQueries.safe_target_name
+local unwrap_game_object = UnitQueries.unwrap_game_object
+local is_same_unit = UnitQueries.is_same_unit
+local AutoAttackHelper = require("lib/AutoAttackHelper")
 
 ---@private
 ---@param pos vec3|table|nil
@@ -71,21 +44,6 @@ local function normalize_pct(value)
         n = 1
     end
     return n
-end
-
----@private
----@param value number
----@param min_value number
----@param max_value number
----@return number
-local function clamp(value, min_value, max_value)
-    if value < min_value then
-        return min_value
-    end
-    if value > max_value then
-        return max_value
-    end
-    return value
 end
 
 ---@private
@@ -126,47 +84,6 @@ local function resolve_unit_health_pct(unit)
     end
 
     return nil
-end
-
----@private
----@param lhs game_object|nil
----@param rhs game_object|nil
----@return boolean
-local function is_same_unit(lhs, rhs)
-    if not lhs or not rhs then
-        return false
-    end
-    if lhs == rhs then
-        return true
-    end
-
-    local lhs_guid = tonumber(safe_method(lhs, "get_guid"))
-        or tonumber(safe_method(lhs, "get_object_guid"))
-        or 0
-    local rhs_guid = tonumber(safe_method(rhs, "get_guid"))
-        or tonumber(safe_method(rhs, "get_object_guid"))
-        or 0
-    if lhs_guid > 0 and rhs_guid > 0 then
-        return lhs_guid == rhs_guid
-    end
-
-    return false
-end
-
----@private
----@param value any
----@return any
-local function unwrap_game_object(value)
-    if type(value) ~= "table" then
-        return value
-    end
-    for i = 1, #OBJECT_UNWRAP_KEYS do
-        local candidate = rawget(value, OBJECT_UNWRAP_KEYS[i])
-        if candidate ~= nil then
-            return candidate
-        end
-    end
-    return value
 end
 
 ---@private
@@ -303,7 +220,7 @@ function CombatService:_resolve_pull_auto_attack_commit_range(pull_profile, mele
     end
 
     local max_commit = tonumber(melee_range) or 5.5
-    commit_range = clamp(commit_range, 1.5, max_commit)
+    commit_range = Helpers.clamp(commit_range, 1.5, max_commit)
     return commit_range
 end
 
@@ -333,27 +250,28 @@ function CombatService:_try_start_auto_attack(target, now)
         pcall(core.input.set_target, target)
     end
 
-    local start_methods = {
-        "start_auto_attack",
-        "start_attack",
-        "attack_target",
-        "attack",
-    }
-    for i = 1, #start_methods do
-        local fn = core.input[start_methods[i]]
-        if type(fn) == "function" then
-            local ok, result = pcall(fn, target)
+    -- Primary: SDK auto_attack_helper (truly idempotent)
+    local aa = AutoAttackHelper.get()
+    if aa and aa.start_attack then
+        local ok = pcall(function()
+            aa:start_attack(target, aa.ATTACK_TYPE and aa.ATTACK_TYPE.MELEE or 6603)
+        end)
+        if ok then return true end
+    end
+
+    -- Fallback: only send 6603 toggle when NOT already auto-attacking
+    if type(core.input.cast_target_spell) == "function" then
+        local player = self._blackboard and self._blackboard:get("player.object")
+        local already_attacking = false
+        if player then
+            local ok, val = pcall(function() return player:is_auto_attacking() end)
+            if ok and val == true then already_attacking = true end
+        end
+        if not already_attacking then
+            local ok, result = pcall(core.input.cast_target_spell, 6603, target)
             if ok and result ~= false then
                 return true
             end
-        end
-    end
-
-    -- WoW "Attack" spell id fallback for runtimes that expose only cast APIs.
-    if type(core.input.cast_target_spell) == "function" then
-        local ok, result = pcall(core.input.cast_target_spell, 6603, target)
-        if ok and result ~= false then
-            return true
         end
     end
 
@@ -429,14 +347,14 @@ function CombatService:_resolve_recovery_governor(defensive)
     if death_high <= death_low then
         death_high = death_low + 0.01
     end
-    local death_t = clamp((deaths_per_hour - death_low) / (death_high - death_low), 0.0, 1.0)
+    local death_t = Helpers.clamp((deaths_per_hour - death_low) / (death_high - death_low), 0.0, 1.0)
 
     local idle_relax_start = tonumber(self._cfg.recovery_idle_relax_start_pct) or 0.18
     local idle_relax_full = tonumber(self._cfg.recovery_idle_relax_full_pct) or 0.35
     if idle_relax_full <= idle_relax_start then
         idle_relax_full = idle_relax_start + 0.01
     end
-    local idle_t = clamp((idle_full_resource_pct - idle_relax_start) / (idle_relax_full - idle_relax_start), 0.0, 1.0)
+    local idle_t = Helpers.clamp((idle_full_resource_pct - idle_relax_start) / (idle_relax_full - idle_relax_start), 0.0, 1.0)
 
     local mana_bonus = death_t * (tonumber(self._cfg.recovery_mana_bonus_max) or 0.20)
     local health_bonus = death_t * (tonumber(self._cfg.recovery_health_bonus_max) or 0.10)
@@ -450,8 +368,8 @@ function CombatService:_resolve_recovery_governor(defensive)
     local mana_ceiling = tonumber(self._cfg.recovery_mana_ceiling_pct) or 0.65
     local health_floor = tonumber(self._cfg.recovery_health_floor_pct) or 0
     local health_ceiling = tonumber(self._cfg.recovery_health_ceiling_pct) or 0.95
-    mana_threshold = clamp(mana_threshold, mana_floor, mana_ceiling)
-    health_threshold = clamp(health_threshold, health_floor, health_ceiling)
+    mana_threshold = Helpers.clamp(mana_threshold, mana_floor, mana_ceiling)
+    health_threshold = Helpers.clamp(health_threshold, health_floor, health_ceiling)
 
     local hold_for_mana = defensive ~= true
         and base_mana_threshold > 0
@@ -1182,7 +1100,7 @@ function CombatService:start(target)
         return false, ErrorCodes.MAINTENANCE_REQUIRED
     end
 
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     self._active_target = target
     self._blackboard:set("combat.target", target)
     self:_sync_enemy_count(target)
@@ -1268,7 +1186,7 @@ end
 ---@return boolean
 ---@return string|nil
 function CombatService:_execute_pull(target)
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local pull_timeout = tonumber(self._cfg.pull_timeout) or 8.0
     if now - self._pull_started_at > pull_timeout then
         return false, ErrorCodes.PULL_FAILED
@@ -1397,7 +1315,7 @@ function CombatService:update()
         return true, nil
     end
 
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local timeout = tonumber(self._cfg.combat_timeout) or 30.0
 
     local target = self._active_target
@@ -1490,6 +1408,238 @@ function CombatService:update()
     end
 
     return true, nil
+end
+
+--- Build BT node for the utility-AI combat loop (used by GrindService).
+--- This is the BT-driven combat flow using UtilityEvaluator for action selection.
+---@param bb Blackboard
+---@param evaluator UtilityEvaluator
+---@param swing_timer SwingTimer
+---@param human_timing HumanTiming
+---@param spell_executor fun(action: table)
+---@param navigation NavigationAdapter
+---@return table BT node
+function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_executor, navigation)
+    local pending_action = nil
+    local pending_delay_until = nil
+    local combat_start_time = nil
+    local last_chase_dest = nil
+    local chase_repath_pending = false
+    local last_chase_target = nil
+    local target_lost_at = nil
+
+    return BT.ReactiveSequence:new("combat", {
+        -- Gate: must be in combat WITH a valid living target.
+        -- Tolerates a brief grace period (1.5s) when the target dies mid-combat
+        -- so the targeting service can acquire a replacement before exploration
+        -- gets a chance to issue a move_to in the wrong direction.
+        BT.Condition:new("in_combat", function()
+            local in_combat = bb:get("player.in_combat", false)
+                or bb:get("combat.has_aggro", false)
+            if not in_combat then
+                combat_start_time = nil
+                pending_action = nil
+                pending_delay_until = nil
+                last_chase_dest = nil
+                chase_repath_pending = false
+                last_chase_target = nil
+                target_lost_at = nil
+                return false
+            end
+            local target = bb:get("combat.target")
+            local target_alive = false
+            if target then
+                local ok, hp = pcall(function() return target:get_health() end)
+                target_alive = ok and hp and hp > 0
+            end
+            if target_alive then
+                target_lost_at = nil
+                return true
+            end
+            -- Target dead/missing but still in combat: keep BT active briefly
+            -- so exploration doesn't fire during the re-acquisition window.
+            if not target_lost_at then
+                target_lost_at = get_now()
+            end
+            if (get_now() - target_lost_at) < 1.5 then
+                return true
+            end
+            -- Grace expired — give up
+            target_lost_at = nil
+            combat_start_time = nil
+            pending_action = nil
+            pending_delay_until = nil
+            last_chase_dest = nil
+            chase_repath_pending = false
+            last_chase_target = nil
+            return false
+        end),
+
+        -- Track combat start
+        BT.Action:new("track_combat_time", function()
+            if not combat_start_time then
+                combat_start_time = get_now()
+            end
+            bb:set("combat.time_in_combat", get_now() - combat_start_time)
+            return BTStatus.SUCCESS
+        end),
+
+        -- Chase: close distance to melee range
+        BT.Action:new("chase_target", function()
+            local target = bb:get("combat.target")
+            if not target then return BTStatus.SUCCESS end
+
+            -- Don't chase dead targets (grace period keeps BT active for re-acquisition)
+            local ok_hp, hp = pcall(function() return target:get_health() end)
+            if not ok_hp or not hp or hp <= 0 then return BTStatus.SUCCESS end
+
+            -- Target changed (new combat or target switch): stop any stale
+            -- nav immediately so the player doesn't walk toward an old
+            -- exploration/pull waypoint during async pathfinding.
+            if target ~= last_chase_target then
+                last_chase_target = target
+                if navigation and navigation:is_moving() then
+                    pcall(function() navigation:stop() end)
+                end
+                last_chase_dest = nil
+                chase_repath_pending = false
+            end
+
+            local ok, tpos = pcall(function() return target:get_position() end)
+            if not ok or not tpos then return BTStatus.SUCCESS end
+
+            local player_pos = bb:get("player.position")
+            if not player_pos then return BTStatus.SUCCESS end
+
+            local dist = Helpers.distance_3d(player_pos, tpos)
+
+            if dist <= 5 then
+                if navigation and navigation:is_moving() then
+                    pcall(function() navigation:stop() end)
+                    last_chase_dest = nil
+                    chase_repath_pending = false
+                end
+                return BTStatus.SUCCESS
+            end
+
+            if navigation then
+                if not navigation:is_moving() and not chase_repath_pending then
+                    last_chase_dest = tpos
+                    pcall(function() navigation:move_to(tpos) end)
+                elseif navigation:is_moving() and last_chase_dest == nil then
+                    -- Stale nav from another service (exploration, loot, etc.)
+                    pcall(function() navigation:stop() end)
+                    last_chase_dest = tpos
+                    pcall(function() navigation:move_to(tpos) end)
+                elseif navigation:is_moving() and not chase_repath_pending and last_chase_dest then
+                    if Helpers.distance_3d(last_chase_dest, tpos) > 2.0 then
+                        chase_repath_pending = true
+                        last_chase_dest = tpos
+                        pcall(function()
+                            navigation:soft_repath(tpos, function()
+                                chase_repath_pending = false
+                            end)
+                        end)
+                    end
+                end
+            end
+
+            return BTStatus.SUCCESS
+        end),
+
+        -- Facing: only when in melee range (not chasing)
+        BT.Action:new("face_target", function()
+            if navigation and navigation:is_moving() then
+                return BTStatus.SUCCESS
+            end
+            local target = bb:get("combat.target")
+            if not target then return BTStatus.SUCCESS end
+            local ok, pos = pcall(function() return target:get_position() end)
+            if ok and pos and core.input and core.input.look_at then
+                pcall(function() core.input.look_at(pos) end)
+            end
+            return BTStatus.SUCCESS
+        end),
+
+        -- Evaluate + execute rotation (with GCD-aware pre-queuing)
+        BT.Action:new("evaluate_and_execute", function()
+            local now = get_now()
+            local prequeue_window = 0.15 -- 150ms before GCD expires
+
+            -- Execute pending action when delay expires
+            if pending_action and pending_delay_until and now >= pending_delay_until then
+                -- Re-evaluate if context changed significantly since pre-queue
+                if pending_action._prequeue_snap then
+                    local ctx = CombatContext.build(bb, swing_timer)
+                    local snap = pending_action._prequeue_snap
+                    local hp_delta = math.abs((ctx.target_health_pct or 0) - (snap.thp or 0))
+                    local php_delta = math.abs((ctx.player_health_pct or 0) - (snap.php or 0))
+                    if hp_delta > 0.20 or php_delta > 0.20 then
+                        pending_action = nil
+                        pending_delay_until = nil
+                        -- Fall through to re-evaluate
+                    end
+                end
+
+                if pending_action then
+                    local action = pending_action
+                    pending_action = nil
+                    pending_delay_until = nil
+                    if spell_executor then
+                        spell_executor(action)
+                    end
+                    return BTStatus.RUNNING
+                end
+            end
+
+            -- Wait for pending action delay
+            if pending_action and pending_delay_until then
+                return BTStatus.RUNNING
+            end
+
+            local ctx = CombatContext.build(bb, swing_timer)
+            local gcd_remaining = ctx.gcd_remaining or 0
+
+            -- GCD active, not in pre-queue window: wait
+            if gcd_remaining > prequeue_window then
+                return BTStatus.RUNNING
+            end
+
+            -- Pre-queue: GCD about to expire, evaluate ignoring GCD
+            if gcd_remaining > 0 then
+                local top = evaluator:get_top_k(ctx, 3, { ignore_gcd = true })
+                local result = nil
+                if #top > 0 then
+                    result = human_timing:stochastic_select(top, 0.05)
+                end
+                if result then
+                    pending_action = result.action
+                    pending_action._prequeue_snap = {
+                        thp = ctx.target_health_pct,
+                        php = ctx.player_health_pct,
+                    }
+                    -- Fire at GCD expiry (human delay already absorbed during GCD wait)
+                    pending_delay_until = now + gcd_remaining
+                end
+                return BTStatus.RUNNING
+            end
+
+            -- Normal evaluation (no GCD active) — stochastic top-K selection
+            local top = evaluator:get_top_k(ctx, 3)
+            local result = nil
+            if #top > 0 then
+                result = human_timing:stochastic_select(top, 0.05)
+            end
+            if not result then
+                return BTStatus.RUNNING
+            end
+
+            local delay = human_timing:get_action_delay(result.action.intent or "rotation")
+            pending_action = result.action
+            pending_delay_until = now + delay
+            return BTStatus.RUNNING
+        end),
+    })
 end
 
 return CombatService

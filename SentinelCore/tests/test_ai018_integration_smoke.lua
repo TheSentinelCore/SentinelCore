@@ -11,7 +11,11 @@ function M.run()
     local env = TU.install_core_stub()
     local EventBus = require("events/EventBus")
     local Blackboard = require("core/Blackboard")
-    local GrindTree = require("bt/GrindTree")
+    local GrindService = require("services/GrindService")
+    local TargetingService = require("services/TargetingService")
+    local ExplorationService = require("services/ExplorationService")
+    local DeathRecoveryService = require("services/DeathRecoveryService")
+    local LootService = require("services/LootService")
 
     env.core.spell_book.has_spell = function() return true end
     env.core.spell_book.is_spell_learned = function() return true end
@@ -49,7 +53,8 @@ function M.run()
     end
 
     local target_available = true
-    local mock_targeting = {
+    local mock_targeting = setmetatable({
+        _blackboard = bb,
         acquire_target = function()
             if not target_available then return nil end
             return TU.mock_object({
@@ -57,14 +62,28 @@ function M.run()
                 position = { x = 40, y = 0, z = 0 },
             })
         end,
-    }
+    }, { __index = TargetingService })
 
     local explore_ticks = 0
-    local mock_explore = {
-        tick = function() explore_ticks = explore_ticks + 1 end,
-    }
+    local mock_explore = setmetatable({
+        _blackboard = bb,
+        tick = function() explore_ticks = explore_ticks + 1; return true end,
+    }, { __index = ExplorationService })
 
-    local tree = GrindTree.build({
+    local mock_death = setmetatable({
+        _blackboard = bb,
+        _active = false,
+        update = function(self)
+            local is_dead = bb:get("player.is_dead", false)
+            local is_ghost = bb:get("player.is_ghost", false)
+            self._active = is_dead or is_ghost
+        end,
+        is_active = function(self) return self._active end,
+    }, { __index = DeathRecoveryService })
+
+    local loot_svc = LootService:new(eb, bb, {}, mock_nav)
+
+    local tree = GrindService.build({
         bb = bb,
         evaluator = eval,
         swing_timer = nil,
@@ -74,6 +93,8 @@ function M.run()
         targeting = mock_targeting,
         vendor_service = nil,
         exploration_service = mock_explore,
+        death_recovery_service = mock_death,
+        loot_service = loot_svc,
     })
 
     -- Helper to set common alive/idle state
@@ -100,7 +121,7 @@ function M.run()
 
     -- ================================================================
     -- Scenario 1: Full grind cycle
-    -- idle → find target → pull → combat → loot → rest → idle
+    -- idle -> find target -> pull -> combat -> loot -> rest -> idle
     -- ================================================================
 
     -- Phase 1a: Idle - FindTarget acquires a mob
@@ -140,6 +161,7 @@ function M.run()
     bb:set("combat.target", nil)
     bb:set("loot.pending_target", corpse)
     tree:reset()
+    loot_svc:reset()
     now = now + 0.1
     status = tree:tick()
     -- Loot subtree navigates to corpse or interacts
@@ -164,7 +186,7 @@ function M.run()
 
     -- ================================================================
     -- Scenario 2: Death cycle
-    -- die → release → corpse run → resurrect
+    -- die -> release -> corpse run -> resurrect
     -- ================================================================
 
     set_alive_idle()
@@ -194,7 +216,7 @@ function M.run()
 
     -- ================================================================
     -- Scenario 3: Flee cycle
-    -- overwhelmed → flee → recover
+    -- overwhelmed -> flee -> recover
     -- ================================================================
 
     set_alive_idle()

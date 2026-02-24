@@ -8,7 +8,7 @@ local function run()
     local Blackboard = require("core/Blackboard")
     local RecoveryService = require("services/RecoveryService")
     local ErrorCodes = require("events/ErrorCodes")
-    local GrindTree = require("behaviors/trees/GrindTree")
+    local CombatKernelTree = require("behaviors/trees/CombatKernelTree")
 
     local bus = EventBus:new()
     local bb = Blackboard:new(bus)
@@ -95,7 +95,7 @@ local function run()
         },
     }
 
-    local tree = GrindTree.create(services, {
+    local tree = CombatKernelTree.create(services, {
         pause = function() end,
         restart = function() return false end,
         fail = function() end,

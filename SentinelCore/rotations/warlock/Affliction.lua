@@ -8,6 +8,10 @@ local SpellCatalog = require("rotations/framework/SpellCatalog")
 local AuraCatalog = require("rotations/framework/AuraCatalog")
 local RankPolicy = require("rotations/framework/RankPolicy")
 local RestPolicy = require("rotations/framework/RestPolicy")
+local Helpers = require("lib/Helpers")
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local safe_unit_call = UnitQueries.safe_method
 
 Affliction.CLASS_ID = 9
 Affliction.SPEC = "affliction"
@@ -86,7 +90,7 @@ local function refresh_spellbook_cache()
         return
     end
 
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     if now - (_spellbook_cache.at or 0) < SPELLBOOK_CACHE_TTL then
         return
     end
@@ -640,7 +644,7 @@ local function ensure_pet_attack(ctx)
         return
     end
 
-    local now = tonumber(ctx.now) or ((core and core.time and core.time()) or 0)
+    local now = tonumber(ctx.now) or (get_now())
     if now - _last_pet_attack_at < PET_ATTACK_THROTTLE then
         return
     end
@@ -689,7 +693,7 @@ local function try_pet_spell_lock(ctx)
         return
     end
 
-    local now = tonumber(ctx.now) or ((core and core.time and core.time()) or 0)
+    local now = tonumber(ctx.now) or (get_now())
     if now - _last_spell_lock_at < PET_SPELL_LOCK_COOLDOWN then
         return
     end
@@ -769,37 +773,6 @@ local function target_key(target)
     end
 
     return tostring(target)
-end
-
----@private
----@param v number
----@param lo number
----@param hi number
----@return number
-local function clamp(v, lo, hi)
-    if v < lo then return lo end
-    if v > hi then return hi end
-    return v
-end
-
----@private
----@param unit any
----@param method string
----@param ... any
----@return any
-local function safe_unit_call(unit, method, ...)
-    if not unit then
-        return nil
-    end
-    local fn = unit[method]
-    if type(fn) ~= "function" then
-        return nil
-    end
-    local ok, value = pcall(fn, unit, ...)
-    if not ok then
-        return nil
-    end
-    return value
 end
 
 ---@private
@@ -909,7 +882,7 @@ function Affliction:_estimate_target_ttd(ctx, p)
         return nil, nil
     end
 
-    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
+    local now = tonumber(ctx and ctx.now) or (get_now())
     local ttl = tonumber(p and p.ttd_memory_ttl_secs) or 20.0
     if ttl <= 0 then
         ttl = 20.0
@@ -942,7 +915,7 @@ function Affliction:_estimate_target_ttd(ctx, p)
         return 0, nil
     end
 
-    local alpha = clamp(tonumber(p and p.ttd_alpha) or 0.35, 0.05, 0.95)
+    local alpha = Helpers.clamp(tonumber(p and p.ttd_alpha) or 0.35, 0.05, 0.95)
     local min_sample = tonumber(p and p.ttd_min_sample_secs) or 0.20
     if min_sample <= 0 then
         min_sample = 0.20
@@ -989,7 +962,7 @@ function Affliction:_estimate_target_ttd(ctx, p)
     end
 
     if ttd ~= nil then
-        ttd = clamp(ttd, 0, max_ttd)
+        ttd = Helpers.clamp(ttd, 0, max_ttd)
     end
     self._ttd_state[key] = entry
 

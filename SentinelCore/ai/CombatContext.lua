@@ -1,4 +1,7 @@
 -- SentinelCore/ai/CombatContext.lua
+local get_now = require("lib/TimeHelper").get_now
+local AutoAttackHelper = require("lib/AutoAttackHelper")
+
 ---@class CombatContext
 local CombatContext = {}
 
@@ -35,6 +38,24 @@ local function unit_has_buff(unit, spell_ids)
         if ok and result then return true end
     end
     return false
+end
+
+---@return number GCD remaining in seconds
+local function resolve_gcd_remaining()
+    local aa = AutoAttackHelper.get()
+    if aa and aa.get_next_global_core_time then
+        local ok, next_gcd = pcall(function() return aa:get_next_global_core_time() end)
+        if ok and next_gcd and next_gcd > 0 then
+            local now = get_now()
+            local rem = next_gcd - now
+            return rem > 0 and rem or 0
+        end
+    end
+    if core and core.spell_book and core.spell_book.get_global_cooldown then
+        local ok, v = pcall(core.spell_book.get_global_cooldown)
+        if ok and v then return v end
+    end
+    return 0
 end
 
 --- Get buff stacks for the first matching spell ID from a rank table.
@@ -114,8 +135,8 @@ function CombatContext.build(bb, swing_timer)
         local ok5, cst = pcall(function()
             local st = target:get_active_spell_cast_start_time()
             local et = target:get_active_spell_cast_end_time()
-            if st and et and et > st and core then
-                return (core.time() - st) / (et - st)
+            if st and et and et > st then
+                return (get_now() - st) / (et - st)
             end
             return 0
         end)
@@ -142,7 +163,8 @@ function CombatContext.build(bb, swing_timer)
                     if eok and epos then
                         local dx = (epos.x or 0) - (pp.x or 0)
                         local dy = (epos.y or 0) - (pp.y or 0)
-                        local d = math.sqrt(dx*dx + dy*dy)
+                        local dz = (epos.z or 0) - (pp.z or 0)
+                        local d = math.sqrt(dx*dx + dy*dy + dz*dz)
                         if d < nearest_enemy_dist then nearest_enemy_dist = d end
                     end
                 end
@@ -177,15 +199,9 @@ function CombatContext.build(bb, swing_timer)
         time_in_combat = bb:get("combat.time_in_combat", 0),
         nearest_enemy_distance = nearest_enemy_dist,
 
-        -- Spell state (GCD queried from API)
+        -- Spell state (GCD from auto_attack_helper if available, else spell_book)
         spell_cooldown_remaining = 0,
-        gcd_remaining = (function()
-            if core and core.spell_book and core.spell_book.get_global_cooldown then
-                local ok, v = pcall(core.spell_book.get_global_cooldown)
-                if ok and v then return v end
-            end
-            return 0
-        end)(),
+        gcd_remaining = resolve_gcd_remaining(),
 
         -- Swing timer (populated below)
         swing_time_remaining = 0,
@@ -208,6 +224,11 @@ function CombatContext.build(bb, swing_timer)
 
     -- Swing timer integration
     if swing_timer then
+        -- Pass player so SwingTimer can query auto_attack_helper
+        if player then
+            swing_timer:set_player(player)
+        end
+
         -- Feed weapon speed from player API if available
         if player then
             local ok_ws, ws = pcall(function()

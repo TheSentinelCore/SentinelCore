@@ -1,5 +1,6 @@
 local Helpers = require("lib/Helpers")
 local ErrorCodes = require("events/ErrorCodes")
+local get_now = require("lib/TimeHelper").get_now
 
 ---@private
 ---@param value any
@@ -139,7 +140,7 @@ function WaypointObjectiveProvider:acquire(ctx)
 
     local waypoint = queue[index]
     local destination = normalize_waypoint(waypoint)
-    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
+    local now = tonumber(ctx and ctx.now) or (get_now())
     local label = waypoint.label
     if type(label) ~= "string" or label == "" then
         label = string.format("%s waypoint %d/%d", self._mode_id, index, #queue)
@@ -195,7 +196,7 @@ function WaypointObjectiveProvider:tick(objective, ctx)
         return "failure", { error_code = ErrorCodes.OBJECTIVE_PROVIDER_INVALID }
     end
 
-    local now = tonumber(ctx.now) or ((core and core.time and core.time()) or 0)
+    local now = tonumber(ctx.now) or (get_now())
     objective._started_at = objective._started_at or now
 
     local player_pos = bb:get("player.position")

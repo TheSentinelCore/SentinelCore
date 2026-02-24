@@ -17,10 +17,12 @@ function M.run()
     assert(Events.UTILITY_EVALUATED == "utility.evaluated", "UTILITY_EVALUATED should exist")
     assert(Events.UTILITY_ACTION_SELECTED == "utility.action_selected", "UTILITY_ACTION_SELECTED should exist")
 
-    -- Test 2: GrindTree can be built with deps table
-    local GrindTree = require("bt/GrindTree")
+    -- Test 2: GrindService can be built with deps table
+    local GrindService = require("services/GrindService")
     local UE = require("ai/UtilityEvaluator")
     local HumanTiming = require("ai/HumanTiming")
+    local TargetingService = require("services/TargetingService")
+    local ExplorationService = require("services/ExplorationService")
 
     local eb = EventBus:new()
     local bb = Blackboard:new(eb)
@@ -36,14 +38,16 @@ function M.run()
         move_to = function() end,
         stop = function() end,
     }
-    local mock_targeting = {
+    local mock_targeting = setmetatable({
+        _blackboard = bb,
         acquire_target = function() return nil end,
-    }
-    local mock_explore = {
-        tick = function() end,
-    }
+    }, { __index = TargetingService })
+    local mock_explore = setmetatable({
+        _blackboard = bb,
+        tick = function() return true end,
+    }, { __index = ExplorationService })
 
-    local tree = GrindTree.build({
+    local tree = GrindService.build({
         bb = bb,
         evaluator = eval,
         swing_timer = nil,
@@ -53,8 +57,10 @@ function M.run()
         targeting = mock_targeting,
         vendor_service = nil,
         exploration_service = mock_explore,
+        death_recovery_service = nil,
+        loot_service = nil,
     })
-    assert(tree ~= nil, "GrindTree should build successfully")
+    assert(tree ~= nil, "GrindService should build successfully")
 
     -- Test 3: Tree ticks without error when all BB keys empty
     bb:set("player.is_dead", false)

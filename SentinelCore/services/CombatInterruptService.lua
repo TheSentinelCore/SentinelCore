@@ -1,9 +1,9 @@
 local BT = require("ai/BehaviorTree")
 local S = BT.Status
 
-local CombatInterruptSubTree = {}
+local CombatInterruptService = {}
 
-function CombatInterruptSubTree.build(bb)
+function CombatInterruptService.build(bb)
     return BT.Sequence:new("combat_interrupt", {
         -- Gate: in combat AND was doing something non-combat
         BT.Condition:new("interrupted", function()
@@ -25,4 +25,4 @@ function CombatInterruptSubTree.build(bb)
     })
 end
 
-return CombatInterruptSubTree
+return CombatInterruptService

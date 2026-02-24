@@ -1,6 +1,7 @@
 local JSON = require("lib/JSON")
 local Defaults = require("core/Defaults")
 local ErrorCodes = require("events/ErrorCodes")
+local get_now = require("lib/TimeHelper").get_now
 
 ---@class SentinelPersistence
 ---@field private _root string
@@ -269,7 +270,7 @@ function Persistence:load_policy()
 
     if not parsed then
         local default_policy = Defaults.copy(Defaults.policy)
-        default_policy.updated_at_unix = core and core.time and math.floor(core.time()) or 0
+        default_policy.updated_at_unix = math.floor(get_now())
         self:save_policy(default_policy)
         return default_policy, nil, warnings
     end
@@ -297,7 +298,7 @@ function Persistence:save_policy(policy)
         return false, val_err
     end
 
-    policy.updated_at_unix = math.floor((core and core.time and core.time()) or 0)
+    policy.updated_at_unix = math.floor(get_now())
     return self:_write_json_atomic(self._paths.policy, policy, "vendor_inventory_policy.v1")
 end
 
@@ -312,7 +313,7 @@ function Persistence:load_runtime_state()
 
     if not parsed then
         local defaults = Defaults.copy(Defaults.runtime_state)
-        defaults.updated_at_unix = math.floor((core and core.time and core.time()) or 0)
+        defaults.updated_at_unix = math.floor(get_now())
         local ok = self:save_runtime_state(defaults)
         if not ok then
             return nil, ErrorCodes.POLICY_IO_ERROR
@@ -345,7 +346,7 @@ end
 ---@return boolean
 ---@return string|nil
 function Persistence:save_runtime_state(runtime_state)
-    runtime_state.updated_at_unix = math.floor((core and core.time and core.time()) or 0)
+    runtime_state.updated_at_unix = math.floor(get_now())
     return self:_write_json_atomic(self._paths.runtime_state, runtime_state, "runtime_state.v1")
 end
 
@@ -360,7 +361,7 @@ function Persistence:load_vendor_cache()
 
     if not parsed then
         local defaults = Defaults.copy(Defaults.vendor_cache)
-        defaults.updated_at_unix = math.floor((core and core.time and core.time()) or 0)
+        defaults.updated_at_unix = math.floor(get_now())
         local ok = self:save_vendor_cache(defaults)
         if not ok then
             return nil, ErrorCodes.POLICY_IO_ERROR
@@ -376,7 +377,7 @@ function Persistence:load_vendor_cache()
         return nil, ErrorCodes.PERSISTENCE_CORRUPTED
     end
 
-    local now = math.floor((core and core.time and core.time()) or 0)
+    local now = math.floor(get_now())
     local pruned = {}
     for i = 1, #parsed.entries do
         local entry = parsed.entries[i]
@@ -402,7 +403,7 @@ end
 ---@return boolean
 ---@return string|nil
 function Persistence:save_vendor_cache(cache)
-    cache.updated_at_unix = math.floor((core and core.time and core.time()) or 0)
+    cache.updated_at_unix = math.floor(get_now())
     return self:_write_json_atomic(self._paths.vendor_cache, cache, "vendor_runtime_cache.v1")
 end
 
@@ -470,7 +471,7 @@ function Persistence:load_profiles(default_runtime, default_policy)
     end
 
     if not parsed then
-        local now = math.floor((core and core.time and core.time()) or 0)
+        local now = math.floor(get_now())
         local default_payload = Defaults.copy(Defaults.profiles)
         default_payload.active_profile_id = "default"
         default_payload.updated_at_unix = now
@@ -507,7 +508,7 @@ function Persistence:save_profiles(payload)
         return false, val_err
     end
 
-    local now = math.floor((core and core.time and core.time()) or 0)
+    local now = math.floor(get_now())
     payload.updated_at_unix = now
     for i = 1, #payload.profiles do
         local profile = payload.profiles[i]

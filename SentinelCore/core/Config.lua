@@ -1,6 +1,7 @@
 local Defaults = require("core/Defaults")
 local Persistence = require("core/Persistence")
 local ErrorCodes = require("events/ErrorCodes")
+local get_now = require("lib/TimeHelper").get_now
 
 ---@class SentinelConfig
 ---@field private _runtime table
@@ -790,7 +791,7 @@ function Config:save_as_profile(profile_id, profile_name)
         name = name,
         runtime = Defaults.copy(self._runtime),
         policy = Defaults.copy(self._policy),
-        updated_at_unix = math.floor((core and core.time and core.time()) or 0),
+        updated_at_unix = math.floor(get_now()),
     }
 
     local index = self:_find_profile_index(id)
@@ -816,7 +817,7 @@ function Config:save_current_profile(profile_name)
     local profile = self._profiles.profiles[index]
     profile.runtime = Defaults.copy(self._runtime)
     profile.policy = Defaults.copy(self._policy)
-    profile.updated_at_unix = math.floor((core and core.time and core.time()) or 0)
+    profile.updated_at_unix = math.floor(get_now())
     if profile_name and tostring(profile_name) ~= "" then
         profile.name = tostring(profile_name)
     end
@@ -862,7 +863,7 @@ function Config:rename_profile(profile_id, new_name)
 
     local profile = self._profiles.profiles[index]
     profile.name = name
-    profile.updated_at_unix = math.floor((core and core.time and core.time()) or 0)
+    profile.updated_at_unix = math.floor(get_now())
     return true, nil
 end
 

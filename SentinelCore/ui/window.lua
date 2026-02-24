@@ -9,6 +9,7 @@ local vec2 = require("common/geometry/vector_2")
 local enums = require("common/enums")
 local color = require("common/color")
 local AstroUI = require("lib/AstroUI")
+local get_now = require("lib/TimeHelper").get_now
 
 local LAYOUT = AstroUI.LAYOUT
 
@@ -1603,7 +1604,7 @@ local function register_tabs(ui, client)
 
                 bx = bx + btn_w + gap
                 if make_btn(bx, btn_w, "Create", true) then
-                    local stamp = math.floor((core and core.time and core.time()) or 0)
+                    local stamp = math.floor(get_now())
                     local name = "Profile " .. tostring(stamp)
                     local ok, err, new_id = client:create_profile(name)
                     _last_profile_result = ok and ("Created " .. tostring(name))
@@ -1621,7 +1622,7 @@ local function register_tabs(ui, client)
 
                 bx = bx + btn_w + gap
                 if make_btn(bx, btn_w, "Rename", true) then
-                    local stamp = math.floor((core and core.time and core.time()) or 0)
+                    local stamp = math.floor(get_now())
                     local new_name = string.format("%s %d", tostring(selected.name), stamp)
                     local ok, err = client:rename_profile(selected.profile_id, new_name)
                     _last_profile_result = ok and ("Renamed to " .. tostring(new_name))

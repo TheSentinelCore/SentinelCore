@@ -234,6 +234,8 @@ function TestUtil.mock_object(props)
         _classification = props.classification or 0,
         _stack_count = props.stack_count or 1,
         _quality = props.quality or 0,
+        _has_loot = props.has_loot == true,
+        _can_be_looted = props.can_be_looted == true,
     }
 
     function obj:is_valid() return self._valid end
@@ -263,6 +265,10 @@ function TestUtil.mock_object(props)
     function obj:can_attack() return self._can_attack end
     function obj:is_enemy_with() return self._is_enemy end
     function obj:get_classification() return self._classification end
+    function obj:has_loot() return self._has_loot end
+    function obj:can_be_looted() return self._can_be_looted end
+    function obj:get_guid() return props.guid or tostring(obj) end
+    function obj:get_pet() return props.pet or nil end
 
     return obj
 end

@@ -1,8 +1,13 @@
+local BT = require("ai/BehaviorTree")
+local BTStatus = BT.Status
 local Helpers = require("lib/Helpers")
 local Defaults = require("core/Defaults")
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
 local FactionResolver = require("lib/FactionResolver")
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local safe_method = UnitQueries.safe_method
 
 ---@class VendorService
 ---@field private _event_bus EventBus
@@ -117,7 +122,7 @@ end
 ---@param result string
 ---@param path_cost number|nil
 function VendorService:_update_cache(vendor, result, path_cost)
-    local now = math.floor((core and core.time and core.time()) or 0)
+    local now = math.floor(get_now())
     local vendor_id = tonumber(vendor.vendor_id) or 0
     local map_id = tonumber(vendor.map_id) or tonumber(self._ctx and self._ctx.map_id) or 0
 
@@ -171,7 +176,7 @@ end
 ---@param vendor table
 ---@return boolean
 function VendorService:_is_blacklisted(vendor)
-    local now = math.floor((core and core.time and core.time()) or 0)
+    local now = math.floor(get_now())
     local entry = self:_cache_entry(tonumber(vendor.vendor_id) or 0, tonumber(vendor.map_id) or 0)
     if not entry then
         return false
@@ -342,13 +347,16 @@ function VendorService:_find_vendor_object(vendor)
 
     for i = 1, #objects do
         local obj = objects[i]
-        if obj and obj.is_valid and obj:is_valid() and obj.is_unit and obj:is_unit() then
-            local npc_id = tonumber(obj.get_npc_id and obj:get_npc_id() or 0)
+        if obj and safe_method(obj, "is_valid") and safe_method(obj, "is_unit") then
+            local npc_id = tonumber(safe_method(obj, "get_npc_id") or 0)
             if npc_id == target_npc_id then
-                local dist = Helpers.distance_3d(player_pos, obj:get_position())
-                if dist < best_dist then
-                    best = obj
-                    best_dist = dist
+                local obj_pos = safe_method(obj, "get_position")
+                if obj_pos then
+                    local dist = Helpers.distance_3d(player_pos, obj_pos)
+                    if dist < best_dist then
+                        best = obj
+                        best_dist = dist
+                    end
                 end
             end
         end
@@ -373,7 +381,7 @@ function VendorService:start(canonical_ctx)
     self._candidates = {}
     self._reachable = {}
     self._active_candidate = nil
-    self._started_at = (core and core.time and core.time()) or 0
+    self._started_at = get_now()
     self._interaction_started_at = 0
     self._return_started_at = 0
     self._return_pending = false
@@ -402,7 +410,7 @@ function VendorService:start(canonical_ctx)
             self._state = "failed"
             self._last_error = error_code or ErrorCodes.VENDOR_FETCH_FAILED
             self._event_bus:emit(Events.VENDOR_FAILED, {
-                timestamp = (core and core.time and core.time()) or 0,
+                timestamp = get_now(),
                 error_code = self._last_error,
             })
             return
@@ -413,7 +421,7 @@ function VendorService:start(canonical_ctx)
             self._state = "failed"
             self._last_error = ErrorCodes.VENDOR_NONE_VIABLE
             self._event_bus:emit(Events.VENDOR_FAILED, {
-                timestamp = (core and core.time and core.time()) or 0,
+                timestamp = get_now(),
                 error_code = self._last_error,
                 candidates = #vendors,
             })
@@ -430,7 +438,7 @@ function VendorService:start(canonical_ctx)
                 self._state = "failed"
                 self._last_error = rank_error or ErrorCodes.VENDOR_NONE_VIABLE
                 self._event_bus:emit(Events.VENDOR_FAILED, {
-                    timestamp = (core and core.time and core.time()) or 0,
+                    timestamp = get_now(),
                     error_code = self._last_error,
                 })
                 return
@@ -447,14 +455,14 @@ function VendorService:start(canonical_ctx)
                     self._state = "failed"
                     self._last_error = travel_error or ErrorCodes.VENDOR_UNREACHABLE
                     self._event_bus:emit(Events.VENDOR_FAILED, {
-                        timestamp = (core and core.time and core.time()) or 0,
+                        timestamp = get_now(),
                         error_code = self._last_error,
                     })
                     return
                 end
 
                 self._state = "interact"
-                self._interaction_started_at = (core and core.time and core.time()) or 0
+                self._interaction_started_at = get_now()
                 self._sub_state = ""
             end)
         end)
@@ -475,7 +483,7 @@ function VendorService:update()
     end
 
     if self._state == "returning" then
-        local now = (core and core.time and core.time()) or 0
+        local now = get_now()
         local timeout = tonumber(self._cfg.return_timeout) or 25
         if self._return_started_at > 0 and (now - self._return_started_at) > timeout then
             self._state = "failed"
@@ -496,7 +504,7 @@ function VendorService:update()
         return true, nil
     end
 
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
 
     -- Sub-state: initial interact — find and click the vendor NPC
     if self._sub_state == "" then
@@ -655,13 +663,13 @@ function VendorService:update()
                         self:_update_cache(self._active_candidate, "return_failed", self._active_candidate.path_cost)
                     end
                     self._event_bus:emit(Events.VENDOR_FAILED, {
-                        timestamp = (core and core.time and core.time()) or 0,
+                        timestamp = get_now(),
                         error_code = self._last_error,
                     })
                     return
                 end
 
-                self:_complete_vendor((core and core.time and core.time()) or 0, true)
+                self:_complete_vendor(get_now(), true)
             end)
             return true, nil
         end
@@ -688,6 +696,51 @@ function VendorService:reset()
     self._sell_count = 0
     self._last_sell_at = 0
     self._sell_started_at = 0
+end
+
+--- Build BT node for vendor phase (used by GrindService).
+---@return table BT node
+function VendorService:build()
+    local bb = self._blackboard
+
+    return BT.ReactiveSequence:new("vendor", {
+        -- Gate: bags near full or durability low
+        BT.Condition:new("needs_vendor", function()
+            if bb:get("player.in_combat", false) then return false end
+            local free = bb:get("inventory.free_slots", 99)
+            local durability = bb:get("player.durability_pct", 1.0)
+            return free <= 3 or durability < 0.25
+        end),
+
+        -- Vendor trip with timeout
+        BT.Timeout:new("vendor_timeout", 120.0,
+            BT.Action:new("vendor_trip", function()
+                local state = self:get_state()
+
+                if state == "idle" then
+                    local ctx = {
+                        map_id = bb:get("context.ui_map_id", 0),
+                    }
+                    local ok, err = self:start(ctx)
+                    if not ok then return BTStatus.FAILURE end
+                    return BTStatus.RUNNING
+                end
+
+                if self:is_active() then
+                    pcall(function() self:update() end)
+                    return BTStatus.RUNNING
+                end
+
+                if state == "completed" then
+                    self:reset()
+                    return BTStatus.SUCCESS
+                end
+
+                self:reset()
+                return BTStatus.FAILURE
+            end)
+        ),
+    })
 end
 
 return VendorService

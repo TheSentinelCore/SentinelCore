@@ -1,7 +1,8 @@
 local BT = require("ai/BehaviorTree")
 local S = BT.Status
+local get_now = require("lib/TimeHelper").get_now
 
-local RestSubTree = {}
+local RestService = {}
 
 -- Flash of Light ranks: highest first
 local FLASH_OF_LIGHT_RANKS = { 27137, 19943, 19942, 19941, 19940, 19939, 19750 }
@@ -109,19 +110,30 @@ local function best_rank(ranks)
     return nil
 end
 
---- Find the first available drink/food item from a priority list.
---- Uses game_object:has_item() on the player object.
+--- Cached consumable lookup — avoids scanning all items every tick.
+local _consumable_cache = {}
+local _consumable_cache_ttl = 5.0
+
+--- Find the first available drink/food item from a priority list (cached).
 ---@param player any game_object
 ---@param item_ids number[]
 ---@return number|nil
 local function find_consumable(player, item_ids)
     if not player or not player.has_item then return nil end
+    local now = get_now()
+    local key = item_ids  -- identity key (same table reference = same list)
+    local cached = _consumable_cache[key]
+    if cached and (now - cached.at) < _consumable_cache_ttl then
+        return cached.id
+    end
     for i = 1, #item_ids do
         local ok, found = pcall(function() return player:has_item(item_ids[i]) end)
         if ok and found then
+            _consumable_cache[key] = { id = item_ids[i], at = now }
             return item_ids[i]
         end
     end
+    _consumable_cache[key] = { id = nil, at = now }
     return nil
 end
 
@@ -131,6 +143,31 @@ local function use_item(item_id)
     if core.input and core.input.use_item then
         pcall(function() core.input.use_item(item_id) end)
     end
+end
+
+-- Well-known TBC drink/food aura spell IDs (Rank 1-10).
+-- When a drink/food item is consumed, the game applies one of these auras.
+local DRINK_AURA_IDS = { 430, 431, 432, 1133, 1135, 1137, 10250, 22734, 27089, 34291 }
+local FOOD_AURA_IDS = { 433, 434, 435, 1127, 1129, 1131, 10256, 22731, 25660, 27094, 33264 }
+
+--- Check if the player has an active drink or food buff.
+--- Scans get_buffs() for known aura IDs to avoid reapplying while already consuming.
+---@param player any game_object
+---@param aura_ids number[]
+---@return boolean
+local function has_consumable_buff(player, aura_ids)
+    if not player then return false end
+    local ok, buffs = pcall(function() return player:get_buffs() end)
+    if not ok or not buffs then return false end
+    for _, buff in pairs(buffs) do
+        local bid = buff.buff_id or buff.spell_id
+        if bid then
+            for i = 1, #aura_ids do
+                if bid == aura_ids[i] then return true end
+            end
+        end
+    end
+    return false
 end
 
 --- Get player mana percentage.
@@ -146,12 +183,16 @@ local function get_mana_pct(player)
     return ok and pct or 1
 end
 
-function RestSubTree.build(bb, navigation)
+function RestService.build(bb, navigation)
     local rest_start_time = nil
     local heal_spell_id = best_rank(FLASH_OF_LIGHT_RANKS)
-    local drink_applied = false
-    local food_applied = false
+    local last_drink_time = 0
+    local last_food_time = 0
     local last_heal_time = 0
+    -- Minimum interval between consumable re-applications. Food/drink buffs last
+    -- 30s. Only re-apply after 20s to avoid consuming a second item. Timers reset
+    -- when combat starts (gate condition) so re-entering rest starts fresh.
+    local CONSUMABLE_REAPPLY_INTERVAL = 20.0
 
     return BT.ReactiveSequence:new("rest", {
         -- Gate: needs recovery and not in combat (re-evaluated every tick)
@@ -160,8 +201,8 @@ function RestSubTree.build(bb, navigation)
             if bb:get("player.in_combat", false) then
                 if rest_start_time then
                     rest_start_time = nil
-                    drink_applied = false
-                    food_applied = false
+                    last_drink_time = 0
+                    last_food_time = 0
                     bb:set("combat.was_resting", false)
                 end
                 return false
@@ -190,15 +231,32 @@ function RestSubTree.build(bb, navigation)
 
         -- Heal/eat/drink action
         BT.Action:new("eat_drink", function()
-            local now = core.time()
+            local now = get_now()
 
             if not rest_start_time then
                 rest_start_time = now
-                drink_applied = false
-                food_applied = false
+                last_drink_time = 0
+                last_food_time = 0
                 bb:set("combat.was_resting", true)
                 if navigation and navigation.stop then
                     pcall(function() navigation:stop() end)
+                end
+            end
+
+            -- Don't apply consumables until the player has actually stopped moving.
+            -- Check both navigation state AND the player's physical movement.
+            -- navigation:stop() is async and the character decelerates after stopping.
+            local nav_moving = navigation and type(navigation.is_moving) == "function"
+                and navigation:is_moving()
+            if nav_moving then
+                pcall(function() navigation:stop() end)
+                return S.RUNNING
+            end
+            local player_obj = bb:get("player.object")
+            if player_obj then
+                local ok_m, phys_moving = pcall(function() return player_obj:is_moving() end)
+                if ok_m and phys_moving then
+                    return S.RUNNING
                 end
             end
 
@@ -212,29 +270,34 @@ function RestSubTree.build(bb, navigation)
             -- Fully recovered
             if hp_pct >= 0.90 and mana_pct >= 0.80 then
                 rest_start_time = nil
-                drink_applied = false
-                food_applied = false
+                last_drink_time = 0
+                last_food_time = 0
                 bb:set("combat.was_resting", false)
                 return S.SUCCESS
             end
 
             local is_casting = bb:get("player.is_casting", false)
 
-            -- Drink water once per rest session
-            if mana_pct < 0.80 and not drink_applied then
+            -- Drink water: only apply if no active drink buff.
+            -- Checking the buff prevents cancelling+restarting the drink on each tick.
+            if mana_pct < 0.80
+                and not has_consumable_buff(player, DRINK_AURA_IDS)
+                and (now - last_drink_time) >= CONSUMABLE_REAPPLY_INTERVAL then
                 local drink_id = find_consumable(player, DRINK_ITEMS)
                 if drink_id then
                     use_item(drink_id)
-                    drink_applied = true
+                    last_drink_time = now
                 end
             end
 
-            -- Eat food once per rest session
-            if hp_pct < 0.90 and not food_applied then
+            -- Eat food: only apply if no active food buff.
+            if hp_pct < 0.90
+                and not has_consumable_buff(player, FOOD_AURA_IDS)
+                and (now - last_food_time) >= CONSUMABLE_REAPPLY_INTERVAL then
                 local food_id = find_consumable(player, FOOD_ITEMS)
                 if food_id then
                     use_item(food_id)
-                    food_applied = true
+                    last_food_time = now
                 end
             end
 
@@ -242,7 +305,7 @@ function RestSubTree.build(bb, navigation)
             -- and HP is critically low (< 30%), or no food was available
             if hp_pct < 0.90 and mana_pct > 0.10 and not is_casting
                 and heal_spell_id and (now - last_heal_time) > 2.0
-                and not food_applied then
+                and last_food_time == 0 then
                 if core.input and core.input.cast_target_spell and player then
                     pcall(function()
                         core.input.cast_target_spell(heal_spell_id, player)
@@ -254,8 +317,8 @@ function RestSubTree.build(bb, navigation)
             -- Timeout: don't rest forever (60s for mana recovery)
             if now - rest_start_time > 60 then
                 rest_start_time = nil
-                drink_applied = false
-                food_applied = false
+                last_drink_time = 0
+                last_food_time = 0
                 bb:set("combat.was_resting", false)
                 return S.FAILURE
             end
@@ -265,4 +328,4 @@ function RestSubTree.build(bb, navigation)
     })
 end
 
-return RestSubTree
+return RestService

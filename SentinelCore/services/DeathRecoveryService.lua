@@ -1,5 +1,10 @@
+local BT = require("ai/BehaviorTree")
+local BTStatus = BT.Status
 local Helpers = require("lib/Helpers")
 local Events = require("events/Events")
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local safe_method = UnitQueries.safe_method
 
 ---@private
 ---@param value any
@@ -23,25 +28,6 @@ local function copy_position(pos)
         y = tonumber(pos.y) or 0,
         z = tonumber(pos.z) or 0,
     }
-end
-
----@private
----@param obj any
----@param method string
----@return any
-local function safe_method(obj, method)
-    if type(obj) ~= "table" then
-        return nil
-    end
-    local fn = obj[method]
-    if type(fn) ~= "function" then
-        return nil
-    end
-    local ok, result = pcall(fn, obj)
-    if not ok then
-        return nil
-    end
-    return result
 end
 
 ---@class DeathRecoveryService
@@ -131,7 +117,7 @@ function DeathRecoveryService:_get_player()
 end
 
 ---@private
----@param player game_object
+---@param player game_object|nil
 ---@return vec3|nil
 function DeathRecoveryService:_read_player_position(player)
     local pos = self._blackboard:get("player.position")
@@ -162,7 +148,7 @@ function DeathRecoveryService:_query_corpse_position()
 end
 
 ---@private
----@param player game_object
+---@param player game_object|nil
 ---@param dead boolean
 ---@param ghost boolean
 function DeathRecoveryService:_refresh_corpse_position(player, dead, ghost)
@@ -337,7 +323,7 @@ end
 
 ---@private
 ---@param now number
----@param player game_object
+---@param player game_object|nil
 function DeathRecoveryService:_run_to_corpse(now, player)
     local player_pos = self:_read_player_position(player)
     local corpse_pos = copy_position(self._corpse_position)
@@ -372,28 +358,32 @@ end
 ---@return boolean
 ---@return string|nil
 function DeathRecoveryService:update(now)
-    now = tonumber(now) or ((core and core.time and core.time()) or 0)
+    now = tonumber(now) or (get_now())
 
     local player = self:_get_player()
-    if not player then
+
+    -- Read death state from blackboard (Sensors updates these even when
+    -- is_valid() fails, so they're authoritative for dead/ghost detection).
+    local dead = self._blackboard:get("player.is_dead", false) == true
+    local ghost = self._blackboard:get("player.is_ghost", false) == true
+
+    -- If we have a valid player object, prefer direct method calls
+    if player then
+        dead = safe_method(player, "is_dead") == true
+        ghost = safe_method(player, "is_ghost") == true
+    end
+
+    if not dead and not ghost then
         self:_deactivate(now)
         return true, nil
     end
 
-    local dead = safe_method(player, "is_dead") == true
-    local ghost = safe_method(player, "is_ghost") == true
-
-    if dead ~= true and ghost ~= true then
-        self:_deactivate(now)
-        return true, nil
-    end
-
-    local state = ghost == true and "corpse_run" or "dead"
+    local state = ghost and "corpse_run" or "dead"
     self:_activate(now, state)
     self._state = state
     self:_refresh_corpse_position(player, dead, ghost)
 
-    if ghost == true then
+    if ghost then
         self:_run_to_corpse(now, player)
     else
         self:_stop_navigation()
@@ -415,6 +405,35 @@ function DeathRecoveryService:reset()
     self._last_move_to_at = 0
     self._last_move_to_dest = nil
     self:_write_blackboard_state()
+end
+
+--- Build BT node for death recovery phase (used by GrindService).
+--- Delegates all logic to the service's update() method.
+---@return table BT node
+function DeathRecoveryService:build()
+    local bb = self._blackboard
+
+    return BT.ReactiveSequence:new("death_recovery", {
+        -- Gate: must be dead or ghost (re-evaluated every tick)
+        BT.Condition:new("is_dead_or_ghost", function()
+            local is_dead = bb:get("player.is_dead", false)
+            local is_ghost = bb:get("player.is_ghost", false)
+            return is_dead or is_ghost
+        end),
+
+        -- Tick the service each frame
+        BT.Action:new("death_recovery_tick", function()
+            self:update()
+
+            -- Stay RUNNING while active (dead or ghost)
+            if self:is_active() then
+                return BTStatus.RUNNING
+            end
+
+            -- Service deactivated — player is alive
+            return BTStatus.SUCCESS
+        end),
+    })
 end
 
 return DeathRecoveryService

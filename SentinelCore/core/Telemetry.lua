@@ -1,26 +1,9 @@
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
 local Helpers = require("lib/Helpers")
-
----@private
----@param unit any
----@param method string
----@param ... any
----@return any
-local function safe_unit_call(unit, method, ...)
-    if not unit then
-        return nil
-    end
-    local fn = unit[method]
-    if type(fn) ~= "function" then
-        return nil
-    end
-    local ok, value = pcall(fn, unit, ...)
-    if not ok then
-        return nil
-    end
-    return value
-end
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local safe_unit_call = UnitQueries.safe_method
 
 ---@private
 ---@param value any
@@ -91,7 +74,7 @@ function Telemetry:new(event_bus, blackboard, flush_interval)
     o._event_bus = event_bus
     o._blackboard = blackboard
     o._session_id = Helpers.generate_id()
-    o._started_at = (core and core.time and core.time()) or 0
+    o._started_at = get_now()
     o._last_flush = o._started_at
     o._last_update_at = o._started_at
     o._last_kill_at = 0
@@ -163,7 +146,7 @@ end
 ---@private
 function Telemetry:_bind_events()
     self._event_bus:on(Events.KILL_CONFIRMED, function(data)
-        local now = tonumber(data and data.timestamp) or ((core and core.time and core.time()) or 0)
+        local now = tonumber(data and data.timestamp) or (get_now())
         if self._last_kill_at > 0 then
             local downtime = now - self._last_kill_at
             if downtime >= 0 then
@@ -350,7 +333,7 @@ end
 
 ---@param now number
 function Telemetry:update(now)
-    now = now or ((core and core.time and core.time()) or 0)
+    now = now or (get_now())
 
     local dt = now - (tonumber(self._last_update_at) or now)
     if dt < 0 then
@@ -382,7 +365,8 @@ end
 ---@return table
 function Telemetry:get_snapshot()
     local context = self._blackboard:get("context.canonical", {})
-    local now = (core and core.time and core.time()) or self._started_at
+    local now = get_now()
+    if now == 0 then now = self._started_at end
     local uptime = math.max(0, now - self._started_at)
     return {
         session_id = self._session_id,

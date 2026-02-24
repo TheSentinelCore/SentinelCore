@@ -1,5 +1,6 @@
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
+local get_now = require("lib/TimeHelper").get_now
 
 ---@class RecoveryService
 ---@field private _event_bus EventBus
@@ -61,7 +62,7 @@ function RecoveryService:report_critical(error_code, detail)
     self._next_restart_at = 0
 
     self._event_bus:emit(Events.RECOVERY_STARTED, {
-        timestamp = (core and core.time and core.time()) or 0,
+        timestamp = get_now(),
         error_code = error_code,
         detail = detail,
     })
@@ -70,7 +71,7 @@ end
 ---@param now number
 ---@return table|nil
 function RecoveryService:update(now)
-    now = now or ((core and core.time and core.time()) or 0)
+    now = now or (get_now())
     if not self._active then
         return nil
     end
@@ -162,7 +163,7 @@ function RecoveryService:complete_restart_attempt(success)
         self._error_detail = nil
         self._next_restart_at = 0
         self._event_bus:emit(Events.RECOVERY_COMPLETED, {
-            timestamp = (core and core.time and core.time()) or 0,
+            timestamp = get_now(),
             attempts_used = self._attempts_used,
         })
         self._attempts_used = 0

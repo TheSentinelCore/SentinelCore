@@ -1,16 +1,19 @@
 local BT = require("ai/BehaviorTree")
 local S = BT.Status
+local get_now = require("lib/TimeHelper").get_now
 
-local FleeSubTree = {}
+local FleeService = {}
 
-function FleeSubTree.build(bb, navigation)
+function FleeService.build(bb, navigation)
     local flee_started = false
+    local flee_started_at = nil
 
     return BT.ReactiveSequence:new("flee", {
         -- Gate: should flee (re-evaluated every tick)
         BT.Condition:new("should_flee", function()
             if not bb:get("player.in_combat", false) then
                 flee_started = false
+                flee_started_at = nil
                 return false
             end
             local hp = bb:get("player.health", 0)
@@ -23,7 +26,14 @@ function FleeSubTree.build(bb, navigation)
         -- Flee action (navigate once away from enemies)
         BT.Action:new("flee_navigate", function()
             if flee_started then
-                return S.RUNNING  -- already fleeing, let nav finish
+                -- Timeout: don't flee forever (12s max)
+                local now = get_now()
+                if flee_started_at and (now - flee_started_at) > 12 then
+                    flee_started = false
+                    flee_started_at = nil
+                    return S.FAILURE
+                end
+                return S.RUNNING
             end
 
             local player_pos = bb:get("player.position")
@@ -47,6 +57,7 @@ function FleeSubTree.build(bb, navigation)
                         z = player_pos.z or 0,
                     }
                     flee_started = true
+                    flee_started_at = get_now()
                     pcall(function() navigation:move_to(flee_pos) end)
                 end
             end
@@ -56,4 +67,4 @@ function FleeSubTree.build(bb, navigation)
     })
 end
 
-return FleeSubTree
+return FleeService

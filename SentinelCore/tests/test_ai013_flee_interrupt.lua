@@ -8,8 +8,8 @@ function M.run()
     local env = TU.install_core_stub()
     local EventBus = require("events/EventBus")
     local Blackboard = require("core/Blackboard")
-    local FleeSubTree = require("bt/FleeSubTree")
-    local CombatInterruptSubTree = require("bt/CombatInterruptSubTree")
+    local FleeService = require("services/FleeService")
+    local CombatInterruptService = require("services/CombatInterruptService")
 
     local eb = EventBus:new()
     local bb = Blackboard:new(eb)
@@ -32,9 +32,9 @@ function M.run()
     }
 
     -- =====================
-    -- FleeSubTree tests
+    -- FleeService tests
     -- =====================
-    local flee = FleeSubTree.build(bb, mock_nav)
+    local flee = FleeService.build(bb, mock_nav)
 
     -- Test 1: FAILURE when not in combat
     bb:set("player.in_combat", false)
@@ -72,9 +72,9 @@ function M.run()
     assert(flee:tick() == S.FAILURE, "should fail when out of combat (gate blocks)")
 
     -- =====================
-    -- CombatInterruptSubTree tests
+    -- CombatInterruptService tests
     -- =====================
-    local interrupt = CombatInterruptSubTree.build(bb)
+    local interrupt = CombatInterruptService.build(bb)
 
     -- Test 6: FAILURE when not in combat
     bb:set("player.in_combat", false)

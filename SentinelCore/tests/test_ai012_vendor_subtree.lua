@@ -8,19 +8,20 @@ function M.run()
     local env = TU.install_core_stub()
     local EventBus = require("events/EventBus")
     local Blackboard = require("core/Blackboard")
-    local VendorSubTree = require("bt/VendorSubTree")
+    local VendorService = require("services/VendorService")
 
     local eb = EventBus:new()
     local bb = Blackboard:new(eb)
     local now = 1000
     env.core.time = function() return now end
 
-    -- VendorSubTree uses a state-machine vendor service:
+    -- VendorService uses a state-machine vendor service:
     -- get_state(), is_active(), start(ctx), update(), reset()
     local vendor_state = "idle"
     local start_calls = 0
     local update_calls = 0
-    local mock_vendor = {
+    local mock_vendor = setmetatable({
+        _blackboard = bb,
         get_state = function() return vendor_state end,
         is_active = function()
             return vendor_state == "active" or vendor_state == "running"
@@ -36,14 +37,15 @@ function M.run()
         reset = function()
             vendor_state = "idle"
         end,
-    }
+    }, { __index = VendorService })
 
-    local tree = VendorSubTree.build(bb, mock_vendor)
+    local tree = mock_vendor:build()
 
     -- Test 1: FAILURE when bags have space and durability ok
     bb:set("player.in_combat", false)
     bb:set("inventory.free_slots", 20)
     bb:set("player.durability_pct", 0.90)
+    bb:set("context.ui_map_id", 0)
     assert(tree:tick() == S.FAILURE, "should fail when no vendor needed")
 
     -- Test 2: FAILURE when in combat

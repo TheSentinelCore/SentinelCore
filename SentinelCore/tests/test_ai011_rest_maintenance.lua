@@ -8,8 +8,8 @@ function M.run()
     local env = TU.install_core_stub()
     local EventBus = require("events/EventBus")
     local Blackboard = require("core/Blackboard")
-    local RestSubTree = require("bt/RestSubTree")
-    local MaintenanceSubTree = require("bt/MaintenanceSubTree")
+    local RestService = require("services/RestService")
+    local MaintenanceService = require("services/MaintenanceService")
 
     local eb = EventBus:new()
     local bb = Blackboard:new(eb)
@@ -17,9 +17,9 @@ function M.run()
     env.core.time = function() return now end
 
     -- =====================
-    -- RestSubTree tests
+    -- RestService tests
     -- =====================
-    local rest = RestSubTree.build(bb)
+    local rest = RestService.build(bb)
 
     -- Test 1: FAILURE when health is high (90% >= 80% threshold)
     bb:set("player.in_combat", false)
@@ -58,9 +58,9 @@ function M.run()
     assert(bb:get("combat.was_resting") == false, "should clear was_resting on combat")
 
     -- =====================
-    -- MaintenanceSubTree tests
+    -- MaintenanceService tests
     -- =====================
-    -- MaintenanceSubTree queries player:has_buff(spell_id) directly.
+    -- MaintenanceService queries player:has_buff(spell_id) directly.
     -- Provide a mock player with configurable has_buff results.
     local SANCTITY_AURA = 20218
     local BLESSING_OF_MIGHT = 27140
@@ -73,7 +73,7 @@ function M.run()
         return active_buffs[spell_id] == true
     end
 
-    local maint = MaintenanceSubTree.build(bb)
+    local maint = MaintenanceService.build(bb)
 
     -- Test 6: FAILURE when in combat
     bb:set("player.in_combat", true)

@@ -24,12 +24,15 @@ local VendorService = require("services/VendorService")
 local RecoveryService = require("services/RecoveryService")
 local DeathRecoveryService = require("services/DeathRecoveryService")
 
+local get_now = require("lib/TimeHelper").get_now
+local AutoAttackHelper = require("lib/AutoAttackHelper")
+
 local GrindMode = require("modes/GrindMode")
 local QuestMode = require("modes/QuestMode")
 local GatherMode = require("modes/GatherMode")
 local BgMode = require("modes/BgMode")
 
-local GrindTree = require("bt/GrindTree")
+local GrindService = require("services/GrindService")
 local UtilityEvaluator = require("ai/UtilityEvaluator")
 local SwingTimer = require("ai/SwingTimer")
 local HumanTiming = require("ai/HumanTiming")
@@ -88,7 +91,7 @@ function Client:new(config)
             end
             if type(payload) == "table" then
                 if payload.timestamp == nil then
-                    payload.timestamp = (core and core.time and core.time()) or 0
+                    payload.timestamp = get_now()
                 end
                 if payload.session_id == nil then
                     payload.session_id = o._telemetry:get_session_id()
@@ -315,7 +318,7 @@ end
 
 ---@private
 function Client:_write_runtime_state(force)
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     if not force and now - self._last_runtime_state_write < 1.0 then
         return
     end
@@ -361,7 +364,7 @@ function Client:_resolve_context_if_due(force)
         return
     end
 
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local interval = self._config:get_runtime_value("runtime", "context_resolve_interval", 10.0)
     if not force and (now - self._context_last_attempt) < interval then
         return
@@ -392,7 +395,7 @@ end
 ---@private
 ---@param force boolean
 function Client:_dependency_health_check(force)
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local interval = self._config:get_runtime_value("runtime", "dependency_health_interval", 5.0)
 
     if not force and (now - self._last_dependency_check) < interval then
@@ -448,16 +451,33 @@ function Client:_execute_action(action)
             pcall(function() core.input.cast_target_spell(action.spell_id, player) end)
         end
     elseif action.action_type == "auto_attack" then
-        -- Only send auto-attack once per target (6603 is a toggle — spamming flips it on/off)
-        if not self._auto_attack_sent then
-            local target = self._blackboard:get("combat.target")
-            if core.input and target then
-                pcall(function()
-                    if core.input.set_target then core.input.set_target(target) end
-                    if core.input.cast_target_spell then core.input.cast_target_spell(6603, target) end
+        -- Idempotent auto-attack: use SDK auto_attack_helper, fall back to
+        -- cast_target_spell(6603) only when not already auto-attacking.
+        local target = self._blackboard:get("combat.target")
+        if core.input and target then
+            pcall(function()
+                if core.input.set_target then core.input.set_target(target) end
+            end)
+            local sent = false
+            -- Primary: SDK auto_attack_helper (truly idempotent)
+            local aa = AutoAttackHelper.get()
+            if aa and aa.start_attack then
+                local ok = pcall(function()
+                    aa:start_attack(target, aa.ATTACK_TYPE and aa.ATTACK_TYPE.MELEE or 6603)
                 end)
-                self._auto_attack_sent = true
-                self._auto_attack_target = target
+                if ok then sent = true end
+            end
+            -- Fallback: only send 6603 toggle when NOT already auto-attacking
+            if not sent and core.input.cast_target_spell then
+                local p = self._blackboard:get("player.object")
+                local already_attacking = false
+                if p then
+                    local ok, val = pcall(function() return p:is_auto_attacking() end)
+                    if ok and val == true then already_attacking = true end
+                end
+                if not already_attacking then
+                    pcall(core.input.cast_target_spell, 6603, target)
+                end
             end
         end
     end
@@ -642,7 +662,7 @@ function Client:start(mode_id, opts)
 
     -- Build BT grind tree for grind mode
     if mode_definition.id == "grind" then
-        self._grind_tree = GrindTree.build({
+        self._grind_tree = GrindService.build({
             bb = self._blackboard,
             evaluator = self._utility_evaluator,
             swing_timer = self._swing_timer,
@@ -652,11 +672,16 @@ function Client:start(mode_id, opts)
             targeting = self._services.targeting,
             vendor_service = self._services.vendor,
             exploration_service = self._services.exploration,
+            loot_service = self._services.loot,
+            death_recovery_service = self._services.death_recovery,
         })
+        -- Clear stale BT state from previous session
+        self._blackboard:clear("loot.pending_target")
+        self._blackboard:clear("combat.target")
     end
 
     self._event_bus:emit(Events.STARTED, {
-        timestamp = (core and core.time and core.time()) or 0,
+        timestamp = get_now(),
         mode = mode_definition.id,
         session_id = self._telemetry:get_session_id(),
     })
@@ -695,6 +720,7 @@ function Client:stop(reason)
     if self._services.death_recovery and self._services.death_recovery.reset then
         self._services.death_recovery:reset()
     end
+    self._blackboard:clear("loot.pending_target")
 
     self._context_pending = false
     self._grind_tree = nil
@@ -711,7 +737,7 @@ function Client:stop(reason)
     self._state_machine:reset()
 
     self._event_bus:emit(Events.STOPPED, {
-        timestamp = (core and core.time and core.time()) or 0,
+        timestamp = get_now(),
         reason = reason,
     })
 
@@ -738,7 +764,7 @@ function Client:pause(reason)
 
     self._services.navigation:stop()
     self._event_bus:emit(Events.PAUSED, {
-        timestamp = (core and core.time and core.time()) or 0,
+        timestamp = get_now(),
         reason = reason,
     })
 
@@ -781,7 +807,7 @@ function Client:resume()
     end
 
     self._event_bus:emit(Events.RESUMED, {
-        timestamp = (core and core.time and core.time()) or 0,
+        timestamp = get_now(),
     })
 
     self:_resolve_context_if_due(true)
@@ -811,17 +837,6 @@ function Client:update()
             pcall(function() self._services.targeting:update() end)
             pcall(function() self._services.inventory:update() end)
             pcall(function() self._services.death_recovery:update() end)
-
-            -- Reset auto-attack toggle guard when out of combat or target changed
-            if not self._blackboard:get("player.in_combat", false) then
-                self._auto_attack_sent = false
-                self._auto_attack_target = nil
-            else
-                local cur_target = self._blackboard:get("combat.target")
-                if cur_target ~= self._auto_attack_target then
-                    self._auto_attack_sent = false
-                end
-            end
 
             self._grind_tree:tick()
 

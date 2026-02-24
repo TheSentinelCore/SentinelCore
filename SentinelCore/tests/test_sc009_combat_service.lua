@@ -1,5 +1,6 @@
 local T = require("tests/TestUtil")
 local ErrorCodes = require("events/ErrorCodes")
+local get_now = require("lib/TimeHelper").get_now
 
 local function run()
     local player = T.mock_object({ position = { x = 0, y = 0, z = 0 } })
@@ -94,7 +95,7 @@ local function run()
     }
     combat._state = "combat"
     combat._active_target = stale_target
-    combat._started_at = (core and core.time and core.time()) or 0
+    combat._started_at = get_now()
     local safe_ok, update_ok, update_err = pcall(function()
         return combat:update()
     end)

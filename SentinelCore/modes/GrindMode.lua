@@ -1,5 +1,3 @@
-local BT = require("lib/BehaviorTree")
-local GrindTree = require("behaviors/trees/GrindTree")
 local ModeState = require("core/ModeState")
 local Defaults = require("core/Defaults")
 local WaypointObjectiveProvider = require("modes/providers/WaypointObjectiveProvider")
@@ -11,7 +9,6 @@ GrindMode.__index = GrindMode
 ---@return GrindMode
 function GrindMode:new()
     local o = setmetatable({}, GrindMode)
-    o._tree = nil
     o._services = nil
     o._objective_provider = WaypointObjectiveProvider:new({
         mode_id = "grind",
@@ -76,8 +73,9 @@ end
 ---@return table
 function GrindMode:build_tree(services, command_handlers)
     self._services = services
-    self._tree = GrindTree.create(services, command_handlers)
-    return self._tree
+    -- Legacy tree not used; grind mode uses GrindService reactive BT.
+    -- Return non-nil so _bind_mode_tree considers the bind successful.
+    return {}
 end
 
 ---@param ctx table
@@ -92,19 +90,14 @@ end
 ---@param ctx table
 ---@return string
 function GrindMode:tick(ctx)
-    if not self._tree then
-        return BT.FAILURE
-    end
-
-    return self._tree:tick(self._services.blackboard, 0)
+    -- Legacy tick unused; Client.update() drives GrindService tree directly.
+    return "success"
 end
 
 ---@param ctx table
 ---@param reason? string
 function GrindMode:on_exit(ctx, reason)
-    if self._tree then
-        self._tree:reset()
-    end
+    -- No legacy tree to reset; GrindService tree is owned by Client.
 end
 
 ---@return table

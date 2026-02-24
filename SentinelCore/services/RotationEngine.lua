@@ -7,12 +7,9 @@ local RestPolicy = require("rotations/framework/RestPolicy")
 local ErrorCodes = require("events/ErrorCodes")
 local Events = require("events/Events")
 local Helpers = require("lib/Helpers")
-
-local OBJECT_UNWRAP_KEYS = {
-    "object",
-    "raw_object",
-    "game_object",
-}
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local unwrap_game_object = UnitQueries.unwrap_game_object
 
 local ITEM_UNWRAP_KEYS = {
     "item",
@@ -213,24 +210,6 @@ function RotationEngine:new(event_bus, blackboard, cfg)
     end
 
     return o
-end
-
----@private
----@param value any
----@return any
-local function unwrap_game_object(value)
-    if type(value) ~= "table" then
-        return value
-    end
-
-    for i = 1, #OBJECT_UNWRAP_KEYS do
-        local candidate = rawget(value, OBJECT_UNWRAP_KEYS[i])
-        if type(candidate) == "userdata" then
-            return candidate
-        end
-    end
-
-    return value
 end
 
 ---@private
@@ -723,7 +702,7 @@ function RotationEngine:_on_action_executed(action, ctx)
         return
     end
 
-    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
+    local now = tonumber(ctx and ctx.now) or (get_now())
     if self._blackboard and self._blackboard.set then
         local lock_until = now + lock_secs
         local item_kind = string.lower(tostring(action.item_kind or ""))
@@ -1167,7 +1146,7 @@ end
 ---@return boolean
 ---@return string|nil
 function RotationEngine:_execute_queue_first(action, ctx)
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
 
     if action.action_type == "use_best_health_potion" and self._izi and self._izi.use_best_health_potion_safe then
         local ok, used = pcall(self._izi.use_best_health_potion_safe)
@@ -1289,7 +1268,7 @@ end
 ---@return boolean
 ---@return string|nil
 function RotationEngine:_execute_guarded_fallback(action, ctx)
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local throttle = tonumber(self._cfg.action_throttle) or 0.12
     if now - self._last_cast_at < throttle then
         return false, ErrorCodes.CAST_GUARD_BLOCKED
@@ -1428,7 +1407,7 @@ function RotationEngine:_action_allowed(action, ctx)
     if type(action) ~= "table" then
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
-    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
+    local now = tonumber(ctx and ctx.now) or (get_now())
 
     if action.action_type == "cast_spell_target" and not ctx.target then
         return false, ErrorCodes.TARGET_NOT_FOUND
@@ -1615,7 +1594,7 @@ function RotationEngine:_emit_rotation_blocked(reason, blocked)
         return
     end
 
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local top = blocked and blocked[1] or nil
     local key = string.format(
         "%s|%s|%d|%d",
@@ -1678,7 +1657,7 @@ function RotationEngine:_execute_plan(plan, ctx, opts)
         return false, ErrorCodes.CAST_GUARD_BLOCKED
     end
 
-    local now = tonumber(ctx and ctx.now) or ((core and core.time and core.time()) or 0)
+    local now = tonumber(ctx and ctx.now) or (get_now())
     local last_err = ErrorCodes.CAST_GUARD_BLOCKED
     local blocked = {}
     for i = 1, #plan do

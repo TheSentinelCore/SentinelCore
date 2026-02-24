@@ -1,27 +1,9 @@
+local BT = require("ai/BehaviorTree")
+local BTStatus = BT.Status
 local Helpers = require("lib/Helpers")
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
-
----@private
----@return number
-local function now_seconds()
-    return (core and core.time and core.time()) or 0
-end
-
----@private
----@param value number
----@param low number
----@param high number
----@return number
-local function clamp(value, low, high)
-    if value < low then
-        return low
-    end
-    if value > high then
-        return high
-    end
-    return value
-end
+local get_now = require("lib/TimeHelper").get_now
 
 ---@private
 ---@param pos vec3|nil
@@ -273,13 +255,13 @@ function ExplorationService:_record_candidate_cells(now, candidates)
     for i = 1, #candidates do
         local entry = candidates[i]
         local target = entry and entry.target
-        local pos = target and target.get_position and target:get_position() or nil
-        if is_valid_position(pos) then
+        local ok_pos, pos = pcall(function() return target and target.get_position and target:get_position() end)
+        if ok_pos and is_valid_position(pos) then
             local cx, cy = self:_cell_index(cell_size, pos)
             local cell = self:_get_or_create_cell(cx, cy)
             local score = tonumber(entry.score) or 0
-            local normalized = clamp((score + 1.0) * 0.5, 0.05, 1.0)
-            cell.sighting_score = clamp((tonumber(cell.sighting_score) or 0) + (sighting_gain * normalized), 0, sighting_cap)
+            local normalized = Helpers.clamp((score + 1.0) * 0.5, 0.05, 1.0)
+            cell.sighting_score = Helpers.clamp((tonumber(cell.sighting_score) or 0) + (sighting_gain * normalized), 0, sighting_cap)
             cell.last_seen_at = now
             cell.last_touched_at = now
         end
@@ -312,8 +294,8 @@ function ExplorationService:_select_pursuit(now, player_pos, engage_radius, cand
             local distance_penalty = distance / math.max(1.0, pursuit_max)
             local utility = score - (distance_penalty * cfg_number(self._cfg, "pursuit_distance_weight", 0.15))
             if utility > best_score then
-                local pos = target.get_position and target:get_position() or nil
-                if is_valid_position(pos) then
+                local ok_p, pos = pcall(function() return target.get_position and target:get_position() end)
+                if ok_p and is_valid_position(pos) then
                     best_score = utility
                     best = {
                         mode = "pursuit",
@@ -380,20 +362,20 @@ function ExplorationService:_select_frontier(now, player_pos, anchor)
             local fail_until = tonumber(cell.fail_until) or 0
             if fail_until <= now then
                 local dist = Helpers.distance_3d(player_pos, destination)
-                local travel_term = clamp(dist / math.max(1.0, max_radius), 0.0, 1.5)
+                local travel_term = Helpers.clamp(dist / math.max(1.0, max_radius), 0.0, 1.5)
 
                 local last_visit = tonumber(cell.last_visited_at) or 0
                 local novelty_age = (last_visit > 0) and (now - last_visit) or novelty_horizon
-                local novelty = clamp(novelty_age / novelty_horizon, 0.0, 1.0)
+                local novelty = Helpers.clamp(novelty_age / novelty_horizon, 0.0, 1.0)
 
                 local last_seen = tonumber(cell.last_seen_at) or 0
                 local seen_age = (last_seen > 0) and (now - last_seen) or seen_horizon
-                local seen_freshness = 1.0 - clamp(seen_age / seen_horizon, 0.0, 1.0)
-                local seen_score = clamp((tonumber(cell.sighting_score) or 0) / math.max(1.0, cfg_number(self._cfg, "sighting_cap", 8.0)), 0.0, 1.0)
+                local seen_freshness = 1.0 - Helpers.clamp(seen_age / seen_horizon, 0.0, 1.0)
+                local seen_score = Helpers.clamp((tonumber(cell.sighting_score) or 0) / math.max(1.0, cfg_number(self._cfg, "sighting_cap", 8.0)), 0.0, 1.0)
                 local sighting = seen_freshness * seen_score
 
                 local recently_visited = self:_was_recently_visited(cell.key) and 1.0 or 0.0
-                local failure_count = clamp((tonumber(cell.failure_count) or 0) / 5.0, 0.0, 1.0)
+                local failure_count = Helpers.clamp((tonumber(cell.failure_count) or 0) / 5.0, 0.0, 1.0)
 
                 local utility = (novelty * w_novelty)
                     + (sighting * w_sighting)
@@ -432,7 +414,7 @@ function ExplorationService:_activate_goal(goal, now)
     local active = self._active
     if active and is_valid_position(active.destination) then
         local destination_delta = Helpers.distance_3d(active.destination, goal.destination)
-        local min_switch_delta = math.max(0.1, cfg_number(self._cfg, "destination_switch_distance", 2.5))
+        local min_switch_delta = math.max(0.1, cfg_number(self._cfg, "destination_switch_distance", 1.0))
         local min_switch_cooldown = math.max(0, cfg_number(self._cfg, "destination_switch_cooldown", 0.75))
         local min_switch_gain = cfg_number(self._cfg, "destination_switch_min_gain", 0.05)
 
@@ -513,7 +495,7 @@ function ExplorationService:_on_command_result(active, now, ok, error_code)
     active.failure_count = (tonumber(active.failure_count) or 0) + 1
 
     local fail_cooldown = cfg_number(self._cfg, "cell_failure_cooldown", 8.0)
-    local failure_ttl = fail_cooldown * clamp(active.failure_count, 1, 4)
+    local failure_ttl = fail_cooldown * Helpers.clamp(active.failure_count, 1, 4)
     if active.cell_key and self._cells[active.cell_key] then
         local cell = self._cells[active.cell_key]
         cell.fail_until = now + failure_ttl
@@ -550,7 +532,7 @@ function ExplorationService:_issue_navigation(active, now)
 
     if moving == true and type(self._nav.soft_repath) == "function" then
         local repath_cooldown = math.max(0.05, cfg_number(self._cfg, "soft_repath_cooldown", 0.45))
-        local repath_delta = math.max(0.1, cfg_number(self._cfg, "soft_repath_distance", 2.0))
+        local repath_delta = math.max(0.1, cfg_number(self._cfg, "soft_repath_distance", 1.0))
         local moved_distance = Helpers.distance_3d(active.destination, destination)
         if moved_distance >= repath_delta and (now - (tonumber(active.last_soft_repath_at) or 0)) >= repath_cooldown then
             active.last_soft_repath_at = now
@@ -562,7 +544,7 @@ function ExplorationService:_issue_navigation(active, now)
                 if self._active ~= active or token ~= active.command_token then
                     return
                 end
-                self:_on_command_result(active, now_seconds(), ok == true, error_code)
+                self:_on_command_result(active, get_now(), ok == true, error_code)
             end)
         end
         return
@@ -582,7 +564,7 @@ function ExplorationService:_issue_navigation(active, now)
         if self._active ~= active or token ~= active.command_token then
             return
         end
-        self:_on_command_result(active, now_seconds(), ok == true, error_code)
+        self:_on_command_result(active, get_now(), ok == true, error_code)
     end)
 end
 
@@ -622,11 +604,30 @@ end
 ---@param player_pos vec3
 function ExplorationService:_tick_active_goal(now, active, destination, player_pos)
     if active.mode == "pursuit" and active.target then
-        local valid = active.target.is_valid and active.target:is_valid()
-        local dead = active.target.is_dead and active.target:is_dead()
+        local ok_v, valid = pcall(function() return active.target.is_valid and active.target:is_valid() end)
+        local ok_d, dead = pcall(function() return active.target.is_dead and active.target:is_dead() end)
+        if not ok_v then valid = false end
+        if not ok_d then dead = false end
         if valid == false or dead == true then
             self._active = nil
             return
+        end
+
+        -- Live-track moving targets: update pending_destination from target's
+        -- current position every tick so navigation follows the mob, not where
+        -- it was when we selected it.
+        local ok, live_pos = pcall(function() return active.target:get_position() end)
+        if ok and is_valid_position(live_pos) then
+            local live = {
+                x = tonumber(live_pos.x) or 0,
+                y = tonumber(live_pos.y) or 0,
+                z = tonumber(live_pos.z) or 0,
+            }
+            local moved = Helpers.distance_3d(destination, live)
+            if moved and moved > 0.5 then
+                active.pending_destination = live
+                destination = live
+            end
         end
     end
 
@@ -657,7 +658,7 @@ end
 ---@return boolean
 ---@return string|nil
 function ExplorationService:tick()
-    local now = now_seconds()
+    local now = get_now()
     self:_prune_cells(now)
 
     if not self:_is_enabled() then
@@ -734,8 +735,45 @@ function ExplorationService:tick()
 
     self:_tick_active_goal(now, active, destination, player_pos)
 
+    -- Seamless transition: if arrival cleared the active goal, immediately select
+    -- and activate the next goal in the same tick to avoid a 1-frame stall where
+    -- the player stands idle waiting for the next tick's goal selection.
+    if not self._active then
+        local next_goal = self:_select_pursuit(now, player_pos, engage_radius, candidates)
+        if not next_goal then
+            next_goal = self:_select_frontier(now, player_pos, anchor)
+        end
+        if next_goal then
+            -- Guard against pseudo-arrivals: only activate if the goal is far
+            -- enough that the bot actually needs to move to reach it.
+            local next_pos = next_goal.destination or next_goal.position
+            local next_dist = next_pos and Helpers.distance_3d(player_pos, next_pos)
+            local min_move = math.max(0.5, cfg_number(self._cfg, "arrive_distance", 6.5))
+            if next_dist and next_dist > min_move then
+                self:_activate_goal(next_goal, now)
+                if self._active then
+                    local next_dest = self._active.destination
+                    if is_valid_position(self._active.pending_destination) then
+                        next_dest = self._active.pending_destination
+                    end
+                    self._event_bus:emit(Events.EXPLORATION_SELECTED, {
+                        mode = self._active.mode,
+                        destination = next_dest,
+                        score = tonumber(self._active.score) or 0,
+                        distance = tonumber(self._active.distance) or 0,
+                    })
+                    self:_tick_active_goal(now, self._active, next_dest, player_pos)
+                end
+            end
+        end
+    end
+
     if self._active then
-        self:_write_state(active.mode, destination, active.score, active.last_error)
+        local final_dest = self._active.destination
+        if is_valid_position(self._active.pending_destination) then
+            final_dest = self._active.pending_destination
+        end
+        self:_write_state(self._active.mode, final_dest, self._active.score, self._active.last_error)
     else
         self:_write_state("idle", nil, nil, nil)
     end
@@ -761,11 +799,67 @@ function ExplorationService:update()
 end
 
 function ExplorationService:reset()
+    -- Stop navigation so stale exploration paths don't persist after BT preemption
+    if self._nav then
+        local ok_m, moving = pcall(function() return self._nav:is_moving() end)
+        if ok_m and moving == true and type(self._nav.stop) == "function" then
+            pcall(self._nav.stop, self._nav)
+        end
+    end
     self._cells = {}
     self._recent_cells = {}
     self._active = nil
     self._last_frontier_phase = 0
     self:_write_state("idle", nil, nil, nil)
+end
+
+--- Build BT node for exploration (used by GrindService).
+---@return table BT node
+function ExplorationService:build()
+    local bb = self._blackboard
+
+    return BT.ReactiveSequence:new("explore", {
+        -- Gate: nothing else to do
+        BT.Condition:new("idle", function()
+            if bb:get("player.in_combat", false) then
+                -- Clean up stale exploration navigation so combat chase
+                -- takes over immediately without fighting old waypoints.
+                -- Stop nav regardless of self._active — exploration may have
+                -- completed its goal but nav still following the last path.
+                if self._nav then
+                    local ok_m, moving = pcall(function() return self._nav:is_moving() end)
+                    if ok_m and moving == true and type(self._nav.stop) == "function" then
+                        pcall(self._nav.stop, self._nav)
+                    end
+                end
+                self._active = nil
+                bb:set("exploration.active", false)
+                bb:clear("exploration.destination")
+                return false
+            end
+            if bb:get("player.is_dead", false) then return false end
+            if bb:get("player.is_ghost", false) then return false end
+            local target = bb:get("combat.target")
+            if target then
+                local ok, hp = pcall(function() return target:get_health() end)
+                if ok and hp and hp > 0 then return false end
+            end
+            return true
+        end),
+
+        -- Navigate to next waypoint
+        BT.Action:new("explore_waypoint", function()
+            local ok = pcall(function() self:tick() end)
+            if not ok then return BTStatus.FAILURE end
+
+            local dest = bb:get("exploration.destination")
+            if dest then
+                return BTStatus.RUNNING
+            end
+
+            return BTStatus.FAILURE
+        end),
+    })
 end
 
 return ExplorationService

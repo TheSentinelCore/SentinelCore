@@ -9,7 +9,7 @@ function M.run()
     local env = TU.install_core_stub()
     local EventBus = require("events/EventBus")
     local Blackboard = require("core/Blackboard")
-    local CombatSubTree = require("bt/CombatSubTree")
+    local CombatService = require("services/CombatService")
 
     local eb = EventBus:new()
     local bb = Blackboard:new(eb)
@@ -36,7 +36,7 @@ function M.run()
         executed_actions[#executed_actions + 1] = action
     end
 
-    local tree = CombatSubTree.build(bb, eval, nil, ht, spell_executor)
+    local tree = CombatService.build_bt(bb, eval, nil, ht, spell_executor, nil)
 
     -- Test 1: FAILURE when not in combat
     bb:set("player.in_combat", false)

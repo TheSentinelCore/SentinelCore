@@ -1,4 +1,5 @@
 local Events = require("events/Events")
+local get_now = require("lib/TimeHelper").get_now
 
 ---@class SentinelConsoleLogger
 ---@field private _event_bus EventBus
@@ -28,7 +29,7 @@ end
 ---@param message string
 ---@param event_name? string
 function ConsoleLogger:_push_history(level, message, event_name)
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local entry = {
         timestamp = now,
         level = level,

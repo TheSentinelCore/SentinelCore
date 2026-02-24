@@ -1,28 +1,9 @@
 local Helpers = require("lib/Helpers")
 local FactionResolver = require("lib/FactionResolver")
-
-local OBJECT_UNWRAP_KEYS = {
-    "object",
-    "raw_object",
-    "game_object",
-}
-
----@param value any
----@return any
-local function unwrap_game_object(value)
-    if type(value) ~= "table" then
-        return value
-    end
-
-    for i = 1, #OBJECT_UNWRAP_KEYS do
-        local candidate = rawget(value, OBJECT_UNWRAP_KEYS[i])
-        if candidate ~= nil then
-            return candidate
-        end
-    end
-
-    return value
-end
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local safe_method = UnitQueries.safe_method
+local unwrap_game_object = UnitQueries.unwrap_game_object
 
 ---@class SentinelSensors
 ---@field private _blackboard Blackboard
@@ -52,10 +33,21 @@ local function get_player()
     return player
 end
 
+--- Get the player object without the is_valid() gate.
+--- Dead/ghost players may fail is_valid() but we still need to detect death state.
+---@private
+---@return game_object|nil
+local function get_raw_player()
+    if not core or not core.object_manager or not core.object_manager.get_local_player then
+        return nil
+    end
+    return unwrap_game_object(core.object_manager.get_local_player())
+end
+
 ---@return table
 function Sensors:update()
     local bb = self._blackboard
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     bb:set("_time", now)
 
     local player = get_player()
@@ -66,55 +58,76 @@ function Sensors:update()
         player_valid = player ~= nil,
     }
 
+    -- Always update death/ghost state, even when is_valid() fails.
+    -- Dead/ghost players may be "invalid" to the object manager but we
+    -- MUST detect death to trigger corpse recovery.
     if not player then
+        local raw = get_raw_player()
+        if raw then
+            local is_dead = safe_method(raw, "is_dead") or false
+            local is_ghost = safe_method(raw, "is_ghost") or false
+            bb:set("player.is_dead", is_dead)
+            bb:set("player.is_ghost", is_ghost)
+
+            if is_dead or is_ghost then
+                -- Update position so ghost navigation works
+                local raw_pos = safe_method(raw, "get_position")
+                if raw_pos then
+                    bb:set("player.position", raw_pos)
+                end
+
+                if is_dead and not self._was_dead and raw_pos then
+                    bb:set("player.death_position", { x = raw_pos.x, y = raw_pos.y, z = raw_pos.z })
+                end
+                self._was_dead = true
+            elseif self._was_dead then
+                self._was_dead = false
+                bb:clear("player.death_position")
+            end
+        end
         return sensor_snapshot
     end
 
-    local pos = player:get_position()
-    local target = player.get_target and player:get_target() or nil
+    local pos = safe_method(player, "get_position")
+    local target = safe_method(player, "get_target")
     local map_id = (core and core.get_map_id and core.get_map_id()) or 0
     local instance_type = (core and core.get_instance_type and core.get_instance_type()) or "none"
     local spec_id = 0
     if player.get_specialization_id then
-        spec_id = tonumber(player:get_specialization_id()) or 0
+        spec_id = tonumber(safe_method(player, "get_specialization_id")) or 0
     elseif core and core.spell_book and core.spell_book.get_specialization_id then
         spec_id = tonumber(core.spell_book.get_specialization_id()) or 0
     end
 
     bb:set("player.position", pos)
     bb:set("player.target", target)
-    bb:set("player.health", player:get_health())
-    bb:set("player.max_health", player:get_max_health())
-    local in_combat = player:is_in_combat()
+    bb:set("player.health", safe_method(player, "get_health") or 0)
+    bb:set("player.max_health", safe_method(player, "get_max_health") or 1)
+    local in_combat = safe_method(player, "is_in_combat") or false
     bb:set("player.in_combat", in_combat)
-    bb:set("player.is_casting", player:is_casting_spell() or player:is_channelling_spell())
+    local casting = safe_method(player, "is_casting_spell") or false
+    local channelling = safe_method(player, "is_channelling_spell") or false
+    bb:set("player.is_casting", casting or channelling)
 
     -- Movement state (always set, default false if method unavailable)
-    local ok_mov, mov = pcall(function() return player:is_moving() end)
-    bb:set("player.is_moving", ok_mov and mov or false)
+    bb:set("player.is_moving", safe_method(player, "is_moving") or false)
 
     -- Aggro detection: true if player is in combat or any nearby enemy is in combat with us
     bb:set("combat.has_aggro", in_combat)
-    bb:set("player.level", player:get_level())
-    bb:set("player.xp", player:get_xp())
-    bb:set("player.max_xp", player:get_max_xp())
-    bb:set("player.class_id", player:get_class())
+    bb:set("player.level", safe_method(player, "get_level") or 1)
+    bb:set("player.xp", safe_method(player, "get_xp") or 0)
+    bb:set("player.max_xp", safe_method(player, "get_max_xp") or 1)
+    bb:set("player.class_id", safe_method(player, "get_class") or 0)
     bb:set("player.spec_id", spec_id)
-    local faction_id = player:get_faction_id()
+    local faction_id = safe_method(player, "get_faction_id") or 0
     bb:set("player.faction_id", faction_id)
     bb:set("player.faction_team", FactionResolver.resolve_team(faction_id))
 
-    local dur_ok, dur_pct = pcall(function()
-        if player.get_durability_pct then
-            return player:get_durability_pct()
-        end
-        return 1.0
-    end)
-    bb:set("player.durability_pct", (dur_ok and tonumber(dur_pct)) or 1.0)
+    bb:set("player.durability_pct", tonumber(safe_method(player, "get_durability_pct")) or 1.0)
 
     -- Death state tracking: cache death position on alive→dead transition
-    local is_dead = player.is_dead and player:is_dead() or false
-    local is_ghost = player.is_ghost and player:is_ghost() or false
+    local is_dead = safe_method(player, "is_dead") or false
+    local is_ghost = safe_method(player, "is_ghost") or false
     bb:set("player.is_dead", is_dead)
     bb:set("player.is_ghost", is_ghost)
 

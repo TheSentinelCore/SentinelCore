@@ -1,3 +1,7 @@
+local get_now = require("lib/TimeHelper").get_now
+local UnitQueries = require("lib/UnitQueries")
+local safe_unit_call = UnitQueries.safe_method
+
 ---@class CombatContextBuilder
 ---@field private _blackboard Blackboard
 local CombatContext = {}
@@ -20,26 +24,6 @@ local function to_number(value)
         return nil
     end
     return n
-end
-
----@private
----@param unit any
----@param method string
----@param ... any
----@return any
-local function safe_unit_call(unit, method, ...)
-    if not unit then
-        return nil
-    end
-    local fn = unit[method]
-    if type(fn) ~= "function" then
-        return nil
-    end
-    local ok, value = pcall(fn, unit, ...)
-    if not ok then
-        return nil
-    end
-    return value
 end
 
 ---@private
@@ -686,7 +670,7 @@ function CombatContext:build(deps)
     local player_move_speed = resolve_player_move_speed(player)
     local gcd_remaining = resolve_global_cooldown_remaining()
     local melee_swing_remaining = resolve_melee_swing_remaining(player)
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local rest_lock_until = resolve_rest_lock_until(bb, now)
     local rest_lock_food_until = resolve_rest_lock_until(bb, now, "food")
     local rest_lock_water_until = resolve_rest_lock_until(bb, now, "water")

@@ -1,7 +1,7 @@
 local BT = require("ai/BehaviorTree")
 local S = BT.Status
 
-local MaintenanceSubTree = {}
+local MaintenanceService = {}
 
 -- Rank tables: highest rank first. Resolved once at build time.
 local SANCTITY_AURA_RANKS = { 20218 }
@@ -24,7 +24,7 @@ local function best_rank(ranks)
     return nil
 end
 
-function MaintenanceSubTree.build(bb)
+function MaintenanceService.build(bb)
     -- Resolve best ranks once at tree-build time (spells don't change mid-session)
     local aura_id = best_rank(SANCTITY_AURA_RANKS)
     local bom_id = best_rank(BLESSING_OF_MIGHT_RANKS)
@@ -78,4 +78,4 @@ function MaintenanceSubTree.build(bb)
     })
 end
 
-return MaintenanceSubTree
+return MaintenanceService

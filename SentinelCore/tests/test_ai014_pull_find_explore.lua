@@ -8,9 +8,9 @@ function M.run()
     local env = TU.install_core_stub()
     local EventBus = require("events/EventBus")
     local Blackboard = require("core/Blackboard")
-    local PullSubTree = require("bt/PullSubTree")
-    local FindTargetSubTree = require("bt/FindTargetSubTree")
-    local ExploreSubTree = require("bt/ExploreSubTree")
+    local PullService = require("services/PullService")
+    local TargetingService = require("services/TargetingService")
+    local ExplorationService = require("services/ExplorationService")
 
     local eb = EventBus:new()
     local bb = Blackboard:new(eb)
@@ -33,9 +33,9 @@ function M.run()
     }
 
     -- =====================
-    -- PullSubTree tests
+    -- PullService tests
     -- =====================
-    local pull = PullSubTree.build(bb, mock_nav)
+    local pull = PullService.build(bb, mock_nav)
 
     -- Test 1: FAILURE when no target
     bb:set("combat.target", nil)
@@ -87,19 +87,18 @@ function M.run()
     assert(pull:tick() == S.FAILURE, "pull should fail on dead target")
 
     -- =====================
-    -- FindTargetSubTree tests
+    -- TargetingService tests
     -- =====================
     local acquired_target = TU.mock_object({
         health = 800, max_health = 1000,
         position = { x = 20, y = 0, z = 0 },
     })
-    local mock_targeting = {
-        acquire_target = function()
-            return acquired_target
-        end,
-    }
+    local mock_targeting = setmetatable({
+        _blackboard = bb,
+        acquire_target = function() return acquired_target end,
+    }, { __index = TargetingService })
 
-    local find = FindTargetSubTree.build(bb, mock_targeting)
+    local find = mock_targeting:build()
 
     -- Test 7: FAILURE when already has valid target
     local alive_target = TU.mock_object({
@@ -121,24 +120,27 @@ function M.run()
     assert(find:tick() == S.SUCCESS, "find should succeed when current target dead")
 
     -- Test 10: FAILURE when targeting service returns nil
-    local empty_targeting = {
+    local empty_targeting = setmetatable({
+        _blackboard = bb,
         acquire_target = function() return nil end,
-    }
-    local find_empty = FindTargetSubTree.build(bb, empty_targeting)
+    }, { __index = TargetingService })
+    local find_empty = empty_targeting:build()
     bb:set("combat.target", nil)
     assert(find_empty:tick() == S.FAILURE, "find should fail when no candidates")
 
     -- =====================
-    -- ExploreSubTree tests
+    -- ExplorationService tests
     -- =====================
     local explore_ticks = 0
-    local mock_explore = {
+    local mock_explore_svc = setmetatable({
+        _blackboard = bb,
         tick = function()
             explore_ticks = explore_ticks + 1
+            return true
         end,
-    }
+    }, { __index = ExplorationService })
 
-    local explore = ExploreSubTree.build(bb, mock_nav, mock_explore)
+    local explore = mock_explore_svc:build()
 
     -- Test 11: FAILURE when in combat
     bb:set("player.in_combat", true)
@@ -151,7 +153,7 @@ function M.run()
     assert(explore:tick() == S.FAILURE, "explore should fail with valid target")
 
     -- Test 13: RUNNING when idle and exploring
-    -- ExploreSubTree delegates navigation to ExplorationService internally,
+    -- ExplorationService delegates navigation internally,
     -- so we only verify exploration_service:tick() is called and dest exists.
     bb:set("combat.target", nil)
     bb:set("exploration.destination", { x = 100, y = 200, z = 0 })

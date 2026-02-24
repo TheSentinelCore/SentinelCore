@@ -1,5 +1,6 @@
 -- Shared Rotation Settings Custom UI
 -- A reusable custom window module for displaying rotation settings across all classes
+local get_now = require("lib/TimeHelper").get_now
 
 ---@private
 ---@param module_name string
@@ -2318,7 +2319,7 @@ function RotationSettingsUI:_render_text_input_list(section, y_offset)
     local input_width = content_width - label_width - 10
 
     -- Update blink timer
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     self._text_input_blink = now
 
     for i, item in ipairs(section.elements) do

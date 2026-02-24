@@ -1,6 +1,7 @@
 local T = require("tests/TestUtil")
 local ErrorCodes = require("events/ErrorCodes")
 local Events = require("events/Events")
+local get_now = require("lib/TimeHelper").get_now
 
 local function run()
     local player = T.mock_object({ class_id = 2, spec_id = 0, health = 60, max_health = 100, mana = 30, max_mana = 100 })
@@ -103,7 +104,7 @@ local function run()
             player_is_drinking = true,
             player_health_pct = 0.90,
             player_mana_pct = 0.90,
-            now = (core and core.time and core.time()) or 0,
+            now = get_now(),
             rest_lock_until = 0,
             rest_lock_food_until = 0,
             rest_lock_water_until = 0,
@@ -153,7 +154,7 @@ local function run()
         item_id = 159,
         allow_movement = true,
     }, {
-        now = (core and core.time and core.time()) or 0,
+        now = get_now(),
         player = player,
         target = target,
         player_is_moving = false,
@@ -169,7 +170,7 @@ local function run()
         target_must_be_casting = true,
         allow_movement = true,
     }, {
-        now = (core and core.time and core.time()) or 0,
+        now = get_now(),
         player = player,
         target = target,
         target_is_casting = false,

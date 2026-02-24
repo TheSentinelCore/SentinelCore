@@ -1946,7 +1946,7 @@ Expected: All tests pass (both new ai* tests and existing sc* tests).
 
 **Step 2:** Review for unused code
 
-Remove any PlanComposer references that are no longer needed. The old RotationEngine can be kept as a fallback if desired, but all rotation logic should flow through UtilityEvaluator.
+Remove any PlanComposer references that are no longer needed. The old RotationEngine cannot be kept, but all rotation logic should flow through UtilityEvaluator.
 
 **Step 3:** Final commit
 

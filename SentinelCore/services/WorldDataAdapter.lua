@@ -2,6 +2,7 @@ local JSON = require("lib/JSON")
 local ErrorCodes = require("events/ErrorCodes")
 local Events = require("events/Events")
 local FactionResolver = require("lib/FactionResolver")
+local get_now = require("lib/TimeHelper").get_now
 
 ---@class WorldDataAdapter
 ---@field private _event_bus EventBus
@@ -212,7 +213,7 @@ function WorldDataAdapter:resolve_context(runtime_ctx, callback)
     }
 
     self._event_bus:emit(Events.CONTEXT_RESOLVE_STARTED, {
-        timestamp = (core and core.time and core.time()) or 0,
+        timestamp = get_now(),
         request = params,
     })
 
@@ -223,7 +224,7 @@ function WorldDataAdapter:resolve_context(runtime_ctx, callback)
                 mapped = ErrorCodes.CTX_UNRESOLVED
             end
             self._event_bus:emit(Events.CONTEXT_FAILED, {
-                timestamp = (core and core.time and core.time()) or 0,
+                timestamp = get_now(),
                 error_code = mapped,
             })
             callback(false, nil, mapped)
@@ -237,7 +238,7 @@ function WorldDataAdapter:resolve_context(runtime_ctx, callback)
 
         if not resolved then
             self._event_bus:emit(Events.CONTEXT_FAILED, {
-                timestamp = (core and core.time and core.time()) or 0,
+                timestamp = get_now(),
                 error_code = ErrorCodes.CTX_UNRESOLVED,
             })
             callback(false, nil, ErrorCodes.CTX_UNRESOLVED)
@@ -246,7 +247,7 @@ function WorldDataAdapter:resolve_context(runtime_ctx, callback)
 
         if ambiguous or confidence < min_conf then
             self._event_bus:emit(Events.CONTEXT_FAILED, {
-                timestamp = (core and core.time and core.time()) or 0,
+                timestamp = get_now(),
                 error_code = ErrorCodes.CTX_LOW_CONFIDENCE,
             })
             callback(false, nil, ErrorCodes.CTX_LOW_CONFIDENCE)
@@ -262,7 +263,7 @@ function WorldDataAdapter:resolve_context(runtime_ctx, callback)
         }
 
         self._event_bus:emit(Events.CONTEXT_RESOLVED, {
-            timestamp = (core and core.time and core.time()) or 0,
+            timestamp = get_now(),
             context = canonical,
         })
 
@@ -312,7 +313,7 @@ end
 
 ---@param now number
 function WorldDataAdapter:update(now)
-    now = now or ((core and core.time and core.time()) or 0)
+    now = now or (get_now())
 
     local health_interval = tonumber(self._cfg.health_interval or 5.0) or 5.0
     if now - self._last_health_check >= health_interval then

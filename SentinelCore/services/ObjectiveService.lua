@@ -1,5 +1,6 @@
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
+local get_now = require("lib/TimeHelper").get_now
 
 ---@private
 ---@param status any
@@ -94,7 +95,7 @@ end
 ---@private
 ---@return number
 function ObjectiveService:_now()
-    return (core and core.time and core.time()) or 0
+    return get_now()
 end
 
 ---@private

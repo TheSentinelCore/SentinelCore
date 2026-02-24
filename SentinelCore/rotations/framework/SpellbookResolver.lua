@@ -1,3 +1,5 @@
+local get_now = require("lib/TimeHelper").get_now
+
 ---@class SpellbookResolver
 local SpellbookResolver = {}
 SpellbookResolver.__index = SpellbookResolver
@@ -71,7 +73,7 @@ end
 
 ---@private
 function SpellbookResolver:_refresh()
-    local now = (core and core.time and core.time()) or 0
+    local now = get_now()
     local has_cached_spells = type(self._spells) == "table" and next(self._spells) ~= nil
     if has_cached_spells and now - self._last_refresh < 1.0 then
         return
