@@ -32,6 +32,9 @@ use crate::validation::{validate_coordinate, validate_map_id, validate_radius, v
 #[derive(Debug, Deserialize)]
 pub struct FleeRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     pub player_x: f32,
     pub player_y: f32,
     pub player_z: f32,
@@ -116,7 +119,8 @@ pub async fn flee(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     let custom_filter;
     let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava)
@@ -232,6 +236,9 @@ pub async fn flee(
 #[derive(Debug, Deserialize)]
 pub struct LosCoverRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     pub player_x: f32,
     pub player_y: f32,
     pub player_z: f32,
@@ -295,7 +302,8 @@ pub async fn los_cover(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
     let filter = pool.filter();
 
     // Find the player's polygon for random point sampling
@@ -368,6 +376,9 @@ pub async fn los_cover(
 #[derive(Debug, Deserialize)]
 pub struct KiteRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     pub player_x: f32,
     pub player_y: f32,
     pub player_z: f32,
@@ -450,7 +461,8 @@ pub async fn kite(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     let custom_filter;
     let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava) {

@@ -1,8 +1,9 @@
 //! Sentinel Navigation Server - High-performance navigation server for WoW pathfinding.
 //!
-//! This server provides HTTP endpoints for pathfinding using CMaNGOS-generated
-//! navigation mesh files (mmaps).
+//! This server provides HTTP endpoints for pathfinding using CMaNGOS or TrinityCore
+//! navigation mesh files (mmaps). Supports multiple game versions simultaneously.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,7 +21,7 @@ mod services;
 mod state;
 mod validation;
 
-use blackboard::ServerBlackboard;
+use blackboard::{GameBundle, ServerBlackboard};
 use cache::PathCache;
 use config::Config;
 use services::cache_impl::MokaCache;
@@ -51,56 +52,89 @@ async fn main() -> anyhow::Result<()> {
     // Load configuration
     let config = Config::load()?;
     tracing::info!(
-        "Configuration loaded: host={}, port={}, mmap_path={:?}",
+        "Configuration loaded: host={}, port={}, default_game={}",
         config.server.host,
         config.server.port,
-        config.navmesh.mmap_path
+        config.navmesh.default_game
     );
 
-    // Create shared infrastructure
-    let mmap_manager = Arc::new(mmap_loader::MmapManager::new(
-        &config.navmesh.mmap_path,
-        config.pathfinding.query_pool_size,
-        config.pathfinding.max_query_nodes,
-    ));
+    // Resolve game configurations (handles legacy single-game mode)
+    let game_configs = config.navmesh.resolved_games();
 
-    tracing::info!(
-        "MmapManager created: pool_size={}, max_query_nodes={}",
-        config.pathfinding.query_pool_size,
-        config.pathfinding.max_query_nodes,
-    );
+    if game_configs.is_empty() {
+        anyhow::bail!(
+            "No game configurations found. Define [navmesh.games.<name>] sections in config.toml \
+             or set navmesh.mmap_path for legacy single-game mode."
+        );
+    }
 
-    // Preload configured maps
-    for &map_id in &config.navmesh.preload_maps {
-        tracing::info!("Preloading map {}", map_id);
-        match mmap_manager.get_or_load_mesh(map_id) {
-            Ok(_) => tracing::info!("Successfully preloaded map {}", map_id),
-            Err(e) => tracing::warn!("Failed to preload map {}: {}", map_id, e),
+    // Build a GameBundle per game
+    let mut games: HashMap<String, Arc<GameBundle>> = HashMap::new();
+
+    for (game_name, game_config) in &game_configs {
+        tracing::info!(
+            "Initializing game '{}': mmap_path={:?}",
+            game_name,
+            game_config.mmap_path
+        );
+
+        let mmap_manager = Arc::new(mmap_loader::MmapManager::new(
+            &game_config.mmap_path,
+            config.pathfinding.query_pool_size,
+            config.pathfinding.max_query_nodes,
+        ));
+
+        // Preload configured maps for this game
+        for &map_id in &game_config.preload_maps {
+            tracing::info!("Preloading map {} for game '{}'", map_id, game_name);
+            match mmap_manager.get_or_load_mesh(map_id) {
+                Ok(_) => tracing::info!(
+                    "Successfully preloaded map {} for game '{}'",
+                    map_id,
+                    game_name
+                ),
+                Err(e) => tracing::warn!(
+                    "Failed to preload map {} for game '{}': {}",
+                    map_id,
+                    game_name,
+                    e
+                ),
+            }
         }
+
+        // Build service implementations for this game
+        let pathfinder: Arc<dyn services::PathfindingService> =
+            Arc::new(DetourPathfinder::new(mmap_manager.clone()));
+        let router: Arc<dyn services::RoutingService> =
+            Arc::new(DetourRouter::new(mmap_manager.clone()));
+        let spatial: Arc<dyn services::SpatialService> =
+            Arc::new(DetourSpatial::new(mmap_manager.clone()));
+        let tactical: Arc<dyn services::TacticalService> =
+            Arc::new(DetourTactical::new(mmap_manager.clone()));
+
+        games.insert(
+            game_name.clone(),
+            Arc::new(GameBundle {
+                mmap_manager,
+                pathfinding: pathfinder,
+                routing: router,
+                spatial,
+                tactical,
+            }),
+        );
+
+        tracing::info!("Game '{}' initialized", game_name);
     }
 
     let path_cache = Arc::new(PathCache::new());
-
-    // Build concrete service implementations
-    let pathfinder: Arc<dyn services::PathfindingService> =
-        Arc::new(DetourPathfinder::new(mmap_manager.clone()));
-    let router: Arc<dyn services::RoutingService> =
-        Arc::new(DetourRouter::new(mmap_manager.clone()));
-    let spatial: Arc<dyn services::SpatialService> =
-        Arc::new(DetourSpatial::new(mmap_manager.clone()));
-    let tactical: Arc<dyn services::TacticalService> =
-        Arc::new(DetourTactical::new(mmap_manager.clone()));
     let cache: Arc<dyn services::CacheService> =
         Arc::new(MokaCache::new(path_cache.clone()));
 
     // Assemble the ServerBlackboard
     let blackboard = Arc::new(ServerBlackboard {
-        pathfinding: pathfinder,
-        routing: router,
-        spatial,
-        tactical,
+        games,
+        default_game: config.navmesh.default_game.clone(),
         cache,
-        mmap_manager: mmap_manager.clone(),
         request_semaphore: Arc::new(Semaphore::new(config.server.max_concurrent_requests)),
         path_cache,
         config: Arc::new(config.clone()),
@@ -109,8 +143,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tracing::info!(
-        "ServerBlackboard initialized, {} maps preloaded",
-        mmap_manager.loaded_map_count()
+        "ServerBlackboard initialized: {} game(s), {} total maps preloaded",
+        blackboard.games.len(),
+        blackboard.total_loaded_map_count()
     );
 
     // Build router with timeout middleware

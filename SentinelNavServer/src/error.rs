@@ -18,6 +18,8 @@ pub enum AppError {
     InvalidParams(String),
     /// Internal server error.
     Internal(String),
+    /// Bad request (e.g. unknown game identifier).
+    BadRequest(String),
     /// Server overloaded — too many concurrent requests.
     Overloaded,
 }
@@ -50,6 +52,11 @@ impl IntoResponse for AppError {
             AppError::Internal(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR",
+                msg,
+            ),
+            AppError::BadRequest(msg) => (
+                StatusCode::BAD_REQUEST,
+                "BAD_REQUEST",
                 msg,
             ),
             AppError::Overloaded => (

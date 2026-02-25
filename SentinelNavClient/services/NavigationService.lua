@@ -5,6 +5,7 @@
 ---@field _bb Blackboard
 ---@field _base_url string
 ---@field _max_retries number
+---@field _game string|nil
 local NavigationService = {}
 NavigationService.__index = NavigationService
 
@@ -579,15 +580,12 @@ local function apply_avoid_zones(params, zones)
     params.avoid = table.concat(parts, ";")
 end
 
----Resolve current UiMapID to continent ID
+---Resolve physical map ID for navigation (mmap file lookup).
+---Uses core.get_instance_id() which returns the server's physical map ID directly,
+---avoiding the need for UiMapID-to-continent translation tables.
 ---@return number
 local function get_continent_id()
-    local ui_map_id = core.get_map_id()
-    if ui_map_id then
-        local continent = UI_MAP_TO_CONTINENT[ui_map_id]
-        if continent then return continent end
-    end
-    return 0
+    return core.get_instance_id()
 end
 
 ---Check if current UiMapID is indoor
@@ -615,6 +613,7 @@ function NavigationService:new(event_bus, blackboard, config)
 
     o._base_url = (config and config.base_url) or ServerConfig.base_url
     o._max_retries = (config and config.max_retries) or ServerConfig.max_retries
+    o._game = (config and config.game) or ServerConfig.game
 
     o._bb:set("server.connected", false)
     o._bb:set("server.failures", 0)
@@ -633,6 +632,12 @@ end
 ---@return string
 function NavigationService:_build_url(endpoint, params)
     local url = self._base_url .. endpoint
+    -- Inject game identifier from config if set and not already in params
+    local game = self._game
+    if game and (not params or not params.game) then
+        params = params or {}
+        params.game = game
+    end
     if not params or next(params) == nil then return url end
 
     local parts = {}
@@ -1339,6 +1344,7 @@ function NavigationService:update_config(overrides)
     if not overrides then return end
     if overrides.base_url then self._base_url = overrides.base_url end
     if overrides.max_retries then self._max_retries = overrides.max_retries end
+    if overrides.game ~= nil then self._game = overrides.game end
 end
 
 -- ============================================================================

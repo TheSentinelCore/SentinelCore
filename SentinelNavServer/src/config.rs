@@ -1,6 +1,7 @@
 //! Configuration loading and types.
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Main configuration structure.
@@ -25,14 +26,63 @@ pub struct ServerConfig {
     pub max_concurrent_requests: usize,
 }
 
-/// Navmesh configuration.
+/// Navmesh configuration with multi-game support.
+///
+/// Supports two modes:
+/// 1. **Multi-game** (preferred): `[navmesh.games.<name>]` sections define per-game mmap sources
+/// 2. **Legacy**: single `mmap_path` + `preload_maps` fields (treated as the default game)
 #[derive(Debug, Clone, Deserialize)]
 pub struct NavmeshConfig {
-    /// Path to mmap files directory.
-    pub mmap_path: PathBuf,
-    /// Maps to preload at startup.
+    /// Default game to use when no `game` parameter is specified in requests.
+    #[serde(default = "default_game")]
+    pub default_game: String,
+
+    /// Per-game mmap configurations.
+    /// Keys are game identifiers (e.g., "tbc", "retail").
+    #[serde(default)]
+    pub games: HashMap<String, GameConfig>,
+
+    // -- Legacy fields (for backward compatibility) --
+    /// Path to mmap files directory (legacy single-game mode).
+    pub mmap_path: Option<PathBuf>,
+    /// Maps to preload at startup (legacy single-game mode).
     #[serde(default)]
     pub preload_maps: Vec<u32>,
+}
+
+/// Configuration for a single game's mmap data.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GameConfig {
+    /// Path to the mmap files directory for this game.
+    pub mmap_path: PathBuf,
+    /// Maps to preload at startup for this game.
+    #[serde(default)]
+    pub preload_maps: Vec<u32>,
+}
+
+impl NavmeshConfig {
+    /// Resolve the effective game configurations.
+    ///
+    /// If `games` map is empty but legacy `mmap_path` is set, creates a
+    /// single-game config using the default_game name.
+    pub fn resolved_games(&self) -> HashMap<String, GameConfig> {
+        if !self.games.is_empty() {
+            return self.games.clone();
+        }
+
+        // Legacy mode: use mmap_path as the default game
+        let mut games = HashMap::new();
+        if let Some(path) = &self.mmap_path {
+            games.insert(
+                self.default_game.clone(),
+                GameConfig {
+                    mmap_path: path.clone(),
+                    preload_maps: self.preload_maps.clone(),
+                },
+            );
+        }
+        games
+    }
 }
 
 /// Pathfinding configuration.
@@ -70,6 +120,10 @@ fn default_port() -> u16 {
 
 fn default_max_concurrent() -> usize {
     100
+}
+
+fn default_game() -> String {
+    "tbc".to_string()
 }
 
 fn default_max_path_length() -> usize {
@@ -135,7 +189,9 @@ impl Config {
         Ok(Self {
             server: ServerConfig::default(),
             navmesh: NavmeshConfig {
-                mmap_path: PathBuf::from("./mmaps"),
+                default_game: default_game(),
+                games: HashMap::new(),
+                mmap_path: Some(PathBuf::from("./mmaps")),
                 preload_maps: vec![],
             },
             pathfinding: PathfindingConfig::default(),

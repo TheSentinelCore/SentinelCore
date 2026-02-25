@@ -38,6 +38,8 @@ const SEARCH_EXTENTS: Vec3 = Vec3 {
 #[derive(Debug, Deserialize)]
 pub struct MoveRequest {
     pub map_id: u32,
+    #[serde(default)]
+    pub game: Option<String>,
     pub start_x: f32,
     pub start_y: f32,
     pub start_z: f32,
@@ -68,11 +70,14 @@ pub async fn move_along_surface(
     validate_coordinate(params.start_x, params.start_y, params.start_z)?;
     validate_coordinate(params.end_x, params.end_y, params.end_z)?;
 
+    // Resolve game bundle
+    let bundle = state.get_game(params.game.as_deref())?;
+
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
     // Load map
-    let _mesh = state
+    let _mesh = bundle
         .mmap_manager
         .get_or_load_mesh(params.map_id)
         .map_err(|e| match &e {
@@ -81,7 +86,7 @@ pub async fn move_along_surface(
         })?;
 
     // Get query pool
-    let pool = state
+    let pool = bundle
         .mmap_manager
         .get_query_pool(params.map_id)
         .ok_or_else(|| AppError::MapNotFound(params.map_id))?;
@@ -120,6 +125,8 @@ pub async fn move_along_surface(
 #[derive(Debug, Deserialize)]
 pub struct RaycastRequest {
     pub map_id: u32,
+    #[serde(default)]
+    pub game: Option<String>,
     pub start_x: f32,
     pub start_y: f32,
     pub start_z: f32,
@@ -158,11 +165,14 @@ pub async fn raycast(
     validate_coordinate(params.start_x, params.start_y, params.start_z)?;
     validate_coordinate(params.end_x, params.end_y, params.end_z)?;
 
+    // Resolve game bundle
+    let bundle = state.get_game(params.game.as_deref())?;
+
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
     // Load map
-    let _mesh = state
+    let _mesh = bundle
         .mmap_manager
         .get_or_load_mesh(params.map_id)
         .map_err(|e| match &e {
@@ -171,7 +181,7 @@ pub async fn raycast(
         })?;
 
     // Get query pool
-    let pool = state
+    let pool = bundle
         .mmap_manager
         .get_query_pool(params.map_id)
         .ok_or_else(|| AppError::MapNotFound(params.map_id))?;
@@ -227,6 +237,8 @@ pub async fn raycast(
 #[derive(Debug, Deserialize)]
 pub struct RandomPointRequest {
     pub map_id: u32,
+    #[serde(default)]
+    pub game: Option<String>,
     /// Center X coordinate (optional, for circle search).
     pub center_x: Option<f32>,
     /// Center Y coordinate (optional, for circle search).
@@ -268,11 +280,14 @@ pub async fn random_point(
         validate_radius(r)?;
     }
 
+    // Resolve game bundle
+    let bundle = state.get_game(params.game.as_deref())?;
+
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
     // Load map
-    let _mesh = state
+    let _mesh = bundle
         .mmap_manager
         .get_or_load_mesh(params.map_id)
         .map_err(|e| match &e {
@@ -281,7 +296,7 @@ pub async fn random_point(
         })?;
 
     // Get query pool
-    let pool = state
+    let pool = bundle
         .mmap_manager
         .get_query_pool(params.map_id)
         .ok_or_else(|| AppError::MapNotFound(params.map_id))?;
@@ -338,6 +353,8 @@ pub async fn random_point(
 #[derive(Debug, Deserialize)]
 pub struct HeightRequest {
     pub map_id: u32,
+    #[serde(default)]
+    pub game: Option<String>,
     pub x: f32,
     pub y: f32,
     /// Approximate Z for polygon search.
@@ -363,11 +380,14 @@ pub async fn get_height(
     validate_map_id(params.map_id)?;
     validate_coordinate(params.x, params.y, params.z)?;
 
+    // Resolve game bundle
+    let bundle = state.get_game(params.game.as_deref())?;
+
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
     // Load map
-    let _mesh = state
+    let _mesh = bundle
         .mmap_manager
         .get_or_load_mesh(params.map_id)
         .map_err(|e| match &e {
@@ -376,7 +396,7 @@ pub async fn get_height(
         })?;
 
     // Get query pool
-    let pool = state
+    let pool = bundle
         .mmap_manager
         .get_query_pool(params.map_id)
         .ok_or_else(|| AppError::MapNotFound(params.map_id))?;
@@ -412,6 +432,8 @@ pub async fn get_height(
 #[derive(Debug, Deserialize)]
 pub struct HeightsRequest {
     pub map_id: u32,
+    #[serde(default)]
+    pub game: Option<String>,
     pub x: f32,
     pub y: f32,
     /// Approximate Z for polygon search center (defaults to 0).
@@ -497,11 +519,14 @@ pub async fn get_heights(
         ));
     }
 
+    // Resolve game bundle
+    let bundle = state.get_game(params.game.as_deref())?;
+
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
     // Load map
-    let _mesh = state
+    let _mesh = bundle
         .mmap_manager
         .get_or_load_mesh(params.map_id)
         .map_err(|e| match &e {
@@ -510,7 +535,7 @@ pub async fn get_heights(
         })?;
 
     // Get query pool
-    let pool = state
+    let pool = bundle
         .mmap_manager
         .get_query_pool(params.map_id)
         .ok_or_else(|| AppError::MapNotFound(params.map_id))?;
@@ -685,6 +710,8 @@ where
 #[derive(Debug, Deserialize)]
 pub struct ExploreRequest {
     pub map_id: u32,
+    #[serde(default)]
+    pub game: Option<String>,
     /// Polygon vertices as repeated params: `polygon=x,y,z&polygon=x,y,z&...`
     #[serde(deserialize_with = "deserialize_polygon")]
     pub polygon: Vec<(f32, f32, f32)>,
@@ -743,11 +770,14 @@ pub async fn explore_polygon(
         validate_coordinate(x, y, z)?;
     }
 
+    // Resolve game bundle
+    let bundle = state.get_game(params.game.as_deref())?;
+
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
     // Load map
-    let _mesh = state
+    let _mesh = bundle
         .mmap_manager
         .get_or_load_mesh(params.map_id)
         .map_err(|e| match &e {
@@ -756,7 +786,7 @@ pub async fn explore_polygon(
         })?;
 
     // Get query pool
-    let pool = state
+    let pool = bundle
         .mmap_manager
         .get_query_pool(params.map_id)
         .ok_or_else(|| AppError::MapNotFound(params.map_id))?;

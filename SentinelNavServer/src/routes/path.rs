@@ -66,6 +66,9 @@ pub struct PathRequest {
     /// Max segment length (yards) for densification (default 3.0).
     #[serde(default)]
     pub densify_segment_length: Option<f32>,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
 }
 
 /// Random path request (extends PathRequest).
@@ -110,6 +113,9 @@ pub struct RandomPathRequest {
     /// Max segment length (yards) for densification (default 3.0).
     #[serde(default)]
     pub densify_segment_length: Option<f32>,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
 }
 
 fn default_max_deviation() -> f32 {
@@ -167,12 +173,12 @@ pub fn validate_filter_params(
     Ok(())
 }
 
-/// Helper: acquire map, pool, and query from state.
-/// Declares `_nb_mesh`, `_nb_pool`, and `_nb_query` in the calling scope.
-/// Use `_nb_pool.filter()` for the default filter, and `&*_nb_query` for the query ref.
+/// Helper: acquire map, pool, and query from a game bundle.
+/// Declares `_nb_mesh`, `$pool`, and `$query` in the calling scope.
+/// Use `$pool.filter()` for the default filter, and `&*$query` for the query ref.
 macro_rules! acquire_query {
-    ($state:expr, $map_id:expr, $pool:ident, $query:ident) => {
-        let _nb_mesh = $state
+    ($bundle:expr, $map_id:expr, $pool:ident, $query:ident) => {
+        let _nb_mesh = $bundle
             .mmap_manager
             .get_or_load_mesh($map_id)
             .map_err(|e| match &e {
@@ -180,7 +186,7 @@ macro_rules! acquire_query {
                 _ => AppError::Internal(e.to_string()),
             })?;
 
-        let $pool = $state
+        let $pool = $bundle
             .mmap_manager
             .get_query_pool($map_id)
             .ok_or_else(|| AppError::MapNotFound($map_id))?;
@@ -248,7 +254,8 @@ pub async fn find_path(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     // Resolve filter
     let custom_filter;
@@ -340,7 +347,8 @@ pub async fn find_path_random(
 
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     let custom_filter;
     let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava)
@@ -480,6 +488,9 @@ pub struct ValidatePathRequest {
     pub map_id: u32,
     /// Waypoints as semicolon-separated "x,y,z" values
     pub waypoints: String,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
 }
 
 /// Response for path validation endpoints.
@@ -505,7 +516,8 @@ pub async fn validate_path_snap(
 
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
     let filter = pool.filter();
 
     let search_extents = Vec3::new(10.0, 10.0, 50.0);
@@ -542,7 +554,8 @@ pub async fn validate_path_surface(
 
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
     let filter = pool.filter();
 
     let search_extents = Vec3::new(10.0, 10.0, 50.0);

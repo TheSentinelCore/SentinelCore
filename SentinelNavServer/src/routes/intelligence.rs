@@ -32,6 +32,9 @@ use crate::validation::{validate_coordinate, validate_map_id, validate_wall_clea
 #[derive(Debug, Deserialize)]
 pub struct MultiPathRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     /// Semicolon-separated "x,y,z" stops (minimum 2).
     pub stops: String,
     /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
@@ -96,7 +99,8 @@ pub async fn path_multi(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     let custom_filter;
     let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava)
@@ -184,6 +188,9 @@ pub async fn path_multi(
 #[derive(Debug, Deserialize)]
 pub struct TspPathRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     /// Semicolon-separated "x,y,z" points to visit (minimum 2).
     pub points: String,
     /// Semicolon-separated "x,y,z,radius,cost" avoidance zones.
@@ -364,7 +371,8 @@ pub async fn path_tsp(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     let custom_filter;
     let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava)
@@ -529,6 +537,9 @@ pub async fn path_tsp(
 #[derive(Debug, Deserialize)]
 pub struct AvoidPathRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     pub start_x: f32,
     pub start_y: f32,
     pub start_z: f32,
@@ -594,7 +605,8 @@ pub async fn path_avoid(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     let custom_filter;
     let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava)
@@ -664,6 +676,9 @@ pub async fn path_avoid(
 #[derive(Debug, Deserialize)]
 pub struct PathCheckRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     pub current_x: f32,
     pub current_y: f32,
     pub current_z: f32,
@@ -705,7 +720,8 @@ pub async fn path_check(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
     let filter = pool.filter();
 
     let current_pos = Vec3::new(params.current_x, params.current_y, params.current_z);
@@ -777,6 +793,9 @@ pub async fn path_check(
 #[derive(Debug, Deserialize)]
 pub struct CorridorPathRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     pub start_x: f32,
     pub start_y: f32,
     pub start_z: f32,
@@ -862,7 +881,8 @@ pub async fn path_corridor(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     let custom_filter;
     let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava)
@@ -917,6 +937,9 @@ pub async fn path_corridor(
 #[derive(Debug, Deserialize)]
 pub struct ExploreRouteRequest {
     pub map_id: u32,
+    /// Game identifier (e.g. "tbc", "retail"). Uses server default if omitted.
+    #[serde(default)]
+    pub game: Option<String>,
     /// Repeated polygon vertex params "x,y,z".
     #[serde(default)]
     pub polygon: Vec<String>,
@@ -1024,7 +1047,8 @@ pub async fn explore_route(
     // Acquire concurrency permit (503 if overloaded)
     let _permit = state.try_acquire_permit()?;
 
-    acquire_query!(state, params.map_id, pool, query);
+    let bundle = state.get_game(params.game.as_deref())?;
+    acquire_query!(bundle, params.map_id, pool, query);
 
     let custom_filter;
     let filter = if has_custom_filter(params.filter_ground, params.filter_water, params.filter_lava)

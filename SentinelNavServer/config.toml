@@ -10,17 +10,21 @@ port = 47110
 max_concurrent_requests = 100
 
 [navmesh]
-# Path to CMaNGOS mmap files directory
-# Relative to SentinelNavServer directory or absolute path
-mmap_path = "./mmaps"
+# Default game when no ?game= parameter is provided in requests "tbc" or "retail"
+default_game = "tbc"
 
-# Maps to preload at startup (empty = lazy load on first request)
-# Common map IDs:
-#   0   = Eastern Kingdoms (Elwynn, Stormwind, etc.)
-#   1   = Kalimdor (Durotar, Orgrimmar, etc.)
-#   530 = Outland
-#   571 = Northrend
-preload_maps = [0,1,530]
+# Per-game mmap sources. Each game has its own mmap directory and preload list.
+# API requests select the game via ?game=<name> query parameter.
+
+[navmesh.games.tbc]
+# CMaNGOS TBC mmaps (3-digit map IDs, no underscores)
+mmap_path = "./mmaps"
+preload_maps = [0, 1, 530]
+
+[navmesh.games.retail]
+# TrinityCore retail mmaps (4-digit map IDs, underscores)
+mmap_path = "./mmaps_retail"
+preload_maps = []
 
 [pathfinding]
 # Default smoothing algorithm: "none", "chaikin", "catmull_rom", "bezier"
@@ -35,7 +39,6 @@ search_extents = [6.0, 10.0, 50.0]
 # Max segment length before inserting midpoints (yards)
 # Shorter = smoother curves on ramps, higher CPU cost
 max_segment_length = 3.0
-# Island recovery retry count (cardinal + diagonal offsets)
 # Island recovery retry count (inner ring at 3yd + outer ring at 6yd)
 island_retry_count = 16
 # Default area costs [ground, water, lava]

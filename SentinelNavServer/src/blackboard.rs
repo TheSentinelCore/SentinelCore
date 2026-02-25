@@ -1,9 +1,9 @@
 //! Server-wide shared state with trait-based service injection.
 //!
-//! `ServerBlackboard` replaces `AppState` as the handler state type.
-//! Services are injected as trait objects, enabling testing and future
-//! swappability without changing route handlers.
+//! `ServerBlackboard` holds per-game `GameBundle`s (each with its own MmapManager
+//! and service implementations) plus shared infrastructure (cache, metrics, config).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -18,20 +18,13 @@ use crate::services::{
 };
 use crate::state::Metrics;
 
-/// Shared application state with injected service implementations.
+/// Per-game resources: mmap manager and domain services.
 ///
-/// Route handlers receive `State<Arc<ServerBlackboard>>` and delegate to
-/// the appropriate service trait. The blackboard owns:
-///
-/// - **Services**: Trait objects for each domain (pathfinding, routing, etc.)
-/// - **Infrastructure**: Mesh manager, semaphore, cache, config
-/// - **Metrics**: Request counters and timing
-///
-/// Field names match the former `AppState` so existing `acquire_query!` macro
-/// and handler code works without modification.
-#[derive(Clone)]
-pub struct ServerBlackboard {
-    // -- Services (trait objects) --
+/// Each game version (e.g., "tbc", "retail") gets its own bundle with
+/// independent navmesh data and service instances.
+pub struct GameBundle {
+    /// Navigation mesh manager for this game's mmap files.
+    pub mmap_manager: Arc<MmapManager>,
     /// Core pathfinding: find, avoid, corridor, check.
     pub pathfinding: Arc<dyn PathfindingService>,
     /// Multi-stop and TSP route optimization.
@@ -40,12 +33,23 @@ pub struct ServerBlackboard {
     pub spatial: Arc<dyn SpatialService>,
     /// Combat-oriented paths: flee, cover, kite.
     pub tactical: Arc<dyn TacticalService>,
-    /// Path result caching (trait object).
-    pub cache: Arc<dyn CacheService>,
+}
 
-    // -- Infrastructure (same field names as former AppState) --
-    /// Navigation mesh manager for loading and querying maps.
-    pub mmap_manager: Arc<MmapManager>,
+/// Shared application state with per-game service bundles.
+///
+/// Route handlers receive `State<Arc<ServerBlackboard>>` and resolve the
+/// appropriate `GameBundle` via `get_game()` before delegating to services.
+#[derive(Clone)]
+pub struct ServerBlackboard {
+    // -- Per-game bundles --
+    /// Game bundles keyed by game identifier (e.g., "tbc", "retail").
+    pub games: HashMap<String, Arc<GameBundle>>,
+    /// Default game identifier when no `?game=` param is provided.
+    pub default_game: String,
+
+    // -- Shared infrastructure --
+    /// Path result caching (shared across all games).
+    pub cache: Arc<dyn CacheService>,
     /// Semaphore for limiting concurrent pathfinding requests.
     pub request_semaphore: Arc<Semaphore>,
     /// Path cache for fast repeated lookups (direct access for handlers).
@@ -59,6 +63,21 @@ pub struct ServerBlackboard {
 }
 
 impl ServerBlackboard {
+    /// Resolve the game bundle for a request.
+    ///
+    /// If `game` is `None`, uses `default_game`. Returns an error if the
+    /// game identifier is not found.
+    pub fn get_game(&self, game: Option<&str>) -> Result<&Arc<GameBundle>, crate::error::AppError> {
+        let key = game.unwrap_or(&self.default_game);
+        self.games.get(key).ok_or_else(|| {
+            let available: Vec<&String> = self.games.keys().collect();
+            crate::error::AppError::BadRequest(format!(
+                "Unknown game '{}'. Available: {:?}",
+                key, available
+            ))
+        })
+    }
+
     /// Try to acquire a request permit, returning 503 if overloaded.
     pub fn try_acquire_permit(
         &self,
@@ -72,5 +91,18 @@ impl ServerBlackboard {
     /// Get server uptime in seconds.
     pub fn uptime_secs(&self) -> f64 {
         self.start_time.elapsed().as_secs_f64()
+    }
+
+    /// Total number of loaded maps across all games.
+    pub fn total_loaded_map_count(&self) -> usize {
+        self.games.values().map(|g| g.mmap_manager.loaded_map_count()).sum()
+    }
+
+    /// Get loaded maps per game.
+    pub fn loaded_maps_by_game(&self) -> HashMap<String, Vec<u32>> {
+        self.games
+            .iter()
+            .map(|(name, bundle)| (name.clone(), bundle.mmap_manager.loaded_maps()))
+            .collect()
     }
 }

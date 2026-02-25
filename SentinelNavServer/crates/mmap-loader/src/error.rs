@@ -14,7 +14,7 @@ pub enum MmapError {
     #[error("Unsupported Detour version: {0}, expected 7")]
     UnsupportedDetourVersion(u32),
 
-    #[error("Unsupported mmap version: {0}, expected 5-15")]
+    #[error("Unsupported mmap version: {0}, expected 5-16")]
     UnsupportedMmapVersion(u32),
 
     #[error("File too small for header (got {0} bytes)")]
