@@ -42,6 +42,9 @@ local SPELLS = {
 
 local MELEE_RANGE = 5.5
 local HAMMER_OF_JUSTICE_CAST_RANGE = 10.0
+local SEAL_OF_BLOOD_AURA     = (RET_AURAS.SEAL_OF_BLOOD and RET_AURAS.SEAL_OF_BLOOD[1])     or 21084
+local SEAL_OF_VENGEANCE_AURA = (RET_AURAS.SEAL_OF_VENGEANCE and RET_AURAS.SEAL_OF_VENGEANCE[1]) or 20165
+local SEAL_OF_COMMAND_AURA   = (RET_AURAS.SEAL_OF_COMMAND and RET_AURAS.SEAL_OF_COMMAND[1])   or 20375
 local REPENTANCE_CAST_RANGE = 20.0
 local JUDGEMENT_CAST_RANGE = 9.0
 local EXECUTE_TARGET_HEALTH_PCT = 0.20
@@ -91,6 +94,7 @@ local DEFAULT_POLICY = {
     repentance_defensive_min_distance = 6.0,
     blessing_of_might_refresh_sec = 30.0,
     divine_shield_cc_hp_pct = 0.35,
+    seal_twist_enabled = true,
 }
 
 ---@private
@@ -104,7 +108,31 @@ local function spell_id(value)
     return id
 end
 
+---@private
+---@param spell number|nil
+---@return boolean
+local function is_learned(spell)
+    local id = spell_id(spell)
+    if not id then
+        return false
+    end
 
+    if core and core.spell_book and core.spell_book.is_spell_learned then
+        local ok, learned = pcall(core.spell_book.is_spell_learned, id)
+        if ok and learned == true then
+            return true
+        end
+    end
+
+    if core and core.spell_book and core.spell_book.has_spell then
+        local ok, has = pcall(core.spell_book.has_spell, id)
+        if ok and has == true then
+            return true
+        end
+    end
+
+    return false
+end
 
 ---@private
 ---@param ctx table
@@ -132,36 +160,20 @@ local function resolve_spell(ctx, spec, fallback)
     end
 
     if type(spell_fallback) == "table" and #spell_fallback > 0 then
-        return spell_id(spell_fallback[1])
+        -- Walk highest-to-lowest; return first learned rank.
+        -- Matches Affliction.lua behaviour: never return an unlearned rank when
+        -- the spellbook is queryable. Falls back to the lowest (safest) rank
+        -- only when the spellbook is entirely unavailable.
+        for i = 1, #spell_fallback do
+            local id = spell_id(spell_fallback[i])
+            if id and is_learned(id) then
+                return id
+            end
+        end
+        return spell_id(spell_fallback[#spell_fallback])
     end
 
     return nil
-end
-
----@private
----@param spell number|nil
----@return boolean
-local function is_learned(spell)
-    local id = spell_id(spell)
-    if not id then
-        return false
-    end
-
-    if core and core.spell_book and core.spell_book.is_spell_learned then
-        local ok, learned = pcall(core.spell_book.is_spell_learned, id)
-        if ok and learned == true then
-            return true
-        end
-    end
-
-    if core and core.spell_book and core.spell_book.has_spell then
-        local ok, has = pcall(core.spell_book.has_spell, id)
-        if ok and has == true then
-            return true
-        end
-    end
-
-    return false
 end
 
 ---@private
@@ -217,7 +229,7 @@ local function preferred_seal_id(ctx)
         return vengeance
     end
 
-    return command or blood
+    return vengeance or command or blood
 end
 
 ---@private
@@ -801,7 +813,13 @@ function Retribution:defensive(ctx)
     local p = policy(ctx)
 
     local holy_light = function(local_ctx)
-        return RankPolicy.select_max_rank(local_ctx, SpellCatalog.name(SPELLS.HOLY_LIGHT), SpellCatalog.ids(SPELLS.HOLY_LIGHT))
+        return RankPolicy.select_by_mana_policy(local_ctx, {
+            spell_name = SpellCatalog.name(SPELLS.HOLY_LIGHT),
+            fallback_ids = SpellCatalog.ids(SPELLS.HOLY_LIGHT),
+            low_mana_rank_ids = SpellCatalog.low_mana_ids(SPELLS.HOLY_LIGHT),
+            low_mana_threshold = 0.30,
+            critical_mana_threshold = p.holy_light_min_mana_pct,
+        })
     end
 
     local flash_light = function(local_ctx)
@@ -882,7 +900,10 @@ function Retribution:defensive(ctx)
             max_player_mana_pct = p.flash_light_very_oom_mana_pct,
             allow_movement = false,
             intent = "recover",
-            combat_modes = { "recovery" },
+            -- Defensive healing must fire in all mana modes — a player can drop
+            -- to critical health while at 50% mana (sustain/burst mode), in which
+            -- case the recovery-only gate would silently suppress Flash of Light.
+            combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
                     and not should_hold_flash_for_execute(local_ctx, p)
@@ -968,9 +989,39 @@ end
 ---@param ctx table
 ---@return table[]
 function Retribution:combat(ctx)
-    local p = policy(ctx)
+    if ctx.player_is_stunned or ctx.player_is_feared then
+        return {}
+    end
 
-    return {
+    local p = policy(ctx)
+    local actions = {}
+
+    if p.seal_twist_enabled and ctx.melee_twist_window then
+        local twist_id = resolve_spell(ctx, SPELLS.SEAL_OF_BLOOD)
+                      or resolve_spell(ctx, SPELLS.SEAL_OF_VENGEANCE)
+        if twist_id then
+            actions[#actions+1] = self_spell(function()
+                return twist_id
+            end, 960, {
+                intent = "sustain",
+                combat_modes = { "burst", "sustain", "recovery" },
+            })
+        end
+    end
+
+    if p.seal_twist_enabled and ctx.melee_swing_window_open then
+        local soc_id = resolve_spell(ctx, SPELLS.SEAL_OF_COMMAND)
+        if soc_id and (type(ctx.player_has_aura) ~= "function" or not ctx.player_has_aura(SEAL_OF_COMMAND_AURA)) then
+            actions[#actions+1] = self_spell(function()
+                return soc_id
+            end, 950, {
+                intent = "sustain",
+                combat_modes = { "burst", "sustain", "recovery" },
+            })
+        end
+    end
+
+    local base = {
         target_spell(SPELLS.HAMMER_OF_WRATH, 560, {
             max_target_health_pct = 0.20,
             max_target_distance = 30.0,
@@ -1008,6 +1059,15 @@ function Retribution:combat(ctx)
                 return in_engage_context(local_ctx) and should_reseal(local_ctx)
             end,
         }),
+        self_spell(SPELLS.CONSECRATION, 540, {
+            max_target_distance = 8.0,
+            min_player_mana_pct = p.consecration_st_min_mana_pct,
+            intent = "sustain",
+            combat_modes = { "burst", "sustain" },
+            condition = function(local_ctx)
+                return (tonumber(local_ctx.target_distance) or 999) <= 8
+            end,
+        }),
         target_spell(SPELLS.EXORCISM, 500, {
             max_target_distance = 30.0,
             min_player_mana_pct = p.exorcism_min_mana_pct,
@@ -1019,6 +1079,10 @@ function Retribution:combat(ctx)
             end,
         }),
     }
+    for i = 1, #base do
+        actions[#actions+1] = base[i]
+    end
+    return actions
 end
 
 ---@param ctx table

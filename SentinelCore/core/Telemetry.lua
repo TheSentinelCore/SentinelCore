@@ -1,6 +1,7 @@
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
 local Helpers = require("lib/Helpers")
+local JSON = require("lib/JSON")
 local get_now = require("lib/TimeHelper").get_now
 local UnitQueries = require("lib/UnitQueries")
 local safe_unit_call = UnitQueries.safe_method
@@ -62,6 +63,8 @@ end
 ---@field private _combat_downtime_total number
 ---@field private _combat_downtime_samples number
 ---@field private _was_dead boolean
+---@field private _death_details table
+---@field private _is_resting boolean
 local Telemetry = {}
 Telemetry.__index = Telemetry
 
@@ -81,6 +84,7 @@ function Telemetry:new(event_bus, blackboard, flush_interval)
     o._combat_downtime_total = 0
     o._combat_downtime_samples = 0
     o._was_dead = false
+    o._is_resting = false
     o._flush_interval = flush_interval or 1.0
     o._counters = {
         kills = 0,
@@ -101,7 +105,14 @@ function Telemetry:new(event_bus, blackboard, flush_interval)
         failed_pulls = 0,
         unreachable_targets = 0,
         idle_full_resource_secs = 0,
+        -- F7 additions
+        pull_successes = 0,       -- pulls that reached the engage phase (PULL_STARTED)
+        flee_events = 0,          -- times FleeService triggered (via COMBAT_FAILED flee reason)
+        rotation_casts = 0,       -- total spell casts executed (ROTATION_EXECUTED)
+        rotation_blocked = 0,     -- times rotation was blocked (ROTATION_BLOCKED)
+        rest_time_secs = 0,       -- total time eating/drinking (seconds, sampled via death state)
     }
+    o._death_details = {}         -- list of {timestamp, position, state} for last 10 deaths
     o._cast_guard_by_spell = {}
     o._rates = {
         xp_per_hour = 0,
@@ -222,6 +233,37 @@ function Telemetry:_bind_events()
             self._counters.unreachable_targets = self._counters.unreachable_targets + 1
         end
     end, { owner = self })
+
+    -- F7: pull successes — a pull that reached the engage phase
+    self._event_bus:on(Events.PULL_STARTED, function()
+        self._counters.pull_successes = self._counters.pull_successes + 1
+    end, { owner = self })
+
+    -- F7: rotation cast count
+    self._event_bus:on(Events.ROTATION_EXECUTED, function()
+        self._counters.rotation_casts = self._counters.rotation_casts + 1
+    end, { owner = self })
+
+    -- F7: rotation blocked count (total, separate from cast_guard_blocked)
+    self._event_bus:on(Events.ROTATION_BLOCKED, function()
+        self._counters.rotation_blocked = self._counters.rotation_blocked + 1
+    end, { owner = self })
+
+    -- F7: death details — record last 10 deaths with position and timestamp
+    self._event_bus:on(Events.DEATH_RECOVERY_STARTED, function(data)
+        local now = get_now()
+        local pos = self._blackboard:get("player.position") or {}
+        local detail = {
+            timestamp = now,
+            position = { x = pos.x or 0, y = pos.y or 0, z = pos.z or 0 },
+            state = tostring(data and data.state or "unknown"),
+        }
+        self._death_details[#self._death_details + 1] = detail
+        -- Keep only the last 10 deaths
+        while #self._death_details > 10 do
+            table.remove(self._death_details, 1)
+        end
+    end, { owner = self })
 end
 
 ---@private
@@ -299,7 +341,7 @@ function Telemetry:_update_rates(now)
     self._rates.chase_updates_per_min = (self._counters.chase_updates / elapsed) * 60.0
     self._rates.failed_pulls_per_hour = (self._counters.failed_pulls / elapsed) * 3600.0
     self._rates.unreachable_targets_per_hour = (self._counters.unreachable_targets / elapsed) * 3600.0
-    self._rates.idle_full_resource_pct = self._counters.idle_full_resource_secs / elapsed
+    self._rates.idle_full_resource_pct = (self._counters.idle_full_resource_secs / elapsed) * 100.0
     if self._combat_downtime_samples > 0 then
         self._rates.combat_downtime_avg_secs = self._combat_downtime_total / self._combat_downtime_samples
     else
@@ -344,6 +386,13 @@ function Telemetry:update(now)
     if self:_is_idle_full_resources() then
         self._counters.idle_full_resource_secs = self._counters.idle_full_resource_secs + dt
     end
+
+    -- F7: accumulate rest time (eating/drinking)
+    local resting = self._blackboard:get("combat.was_resting", false) == true
+    if resting then
+        self._counters.rest_time_secs = self._counters.rest_time_secs + dt
+    end
+
     self:_sample_death_state(now)
 
     self:_update_rates(now)
@@ -375,10 +424,69 @@ function Telemetry:get_snapshot()
         last_flush_at = self._last_flush,
         counters = Helpers.deep_copy(self._counters),
         rates = Helpers.deep_copy(self._rates),
+        death_details = Helpers.deep_copy(self._death_details),
         map_id = context.map_id,
         zone_id = context.zone_id,
         area_id = context.area_id,
     }
+end
+
+---Serialize current session metrics to a JSON string suitable for archiving.
+---Returns a JSON string on success, or nil if serialization fails.
+---@return string|nil
+function Telemetry:export_session_json()
+    local now = get_now()
+    local elapsed = math.max(1, now - self._started_at)
+    local snapshot = self:get_snapshot()
+
+    -- Numeric counters only (death_details is stored separately below)
+    local counters_export = {}
+    for k, v in pairs(self._counters) do
+        if type(v) == "number" then
+            counters_export[k] = v
+        end
+    end
+
+    -- Numeric rates only
+    local rates_export = {}
+    if snapshot and snapshot.rates then
+        for k, v in pairs(snapshot.rates) do
+            if type(v) == "number" then
+                rates_export[k] = v
+            end
+        end
+    end
+
+    local export = {
+        schema_version = "telemetry_session.v1",
+        session_id = tostring(self._session_id),
+        started_at = math.floor(self._started_at),
+        exported_at = math.floor(now),
+        duration_secs = math.floor(elapsed),
+        counters = counters_export,
+        rates = rates_export,
+        death_details = Helpers.deep_copy(self._death_details),
+    }
+
+    local ok, result = pcall(function()
+        return JSON.encode(export, true)
+    end)
+    if ok and type(result) == "string" and result ~= "" then
+        return result
+    end
+
+    -- Fallback: minimal manual serialization if JSON.encode fails
+    local parts = {
+        string.format('{"schema_version":"telemetry_session.v1"'),
+        string.format(',"session_id":"%s"', tostring(self._session_id)),
+        string.format(',"duration_secs":%d', math.floor(elapsed)),
+        string.format(',"kills":%d', tonumber(self._counters.kills) or 0),
+        string.format(',"deaths":%d', tonumber(self._counters.deaths) or 0),
+        string.format(',"pull_successes":%d', tonumber(self._counters.pull_successes) or 0),
+        string.format(',"rotation_casts":%d', tonumber(self._counters.rotation_casts) or 0),
+        '}',
+    }
+    return table.concat(parts)
 end
 
 ---@return string

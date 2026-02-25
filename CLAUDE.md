@@ -1,4 +1,5 @@
 # CLAUDE.md - Scripts Workspace
+
 ## SDK Reference (scripts/.api/)
 
 The `.api/` directory contains IntelliSense type stubs -- not runtime code. Key files:
@@ -26,8 +27,10 @@ Mono-repo containing Lua bot scripts and Rust backend services for World of Warc
 
 | Directory | Language | Purpose |
 |-----------|----------|---------|
-| `SentinelNavClient/` | Lua | Navigation client — shared Client for all consumers |
-| `SentinelNavServer/` | Rust | Pathfinding HTTP server (Recast/Detour navmesh) |
+| `SentinelCore/` | Lua | Autonomous grinding/combat bot — service-based BT engine with rotation framework |
+| `SentinelNavClient/` | Lua | Navigation client — shared singleton Client for all consumers |
+| `SentinelNavServer/` | Rust | Pathfinding HTTP server (Recast/Detour navmesh, multi-game) |
+| `SentinelQueryServer/` | Rust | World data query server (SQLite, NPC/vendor/trainer lookups) |
 | `SentinelGather/` | Lua | Gathering bot — herb/ore route following with UI |
 | `SentinelHeightQuery/` | Lua | Debug tool — query navmesh heights at player position |
 | `SentinelDebugCursor/` | Lua | Debug tool — log world position under map cursor |
@@ -44,13 +47,22 @@ Mono-repo containing Lua bot scripts and Rust backend services for World of Warc
 ## Key Constraints
 
 - **Sylvannas API only** — never use WoW Lua APIs. API docs are in `.api/` and `documentation/` folders.
-- **GET-only HTTP** — SentinelNavServer endpoints must be GET because the Lua client uses `core.http_get` (no POST support).
-- **Shared UI library** — `SentinelGather/shared/rotation_settings_ui.lua` provides the tab-based settings window.
+- **GET-only HTTP** — both Rust servers use GET endpoints because the Lua client uses `core.http_get` (no POST support).
+- **Shared UI library** — `SentinelGather/shared/rotation_settings_ui.lua` provides the tab-based settings window (also used by SentinelCore and SentinelNavClient).
 - **`require()` resolution** — relative to the script's own folder. Only `.api/common/` paths are global. Each script needs its own copy of shared libraries in its `shared/` folder.
 
 ## Cross-Project Integration
 
 ```
+SentinelCore (Lua)                   SentinelQueryServer (Rust)
+┌──────────────────┐                 ┌──────────────────────┐
+│ Grind/Combat Bot │                 │ GET /api/v1/context  │
+│ WorldDataAdapter │──core.http_get──│ GET /api/v1/vendors  │
+│                  │                 │ GET /api/v1/trainers │
+│ NavigationAdapter│                 │ ... (14 endpoints)   │
+└────────┬─────────┘                 └──────────────────────┘
+         │
+         ▼ consumes
 SentinelNavClient (Lua)              SentinelNavServer (Rust)
 ┌──────────────────┐                 ┌──────────────────────┐
 │ Shared Client    │                 │ GET /api/v1/path     │
@@ -58,17 +70,20 @@ SentinelNavClient (Lua)              SentinelNavServer (Rust)
 │                  │                 │ GET /api/v1/move     │
 │ _G.SentinelNav   │                 │ GET /api/v1/raycast  │
 │   Client         │                 │ ... (18 endpoints)   │
-└──────────────────┘                 └──────────────────────┘
+└────────┬─────────┘                 └──────────────────────┘
          │
          ▼ consumed by
 ┌──────────────────┐
 │ SentinelGather   │  BotManager accesses _G.SentinelNavClient.client
-│ SentinelHeight   │  for Navigation, Movement, and Obstacle modules
+│ SentinelCore     │  for Navigation, Movement, and Obstacle modules
+│ SentinelHeight   │
 │   Query          │
 └──────────────────┘
 ```
 
-- **SentinelNavClient → SentinelNavServer**: The Client's Navigation module sends HTTP GET requests to SentinelNavServer for pathfinding, raycasting, random points, and tactical endpoints.
+- **SentinelCore → SentinelQueryServer**: `WorldDataAdapter` sends HTTP GET requests for context resolution, vendor/trainer/innkeeper lookups.
+- **SentinelCore → SentinelNavClient**: `NavigationAdapter` wraps the shared navigation Client for movement.
+- **SentinelNavClient → SentinelNavServer**: NavigationService sends HTTP GET requests for pathfinding, raycasting, random points, and tactical endpoints.
 - **SentinelGather → SentinelNavClient**: `BotManager.lua` accesses `_G.SentinelNavClient.client` for the shared navigation Client.
 
 ## Build Commands
@@ -78,6 +93,14 @@ SentinelNavClient (Lua)              SentinelNavServer (Rust)
 cd SentinelNavServer && cargo build --release
 cd SentinelNavServer && cargo test
 cd SentinelNavServer && cargo clippy
+
+# SentinelQueryServer (Rust)
+cd SentinelQueryServer && cargo build --release
+cd SentinelQueryServer && cargo test
+cd SentinelQueryServer && cargo clippy
+
+# SentinelCore tests (Lua, in-game)
+# Call _G.SentinelCore.run_tests() from the Sylvannas console
 
 # Lua scripts don't need building — loaded at runtime by Sylvannas
 ```
@@ -94,7 +117,8 @@ SentinelGather/
 │   ├── Constants.lua           # Shared constants and default settings
 │   ├── ModuleFactory.lua       # Module registration
 │   ├── Settings.lua            # Persistent settings (sentinel_gather/settings.json)
-│   └── StateMachine.lua        # Bot state management
+│   ├── StateMachine.lua        # Bot state management
+│   └── TravelingController.lua # Travel state management
 ├── modules/
 │   ├── Gather.lua              # Herb/ore gathering logic
 │   ├── ProfileManager.lua      # Profile loading/switching

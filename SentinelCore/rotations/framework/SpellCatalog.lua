@@ -54,6 +54,7 @@ SpellCatalog.PALADIN = {
         HOLY_LIGHT = {
             name = "holy light",
             ids = { 27136, 25292, 10329, 10328, 3472, 1042, 1026, 647, 639, 635 },
+            low_mana_ids = { 3472, 1042 },
         },
         FLASH_OF_LIGHT = {
             name = "flash of light",

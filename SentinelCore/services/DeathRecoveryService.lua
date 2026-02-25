@@ -44,6 +44,7 @@ end
 ---@field private _last_resurrect_at number
 ---@field private _last_move_to_at number
 ---@field private _last_move_to_dest vec3|nil
+---@field private _corpse_reachability_checked boolean
 local DeathRecoveryService = {}
 DeathRecoveryService.__index = DeathRecoveryService
 
@@ -52,7 +53,7 @@ DeathRecoveryService.__index = DeathRecoveryService
 ---@param cfg table|nil
 ---@param navigation NavigationAdapter|nil
 ---@return DeathRecoveryService
-function DeathRecoveryService:new(event_bus, blackboard, cfg, navigation)
+function DeathRecoveryService:new(event_bus, blackboard, cfg, navigation, logger)
     local o = setmetatable({}, DeathRecoveryService)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -67,6 +68,14 @@ function DeathRecoveryService:new(event_bus, blackboard, cfg, navigation)
     o._last_resurrect_at = 0
     o._last_move_to_at = 0
     o._last_move_to_dest = nil
+    o._corpse_reachability_checked = false
+    -- Ghost run / death-loop detection ring buffer
+    o._death_locations = {}        -- { {position={x,y,z}, timestamp=N}, ... }
+    o._ghost_run_max_entries = 5
+    o._ghost_run_cluster_radius = 60   -- meters
+    o._ghost_run_cluster_count = 3     -- deaths required to trigger
+    o._ghost_run_window_secs = 600     -- 10-minute sliding window
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     o:_write_blackboard_state()
     return o
 end
@@ -174,6 +183,68 @@ function DeathRecoveryService:_refresh_corpse_position(player, dead, ghost)
 end
 
 ---@private
+---@param now number
+function DeathRecoveryService:_record_death(now)
+    local pos = self._blackboard:get("player.death_position") or self._blackboard:get("player.position")
+    if not is_valid_position(pos) then return end
+    -- Add to ring buffer
+    table.insert(self._death_locations, {
+        position = { x = tonumber(pos.x) or 0, y = tonumber(pos.y) or 0, z = tonumber(pos.z) or 0 },
+        timestamp = now,
+    })
+    -- Keep only last N entries
+    while #self._death_locations > self._ghost_run_max_entries do
+        table.remove(self._death_locations, 1)
+    end
+    -- Check for ghost run pattern
+    self:_check_ghost_run(now)
+end
+
+---@private
+---@param now number
+function DeathRecoveryService:_check_ghost_run(now)
+    local window_cutoff = now - self._ghost_run_window_secs
+    -- Collect deaths within the sliding window
+    local recent = {}
+    for _, entry in ipairs(self._death_locations) do
+        if entry.timestamp >= window_cutoff then
+            recent[#recent + 1] = entry
+        end
+    end
+    if #recent < self._ghost_run_cluster_count then return end
+    -- Check whether any subset of cluster_count deaths are within the radius
+    for i = 1, #recent do
+        local cluster = 1
+        local a = recent[i].position
+        for j = i + 1, #recent do
+            local b = recent[j].position
+            local dx, dy = a.x - b.x, a.y - b.y
+            if math.sqrt(dx * dx + dy * dy) <= self._ghost_run_cluster_radius then
+                cluster = cluster + 1
+            end
+        end
+        if cluster >= self._ghost_run_cluster_count then
+            self._log:error(
+                "Ghost run detected: %d deaths within %.0fm in %.0f minutes — stopping bot",
+                cluster, self._ghost_run_cluster_radius, self._ghost_run_window_secs / 60
+            )
+            if self._event_bus then
+                self._event_bus:emit("CRITICAL_ERROR", {
+                    error_code = "GHOST_RUN_DETECTED",
+                    message = string.format(
+                        "%d deaths in same location within %d minutes",
+                        cluster, math.floor(self._ghost_run_window_secs / 60)
+                    ),
+                })
+            end
+            -- Clear ring buffer to prevent repeated triggers
+            self._death_locations = {}
+            return
+        end
+    end
+end
+
+---@private
 function DeathRecoveryService:_stop_navigation()
     if self._nav and type(self._nav.stop) == "function" then
         pcall(self._nav.stop, self._nav)
@@ -195,7 +266,11 @@ function DeathRecoveryService:_activate(now, state)
     self._last_move_to_at = 0
     self._last_move_to_dest = nil
     self._last_distance = nil
+    self._corpse_reachability_checked = false
+    -- Record this death for ghost run / death-loop detection
+    self:_record_death(now)
     self:_stop_navigation()
+    self._log:info("death recovery started: state=%s", tostring(state))
     self._event_bus:emit(Events.DEATH_RECOVERY_STARTED, {
         state = state,
     })
@@ -215,6 +290,7 @@ function DeathRecoveryService:_deactivate(now)
 
     self:_stop_navigation()
     local duration = math.max(0, now - self._started_at)
+    self._log:info("resurrected after %.1fs", duration)
     self._event_bus:emit(Events.DEATH_RESURRECTED, {
         duration = duration,
     })
@@ -228,6 +304,8 @@ function DeathRecoveryService:_deactivate(now)
     self._last_resurrect_at = 0
     self._last_move_to_at = 0
     self._last_move_to_dest = nil
+    self._corpse_reachability_checked = false
+    self._blackboard:set("death.skip_corpse_run", false)
     self:_write_blackboard_state()
 end
 
@@ -251,6 +329,7 @@ function DeathRecoveryService:_attempt_release_spirit(now)
     self._last_release_at = now
     local ok, result = pcall(core.input.release_spirit)
     if ok and result ~= false then
+        self._log:debug("spirit released")
         self._event_bus:emit(Events.DEATH_SPIRIT_RELEASED, {})
     end
 end
@@ -317,6 +396,7 @@ function DeathRecoveryService:_attempt_resurrect(now)
     self._last_resurrect_at = now
     local ok, result = pcall(core.input.resurrect_corpse)
     if ok and result ~= false then
+        self._log:debug("resurrect attempt")
         self._event_bus:emit(Events.DEATH_RESURRECT_ATTEMPT, {})
     end
 end
@@ -332,10 +412,43 @@ function DeathRecoveryService:_run_to_corpse(now, player)
         return
     end
 
+    -- Perform a one-shot reachability check when first entering corpse run.
+    -- Only skip corpse run when we get a confirmed path cost that exceeds
+    -- the max threshold. A failed estimate (cost=nil) does NOT mean
+    -- unreachable — long-distance paths may fail to compute in one shot
+    -- but the nav system can still navigate incrementally.
+    if not self._corpse_reachability_checked then
+        self._corpse_reachability_checked = true
+        if self._nav and type(self._nav.estimate_path_cost) == "function" then
+            local max_cost = self:_cfg_number("corpse_max_path_cost", 800)
+            self._nav:estimate_path_cost(player_pos, corpse_pos, function(ok, cost)
+                if ok and cost ~= nil and cost > max_cost then
+                    self._log:warn(
+                        "Corpse unreachable (cost=%.0f > max=%d), forcing spirit rez",
+                        cost, max_cost
+                    )
+                    self._blackboard:set("death.skip_corpse_run", true)
+                elseif not ok then
+                    self._log:debug(
+                        "Corpse path cost unavailable, proceeding with corpse run anyway"
+                    )
+                end
+            end)
+        end
+    end
+
+    -- If reachability check determined corpse is unreachable, skip the run.
+    if self._blackboard:get("death.skip_corpse_run", false) == true then
+        self:_stop_navigation()
+        self:_attempt_resurrect(now)
+        return
+    end
+
     self._last_distance = Helpers.distance_3d(player_pos, corpse_pos)
     local resurrect_distance = math.max(1.0, self:_cfg_number("death_resurrect_distance", 10.0))
 
     if self._last_distance > resurrect_distance then
+        self._log:debug("corpse run: dist=%.1f", self._last_distance)
         self:_issue_move_to(corpse_pos, now)
         return
     end
@@ -404,6 +517,7 @@ function DeathRecoveryService:reset()
     self._last_resurrect_at = 0
     self._last_move_to_at = 0
     self._last_move_to_dest = nil
+    self._corpse_reachability_checked = false
     self:_write_blackboard_state()
 end
 

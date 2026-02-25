@@ -81,10 +81,8 @@ end
 ---@param ignore_gcd? boolean
 ---@return boolean
 local function should_skip(action, ignore_gcd)
-    if action.hard_gate then
-        -- hard_gate is checked against context in evaluate, not here
-        return false
-    end
+    -- Note: hard_gate context evaluation is handled in evaluate() before calling this.
+    -- Do NOT early-return here — spell learned and cooldown checks still apply to hard_gate actions.
     if action.spell_id and core and core.spell_book
         and core.spell_book.is_spell_learned then
         if not core.spell_book.is_spell_learned(action.spell_id) then

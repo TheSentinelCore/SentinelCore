@@ -37,7 +37,9 @@ function SessionBehavior:check_idle_pause(now)
     if now < self._next_idle_check then
         return false
     end
-    self._next_idle_check = now + self._idle_check_interval
+    -- Randomize next check interval ±33% to avoid a detectable fixed 300s cadence.
+    local jitter = self._idle_check_interval * (0.67 + math.random() * 0.66)
+    self._next_idle_check = now + jitter
 
     if math.random() < self._idle_pause_chance then
         local dur = self._idle_pause_min
@@ -46,6 +48,13 @@ function SessionBehavior:check_idle_pause(now)
         return true
     end
     return false
+end
+
+--- Cancel any active idle pause immediately.
+--- Called by the grind loop when combat interrupts a pause so the bot does
+--- not resume the same pause window after combat ends (phantom pause bug).
+function SessionBehavior:cancel_pause()
+    self._pause_until = nil
 end
 
 return SessionBehavior

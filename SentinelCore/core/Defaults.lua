@@ -29,6 +29,7 @@ Defaults.death = {
     death_move_reissue_distance = 1.0,
     death_resurrect_distance = 10.0,
     death_resurrect_retry_secs = 0.75,
+    corpse_max_path_cost = 800,
 }
 
 Defaults.world_data = {
@@ -269,6 +270,18 @@ Defaults.telemetry = {
     idle_full_resource_threshold = 0.98,
 }
 
+Defaults.logging = {
+    global_level = "INFO",
+    console_logger_enabled = true,
+    max_history = 200,
+}
+
+Defaults.mount = {
+    enabled = true,
+    min_travel_distance = 30.0,   -- only mount if > 30m to destination
+    min_level = 40,
+}
+
 Defaults.policy = {
     schema_version = "vendor_inventory_policy.v1",
     updated_at_unix = 0,
@@ -285,7 +298,10 @@ Defaults.policy = {
     always_sell = {},
     keep_stack_min = {},
     special_rules = {},
+    max_session_minutes = 240,
 }
+
+Defaults.zone_overrides = {}
 
 Defaults.runtime_state = {
     schema_version = "runtime_state.v1",
@@ -352,6 +368,9 @@ function Defaults.build_runtime(extra)
         inventory = deep_copy(Defaults.inventory),
         vendor = deep_copy(Defaults.vendor),
         telemetry = deep_copy(Defaults.telemetry),
+        logging = deep_copy(Defaults.logging),
+        mount = deep_copy(Defaults.mount),
+        zone_overrides = deep_copy(Defaults.zone_overrides),
     }
 
     if type(extra) == "table" then

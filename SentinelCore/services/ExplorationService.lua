@@ -4,6 +4,7 @@ local Helpers = require("lib/Helpers")
 local Events = require("events/Events")
 local ErrorCodes = require("events/ErrorCodes")
 local get_now = require("lib/TimeHelper").get_now
+local PathEntropy = require("ai/PathEntropy")
 
 ---@private
 ---@param pos vec3|nil
@@ -58,7 +59,7 @@ ExplorationService.__index = ExplorationService
 ---@param navigation NavigationAdapter|nil
 ---@param targeting TargetingService|nil
 ---@return ExplorationService
-function ExplorationService:new(event_bus, blackboard, cfg, navigation, targeting)
+function ExplorationService:new(event_bus, blackboard, cfg, navigation, targeting, logger)
     local o = setmetatable({}, ExplorationService)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -69,6 +70,12 @@ function ExplorationService:new(event_bus, blackboard, cfg, navigation, targetin
     o._recent_cells = {}
     o._active = nil
     o._last_frontier_phase = 0
+    o._path_entropy = PathEntropy:new()
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
+    -- Global nav-failure backoff: consecutive frontier failures (no navmesh coverage)
+    -- arm a cooldown to prevent infinite 422 churn.
+    o._nav_fail_streak = 0
+    o._nav_backoff_until = 0
     o:_write_state("idle", nil, nil, nil)
     return o
 end
@@ -194,13 +201,19 @@ function ExplorationService:_prune_cells(now)
         return
     end
 
+    -- Collect surviving entries sorted by age (oldest first) so we evict
+    -- the least-recently-touched cells rather than an arbitrary pairs() order.
+    local by_age = {}
+    for key, entry in pairs(self._cells) do
+        by_age[#by_age + 1] = { key = key, touched = tonumber(entry and entry.last_touched_at) or 0 }
+    end
+    table.sort(by_age, function(a, b) return a.touched < b.touched end)
+
     local overflow = count - max_entries
-    for key, _ in pairs(self._cells) do
-        self._cells[key] = nil
+    for i = 1, #by_age do
+        if overflow <= 0 then break end
+        self._cells[by_age[i].key] = nil
         overflow = overflow - 1
-        if overflow <= 0 then
-            break
-        end
     end
 end
 
@@ -338,6 +351,11 @@ function ExplorationService:_select_frontier(now, player_pos, anchor)
     local w_recent = cfg_number(self._cfg, "weight_recent", 0.35)
     local w_failure = cfg_number(self._cfg, "weight_failure", 0.60)
 
+    -- Sighting score decay constants: scores decay exponentially with age.
+    -- Half-life is ~10 minutes (600s); never decays below SIGHTING_DECAY_MIN.
+    local SIGHTING_DECAY_MIN = 1.0
+    local SIGHTING_DECAY_HALF_LIFE = 600.0
+
     self._last_frontier_phase = (self._last_frontier_phase + 1) % rays
     local phase_offset = (self._last_frontier_phase / rays) * (math.pi * 2)
 
@@ -371,7 +389,15 @@ function ExplorationService:_select_frontier(now, player_pos, anchor)
                 local last_seen = tonumber(cell.last_seen_at) or 0
                 local seen_age = (last_seen > 0) and (now - last_seen) or seen_horizon
                 local seen_freshness = 1.0 - Helpers.clamp(seen_age / seen_horizon, 0.0, 1.0)
-                local seen_score = Helpers.clamp((tonumber(cell.sighting_score) or 0) / math.max(1.0, cfg_number(self._cfg, "sighting_cap", 8.0)), 0.0, 1.0)
+                -- Apply age-based exponential decay to sighting_score so stale
+                -- high-value cells do not permanently dominate frontier selection.
+                -- Decay uses last_seen_at as the "last activity" timestamp;
+                -- half-life is ~10 minutes.  Never decays below SIGHTING_DECAY_MIN.
+                local raw_sighting = tonumber(cell.sighting_score) or 0
+                local decay_age_secs = (last_seen > 0) and (now - last_seen) or 0
+                local decay_factor = math.max(0.1, math.exp(-decay_age_secs / SIGHTING_DECAY_HALF_LIFE))
+                local decayed_sighting = math.max(SIGHTING_DECAY_MIN, raw_sighting * decay_factor)
+                local seen_score = Helpers.clamp(decayed_sighting / math.max(1.0, cfg_number(self._cfg, "sighting_cap", 8.0)), 0.0, 1.0)
                 local sighting = seen_freshness * seen_score
 
                 local recently_visited = self:_was_recently_visited(cell.key) and 1.0 or 0.0
@@ -385,15 +411,55 @@ function ExplorationService:_select_frontier(now, player_pos, anchor)
 
                 if utility > best_score then
                     best_score = utility
+                    -- Jitter the destination slightly so the bot doesn't always
+                    -- walk to the exact same grid-aligned frontier points.
+                    local jittered_dest = self._path_entropy:jitter_position(destination)
                     best = {
                         mode = "frontier",
-                        destination = destination,
+                        destination = jittered_dest,
                         score = utility,
                         target = nil,
                         distance = dist,
                         engage_radius = 0,
                         cell_key = cell.key,
                     }
+                end
+            end
+        end
+    end
+
+    -- Terrain height validation: skip candidates that land on void/underwater terrain.
+    -- Uses cached results from NavigationAdapter; fail-open if nav or cache unavailable.
+    if best and self._nav and type(self._nav.validate_position) == "function" then
+        local ok_v, valid = pcall(self._nav.validate_position, self._nav, best.destination)
+        if ok_v and valid == false then
+            self._log:debug("frontier candidate rejected: invalid terrain at (%.1f, %.1f, %.1f)",
+                tonumber(best.destination.x) or 0,
+                tonumber(best.destination.y) or 0,
+                tonumber(best.destination.z) or 0)
+            best = nil
+        end
+    end
+
+    -- Zone boundary guard: reject frontier cells too far from the grind anchor.
+    -- We can't cheaply query zone_id for an arbitrary position, so we use
+    -- distance-from-anchor as a proxy for zone containment.
+    if best then
+        local canonical = self._blackboard:get("context.canonical")
+        local anchor_zone = canonical and tonumber(canonical.zone_id) or 0
+        if anchor_zone and anchor_zone > 0 then
+            local anchor = self:_resolve_anchor(player_pos)
+            if anchor and best.destination then
+                local dx = best.destination.x - anchor.x
+                local dy = best.destination.y - anchor.y
+                local dist_from_anchor = math.sqrt(dx * dx + dy * dy)
+                local max_radius = cfg_number(self._cfg, "max_grind_radius", 300)
+                if dist_from_anchor > max_radius then
+                    self._log:debug(
+                        "Frontier candidate rejected: %.0fm from anchor exceeds max_grind_radius %.0fm",
+                        dist_from_anchor, max_radius
+                    )
+                    best = nil  -- reject; caller handles nil → idle
                 end
             end
         end
@@ -454,6 +520,7 @@ function ExplorationService:_activate_goal(goal, now)
         end
     end
 
+    self._log:info("exploration goal: %s score=%.2f", tostring(goal.mode), tonumber(goal.score) or 0)
     self._active = {
         mode = goal.mode,
         destination = goal.destination,
@@ -509,6 +576,15 @@ function ExplorationService:_on_command_result(active, now, ok, error_code)
 
     if active.failure_count >= math.max(1, math.floor(cfg_number(self._cfg, "max_failures_before_reset", 2))) then
         self._active = nil
+        -- Track consecutive goal-level failures for global backoff.
+        self._nav_fail_streak = (self._nav_fail_streak or 0) + 1
+        local streak_limit = math.max(1, math.floor(cfg_number(self._cfg, "nav_fail_streak_limit", 5)))
+        if self._nav_fail_streak >= streak_limit then
+            local backoff = math.max(5.0, cfg_number(self._cfg, "nav_fail_backoff_secs", 30.0))
+            self._nav_backoff_until = now + backoff
+            self._nav_fail_streak = 0
+            self._log:warn("nav_fail_streak=" .. streak_limit .. " consecutive failures; pausing frontier for " .. backoff .. "s")
+        end
     end
 end
 
@@ -649,6 +725,8 @@ function ExplorationService:_tick_active_goal(now, active, destination, player_p
             self:_mark_recent_cell(active.cell_key)
         end
         self._active = nil
+        -- Successful arrival resets the consecutive-failure streak.
+        self._nav_fail_streak = 0
         return
     end
 
@@ -703,7 +781,11 @@ function ExplorationService:tick()
 
     local goal = self:_select_pursuit(now, player_pos, engage_radius, candidates)
     if not goal then
-        goal = self:_select_frontier(now, player_pos, anchor)
+        -- Global nav-failure backoff: skip frontier selection while in cooldown to
+        -- prevent spamming 422 errors when the area has no navmesh coverage.
+        if now >= (self._nav_backoff_until or 0) then
+            goal = self:_select_frontier(now, player_pos, anchor)
+        end
     end
 
     if not goal then
@@ -740,7 +822,7 @@ function ExplorationService:tick()
     -- the player stands idle waiting for the next tick's goal selection.
     if not self._active then
         local next_goal = self:_select_pursuit(now, player_pos, engage_radius, candidates)
-        if not next_goal then
+        if not next_goal and now >= (self._nav_backoff_until or 0) then
             next_goal = self:_select_frontier(now, player_pos, anchor)
         end
         if next_goal then
@@ -810,6 +892,8 @@ function ExplorationService:reset()
     self._recent_cells = {}
     self._active = nil
     self._last_frontier_phase = 0
+    self._nav_fail_streak = 0
+    self._nav_backoff_until = 0
     self:_write_state("idle", nil, nil, nil)
 end
 

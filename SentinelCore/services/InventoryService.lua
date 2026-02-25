@@ -132,13 +132,14 @@ end
 ---@param cfg table
 ---@param policy table
 ---@return InventoryService
-function InventoryService:new(event_bus, blackboard, cfg, policy)
+function InventoryService:new(event_bus, blackboard, cfg, policy, logger)
     local o = setmetatable({}, InventoryService)
     o._event_bus = event_bus
     o._blackboard = blackboard
     o._cfg = cfg or {}
     o._policy = policy and Defaults.copy(policy) or Defaults.copy(Defaults.policy)
     o._threshold_emitted = false
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     return o
 end
 
@@ -398,6 +399,7 @@ function InventoryService:update()
 
     if needs_vendor and not self._threshold_emitted then
         self._threshold_emitted = true
+        self._log:warn("inventory threshold reached: free=%d", tonumber(self._blackboard:get("inventory.free_slots", 0)) or 0)
         self._event_bus:emit(Events.INVENTORY_THRESHOLD_REACHED, {
             timestamp = get_now(),
             free_slots = self._blackboard:get("inventory.free_slots", 0),

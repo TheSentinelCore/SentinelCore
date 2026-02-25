@@ -19,6 +19,7 @@ function Persistence:new(root)
         profiles = o._root .. "/config/runtime_profiles.v1.json",
         runtime_state = o._root .. "/state/runtime_state.v1.json",
         vendor_cache = o._root .. "/cache/vendor_runtime_cache.v1.json",
+        telemetry_dir = o._root .. "/telemetry",
     }
     return o
 end
@@ -32,6 +33,7 @@ function Persistence:_ensure_dirs()
     core.create_data_folder(self._root .. "/config")
     core.create_data_folder(self._root .. "/state")
     core.create_data_folder(self._root .. "/cache")
+    core.create_data_folder(self._root .. "/telemetry")
 end
 
 ---@private
@@ -515,6 +517,38 @@ function Persistence:save_profiles(payload)
         profile.updated_at_unix = now
     end
     return self:_write_json_atomic(self._paths.profiles, payload, "runtime_profiles.v1")
+end
+
+---Save a session telemetry JSON string to the telemetry archive directory.
+---The filename is derived from session_id to avoid collisions across sessions.
+---Follows the same directory-creation and pcall-guarded write pattern as other saves.
+---@param session_id string Unique session identifier used in the filename
+---@param json_string string JSON payload from Telemetry:export_session_json()
+---@return boolean ok
+---@return string|nil error_msg
+function Persistence:save_session_telemetry(session_id, json_string)
+    if not session_id or session_id == "" then
+        return false, "invalid_session_id"
+    end
+    if not json_string or json_string == "" then
+        return false, "empty_json"
+    end
+
+    if not core or not core.create_data_file or not core.write_data_file then
+        return false, ErrorCodes.POLICY_IO_ERROR
+    end
+
+    self:_ensure_dirs()
+
+    local filename = self._paths.telemetry_dir .. "/session_" .. tostring(session_id) .. ".json"
+    local ok, err = pcall(function()
+        core.create_data_file(filename)
+        core.write_data_file(filename, json_string)
+    end)
+    if not ok then
+        return false, tostring(err or "write_failed")
+    end
+    return true, nil
 end
 
 ---@return table
