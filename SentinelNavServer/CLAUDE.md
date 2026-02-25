@@ -32,28 +32,35 @@ cargo doc --open
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      HTTP Layer (Axum)                       │
+│                      HTTP Layer (Axum 0.7)                   │
 │  18 GET endpoints across 5 route modules                    │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │               Application Layer                              │
-│  AppState, Config, PathCache, Request Routing, JSON Serde   │
+│  ServerBlackboard (per-game GameBundles), PathCache,        │
+│  Config, Semaphore, Metrics, Request Routing, JSON Serde    │
 └─────────┬─────────────────┬──────────────────┬──────────────┘
           │                 │                  │
 ┌─────────▼────────┐ ┌─────▼──────────┐ ┌────▼───────────────┐
 │  Intelligence    │ │   Tactical     │ │   Spatial          │
 │  path-multi      │ │   flee         │ │   move, raycast    │
 │  path-tsp        │ │   los cover    │ │   random, height   │
-│  path-avoid      │ │   kite         │ │   explore          │
+│  path-avoid      │ │   kite         │ │   heights, explore │
 │  check, corridor │ │                │ │                    │
 │  explore-route   │ │                │ │                    │
 └─────────┬────────┘ └─────┬──────────┘ └────┬───────────────┘
           │                │                  │
 ┌─────────▼────────────────▼──────────────────▼───────────────┐
+│          Service Layer (trait-based DI)                       │
+│  PathfindingService, RoutingService, SpatialService,         │
+│  TacticalService, CacheService — per-game instances          │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
 │              Pipeline (pipeline.rs)                           │
 │  execute_pathfind → string_pull → smooth → project → validate│
-│  PathCache (DashMap + 5-yard spatial quantization)           │
+│  PathCache (moka LRU + 5-yard spatial quantization)          │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -98,7 +105,10 @@ cargo doc --open
 | `GET /api/v1/raycast` | `spatial.rs` | Raycast between two points |
 | `GET /api/v1/random` | `spatial.rs` | Random navmesh point (global or in radius) |
 | `GET /api/v1/height` | `spatial.rs` | Get navmesh height at position |
+| `GET /api/v1/heights` | `spatial.rs` | Multi-layer navmesh heights at position |
 | `GET /api/v1/explore` | `spatial.rs` | Poisson disk sampling in polygon |
+
+All endpoints accept an optional `?game=` query param to select which game's navmesh to use (defaults to `default_game` in config).
 
 ## Crate Structure
 
@@ -110,8 +120,9 @@ SentinelNavServer/
 ├── src/
 │   ├── main.rs               # HTTP server entry point
 │   ├── lib.rs                # Library root (for integration tests)
-│   ├── config.rs             # Configuration loading (TOML)
-│   ├── state.rs              # AppState: MmapManager, PathCache, Semaphore
+│   ├── blackboard.rs         # ServerBlackboard + per-game GameBundle
+│   ├── config.rs             # Configuration loading (TOML, multi-game support)
+│   ├── state.rs              # Metrics (AtomicU64 counters)
 │   ├── error.rs              # AppError → HTTP status code mapping
 │   ├── pipeline.rs           # Shared pathfinding pipeline (execute_pathfind)
 │   ├── cache.rs              # DashMap path cache with spatial quantization
@@ -122,7 +133,14 @@ SentinelNavServer/
 │       ├── path.rs           # Core pathfinding + validation + acquire_query! macro
 │       ├── intelligence.rs   # Multi-stop, TSP, avoidance, corridor, check, explore-route
 │       ├── tactical.rs       # Flee, LoS cover, kite
-│       └── spatial.rs        # Move, raycast, random, height, explore
+│       └── spatial.rs        # Move, raycast, random, height, heights, explore
+│   └── services/
+│       ├── mod.rs            # Service traits (PathfindingService, RoutingService, etc.)
+│       ├── pathfinding.rs    # DetourPathfinder implementation
+│       ├── routing.rs        # DetourRouter (multi-stop, TSP)
+│       ├── spatial.rs        # DetourSpatial (raycast, height, random, move)
+│       ├── tactical.rs       # DetourTactical (flee, cover, kite)
+│       └── cache_impl.rs     # MokaCache wrapper
 ├── crates/
 │   ├── detour-sys/           # Raw FFI bindings (Recast/Detour C++)
 │   │   ├── build.rs          # cc + bindgen build script
@@ -180,7 +198,7 @@ let result = execute_pathfind(&query, pool.mesh(), filter, start, end, &options)
 ### Shared Pipeline (`pipeline.rs`)
 
 All pathfinding flows through `execute_pathfind(query, mesh, filter, start, end, options)`:
-1. `find_poly_tiered` — tiered 3D search `[(6,6,6), (10,10,10), (50,50,50)]` with water-aware selection
+1. `find_poly_tiered` — tiered 3D search `[(6,6,3), (10,10,6), (50,50,50)]` with water-aware selection
 2. `maybe_prefer_water` — if ground polygon found, checks for water polygon above (lake surface routing)
 3. `find_path` — polygon corridor via A*
 4. `find_straight_path` — string-pull to waypoints
@@ -193,10 +211,45 @@ All pathfinding flows through `execute_pathfind(query, mesh, filter, start, end,
 
 Key exports: `execute_pathfind`, `find_poly_tiered`, `PathOptions`, `PathResult`, `parse_stops`, `parse_waypoints`, `parse_avoidance_zones`, `parse_threats`, `apply_avoidance`, `compute_corridor_widths`, `create_custom_filter`, `create_smoothing_config`.
 
+### Multi-Game Support (`blackboard.rs`, `config.rs`)
+
+The server supports simultaneous navmesh serving for different game versions:
+
+```rust
+// ServerBlackboard holds per-game bundles
+struct ServerBlackboard {
+    games: HashMap<String, Arc<GameBundle>>,  // "tbc", "retail", etc.
+    cache: Arc<dyn CacheService>,
+    semaphore: Arc<Semaphore>,
+    config: Arc<Config>,
+    metrics: Arc<Metrics>,
+}
+
+// Each game has its own services + mmap manager
+struct GameBundle {
+    mmap_manager: Arc<MmapManager>,
+    pathfinding: Arc<dyn PathfindingService>,
+    routing: Arc<dyn RoutingService>,
+    spatial: Arc<dyn SpatialService>,
+    tactical: Arc<dyn TacticalService>,
+}
+```
+
+Game resolution: endpoints accept `?game=tbc` param; falls back to `navmesh.default_game` in config.
+
+### Service Traits (`services/mod.rs`)
+
+Trait-based dependency injection with 5 core traits:
+- `PathfindingService` — `find_path`, `find_path_with_avoidance`, `find_corridor`, `check_connectivity`
+- `RoutingService` — `multi_stop`, `tsp_optimize`
+- `SpatialService` — `raycast`, `get_height`, `get_heights`, `random_point`, `move_along_surface`
+- `TacticalService` — `flee`, `find_cover`, `kite`
+- `CacheService` — `get`, `put`, `stats`
+
 ### PathCache (`cache.rs`)
 
-- DashMap-backed with 5-yard spatial quantization (floor to grid cells)
-- Key: `(map_id, quantized_start, quantized_end)`
+- moka LRU cache with 5-yard spatial quantization (floor to grid cells)
+- Key: `(map_id, quantized_start, quantized_end, options_hash)`
 - TTL: 60 seconds, max 1000 entries
 - Checked before `execute_pathfind` in `/api/v1/path`, inserted on cache miss
 
@@ -277,24 +330,23 @@ Override via `filter_ground`, `filter_water`, `filter_lava` query params.
 
 ```rust
 pub async fn handler(
-    State(state): State<AppState>,
+    State(state): State<Arc<ServerBlackboard>>,
     Query(params): Query<RequestType>,
 ) -> Result<Json<ResponseType>, AppError> {
     // 1. Validate inputs
     validate_map_id(params.map_id)?;
     validate_coordinate(params.start_x, params.start_y, params.start_z)?;
-    validate_filter_params(params.filter_ground, params.filter_water, params.filter_lava)?;
 
-    let start_time = std::time::Instant::now();
+    // 2. Resolve game bundle (multi-game support)
+    let game = state.get_game(params.game.as_deref())?;
 
-    // 2. Acquire concurrency permit
-    let _permit = state.request_semaphore.acquire().await
-        .map_err(|_| AppError::Internal("Semaphore closed".into()))?;
+    // 3. Acquire concurrency permit
+    let _permit = state.try_acquire_permit()?;
 
-    // 3. Acquire navmesh query (macro declares pool + query in scope)
-    acquire_query!(state, params.map_id, pool, query);
+    // 4. Acquire navmesh query (macro declares pool + query in scope)
+    acquire_query!(game, params.map_id, pool, query);
 
-    // 4. Resolve filter (custom or default)
+    // 5. Resolve filter (custom or default)
     let custom_filter;
     let filter = if has_custom_filter(...) {
         custom_filter = create_custom_filter(...)?;
@@ -303,10 +355,10 @@ pub async fn handler(
         pool.filter()
     };
 
-    // 5. Execute pathfinding (mesh ref needed for water-aware polygon selection)
+    // 6. Execute pathfinding (mesh ref needed for water-aware polygon selection)
     let result = execute_pathfind(&query, pool.mesh(), filter, start_pos, end_pos, &options)?;
 
-    // 6. Return JSON
+    // 7. Return JSON
     Ok(Json(ResponseType { ... }))
 }
 ```
@@ -348,7 +400,9 @@ axum = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 tracing = "0.1"
-dashmap = "5.5"
+dashmap = "6.0"
+moka = "0.12"           # LRU cache (replaces DashMap for PathCache)
+parking_lot = "0.12"    # Fair sync primitives
 rand = "0.8"
 tower-http = { version = "0.5", features = ["trace", "timeout"] }
 ```
@@ -394,8 +448,8 @@ Sentinel Navigation Server uses water-aware polygon selection to handle lakes an
 3. If water polygon exists and is >2 yards above ground, prefer the water polygon
 
 **Search extents**: Tiered 3D search replaces the old XY=50 approach:
-- Tier 1: `(6, 6, 6)` — tight, matches AmeisenNavigation
-- Tier 2: `(10, 10, 10)` — medium, matches CMaNGOS far search
+- Tier 1: `(6, 6, 3)` — tight, correct floor in multi-story buildings
+- Tier 2: `(10, 10, 6)` — medium, still floor-aware
 - Tier 3: `(50, 50, 50)` — fallback for imprecise coordinates
 
 **Reference implementations compared**: CMaNGOS (5/10 extents), AmeisenNavigation (6), BloogBot (3). The previous XY=50 was 10x too large, causing lake-bottom routing and water-edge stuck loops.
@@ -409,7 +463,7 @@ The C++ wrapper isn't being compiled. Check `build.rs` includes `wrapper.cpp`.
 Verify file path format: `{map_id:04}{y:02}{x:02}.mmtile` (note: Y before X).
 
 ### "path not found" for valid points
-`find_poly_tiered` uses 3D search tiers: `[(6,6,6), (10,10,10), (50,50,50)]`. If positions are very imprecise, use `z_extent` query param to override. For general searches outside the pipeline, `SEARCH_EXTENTS = (50, 50, 50)`.
+`find_poly_tiered` uses 3D search tiers: `[(6,6,3), (10,10,6), (50,50,50)]`. If positions are very imprecise, use `z_extent` query param to override. For general searches outside the pipeline, `SEARCH_EXTENTS = (50, 50, 50)`.
 
 ### Memory growing unboundedly
 Ensure `DT_TILE_FREE_DATA` flag is set when adding tiles, or Detour won't free tile memory.

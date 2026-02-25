@@ -215,9 +215,12 @@ function RestService.build(bb, navigation)
             local player = bb:get("player.object")
             local mana_pct = get_mana_pct(player)
 
-            -- If already resting, stay until both HP and mana are recovered
+            -- If already resting, stay until both HP and mana are recovered.
+            -- Mana exit also fires early when drinks run out so we don't sit
+            -- idle waiting for mana we have no way to restore.
             if rest_start_time then
-                if hp_pct >= 0.90 and mana_pct >= 0.80 then
+                local has_drink = find_consumable(player, DRINK_ITEMS) ~= nil
+                if hp_pct >= 0.90 and (mana_pct >= 0.80 or not has_drink) then
                     rest_start_time = nil
                     bb:set("combat.was_resting", false)
                     return false
@@ -225,15 +228,21 @@ function RestService.build(bb, navigation)
                 return true
             end
 
-            -- Not resting yet — enter rest if HP or mana is low
-            return hp_pct < 0.50 or mana_pct < 0.30
+            -- Not resting yet — only enter rest for low mana if we have a drink;
+            -- sitting drinkless wastes time and burns player suspicion.
+            return hp_pct < 0.50 or (mana_pct < 0.30 and find_consumable(player, DRINK_ITEMS) ~= nil)
         end),
 
         -- Heal/eat/drink action
         BT.Action:new("eat_drink", function()
             local now = get_now()
 
-            if not rest_start_time then
+            -- Re-initialise if this is a fresh rest OR if the previous rest was
+            -- interrupted by combat (CombatInterruptService clears combat.was_resting
+            -- but cannot reach the rest_start_time closure, so the old timestamp
+            -- would prematurely fire the 60s timeout on the very next rest session).
+            local interrupted = rest_start_time ~= nil and not bb:get("combat.was_resting", false)
+            if not rest_start_time or interrupted then
                 rest_start_time = now
                 last_drink_time = 0
                 last_food_time = 0
@@ -277,12 +286,16 @@ function RestService.build(bb, navigation)
             end
 
             local is_casting = bb:get("player.is_casting", false)
+            local is_eating  = bb:get("player.eating",    false)
+            local is_drinking = bb:get("player.drinking", false)
 
             -- Drink water: only apply if no active drink buff.
             -- Checking the buff prevents cancelling+restarting the drink on each tick.
+            -- Also skip if mid-cast — starting a new item use would cancel the cast.
             if mana_pct < 0.80
                 and not has_consumable_buff(player, DRINK_AURA_IDS)
-                and (now - last_drink_time) >= CONSUMABLE_REAPPLY_INTERVAL then
+                and (now - last_drink_time) >= CONSUMABLE_REAPPLY_INTERVAL
+                and not is_casting then
                 local drink_id = find_consumable(player, DRINK_ITEMS)
                 if drink_id then
                     use_item(drink_id)
@@ -291,9 +304,11 @@ function RestService.build(bb, navigation)
             end
 
             -- Eat food: only apply if no active food buff.
+            -- Skip if mid-cast — starting a new item use would cancel the cast.
             if hp_pct < 0.90
                 and not has_consumable_buff(player, FOOD_AURA_IDS)
-                and (now - last_food_time) >= CONSUMABLE_REAPPLY_INTERVAL then
+                and (now - last_food_time) >= CONSUMABLE_REAPPLY_INTERVAL
+                and not is_casting then
                 local food_id = find_consumable(player, FOOD_ITEMS)
                 if food_id then
                     use_item(food_id)
@@ -301,11 +316,16 @@ function RestService.build(bb, navigation)
                 end
             end
 
-            -- Cast self-heal only if food is NOT ticking (casting interrupts eating)
-            -- and HP is critically low (< 30%), or no food was available
+            -- Cast self-heal only when:
+            --   1. food/drink buff is NOT active (casting interrupts eating/drinking)
+            --   2. player is NOT currently eating or drinking
+            -- Use buff checks rather than last_food_time == 0 to avoid permanently
+            -- blocking healing after the first food use even after the buff expires.
             if hp_pct < 0.90 and mana_pct > 0.10 and not is_casting
                 and heal_spell_id and (now - last_heal_time) > 2.0
-                and last_food_time == 0 then
+                and not has_consumable_buff(player, FOOD_AURA_IDS)
+                and not has_consumable_buff(player, DRINK_AURA_IDS)
+                and not is_eating and not is_drinking then
                 if core.input and core.input.cast_target_spell and player then
                     pcall(function()
                         core.input.cast_target_spell(heal_spell_id, player)

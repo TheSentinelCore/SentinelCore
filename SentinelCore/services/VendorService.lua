@@ -44,7 +44,7 @@ VendorService.__index = VendorService
 ---@param cfg table
 ---@param cache table
 ---@return VendorService
-function VendorService:new(event_bus, blackboard, navigation, world_data, inventory, cfg, cache)
+function VendorService:new(event_bus, blackboard, navigation, world_data, inventory, cfg, cache, logger)
     local o = setmetatable({}, VendorService)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -69,6 +69,8 @@ function VendorService:new(event_bus, blackboard, navigation, world_data, invent
     o._sell_count = 0
     o._last_sell_at = 0
     o._sell_started_at = 0
+    o._repair_then_sell = false
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     return o
 end
 
@@ -325,6 +327,7 @@ function VendorService:_complete_vendor(now, returned_to_anchor)
     self._return_pending = false
     self._return_started_at = 0
     self:_update_cache(self._active_candidate, "ok", self._active_candidate and self._active_candidate.path_cost or nil)
+    self._log:info("vendor trip completed")
 
     self._event_bus:emit(Events.VENDOR_COMPLETED, {
         timestamp = now,
@@ -338,7 +341,13 @@ end
 ---@param vendor table
 ---@return game_object|nil
 function VendorService:_find_vendor_object(vendor)
-    local objects = core and core.object_manager and core.object_manager.get_visible_objects and core.object_manager.get_visible_objects() or {}
+    local objects = {}
+    if core and core.object_manager and core.object_manager.get_visible_objects then
+        local ok_objs, result = pcall(core.object_manager.get_visible_objects)
+        if ok_objs and type(result) == "table" then
+            objects = result
+        end
+    end
     local target_npc_id = tonumber(vendor.npc_id) or 0
 
     local best = nil
@@ -386,6 +395,7 @@ function VendorService:start(canonical_ctx)
     self._return_started_at = 0
     self._return_pending = false
 
+    self._log:info("vendor trip started map=%d", tonumber(canonical_ctx.map_id) or 0)
     self._event_bus:emit(Events.VENDOR_STARTED, {
         timestamp = self._started_at,
         map_id = canonical_ctx.map_id,
@@ -452,6 +462,7 @@ function VendorService:start(canonical_ctx)
                 end
 
                 if not travel_ok then
+                    self._log:warn("vendor travel failed: %s", tostring(travel_error or "unreachable"))
                     self._state = "failed"
                     self._last_error = travel_error or ErrorCodes.VENDOR_UNREACHABLE
                     self._event_bus:emit(Events.VENDOR_FAILED, {
@@ -512,6 +523,7 @@ function VendorService:update()
         if not vendor_obj then
             local timeout = tonumber(self._cfg.interaction_timeout) or 10
             if now - self._interaction_started_at > timeout then
+                self._log:warn("vendor interaction timeout after %.1fs", now - self._interaction_started_at)
                 self._state = "failed"
                 self._last_error = ErrorCodes.VENDOR_INTERACTION_TIMEOUT
                 self:_update_cache(self._active_candidate, "interaction_timeout", self._active_candidate and self._active_candidate.path_cost)
@@ -558,15 +570,32 @@ function VendorService:update()
         self._sell_count = 0
         self._sell_started_at = now
         self._last_sell_at = 0
-        self._sub_state = "selling"
 
-        if #self._sell_queue > 0 then
+        -- Repair FIRST when durability is critically low (< 15%) — equipment
+        -- may break mid-sell loop otherwise. Otherwise sell first, then repair.
+        local durability_pct = tonumber(self._blackboard:get("player.durability_pct", 1.0)) or 1.0
+        local can_repair = self._active_candidate and self._active_candidate.can_repair == true
+        local policy = self._inventory and self._inventory.get_policy
+            and self._inventory:get_policy() or {}
+        if durability_pct < 0.15 and policy.repair_enabled == true and can_repair then
+            self._sub_state = "repairing"
+            -- After urgent repair, continue to sell
+            -- We'll re-enter selling after repairing by letting the sub-state
+            -- flow to "done", which completes the trip. Instead, override to go
+            -- back to selling after repair by using a flag.
+            self._repair_then_sell = true
+        else
+            self._repair_then_sell = false
+            self._sub_state = "selling"
+        end
+
+        if self._sub_state == "selling" and #self._sell_queue > 0 then
             self._event_bus:emit(Events.VENDOR_SELL_STARTED, {
                 timestamp = now,
                 item_count = #self._sell_queue,
             })
         end
-        -- Fall through to selling
+        -- Fall through to selling or repairing
     end
 
     -- Sub-state: sell items one by one with throttle
@@ -574,6 +603,7 @@ function VendorService:update()
         -- Check sell timeout
         local sell_timeout = tonumber(self._cfg.vendor_sell_timeout) or 30
         if now - self._sell_started_at > sell_timeout then
+            self._log:warn("vendor sell timeout: sold %d before timeout", self._sell_count)
             self._state = "failed"
             self._last_error = ErrorCodes.VENDOR_SELL_TIMEOUT
             self:_update_cache(self._active_candidate, "sell_timeout", self._active_candidate and self._active_candidate.path_cost)
@@ -610,6 +640,7 @@ function VendorService:update()
 
         -- All items sold
         if self._sell_count > 0 then
+            self._log:info("sell loop completed: %d items", self._sell_count)
             self._event_bus:emit(Events.VENDOR_SELL_COMPLETED, {
                 timestamp = now,
                 items_sold = self._sell_count,
@@ -620,19 +651,67 @@ function VendorService:update()
         -- Fall through to repairing
     end
 
-    -- Sub-state: repair (placeholder until API discovery)
+    -- Sub-state: repair
     if self._sub_state == "repairing" then
         local policy = self._inventory and self._inventory.get_policy
             and self._inventory:get_policy() or {}
         local can_repair = self._active_candidate and self._active_candidate.can_repair == true
         if policy.repair_enabled == true and can_repair then
+            -- Determine whether to repair before or after selling based on durability.
+            -- Durability critical (< 15%) is already handled by selling first in the
+            -- pipeline (sell sub-state runs before repair), so we always repair here.
+            local repaired = false
+            local repair_cost = 0
+
+            -- Query repair cost to confirm items actually need repair
+            if core and core.inventory and type(core.inventory.get_total_repair_cost) == "function" then
+                local ok_cost, cost = pcall(core.inventory.get_total_repair_cost)
+                if ok_cost then
+                    repair_cost = tonumber(cost) or 0
+                end
+            end
+
+            if repair_cost > 0 then
+                -- Attempt repair via dedicated API (preferred)
+                if core and core.input and type(core.input.repair_all_items) == "function" then
+                    local ok_rep = pcall(core.input.repair_all_items)
+                    repaired = ok_rep
+                elseif core and core.input and type(core.input.click_action_by_id) == "function" then
+                    -- Fallback: click the "Repair All" UI button exposed by the engine
+                    local ok_rep = pcall(core.input.click_action_by_id, "repair_all")
+                    repaired = ok_rep
+                end
+
+                if repaired then
+                    self._log:info("Repair executed (cost=%d copper)", repair_cost)
+                else
+                    self._log:warn("Repair attempted but no repair API available")
+                end
+            else
+                self._log:debug("No repair needed (cost=0)")
+            end
+
             self._event_bus:emit(Events.VENDOR_REPAIR_COMPLETED, {
                 timestamp = now,
-                repaired = true,
+                repaired = repaired,
+                repair_cost = repair_cost,
             })
         end
-        self._sub_state = "done"
-        -- Fall through to done
+
+        -- If repair was performed first (critical durability), now proceed to sell
+        if self._repair_then_sell then
+            self._repair_then_sell = false
+            self._sub_state = "selling"
+            if #self._sell_queue > 0 then
+                self._event_bus:emit(Events.VENDOR_SELL_STARTED, {
+                    timestamp = now,
+                    item_count = #self._sell_queue,
+                })
+            end
+        else
+            self._sub_state = "done"
+        end
+        -- Fall through to selling or done
     end
 
     -- Sub-state: done — begin return journey or complete
@@ -657,6 +736,7 @@ function VendorService:update()
                 end
 
                 if not ok then
+                    self._log:warn("vendor return failed: %s", tostring(reason or "unknown"))
                     self._state = "failed"
                     self._last_error = reason or ErrorCodes.VENDOR_UNREACHABLE
                     if self._active_candidate then
@@ -682,6 +762,13 @@ function VendorService:update()
 end
 
 function VendorService:reset()
+    -- Stop navigation if a travel or return journey was in progress so the
+    -- path doesn't outlive the vendor trip (e.g. after BT timeout preemption).
+    if (self._state == "travel" or self._state == "returning") and self._nav then
+        if type(self._nav.stop) == "function" then
+            pcall(self._nav.stop, self._nav)
+        end
+    end
     self._state = "idle"
     self._last_error = nil
     self._ctx = nil
@@ -696,6 +783,7 @@ function VendorService:reset()
     self._sell_count = 0
     self._last_sell_at = 0
     self._sell_started_at = 0
+    self._repair_then_sell = false
 end
 
 --- Build BT node for vendor phase (used by GrindService).
@@ -718,8 +806,14 @@ function VendorService:build()
                 local state = self:get_state()
 
                 if state == "idle" then
+                    -- Use the resolved canonical context (has canonical map_id, zone_id,
+                    -- area_id). Falling back to ui_map_id would cause all vendors to be
+                    -- filtered by _candidate_allowed() due to map_id mismatch.
+                    local canonical = bb:get("context.canonical") or {}
                     local ctx = {
-                        map_id = bb:get("context.ui_map_id", 0),
+                        map_id  = canonical.map_id  or bb:get("context.ui_map_id", 0),
+                        zone_id = canonical.zone_id or 0,
+                        area_id = canonical.area_id or 0,
                     }
                     local ok, err = self:start(ctx)
                     if not ok then return BTStatus.FAILURE end

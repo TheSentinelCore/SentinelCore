@@ -336,7 +336,9 @@ end
 function Condition:tick(bb, dt)
     local ok, result = pcall(self._check_fn, bb)
     if not ok then
-        core.log_error("[BT] Condition '" .. self.name .. "' error: " .. tostring(result))
+        if core and core.log_error then
+            core.log_error("[BT] Condition '" .. self.name .. "' error: " .. tostring(result))
+        end
         return BT.FAILURE
     end
     if result then return BT.SUCCESS end
@@ -365,7 +367,9 @@ end
 function Action:tick(bb, dt)
     local ok, result = pcall(self._execute_fn, bb, dt)
     if not ok then
-        core.log_error("[BT] Action '" .. self.name .. "' error: " .. tostring(result))
+        if core and core.log_error then
+            core.log_error("[BT] Action '" .. self.name .. "' error: " .. tostring(result))
+        end
         return BT.FAILURE
     end
     return result

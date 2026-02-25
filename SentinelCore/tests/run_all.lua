@@ -46,6 +46,12 @@ local tests = {
     "tests/test_ai018_integration_smoke",
     "tests/test_ai020_reactive_bt",
     "tests/test_ai021_edge_case_fixes",
+    "tests/test_sc025_logger",
+    "tests/test_sc026_rest_interrupt_resume",
+    "tests/test_sc027_flee_centroid",
+    "tests/test_sc028_pull_nav_unavailable",
+    "tests/test_sc029_mount_service",
+    "tests/test_sc030_zone_config_session",
 }
 
 ---@return table

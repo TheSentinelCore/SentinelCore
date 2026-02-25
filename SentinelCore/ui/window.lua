@@ -1655,6 +1655,214 @@ local function register_tabs(ui, client)
             end,
         })
     end)
+
+    -- ================================================================
+    -- TAB 5: STATS
+    -- ================================================================
+    ui:add_tab({ id = "stats", label = "Stats" }, function(t)
+
+        local function format_hms(secs)
+            local s = math.floor(secs or 0)
+            return string.format("%02d:%02d:%02d", math.floor(s / 3600), math.floor((s % 3600) / 60), s % 60)
+        end
+
+        -- 1. Session (metric_grid)
+        t:metric_grid({
+            label = "Session",
+            elements = {
+                {
+                    label = "Uptime",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry then return 0 end
+                        return tonumber(snap.telemetry.uptime_secs) or 0
+                    end,
+                    format_fn = function(v) return format_hms(v) end,
+                },
+                {
+                    label = "Kills/hr",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.rates then return 0 end
+                        return tonumber(snap.telemetry.rates.kills_per_hour) or 0
+                    end,
+                    format_fn = function(v) return string.format("%.1f", v) end,
+                },
+                {
+                    label = "Kills",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return 0 end
+                        return tonumber(snap.telemetry.counters.kills) or 0
+                    end,
+                    format_fn = function(v) return string.format("%d", v) end,
+                },
+                {
+                    label = "Deaths",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return 0 end
+                        return tonumber(snap.telemetry.counters.deaths) or 0
+                    end,
+                    format_fn = function(v) return string.format("%d", v) end,
+                    color = color.new(255, 69, 58, 255),
+                },
+            },
+        })
+
+        -- 2. Activity (row_list type=info)
+        t:row_list({
+            label = "Activity",
+            elements = {
+                {
+                    type = "info", label = "Vendor Trips",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.vendor_trips or 0)
+                    end,
+                },
+                {
+                    type = "info", label = "Pull Successes",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.pull_successes or 0)
+                    end,
+                },
+                {
+                    type = "info", label = "Rotation Casts",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0" end
+                        return tostring(snap.telemetry.counters.rotation_casts or 0)
+                    end,
+                },
+                {
+                    type = "info", label = "Rest Time",
+                    value_fn = function()
+                        local snap = client and client.get_snapshot and client:get_snapshot() or nil
+                        if not snap or not snap.telemetry or not snap.telemetry.counters then return "0%" end
+                        local rest = tonumber(snap.telemetry.counters.rest_time_secs) or 0
+                        local uptime = tonumber(snap.telemetry.uptime_secs) or 0
+                        if uptime <= 0 then return "0%" end
+                        return string.format("%.1f%%  (%s)", (rest / uptime) * 100.0, format_hms(rest))
+                    end,
+                },
+            },
+        })
+
+        -- No session placeholder (custom_render, visible when no client)
+        t:custom_render({
+            visible_when = function() return not (client and client.get_snapshot) end,
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x, y_offset), colors.text_disabled, "No session active")
+                return y_offset + 20
+            end,
+        })
+    end)
+
+    -- ================================================================
+    -- TAB 6: LOG
+    -- ================================================================
+    ui:add_tab({ id = "log", label = "Log" }, function(t)
+
+        local Logger = require("core/Logger")
+
+        local LOG_COLORS = {
+            DEBUG   = color.new(128, 128, 128, 255),
+            INFO    = color.new(255, 255, 255, 255),
+            WARN    = color.new(255, 204,   0, 255),
+            WARNING = color.new(255, 204,   0, 255),
+            ERROR   = color.new(255,  77,  77, 255),
+        }
+
+        local function format_hms_log(secs)
+            local s = math.floor(secs or 0)
+            return string.format("%02d:%02d:%02d", math.floor(s / 3600), math.floor((s % 3600) / 60), s % 60)
+        end
+
+        -- 1. Clear button (custom_render)
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local width = window:get_size().x - (2 * LAYOUT.padding_side)
+                local button_h = 26
+
+                local btn_start = vec2.new(x, y_offset)
+                local btn_end = vec2.new(x + width, y_offset + button_h)
+                local hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
+                if hovered then
+                    window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
+                end
+
+                local bg = hovered and lighten_color(colors.primary_accent, 15) or colors.primary_accent
+                window:render_rect_filled(btn_start, btn_end, bg, 8)
+
+                local label = "Clear Log"
+                local ts = window:get_text_size(label)
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x + (width - ts.x) / 2, y_offset + (button_h - ts.y) / 2),
+                    colors.text_primary, label)
+
+                if hovered and window:is_rect_clicked(btn_start, btn_end) then
+                    Logger.clear_history()
+                end
+
+                return y_offset + button_h + 6
+            end,
+        })
+
+        -- 2. Log entries (custom_render)
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local width = window:get_size().x - (2 * LAYOUT.padding_side)
+                local line_h = 16
+
+                local win_h = window:get_size().y
+                local available_h = math.max(line_h, win_h - y_offset - LAYOUT.padding_bottom)
+                local max_lines = math.floor(available_h / line_h)
+
+                local entries = Logger.get_history(50)
+                local shown = {}
+                for i = #entries, 1, -1 do
+                    shown[#shown + 1] = entries[i]
+                    if #shown >= max_lines then break end
+                end
+
+                for i = 1, #shown do
+                    local entry = shown[i]
+                    local lvl = tostring(entry.level or "INFO"):upper()
+                    local line = string.format("[%s] [%s] %s: %s",
+                        format_hms_log(entry.timestamp),
+                        lvl,
+                        tostring(entry.source or ""),
+                        tostring(entry.message or ""))
+                    local col = LOG_COLORS[lvl] or colors.text_secondary
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), col, line)
+                    y_offset = y_offset + line_h
+                end
+
+                if #shown == 0 then
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.text_disabled, "No log entries")
+                    y_offset = y_offset + line_h
+                end
+
+                return y_offset
+            end,
+        })
+    end)
 end
 
 -- ============================================================================

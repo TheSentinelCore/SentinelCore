@@ -144,7 +144,7 @@ CombatService.__index = CombatService
 ---@param rotation RotationEngine
 ---@param cfg table
 ---@return CombatService
-function CombatService:new(event_bus, blackboard, navigation, targeting, rotation, cfg)
+function CombatService:new(event_bus, blackboard, navigation, targeting, rotation, cfg, logger)
     local o = setmetatable({}, CombatService)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -152,6 +152,7 @@ function CombatService:new(event_bus, blackboard, navigation, targeting, rotatio
     o._targeting = targeting
     o._rotation = rotation
     o._cfg = cfg or {}
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     o._state = "idle"
     o._active_target = nil
     o._started_at = 0
@@ -175,6 +176,12 @@ function CombatService:new(event_bus, blackboard, navigation, targeting, rotatio
     o._combat_target_was_in_combat = false
     o._los_check_at = 0
     o._los_blocked = false
+    o._pull_los_check_at = 0
+    o._pull_los_blocked = false
+    o._target_flee_detected = false
+    o._target_last_pos = nil
+    o._target_flee_check_at = 0
+    o._caster_rush_until = 0
     o:_set_state("idle")
     return o
 end
@@ -187,8 +194,12 @@ end
 ---@private
 ---@param value string
 function CombatService:_set_state(value)
+    local prev = self._state
     self._state = tostring(value or "idle")
     self._blackboard:set("combat.state", self._state)
+    if prev ~= self._state then
+        self._log:info("combat state: %s -> %s", tostring(prev), self._state)
+    end
 end
 
 ---@private
@@ -699,7 +710,10 @@ function CombatService:_issue_pull_move_to(target_pos, now, reason)
     })
     self._pull_nav_last_dest = copy_vec3(destination)
     self._pull_nav_last_move_at = now
-    self._pull_nav_repath_pending = false
+    -- NOTE: do NOT clear _pull_nav_repath_pending here. When used_soft_repath is true,
+    -- the flag must stay set until the async path response arrives and fires the callback
+    -- (line ~678). The failure path (line ~687) and move_to path (line ~693) already clear
+    -- it at the point they take effect.
 end
 
 ---@private
@@ -813,7 +827,10 @@ function CombatService:_issue_combat_move_to(target_pos, now, reason)
     })
     self._combat_nav_last_dest = copy_vec3(destination)
     self._combat_nav_last_move_at = now
-    self._combat_nav_repath_pending = false
+    -- NOTE: do NOT clear _combat_nav_repath_pending here. When used_soft_repath is true,
+    -- the flag must stay set until the async path response arrives and fires the callback
+    -- (line ~792). The failure path (line ~801) and move_to path (line ~807) already clear
+    -- it at the point they take effect.
     self._combat_chasing = true
 end
 
@@ -823,6 +840,9 @@ end
 function CombatService:_update_combat_navigation(target_pos, now)
     local destination_changed = self:_combat_destination_changed(target_pos)
     local move_to_cooldown = tonumber(self._cfg.combat_chase_move_to_cooldown) or 0.75
+    if self._target_flee_detected then
+        move_to_cooldown = move_to_cooldown * 0.5
+    end
     local repath_cooldown = tonumber(self._cfg.combat_chase_repath_cooldown) or math.max(0.20, move_to_cooldown * 0.5)
     local refresh_cooldown = tonumber(self._cfg.combat_chase_refresh_cooldown) or (move_to_cooldown * 3.0)
     local since_last_move = now - (tonumber(self._combat_nav_last_move_at) or 0)
@@ -902,6 +922,7 @@ end
 ---@return string
 function CombatService:_fail_and_reset(error_code, now, target)
     self._last_error = error_code or ErrorCodes.PULL_FAILED
+    self._log:warn("combat failed: %s", tostring(self._last_error))
     self:_mark_target_failed(target or self._active_target, self._last_error)
     self._event_bus:emit(Events.COMBAT_FAILED, {
         timestamp = now,
@@ -937,6 +958,53 @@ function CombatService:_update_los_state(target, now)
         self._los_blocked = (has_los ~= true)
     else
         self._los_blocked = false
+    end
+end
+
+---@private
+---@param target game_object
+---@param now number
+---@param distance number
+function CombatService:_update_flee_and_caster_rush(target, now, distance)
+    local bb = self._blackboard
+
+    if now - self._target_flee_check_at >= 0.5 then
+        self._target_flee_check_at = now
+        local t_hp = safe_method(target, "get_health_percentage") or 1.0
+        if t_hp > 1.0 then t_hp = t_hp / 100.0 end
+        if t_hp < 0.20 then
+            local t_pos = safe_method(target, "get_position")
+            local p_pos = bb:get("player.position")
+            if t_pos and p_pos and self._target_last_pos then
+                local prev_dist_sq = (self._target_last_pos.x - p_pos.x)^2 + (self._target_last_pos.y - p_pos.y)^2
+                local cur_dist_sq  = (t_pos.x - p_pos.x)^2 + (t_pos.y - p_pos.y)^2
+                if cur_dist_sq > prev_dist_sq + 4.0 then
+                    self._target_flee_detected = true
+                end
+            end
+            local t_pos2 = safe_method(target, "get_position")
+            if t_pos2 then
+                self._target_last_pos = { x = t_pos2.x, y = t_pos2.y, z = t_pos2.z }
+            end
+        else
+            self._target_flee_detected = false
+            self._target_last_pos = nil
+        end
+    end
+    bb:set("combat.target_fleeing", self._target_flee_detected)
+
+    local MELEE_CLASSES = { [1]=true, [2]=true, [4]=true, [6]=true, [7]=true }
+    local class_id = bb:get("player.class_id", 0)
+    if MELEE_CLASSES[class_id] then
+        local t_cast = safe_method(target, "is_casting_spell") == true
+                    or safe_method(target, "is_channelling_spell") == true
+        if t_cast and distance and distance > 5.0 and now > self._caster_rush_until then
+            self._caster_rush_until = now + 2.0
+            local t_pos = safe_method(target, "get_position")
+            if t_pos then
+                self:_issue_combat_move_to(t_pos, now, nil)
+            end
+        end
     end
 end
 
@@ -1039,12 +1107,16 @@ function CombatService:_maybe_switch_to_attacker(target, now)
     end
 
     local ok_defensive, defensive = pcall(self._targeting.acquire_defensive_target, self._targeting, target)
-    if not ok_defensive or not defensive or defensive == target then
+    if not ok_defensive or not defensive or is_same_unit(defensive, target) then
         return target
     end
 
     self._active_target = defensive
     self._blackboard:set("combat.target", defensive)
+    -- Reset HP baseline so the evade detector doesn't false-fire on the HP
+    -- delta between the old target and the newly-switched defensive target.
+    self._combat_target_last_health_pct = nil
+    self._combat_target_was_in_combat = false
     if safe_method(target, "is_dead") == true then
         self._blackboard:set("loot.pending_target", target)
     end
@@ -1117,6 +1189,7 @@ function CombatService:start(target)
         pcall(core.input.cancel_spells)
     end
 
+    self._log:info("combat start: %s", safe_target_name(target))
     self._event_bus:emit(Events.PULL_STARTED, {
         timestamp = now,
         target_name = safe_target_name(target),
@@ -1141,6 +1214,13 @@ function CombatService:reset()
     self._combat_target_was_in_combat = false
     self._los_check_at = 0
     self._los_blocked = false
+    self._pull_los_check_at = 0
+    self._pull_los_blocked = false
+    self._target_flee_detected = false
+    self._target_last_pos = nil
+    self._caster_rush_until = 0
+    self._blackboard:set("combat.entered_at", nil)
+    self._blackboard:set("combat.target_fleeing", false)
     if self._targeting and self._targeting.clear_target then
         pcall(self._targeting.clear_target, self._targeting, "combat_reset")
     end
@@ -1204,6 +1284,41 @@ function CombatService:_execute_pull(target)
     local engage_range = math.max(1.0, pull_range - math.max(0, engage_padding))
     local distance = self:_distance_to_target(target)
 
+    -- C3: NavServer raycast LoS pre-pull check (throttled to once per 2s).
+    -- Fires an async raycast to detect navmesh obstructions between player and
+    -- target. The callback writes _pull_los_blocked for the next window.
+    -- Defaults to fail-open (not blocked) when NavServer is unavailable.
+    local los_check_interval = tonumber(self._cfg.pull_los_check_interval) or 2.0
+    if (now - (tonumber(self._pull_los_check_at) or 0)) >= los_check_interval then
+        self._pull_los_check_at = now
+        local player_pos = self._blackboard:get("player.position")
+        local t_pos = safe_method(target, "get_position")
+        if player_pos and t_pos then
+            -- Access NavServer raycast via nav_client (NavigationService layer).
+            local client = self._nav and type(self._nav._resolve_client) == "function"
+                and self._nav:_resolve_client() or nil
+            local nav_svc = client and client.nav_client or nil
+            if nav_svc and type(nav_svc.raycast) == "function" then
+                -- Capture self reference for use in the async callback.
+                local self_ref = self
+                pcall(function()
+                    nav_svc:raycast(player_pos, t_pos, function(ok_rc, data, _err)
+                        if ok_rc and type(data) == "table" and data.hit == true then
+                            self_ref._pull_los_blocked = true
+                            self_ref._log:debug("pull: NavServer raycast blocked — approaching for LoS")
+                        else
+                            self_ref._pull_los_blocked = false
+                        end
+                    end)
+                end)
+                -- _pull_los_blocked retains its previous value until the callback fires.
+            else
+                -- NavServer unavailable: fail-open.
+                self._pull_los_blocked = false
+            end
+        end
+    end
+
     if distance > engage_range then
         self._pull_in_range_since = 0
         local target_pos = safe_method(target, "get_position")
@@ -1240,6 +1355,18 @@ function CombatService:_execute_pull(target)
         end
     else
         self._pull_in_range_since = now
+    end
+
+    -- C3: If NavServer raycast indicates LoS is blocked, move closer to break
+    -- obstruction before attempting the ranged pull. Reset in_range timer so we
+    -- re-check stability once the bot gets a clear shot.
+    if self._pull_los_blocked == true then
+        self._pull_in_range_since = 0
+        local target_pos_los = safe_method(target, "get_position")
+        if target_pos_los then
+            self:_update_pull_navigation(target_pos_los, now)
+        end
+        return true, nil
     end
 
     if core and core.input and core.input.set_target then
@@ -1386,8 +1513,12 @@ function CombatService:update()
     end
 
     if self._state == "combat" then
+        if not self._blackboard:get("combat.entered_at") then
+            self._blackboard:set("combat.entered_at", now)
+        end
         local distance = self:_distance_to_target(target)
         self:_update_los_state(target, now)
+        self:_update_flee_and_caster_rush(target, now, distance)
         if self._los_blocked then
             local los_target_pos = safe_method(target, "get_position")
             if los_target_pos then
@@ -1427,6 +1558,16 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
     local chase_repath_pending = false
     local last_chase_target = nil
     local target_lost_at = nil
+    local nav_fail_until = 0
+    -- Tracks when we last called navigation:stop() due to a target change.
+    -- We skip issuing a new move_to for ~50ms after a stop so the async HTTP
+    -- request reaches the NavClient before we send a potentially conflicting path.
+    local nav_stop_at = 0
+    -- R6: In-melee stuck detection. If we're in melee range but no action lands
+    -- for 8s (all on cooldown / blocked), re-face + call set_target to jog the
+    -- server into re-evaluating the target, which often unsticks cast failures.
+    local last_action_at = 0
+    local last_stuck_recovery_at = 0
 
     return BT.ReactiveSequence:new("combat", {
         -- Gate: must be in combat WITH a valid living target.
@@ -1444,6 +1585,10 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                 chase_repath_pending = false
                 last_chase_target = nil
                 target_lost_at = nil
+                nav_fail_until = 0
+                nav_stop_at = 0
+                last_action_at = 0
+                last_stuck_recovery_at = 0
                 return false
             end
             local target = bb:get("combat.target")
@@ -1458,8 +1603,20 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             end
             -- Target dead/missing but still in combat: keep BT active briefly
             -- so exploration doesn't fire during the re-acquisition window.
+            -- Immediately queue the dead target for looting so LootService (priority
+            -- 7) can pick it up as soon as this gate returns false — before
+            -- TargetingService:update() (direct service call) replaces combat.target
+            -- with a new living mob and the kill-detection path in has_lootable misses.
             if not target_lost_at then
                 target_lost_at = get_now()
+                if target and not bb:get("loot.pending_target") then
+                    local has_loot = safe_method(target, "has_loot")
+                    local can_loot  = safe_method(target, "can_be_looted")
+                    if has_loot == true or can_loot == true then
+                        bb:set("loot.pending_target", target)
+                    end
+                end
+                bb:clear("combat.target")
             end
             if (get_now() - target_lost_at) < 1.5 then
                 return true
@@ -1496,13 +1653,21 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             -- Target changed (new combat or target switch): stop any stale
             -- nav immediately so the player doesn't walk toward an old
             -- exploration/pull waypoint during async pathfinding.
-            if target ~= last_chase_target then
+            -- Unconditional stop (ignore is_moving()): a move_to may be
+            -- in-flight (path request pending, HTTP not yet responded) so
+            -- is_moving() can still read false while the NavClient is about
+            -- to start following the old exploration/pull path.
+            if not is_same_unit(target, last_chase_target) then
                 last_chase_target = target
-                if navigation and navigation:is_moving() then
+                if navigation then
                     pcall(function() navigation:stop() end)
+                    -- Defer the next move_to by ~50ms so the stop HTTP request
+                    -- reaches NavClient before we send the new path request.
+                    nav_stop_at = get_now()
                 end
                 last_chase_dest = nil
                 chase_repath_pending = false
+                nav_fail_until = 0
             end
 
             local ok, tpos = pcall(function() return target:get_position() end)
@@ -1514,24 +1679,78 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             local dist = Helpers.distance_3d(player_pos, tpos)
 
             if dist <= 5 then
-                if navigation and navigation:is_moving() then
+                -- Unconditionally stop nav in melee range every tick.
+                -- NavClient:stop() may not abort the current in-progress waypoint on
+                -- the first call (it prevents NEW moves but the current move completes).
+                -- Repeated stop() calls ensure it halts before the next waypoint starts.
+                -- NavigationAdapter:stop() is a fast synchronous Lua call — safe to call
+                -- every frame.
+                if navigation then
                     pcall(function() navigation:stop() end)
                     last_chase_dest = nil
                     chase_repath_pending = false
                 end
+                -- R6: In-melee stuck detection — if no action has landed for 8s
+                -- re-face and re-set target to unjam the rotation evaluator.
+                local now_s = get_now()
+                local reset_point = math.max(last_action_at, combat_start_time or 0)
+                if (now_s - reset_point) >= 8.0 and (now_s - last_stuck_recovery_at) >= 10.0 then
+                    last_stuck_recovery_at = now_s
+                    if core and core.input then
+                        local ok_tp, tpos2 = pcall(function() return target:get_position() end)
+                        if ok_tp and tpos2 and core.input.look_at then
+                            pcall(core.input.look_at, tpos2)
+                        end
+                        if core.input.set_target then
+                            pcall(core.input.set_target, target)
+                        end
+                    end
+                end
+                return BTStatus.SUCCESS
+            end
+
+            -- If we just issued a stop() this tick, skip nav for one cycle so
+            -- the async stop propagates before we send a new path request.
+            local NAV_STOP_SETTLE = 0.05  -- 50ms ≈ 3 frames at 60fps
+            if get_now() < nav_stop_at + NAV_STOP_SETTLE then
                 return BTStatus.SUCCESS
             end
 
             if navigation then
-                if not navigation:is_moving() and not chase_repath_pending then
-                    last_chase_dest = tpos
-                    pcall(function() navigation:move_to(tpos) end)
-                elseif navigation:is_moving() and last_chase_dest == nil then
-                    -- Stale nav from another service (exploration, loot, etc.)
+                -- Treat nil (NavClient unavailable) as its own distinct state — not "not moving".
+                -- Bug: `not navigation:is_moving()` evaluates true for nil, causing every-frame
+                -- move_to spam with immediate silent failure when NavClient is down.
+                local moving = navigation:is_moving()
+
+                -- NavClient unavailable: skip navigation entirely this tick.
+                if moving == nil then
+                    -- no-op
+
+                elseif not moving and not chase_repath_pending then
+                    -- Not moving and no repath in flight: issue fresh move_to.
+                    -- On failure, back off 2s before retrying so we don't hammer
+                    -- a down server or unreachable destination every frame.
+                    if get_now() >= nav_fail_until then
+                        last_chase_dest = tpos
+                        navigation:move_to(tpos, function(ok)
+                            if not ok then
+                                nav_fail_until = get_now() + 2.0
+                                last_chase_dest = nil
+                            end
+                        end)
+                    end
+
+                elseif moving and last_chase_dest == nil then
+                    -- Stale nav from another service (exploration, loot, etc.).
+                    -- Stop it and arm the settle window — do NOT issue move_to() on
+                    -- the same tick as stop(). If stop() is async and move_to() is
+                    -- sent first by the NavClient's event loop, the subsequent stop()
+                    -- would cancel the new combat chase path. The settle window ensures
+                    -- stop() is processed before the fresh move_to() goes out.
                     pcall(function() navigation:stop() end)
-                    last_chase_dest = tpos
-                    pcall(function() navigation:move_to(tpos) end)
-                elseif navigation:is_moving() and not chase_repath_pending and last_chase_dest then
+                    nav_stop_at = get_now()
+
+                elseif moving and not chase_repath_pending and last_chase_dest then
                     if Helpers.distance_3d(last_chase_dest, tpos) > 2.0 then
                         chase_repath_pending = true
                         last_chase_dest = tpos
@@ -1547,13 +1766,27 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             return BTStatus.SUCCESS
         end),
 
-        -- Facing: only when in melee range (not chasing)
+        -- Facing: only call look_at when truly in melee range.
+        -- During the chase phase (dist > 5) the NavClient controls character
+        -- rotation toward path waypoints. Calling look_at here would oscillate
+        -- with the NavClient — character snapping between mob direction and the
+        -- next waypoint direction every tick. Let NavClient own rotation while
+        -- chasing; take over only once we stop in melee range.
         BT.Action:new("face_target", function()
+            local target = bb:get("combat.target")
+            if not target then return BTStatus.SUCCESS end
+
+            local player_pos = bb:get("player.position")
+            if player_pos then
+                local ok_d, tpos_face = pcall(function() return target:get_position() end)
+                if ok_d and tpos_face and Helpers.distance_3d(player_pos, tpos_face) > 5 then
+                    return BTStatus.SUCCESS  -- chasing: leave rotation to NavClient
+                end
+            end
+
             if navigation and navigation:is_moving() then
                 return BTStatus.SUCCESS
             end
-            local target = bb:get("combat.target")
-            if not target then return BTStatus.SUCCESS end
             local ok, pos = pcall(function() return target:get_position() end)
             if ok and pos and core.input and core.input.look_at then
                 pcall(function() core.input.look_at(pos) end)
@@ -1587,6 +1820,7 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                     pending_delay_until = nil
                     if spell_executor then
                         spell_executor(action)
+                        last_action_at = get_now()
                     end
                     return BTStatus.RUNNING
                 end

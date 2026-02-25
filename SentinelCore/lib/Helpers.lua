@@ -48,17 +48,18 @@ function Helpers.distance_3d(pos1, pos2)
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
----Calculate 2D horizontal distance between two positions (ignoring Y height)
----@param pos1 table|vec3 First position with x, z fields
----@param pos2 table|vec3 Second position with x, z fields
+---Calculate 2D horizontal distance between two positions (ignoring Z height).
+-- Uses the XY ground plane (WoW/Sylvannas convention: X=east, Y=north, Z=up).
+---@param pos1 table|vec3 First position with x, y fields
+---@param pos2 table|vec3 Second position with x, y fields
 ---@return number Distance in game units
 function Helpers.distance_2d(pos1, pos2)
     if not pos1 or not pos2 then return math.huge end
 
     local dx = (pos2.x or 0) - (pos1.x or 0)
-    local dz = (pos2.z or 0) - (pos1.z or 0)
+    local dy = (pos2.y or 0) - (pos1.y or 0)
 
-    return math.sqrt(dx * dx + dz * dz)
+    return math.sqrt(dx * dx + dy * dy)
 end
 
 ---Compute shortest 3D distance from point P to line segment AB
@@ -387,7 +388,8 @@ function Helpers._test()
     local p1 = { x = 0, y = 0, z = 0 }
     local p2 = { x = 3, y = 4, z = 0 }
     results.distance_3d = (math.abs(Helpers.distance_3d(p1, p2) - 5) < 0.001)
-    results.distance_2d = (math.abs(Helpers.distance_2d(p1, p2) - 3) < 0.001)
+    -- p1={0,0,0}, p2={3,4,0}: XY horizontal distance = sqrt(9+16) = 5
+    results.distance_2d = (math.abs(Helpers.distance_2d(p1, p2) - 5) < 0.001)
 
     -- Test clamp
     results.clamp_below = (Helpers.clamp(-5, 0, 10) == 0)
@@ -412,10 +414,10 @@ function Helpers._test()
     local tbl = { a = 1, b = 2, c = 3 }
     results.table_count = (Helpers.table_count(tbl) == 3)
 
-    -- Test is_within_radius
+    -- Test is_within_radius (XY ground plane: X=east, Y=north, Z=height)
     local center = { x = 0, y = 0, z = 0 }
-    local inside = { x = 3, y = 0, z = 4 }  -- distance = 5
-    local outside = { x = 10, y = 0, z = 10 }  -- distance > 10
+    local inside = { x = 3, y = 4, z = 0 }  -- XY distance = sqrt(9+16) = 5
+    local outside = { x = 10, y = 10, z = 0 }  -- XY distance = sqrt(200) > 10
     results.within_radius_yes = Helpers.is_within_radius(inside, center, 10)
     results.within_radius_no = not Helpers.is_within_radius(outside, center, 10)
 

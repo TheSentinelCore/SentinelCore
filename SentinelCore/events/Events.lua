@@ -75,6 +75,10 @@ local Events = {
     -- Telemetry
     TELEMETRY_FLUSHED = "telemetry.flushed",
 
+    -- World
+    HOSTILE_PLAYER_DETECTED = "world.hostile_player_detected",
+    ZONE_CHANGED = "world.zone_changed",
+
     -- Blackboard
     BB_PREFIX = "bb.",
 }

@@ -9,6 +9,7 @@ local Config = require("core/Config")
 local Sensors = require("core/Sensors")
 local Telemetry = require("core/Telemetry")
 local ConsoleLogger = require("core/ConsoleLogger")
+local Logger = require("core/Logger")
 local ModeState = require("core/ModeState")
 
 local NavigationAdapter = require("services/NavigationAdapter")
@@ -23,6 +24,7 @@ local InventoryService = require("services/InventoryService")
 local VendorService = require("services/VendorService")
 local RecoveryService = require("services/RecoveryService")
 local DeathRecoveryService = require("services/DeathRecoveryService")
+local MountService = require("services/MountService")
 
 local get_now = require("lib/TimeHelper").get_now
 local AutoAttackHelper = require("lib/AutoAttackHelper")
@@ -36,6 +38,7 @@ local GrindService = require("services/GrindService")
 local UtilityEvaluator = require("ai/UtilityEvaluator")
 local SwingTimer = require("ai/SwingTimer")
 local HumanTiming = require("ai/HumanTiming")
+local SessionBehavior = require("ai/SessionBehavior")
 local RetUtil = require("rotations/paladin/RetributionUtility")
 
 ---@class SentinelClient
@@ -55,6 +58,7 @@ local RetUtil = require("rotations/paladin/RetributionUtility")
 ---@field private _utility_evaluator table
 ---@field private _swing_timer table
 ---@field private _human_timing table
+---@field private _session_behavior table
 ---@field private _grind_tree table|nil
 ---@field private _started boolean
 ---@field private _context_pending boolean
@@ -75,9 +79,9 @@ function Client:new(config)
     o._blackboard = Blackboard:new(o._event_bus)
     o._state_machine = StateMachine:new(o._event_bus)
     o._config = Config:new(config.runtime_overrides, config.persistence)
-    o._sensors = Sensors:new(o._blackboard)
+    o._sensors = Sensors:new(o._blackboard, o._event_bus, Events)
     o._telemetry = Telemetry:new(o._event_bus, o._blackboard, o._config:get_runtime_value("telemetry", "flush_interval", 1.0))
-    o._logger = ConsoleLogger:new(o._event_bus, o._blackboard)
+    o._logger = ConsoleLogger:new(o._event_bus, o._blackboard, Logger)
 
     -- Enrich non-blackboard domain events with common context fields so
     -- payload contracts stay consistent across services.
@@ -129,28 +133,51 @@ function Client:new(config)
         or 0.98
     o._blackboard:set("telemetry.idle_full_resource_threshold", idle_threshold)
 
-    local navigation = config.navigation_adapter or NavigationAdapter:new(o._event_bus, o._blackboard)
-    local world_data = config.world_data_adapter or WorldDataAdapter:new(o._event_bus, o._blackboard, runtime_cfg.world_data)
-    local objective = config.objective_service or ObjectiveService:new(o._event_bus, o._blackboard, runtime_cfg.objective)
-    local targeting = config.targeting_service or TargetingService:new(o._event_bus, o._blackboard, runtime_cfg.targeting, navigation)
+    -- Initialize Logger from config
+    local logging_cfg = runtime_cfg.logging or {}
+    Logger.set_global_level(logging_cfg.global_level or "INFO")
+    Logger.set_max_history(logging_cfg.max_history or 200)
+    o._client_log = Logger:new("Client")
+
+    o._session_cap_warned = false
+    o._session_cap_fired = false
+    o._started_at = nil
+
+    o._event_bus:on(Events.ZONE_CHANGED, function(data)
+        o._client_log:info("Zone changed: " .. tostring(data and data.from) .. " -> " .. tostring(data and data.to) .. " " .. tostring(data and data.name or ""))
+        local wd = o._services and o._services.world_data
+        if wd and type(wd.refresh) == "function" then
+            pcall(function() wd:refresh() end)
+        end
+        if data and data.to then
+            o:_apply_zone_overrides(data.to)
+        end
+    end, { owner = o })
+
+    local navigation = config.navigation_adapter or NavigationAdapter:new(o._event_bus, o._blackboard, Logger:new("Nav"))
+    local world_data = config.world_data_adapter or WorldDataAdapter:new(o._event_bus, o._blackboard, runtime_cfg.world_data, Logger:new("WorldData"))
+    local objective = config.objective_service or ObjectiveService:new(o._event_bus, o._blackboard, runtime_cfg.objective, Logger:new("Objective"))
+    local targeting = config.targeting_service or TargetingService:new(o._event_bus, o._blackboard, runtime_cfg.targeting, navigation, Logger:new("Targeting"))
     local exploration = config.exploration_service or ExplorationService:new(
         o._event_bus,
         o._blackboard,
         runtime_cfg.exploration,
         navigation,
-        targeting
+        targeting,
+        Logger:new("Exploration")
     )
-    local rotation = config.rotation_engine or RotationEngine:new(o._event_bus, o._blackboard, runtime_cfg.combat)
-    local combat = config.combat_service or CombatService:new(o._event_bus, o._blackboard, navigation, targeting, rotation, runtime_cfg.combat)
-    local loot = config.loot_service or LootService:new(o._event_bus, o._blackboard, runtime_cfg.loot, navigation)
+    local rotation = config.rotation_engine or RotationEngine:new(o._event_bus, o._blackboard, runtime_cfg.combat, Logger:new("Rotation"))
+    local combat = config.combat_service or CombatService:new(o._event_bus, o._blackboard, navigation, targeting, rotation, runtime_cfg.combat, Logger:new("Combat"))
+    local loot = config.loot_service or LootService:new(o._event_bus, o._blackboard, runtime_cfg.loot, navigation, Logger:new("Loot"))
 
     -- Policy/cache are loaded during start; seed with defaults for construction.
-    local inventory = config.inventory_service or InventoryService:new(o._event_bus, o._blackboard, runtime_cfg.inventory, o._config:get_policy())
-    local vendor = config.vendor_service or VendorService:new(o._event_bus, o._blackboard, navigation, world_data, inventory, runtime_cfg.vendor, o._config:get_vendor_cache())
-    local recovery = config.recovery_service or RecoveryService:new(o._event_bus, o._blackboard, runtime_cfg.recovery)
+    local inventory = config.inventory_service or InventoryService:new(o._event_bus, o._blackboard, runtime_cfg.inventory, o._config:get_policy(), Logger:new("Inventory"))
+    local vendor = config.vendor_service or VendorService:new(o._event_bus, o._blackboard, navigation, world_data, inventory, runtime_cfg.vendor, o._config:get_vendor_cache(), Logger:new("Vendor"))
+    local recovery = config.recovery_service or RecoveryService:new(o._event_bus, o._blackboard, runtime_cfg.recovery, Logger:new("Recovery"))
     local death_recovery = config.death_recovery_service or DeathRecoveryService:new(
-        o._event_bus, o._blackboard, runtime_cfg.death, navigation
+        o._event_bus, o._blackboard, runtime_cfg.death, navigation, Logger:new("DeathRecovery")
     )
+    local mount = config.mount_service or MountService:new(o._event_bus, o._blackboard, runtime_cfg.mount, Logger:new("Mount"))
 
     o._services = {
         blackboard = o._blackboard,
@@ -166,6 +193,7 @@ function Client:new(config)
         vendor = vendor,
         recovery = recovery,
         death_recovery = death_recovery,
+        mount = mount,
     }
 
     o._service_update_order = {
@@ -176,12 +204,14 @@ function Client:new(config)
         "loot",
         "inventory",
         "vendor",
+        "mount",
     }
 
     -- AI components for BT-driven grind mode
     o._utility_evaluator = UtilityEvaluator:new()
     o._swing_timer = SwingTimer:new()
     o._human_timing = HumanTiming:new()
+    o._session_behavior = SessionBehavior:new()
     RetUtil.register_actions(o._utility_evaluator)
 
     o._grind_tree = nil
@@ -246,6 +276,7 @@ end
 ---@param error_code string
 ---@param detail? table
 function Client:_report_critical(error_code, detail)
+    self._client_log:error("critical: %s", tostring(error_code))
     self._blackboard:set("core.fail_reason", error_code)
     self._blackboard:set("core.fail_detail", detail)
 
@@ -314,6 +345,11 @@ function Client:_apply_runtime_bindings()
     end
 
     self._blackboard:set("rotation.policy", Defaults.copy(runtime_cfg.rotation or {}))
+
+    -- Re-sync Logger global level from config
+    local logging_cfg = runtime_cfg.logging or {}
+    Logger.set_global_level(logging_cfg.global_level or "INFO")
+    Logger.set_max_history(logging_cfg.max_history or 200)
 end
 
 ---@private
@@ -583,6 +619,25 @@ function Client:_configure_mode_objectives(mode, mode_definition)
     self._services.objective:set_mode(mode_definition.id, objective_provider, self._services)
 end
 
+---@private
+---@param zone_id number|string
+function Client:_apply_zone_overrides(zone_id)
+    if not self._config then return end
+    local ok, override = pcall(function()
+        return self._config:get_zone_override(zone_id)
+    end)
+    if ok and type(override) == "table" then
+        self._client_log:info("Applying zone override for zone " .. tostring(zone_id))
+        local runtime = self._config:get_runtime()
+        if runtime then
+            for k, v in pairs(override) do
+                runtime[k] = v
+            end
+            self:_apply_runtime_bindings()
+        end
+    end
+end
+
 ---@param mode_id string
 ---@param opts? table
 ---@return boolean
@@ -590,6 +645,7 @@ end
 function Client:start(mode_id, opts)
     opts = opts or {}
     mode_id = mode_id or "grind"
+    self._client_log:info("starting mode=%s", mode_id)
 
     if self._state_machine:get_state() == "running" then
         return true, nil
@@ -659,6 +715,27 @@ function Client:start(mode_id, opts)
     self:_configure_mode_objectives(mode, mode_definition)
 
     self._started = true
+    self._started_at = get_now()
+    self._session_cap_warned = false
+    self._session_cap_fired = false
+
+    -- Enable persistent file logging for this session.
+    -- Each bot start gets its own log file named after the session ID so logs
+    -- from different runs never overwrite each other.
+    local session_id = self._telemetry:get_session_id()
+    local log_path = "SentinelCore/logs/session_" .. tostring(session_id) .. ".log"
+    pcall(function()
+        if core and core.create_data_folder then
+            core.create_data_folder("SentinelCore")
+            core.create_data_folder("SentinelCore/logs")
+        end
+        Logger.set_log_file(log_path)
+    end)
+
+    -- Start SessionBehavior timer so fatigue/idle-pause cadence is relative to this session start.
+    if self._session_behavior and type(self._session_behavior.start) == "function" then
+        pcall(function() self._session_behavior:start(get_now()) end)
+    end
 
     -- Build BT grind tree for grind mode
     if mode_definition.id == "grind" then
@@ -667,13 +744,16 @@ function Client:start(mode_id, opts)
             evaluator = self._utility_evaluator,
             swing_timer = self._swing_timer,
             human_timing = self._human_timing,
+            session_behavior = self._session_behavior,
             spell_executor = function(action) self:_execute_action(action) end,
             navigation = self._services.navigation,
             targeting = self._services.targeting,
+            rotation_engine = self._services.rotation,
             vendor_service = self._services.vendor,
             exploration_service = self._services.exploration,
             loot_service = self._services.loot,
             death_recovery_service = self._services.death_recovery,
+            mount_service = self._services.mount,
         })
         -- Clear stale BT state from previous session
         self._blackboard:clear("loot.pending_target")
@@ -696,6 +776,7 @@ end
 ---@param reason? string
 ---@return boolean
 function Client:stop(reason)
+    self._client_log:info("stopping reason=%s", tostring(reason or "-"))
     local state = self._state_machine:get_state()
     if state == "idle" then
         return true
@@ -713,12 +794,18 @@ function Client:stop(reason)
     self._services.loot:reset()
     self._services.vendor:reset()
     self._services.recovery:reset()
+    if self._services.rotation and self._services.rotation.reset then
+        self._services.rotation:reset()
+    end
     if self._services.exploration and self._services.exploration.reset then
         self._services.exploration:reset()
     end
     self._services.targeting:clear_target("stop")
     if self._services.death_recovery and self._services.death_recovery.reset then
         self._services.death_recovery:reset()
+    end
+    if self._services.mount and self._services.mount.reset then
+        self._services.mount:reset()
     end
     self._blackboard:clear("loot.pending_target")
 
@@ -740,6 +827,22 @@ function Client:stop(reason)
         timestamp = get_now(),
         reason = reason,
     })
+
+    -- Export and persist session telemetry archive on every clean stop.
+    local tel_session_id = self._telemetry and self._telemetry._session_id
+    if tel_session_id then
+        local ok_json, json_data = pcall(function()
+            return self._telemetry:export_session_json()
+        end)
+        if ok_json and type(json_data) == "string" and json_data ~= "" then
+            pcall(function()
+                self._config:get_persistence():save_session_telemetry(tel_session_id, json_data)
+            end)
+        end
+    end
+
+    -- Disable file logging now that the session is done.
+    pcall(function() Logger.set_log_file(nil) end)
 
     self:_write_runtime_state(true)
     return true
@@ -821,6 +924,25 @@ function Client:update()
 
     local state = self._state_machine:get_state()
     local now = self._blackboard:get("_time", 0)
+
+    -- F6: Session length hard cap
+    if state == "running" then
+        local max_session_minutes = (self._config and self._config:get_runtime()
+            and self._config:get_runtime().policy
+            and self._config:get_runtime().policy.max_session_minutes) or 240
+        local session_elapsed_mins = (get_now() - (self._started_at or get_now())) / 60.0
+
+        if session_elapsed_mins >= max_session_minutes then
+            if not self._session_cap_fired then
+                self._session_cap_fired = true
+                self:_report_critical(ErrorCodes.SESSION_EXPIRED, "Max session duration reached (" .. math.floor(session_elapsed_mins) .. " min)")
+            end
+            return
+        elseif session_elapsed_mins >= max_session_minutes * 0.80 and not self._session_cap_warned then
+            self._session_cap_warned = true
+            self._client_log:warn("Session approaching max duration: " .. string.format("%.0f/%.0f min", session_elapsed_mins, max_session_minutes))
+        end
+    end
 
     if state == "running" then
         -- 2) Dependency health checks (nav needed for corpse run).

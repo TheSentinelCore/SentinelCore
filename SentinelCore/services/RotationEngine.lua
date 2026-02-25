@@ -155,11 +155,12 @@ RotationEngine.__index = RotationEngine
 ---@param blackboard Blackboard
 ---@param cfg table
 ---@return RotationEngine
-function RotationEngine:new(event_bus, blackboard, cfg)
+function RotationEngine:new(event_bus, blackboard, cfg, logger)
     local o = setmetatable({}, RotationEngine)
     o._event_bus = event_bus
     o._blackboard = blackboard
     o._cfg = cfg or {}
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     o._registry = RotationRegistry:new()
     o._queue = nil
     o._spell_helper = nil
@@ -825,7 +826,7 @@ end
 function RotationEngine:_action_retry_target_guid(action, ctx)
     local action_type = tostring(action and action.action_type or "")
     local target = nil
-    if action_type == "cast_spell_target" then
+    if action_type == "cast_spell_target" or action_type == "channel_spell" then
         target = unwrap_game_object(ctx and ctx.target)
     elseif action_type == "cast_spell_self" then
         target = unwrap_game_object(ctx and ctx.player)
@@ -875,13 +876,18 @@ function RotationEngine:_prune_action_retry_windows(now)
         return
     end
 
+    -- Sort by retry_until ascending: evict entries closest to expiry first.
+    -- Preserves the longest-remaining retry blocks (most useful to keep).
+    local sorted = {}
+    for key, retry_until in pairs(self._action_retry_until) do
+        sorted[#sorted + 1] = { key = key, retry_until = tonumber(retry_until) or 0 }
+    end
+    table.sort(sorted, function(a, b) return a.retry_until < b.retry_until end)
     local overflow = active_count - max_entries
-    for key, _ in pairs(self._action_retry_until) do
-        self._action_retry_until[key] = nil
+    for i = 1, #sorted do
+        self._action_retry_until[sorted[i].key] = nil
         overflow = overflow - 1
-        if overflow <= 0 then
-            break
-        end
+        if overflow <= 0 then break end
     end
 end
 
@@ -1018,6 +1024,9 @@ function RotationEngine:_estimate_action_retry_backoff(action, ctx, reason, now)
     elseif backoff > max_backoff then
         backoff = max_backoff
     end
+    -- Add ±5% jitter so repeated failed actions don't retry in a detectable
+    -- fixed-interval pattern (anti-detection: non-deterministic timing).
+    backoff = backoff * (0.95 + math.random() * 0.10)
     return backoff
 end
 
@@ -1087,7 +1096,8 @@ end
 function RotationEngine:_resolve_action_spell_id(action, ctx)
     if action.action_type ~= "cast_spell_target"
         and action.action_type ~= "cast_spell_self"
-        and action.action_type ~= "cast_spell_position" then
+        and action.action_type ~= "cast_spell_position"
+        and action.action_type ~= "channel_spell" then
         return nil, nil
     end
 
@@ -1234,6 +1244,21 @@ function RotationEngine:_execute_queue_first(action, ctx)
         return true, nil
     end
 
+    if action.action_type == "channel_spell" and self._queue.queue_spell_target then
+        if not is_native_game_object(cast_target) then
+            return false, ErrorCodes.CAST_INVALID_TARGET
+        end
+        prepare_target_cast(cast_target, action)
+        -- Channels never allow movement (player must stay still while channeling).
+        local ok = pcall(self._queue.queue_spell_target, self._queue, spell_id, cast_target, qp,
+            "SentinelCore", false)
+        if not ok then
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
+        end
+        self._last_cast_at = now
+        return true, nil
+    end
+
     if action.action_type == "use_item_self" and self._queue.queue_item_self then
         if item_id <= 0 then
             return false, ErrorCodes.CAST_GUARD_BLOCKED
@@ -1289,12 +1314,32 @@ function RotationEngine:_execute_guarded_fallback(action, ctx)
 
     if action.action_type == "cast_spell_target"
         or action.action_type == "cast_spell_self"
-        or action.action_type == "cast_spell_position" then
+        or action.action_type == "cast_spell_position"
+        or action.action_type == "channel_spell" then
         if core and core.spell_book and core.spell_book.is_usable_spell then
             local ok_usable, usable = pcall(core.spell_book.is_usable_spell, spell_id)
             if ok_usable and usable == false then
                 return false, ErrorCodes.CAST_GUARD_BLOCKED
             end
+        end
+    end
+
+    if action.action_type == "channel_spell" then
+        local cast_target = unwrap_game_object(ctx.target)
+        if not cast_target then
+            return false, ErrorCodes.TARGET_NOT_FOUND
+        end
+        if not is_native_game_object(cast_target) then
+            return false, ErrorCodes.CAST_INVALID_TARGET
+        end
+        prepare_target_cast(cast_target, action)
+        if core and core.input and core.input.cast_target_spell then
+            local ok = core.input.cast_target_spell(spell_id, cast_target)
+            if ok then
+                self._last_cast_at = now
+                return true, nil
+            end
+            return false, ErrorCodes.CAST_GUARD_BLOCKED
         end
     end
 
@@ -1409,7 +1454,8 @@ function RotationEngine:_action_allowed(action, ctx)
     end
     local now = tonumber(ctx and ctx.now) or (get_now())
 
-    if action.action_type == "cast_spell_target" and not ctx.target then
+    if (action.action_type == "cast_spell_target" or action.action_type == "channel_spell")
+        and not ctx.target then
         return false, ErrorCodes.TARGET_NOT_FOUND
     end
 
@@ -1475,7 +1521,8 @@ function RotationEngine:_action_allowed(action, ctx)
     if spell_id and spell_id > 0
         and (action.action_type == "cast_spell_target"
             or action.action_type == "cast_spell_self"
-            or action.action_type == "cast_spell_position")
+            or action.action_type == "cast_spell_position"
+            or action.action_type == "channel_spell")
         and core and core.spell_book and core.spell_book.is_usable_spell then
         local ok_usable, usable = pcall(core.spell_book.is_usable_spell, spell_id)
         if ok_usable and usable == false then
@@ -1549,6 +1596,7 @@ function RotationEngine:execute_action(action, ctx)
     if ok then
         self:_clear_action_retry(action, ctx)
         self:_on_action_executed(action, ctx)
+        self._log:debug("action executed: %s (queue)", tostring(action and action.label or action and action.action_type or "?"))
         self._event_bus:emit(Events.ROTATION_EXECUTED, {
             action = action,
             adapter = "queue",
@@ -1560,6 +1608,7 @@ function RotationEngine:execute_action(action, ctx)
     if fallback_ok then
         self:_clear_action_retry(action, ctx)
         self:_on_action_executed(action, ctx)
+        self._log:debug("action executed: %s (fallback)", tostring(action and action.label or action and action.action_type or "?"))
         self._event_bus:emit(Events.ROTATION_EXECUTED, {
             action = action,
             adapter = "fallback",
@@ -1609,6 +1658,7 @@ function RotationEngine:_emit_rotation_blocked(reason, blocked)
 
     self._last_blocked_event_key = key
     self._last_blocked_event_at = now
+    self._log:warn("rotation blocked: %s", tostring(reason or "unknown"))
     self._event_bus:emit(Events.ROTATION_BLOCKED, {
         timestamp = now,
         error_code = reason or ErrorCodes.CAST_GUARD_BLOCKED,
@@ -1763,6 +1813,22 @@ function RotationEngine:get_pull_profile()
         pull_spell_id = nil,
         max_pull_range = 25,
     }
+end
+
+--- Reset provider state between Client:stop() → Client:start() cycles.
+--- Calls provider:reset() if the loaded provider implements it, so that
+--- module-level upvalues (DoT approvals, spell-lock timers, etc.) are cleared
+--- before the next grind session begins.
+function RotationEngine:reset()
+    self._last_cast_at = 0
+    self._action_retry_until = {}
+    self._action_retry_last_sweep_at = 0
+
+    local ctx = self:_build_context()
+    local provider = self:get_provider(ctx)
+    if provider and type(provider.reset) == "function" then
+        pcall(provider.reset, provider)
+    end
 end
 
 return RotationEngine

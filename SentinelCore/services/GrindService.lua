@@ -21,6 +21,25 @@ local function noop_node(name)
     return BT.Action:new(name or "noop", function() return S.FAILURE end)
 end
 
+--- Build a mount node that fires MountService:try_mount() when conditions are met.
+--- Returns SUCCESS on the tick the mount is requested (blocking further children that
+--- tick so the bot doesn't immediately start a pull while the mount cast begins).
+--- Returns FAILURE when mounting is not applicable, letting the tree fall through.
+local function mount_node(mount_service)
+    if not mount_service then
+        return noop_node("mount_noop")
+    end
+    return BT.Action:new("mount", function()
+        if not mount_service:should_mount() then
+            return S.FAILURE
+        end
+        mount_service:try_mount()
+        -- Block this tick so nothing else (pull/explore) starts on the same frame.
+        -- Next tick player.is_mounted == true → should_mount() returns false → FAILURE.
+        return S.SUCCESS
+    end)
+end
+
 --- Build a transparent node that syncs session fatigue into HumanTiming each tick.
 --- Always returns FAILURE so ReactiveSelector falls through to real children.
 local function fatigue_sync_node(human_timing, session_behavior)
@@ -45,9 +64,14 @@ local function idle_pause_node(bb, session_behavior, navigation)
     end
     local was_pausing = false
     return BT.Action:new("idle_pause", function()
-        -- Don't start new pauses during combat (active pauses still drain naturally)
+        -- Don't start new pauses during combat.
+        -- If combat interrupts an active pause, cancel it so the bot doesn't
+        -- resume the same pause window the moment combat ends (phantom pause).
         local in_combat = bb:get("player.in_combat", false)
         if in_combat then
+            if was_pausing and type(session_behavior.cancel_pause) == "function" then
+                session_behavior:cancel_pause()
+            end
             was_pausing = false
             return S.FAILURE
         end
@@ -66,7 +90,7 @@ local function idle_pause_node(bb, session_behavior, navigation)
     end)
 end
 
----@param deps table { bb, evaluator, swing_timer, human_timing, spell_executor, navigation, targeting, vendor_service, exploration_service, loot_service, death_recovery_service, session_behavior? }
+---@param deps table { bb, evaluator, swing_timer, human_timing, session_behavior?, spell_executor, navigation, rotation_engine?, targeting, vendor_service, exploration_service, loot_service, death_recovery_service, mount_service? }
 ---@return table BT Selector node
 function GrindService.build(deps)
     return BT.ReactiveSelector:new("grind_root", {
@@ -80,7 +104,8 @@ function GrindService.build(deps)
         RestService.build(deps.bb, deps.navigation),
         deps.vendor_service and deps.vendor_service:build() or noop_node("vendor_noop"),
         MaintenanceService.build(deps.bb),
-        PullService.build(deps.bb, deps.navigation),
+        mount_node(deps.mount_service),
+        PullService.build(deps.bb, deps.navigation, deps.rotation_engine),
         deps.targeting and deps.targeting:build() or noop_node("target_noop"),
         deps.exploration_service and deps.exploration_service:build() or noop_node("explore_noop"),
     })

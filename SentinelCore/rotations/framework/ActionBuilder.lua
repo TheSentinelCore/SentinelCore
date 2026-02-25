@@ -123,4 +123,16 @@ function ActionBuilder.best_mana_potion(priority, opts)
     return build_action("use_best_mana_potion", priority, opts)
 end
 
+---@param spell_id number|fun(ctx: table, action: table): number|nil
+---@param priority number
+---@param opts? table
+---@return table
+function ActionBuilder.channel_spell(spell_id, priority, opts)
+    opts = opts or {}
+    local action = build_action("channel_spell", priority, opts)
+    action.spell_id = spell_id
+    action.channel_duration = opts.channel_duration or 3.0
+    return action
+end
+
 return ActionBuilder

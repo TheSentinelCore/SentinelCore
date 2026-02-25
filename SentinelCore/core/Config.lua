@@ -867,4 +867,13 @@ function Config:rename_profile(profile_id, new_name)
     return true, nil
 end
 
+function Config:get_zone_override(zone_id)
+    if not self._runtime then return nil end
+    local overrides = self._runtime.zone_overrides
+    if type(overrides) ~= "table" then return nil end
+    local id_num = tonumber(zone_id)
+    local id_str = tostring(zone_id)
+    return overrides[id_num] or overrides[id_str] or nil
+end
+
 return Config

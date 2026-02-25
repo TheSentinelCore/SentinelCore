@@ -19,7 +19,7 @@ RecoveryService.__index = RecoveryService
 ---@param blackboard Blackboard
 ---@param cfg table
 ---@return RecoveryService
-function RecoveryService:new(event_bus, blackboard, cfg)
+function RecoveryService:new(event_bus, blackboard, cfg, logger)
     local o = setmetatable({}, RecoveryService)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -30,6 +30,7 @@ function RecoveryService:new(event_bus, blackboard, cfg)
     o._attempts_used = 0
     o._stage = "idle"
     o._next_restart_at = 0
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     return o
 end
 
@@ -60,6 +61,7 @@ function RecoveryService:report_critical(error_code, detail)
     self._error_detail = detail
     self._stage = "reported"
     self._next_restart_at = 0
+    self._log:warn("recovery started: %s", tostring(error_code))
 
     self._event_bus:emit(Events.RECOVERY_STARTED, {
         timestamp = get_now(),
@@ -94,6 +96,7 @@ function RecoveryService:update(now)
     if self._stage == "paused" then
         if self._attempts_used >= max_attempts then
             self._stage = "failed"
+            self._log:warn("recovery escalated: attempts exhausted (%d)", self._attempts_used)
             self._event_bus:emit(Events.RECOVERY_ESCALATED, {
                 timestamp = now,
                 stage = "failed",
@@ -118,6 +121,7 @@ function RecoveryService:update(now)
             local next_idx = math.min(#backoff, self._attempts_used + 1)
             local next_delay = tonumber(backoff[next_idx]) or 1
             self._next_restart_at = now + next_delay
+            self._log:warn("recovery escalated: restart (attempt %d)", self._attempts_used)
             self._event_bus:emit(Events.RECOVERY_ESCALATED, {
                 timestamp = now,
                 stage = "restart",
@@ -157,6 +161,7 @@ function RecoveryService:complete_restart_attempt(success)
     end
 
     if success then
+        self._log:info("recovery completed after %d attempts", self._attempts_used)
         self._active = false
         self._stage = "idle"
         self._error_code = nil

@@ -61,7 +61,9 @@ function M.is_same_unit(lhs, rhs)
     if not lhs or not rhs then
         return false
     end
-    if lhs == rhs then
+    -- Use rawequal to bypass the Sylvannas __eq metamethod which throws
+    -- "Invalid game object!" when either operand is a stale game object ref.
+    if rawequal(lhs, rhs) then
         return true
     end
 

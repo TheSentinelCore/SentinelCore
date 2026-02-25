@@ -799,7 +799,14 @@ local function dot_needs_refresh(ctx, aura_ids, refresh_window)
         return true
     end
 
-    local aura_key = aura_ids[1] or 0
+    -- Guard: empty aura_ids means no aura to track — always refresh.
+    -- aura_ids[1] or 0 would produce aura_key=0 for ALL empty arrays,
+    -- poisoning the cache with a shared key across every caller.
+    if type(aura_ids) ~= "table" or #aura_ids == 0 then
+        return true
+    end
+
+    local aura_key = aura_ids[1]  -- guaranteed non-nil now
     local tkey = target_key(ctx.target)
     local compound = tkey .. ":" .. tostring(aura_key)
 
@@ -1193,6 +1200,10 @@ end
 ---@param ctx table
 ---@return table[]
 function Affliction:defensive(ctx)
+    if ctx.player_is_stunned or ctx.player_is_feared then
+        return {}
+    end
+
     local p = policy(ctx)
 
     return {
@@ -1362,6 +1373,10 @@ end
 ---@param ctx table
 ---@return table[]
 function Affliction:combat(ctx)
+    if ctx.player_is_stunned or ctx.player_is_feared then
+        return {}
+    end
+
     local p = policy(ctx)
 
     return {
@@ -1395,6 +1410,20 @@ function Affliction:combat(ctx)
                     and not player_is_busy(local_ctx)
             end,
         }),
+        -- Seed of Corruption: 3+ targets, AoE nuke — highest ST priority in multi-target
+        target_spell(SPELLS.SEED_OF_CORRUPTION, 558, {
+            max_target_distance = CAST_RANGE,
+            intent = "burst",
+            combat_modes = { "burst", "sustain" },
+            ttd_min_secs = 5.0,
+            condition = function(local_ctx)
+                return local_ctx.in_combat == true
+                    and (tonumber(local_ctx.enemy_count) or 1) >= 3
+                    and resolve_spell(local_ctx, SPELLS.SEED_OF_CORRUPTION) ~= nil
+                    and not target_has_any_aura(local_ctx, WL_AURAS.SEED_OF_CORRUPTION)
+                    and target_lives_long_enough(local_ctx, 5.0)
+            end,
+        }),
         -- Corruption (instant, allow movement)
         target_spell(SPELLS.CORRUPTION, 555, {
             allow_movement = true,
@@ -1413,6 +1442,19 @@ function Affliction:combat(ctx)
                     and resolve_spell(local_ctx, SPELLS.AMPLIFY_CURSE) ~= nil
                     and local_ctx.player_has_aura
                     and local_ctx.player_has_aura(WL_AURAS.AMPLIFY_CURSE[1]) ~= true
+            end,
+        }),
+        -- Curse of Tongues: silence-class debuff for casters (target actively casting)
+        target_spell(SPELLS.CURSE_OF_TONGUES, 553, {
+            allow_movement = true,
+            max_target_distance = CAST_RANGE,
+            intent = "sustain",
+            combat_modes = { "burst", "sustain" },
+            condition = function(local_ctx)
+                return local_ctx.target_is_casting == true
+                    and resolve_spell(local_ctx, SPELLS.CURSE_OF_TONGUES) ~= nil
+                    and dot_needs_refresh(local_ctx, WL_AURAS.CURSE_OF_TONGUES, p.dot_refresh_window_sec)
+                    and target_lives_long_enough(local_ctx, p.curse_of_agony_min_ttd_sec)
             end,
         }),
         -- Curse: prefer Curse of Elements (caster damage buff), fallback to Curse of Agony
@@ -1460,12 +1502,14 @@ function Affliction:combat(ctx)
                     and target_lives_long_enough(local_ctx, p.unstable_affliction_min_ttd_sec)
             end,
         }),
-        -- Immolate (cast time, stacks with UA for more DoT damage while wanding)
-        target_spell(SPELLS.IMMOLATE, 535, {
+        -- Immolate (cast time, stacks with UA; only in sustain/burst — save mana in recovery)
+        target_spell(SPELLS.IMMOLATE, 548, {
             max_target_distance = CAST_RANGE,
             intent = "sustain",
+            combat_modes = { "burst", "sustain" },
             condition = function(local_ctx)
-                return dot_needs_refresh(local_ctx, WL_AURAS.IMMOLATE, p.dot_refresh_window_sec)
+                return (tonumber(local_ctx.target_ttd_seconds) or 999) >= 8
+                    and dot_needs_refresh(local_ctx, WL_AURAS.IMMOLATE, p.dot_refresh_window_sec)
                     and target_lives_long_enough(local_ctx, p.immolate_min_ttd_sec)
             end,
         }),
@@ -1643,6 +1687,18 @@ function Affliction:get_movement_profile(ctx)
     return {
         combat_chase_range = CAST_RANGE,
     }
+end
+
+--- Reset module-level upvalue state between Client:stop() → Client:start() cycles.
+--- Called by RotationEngine:reset() so stale DoT approvals and timing state from a
+--- previous session don't carry over into the next grind session.
+function Affliction:reset()
+    _last_pet_attack_at = 0
+    _last_spell_lock_at = 0
+    _dot_approved = {}
+    _dot_approved_last_prune = 0
+    _spellbook_cache.at = 0
+    _spellbook_cache.ids = {}
 end
 
 return setmetatable({}, Affliction)

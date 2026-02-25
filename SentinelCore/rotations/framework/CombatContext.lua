@@ -661,6 +661,7 @@ function CombatContext:build(deps)
     end
 
     local target_is_casting, target_is_channeling, target_cast_spell_id, target_cast_spell_name = resolve_cast_state(target)
+    local _, player_is_channeling_flag = resolve_cast_state(player)
     local target_creature_type_id, target_creature_type_name = resolve_creature_type(target)
     local target_is_demon = creature_type_matches(target_creature_type_id, target_creature_type_name, "demon")
     local target_is_undead = creature_type_matches(target_creature_type_id, target_creature_type_name, "undead")
@@ -670,6 +671,8 @@ function CombatContext:build(deps)
     local player_move_speed = resolve_player_move_speed(player)
     local gcd_remaining = resolve_global_cooldown_remaining()
     local melee_swing_remaining = resolve_melee_swing_remaining(player)
+    local melee_swing_window_open = melee_swing_remaining > 0.8
+    local melee_twist_window = melee_swing_remaining > 0 and melee_swing_remaining <= 0.4
     local now = get_now()
     local rest_lock_until = resolve_rest_lock_until(bb, now)
     local rest_lock_food_until = resolve_rest_lock_until(bb, now, "food")
@@ -681,6 +684,25 @@ function CombatContext:build(deps)
         or player_is_eating
         or player_is_drinking
         or rest_lock_until > now
+
+    local in_combat = bb:get("player.in_combat", false)
+    local player_combat_duration = 0
+    if in_combat then
+        local entered_at = tonumber(bb:get("combat.entered_at", 0)) or 0
+        if entered_at > 0 then
+            player_combat_duration = math.max(0, now - entered_at)
+        end
+    end
+
+    local active_dot_count = 0
+    local dot_aura_ids = deps.dot_aura_ids
+    if target and type(dot_aura_ids) == "table" then
+        for i = 1, #dot_aura_ids do
+            if unit_has_aura(target, dot_aura_ids[i]) then
+                active_dot_count = active_dot_count + 1
+            end
+        end
+    end
 
     -- Player CC state
     local player_is_stunned = safe_unit_call(player, "is_stunned") == true
@@ -772,7 +794,7 @@ function CombatContext:build(deps)
         spec_id = bb:get("player.spec_id", 0),
         enemy_count = bb:get("combat.enemy_count", 1),
         combat_state = bb:get("combat.state", "idle"),
-        in_combat = bb:get("player.in_combat", false),
+        in_combat = in_combat,
         now = now,
         player_health_pct = player_health_pct,
         player_mana_pct = player_mana_pct,
@@ -793,6 +815,11 @@ function CombatContext:build(deps)
         player_move_speed = player_move_speed,
         global_cooldown_remaining = gcd_remaining,
         melee_swing_remaining = melee_swing_remaining,
+        melee_swing_window_open = melee_swing_window_open,
+        melee_twist_window = melee_twist_window,
+        player_is_channeling = player_is_channeling_flag == true,
+        player_combat_duration = player_combat_duration,
+        active_dot_count = active_dot_count,
         player_is_eating = player_is_eating,
         player_is_drinking = player_is_drinking,
         eating_or_drinking = eating_or_drinking,

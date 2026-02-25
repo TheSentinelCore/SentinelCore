@@ -85,7 +85,7 @@ TargetingService.__index = TargetingService
 ---@param cfg table
 ---@param navigation? NavigationAdapter
 ---@return TargetingService
-function TargetingService:new(event_bus, blackboard, cfg, navigation)
+function TargetingService:new(event_bus, blackboard, cfg, navigation, logger)
     local o = setmetatable({}, TargetingService)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -96,6 +96,11 @@ function TargetingService:new(event_bus, blackboard, cfg, navigation)
     o._target_memory_last_prune_at = 0
     o._path_cost_cache = {}
     o._path_cost_last_prune_at = 0
+    -- Sub-frame cache for get_visible_objects(). Avoids 4 full scans per update tick.
+    -- 50 ms TTL comfortably covers one game frame at 20+ fps while staying fresh enough
+    -- that threat counts and target availability are never stale.
+    o._visible_cache = { at = 0, objects = {} }
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     return o
 end
 
@@ -141,13 +146,18 @@ function TargetingService:_prune_target_memory(now)
         return
     end
 
+    -- Sort by retry_until ascending: evict entries closest to expiry first.
+    -- Preserves the longest-remaining blacklist entries (most valuable to keep).
+    local sorted = {}
+    for key, entry in pairs(self._target_memory) do
+        sorted[#sorted + 1] = { key = key, retry_until = tonumber(entry.retry_until) or 0 }
+    end
+    table.sort(sorted, function(a, b) return a.retry_until < b.retry_until end)
     local overflow = active_count - max_entries
-    for key, _ in pairs(self._target_memory) do
-        self._target_memory[key] = nil
+    for i = 1, #sorted do
+        self._target_memory[sorted[i].key] = nil
         overflow = overflow - 1
-        if overflow <= 0 then
-            break
-        end
+        if overflow <= 0 then break end
     end
 end
 
@@ -183,6 +193,7 @@ function TargetingService:mark_target_failed(target, reason, ttl)
     if not target then
         return
     end
+    self._log:warn("target failed: %s reason=%s", tostring(safe_method(target, "get_name") or "unknown"), tostring(reason or "-"))
 
     local now = get_now()
     self:_prune_target_memory(now)
@@ -247,13 +258,18 @@ function TargetingService:_prune_path_cost_cache(now)
         return
     end
 
+    -- Sort by updated_at ascending: evict oldest entries first.
+    -- Preserves the most recently computed path costs (freshest data).
+    local sorted = {}
+    for key, entry in pairs(self._path_cost_cache) do
+        sorted[#sorted + 1] = { key = key, updated_at = tonumber(entry and entry.updated_at) or 0 }
+    end
+    table.sort(sorted, function(a, b) return a.updated_at < b.updated_at end)
     local overflow = active - max_entries
-    for key, _ in pairs(self._path_cost_cache) do
-        self._path_cost_cache[key] = nil
+    for i = 1, #sorted do
+        self._path_cost_cache[sorted[i].key] = nil
         overflow = overflow - 1
-        if overflow <= 0 then
-            break
-        end
+        if overflow <= 0 then break end
     end
 end
 
@@ -435,16 +451,19 @@ end
 ---@return boolean
 local function can_engage(unit, player)
     local player_can_attack = safe_method(player, "can_attack", unit)
-    local unit_can_attack = safe_method(unit, "can_attack", player)
+
+    -- The player must be able to attack the target. Without this, the bot
+    -- would chase invulnerable NPCs (guard post turrets, world triggers)
+    -- that it can never damage. Defensive reactions (flee, retarget) are
+    -- handled separately by CombatService when the bot is being attacked.
+    if player_can_attack == true then
+        return true
+    end
+
+    -- Fallback: mutual is_enemy_with when can_attack is unreliable.
     local player_enemy_with = safe_method(player, "is_enemy_with", unit)
     local unit_enemy_with = safe_method(unit, "is_enemy_with", player)
-
-    -- Different mob families/expansions can report hostility flags inconsistently.
-    -- Allow engagement if any reliable attackability/hostility signal is positive.
-    if player_can_attack == true
-        or unit_can_attack == true
-        or player_enemy_with == true
-        or unit_enemy_with == true then
+    if player_enemy_with == true and unit_enemy_with == true then
         return true
     end
 
@@ -734,13 +753,16 @@ is_valid_target = function(unit, player)
     if safe_method(unit, "is_unit") ~= true then
         return false
     end
+    if safe_method(unit, "is_basic_object") == true then
+        return false
+    end
     if safe_method(unit, "is_dead") == true or safe_method(unit, "is_ghost") == true then
         return false
     end
     if is_critter_unit(unit) then
         return false
     end
-    if unit == player then
+    if is_same_unit(unit, player) then
         return false
     end
     if is_engaged_by_others(unit, player) then
@@ -782,8 +804,10 @@ local function estimate_pull_pressure(target, player, objects, cfg, cache)
     for i = 1, #objects do
         local candidate = unwrap_game_object(objects[i])
         if candidate
-            and candidate ~= target
+            and not is_same_unit(candidate, target)
             and safe_method(candidate, "is_valid") == true
+            and safe_method(candidate, "is_unit") == true
+            and safe_method(candidate, "is_basic_object") ~= true
             and safe_method(candidate, "is_dead") ~= true
             and safe_method(candidate, "is_ghost") ~= true
             and is_critter_unit(candidate) ~= true
@@ -808,11 +832,15 @@ end
 ---@param nearby_combat_count number
 ---@param reason string|nil
 function TargetingService:_commit_target(target, score, nearby_combat_count, reason)
-    local changed = self._current_target ~= target
+    local changed = not is_same_unit(self._current_target, target)
     self._current_target = target
     self._blackboard:set("combat.target", target)
     self._blackboard:set("combat.enemy_count", math.max(1, nearby_combat_count))
     if changed then
+        self._log:info("target acquired: %s score=%.2f reason=%s",
+            tostring(safe_method(target, "get_name") or "unknown"),
+            tonumber(score) or 0,
+            tostring(reason or "-"))
         self._event_bus:emit(Events.TARGET_ACQUIRED, {
             timestamp = get_now(),
             target_name = tostring(safe_method(target, "get_name") or "unknown"),
@@ -934,6 +962,10 @@ end
 ---@private
 ---@return table
 function TargetingService:_get_visible_objects()
+    local now = get_now()
+    if (now - self._visible_cache.at) < 0.05 then
+        return self._visible_cache.objects
+    end
     local objects = {}
     if core and core.object_manager and core.object_manager.get_visible_objects then
         local ok_objects, value = pcall(core.object_manager.get_visible_objects)
@@ -941,6 +973,8 @@ function TargetingService:_get_visible_objects()
             objects = value
         end
     end
+    self._visible_cache.at = now
+    self._visible_cache.objects = objects
     return objects
 end
 
@@ -980,11 +1014,13 @@ function TargetingService:get_visible_candidates(opts)
         local candidate = unwrap_game_object(objects[i])
         local valid = is_valid_target(candidate, player)
         if not valid and include_engaged and candidate and safe_method(candidate, "is_valid") == true then
-            valid = safe_method(candidate, "is_dead") ~= true
+            valid = safe_method(candidate, "is_unit") == true
+                and safe_method(candidate, "is_basic_object") ~= true
+                and safe_method(candidate, "is_dead") ~= true
                 and safe_method(candidate, "is_ghost") ~= true
                 and can_engage(candidate, player) == true
                 and is_critter_unit(candidate) ~= true
-                and candidate ~= player
+                and not is_same_unit(candidate, player)
         end
 
         if valid and passes_faction_policy(candidate, player, player_team, self._cfg, objects) then
@@ -1115,7 +1151,7 @@ function TargetingService:acquire_target()
                         -- Stickiness: strongly prefer current target to prevent
                         -- flip-flopping between similarly-scored mobs. A new target
                         -- must score significantly higher to override the current one.
-                        if self._current_target and candidate == self._current_target then
+                        if self._current_target and is_same_unit(candidate, self._current_target) then
                             local sticky_bonus = tonumber(self._cfg.target_sticky_bonus) or 0.25
                             score = score + sticky_bonus
                         end
@@ -1183,6 +1219,13 @@ end
 function TargetingService:get_target()
     if self._current_target and safe_method(self._current_target, "is_valid") == true then
         if safe_method(self._current_target, "is_dead") ~= true then
+            -- Verify target is still engageable (prevents stale unattackable
+            -- targets like guard posts from blocking the entire BT forever).
+            local player = unwrap_game_object(self._blackboard:get("player.object"))
+            if player and not can_engage(self._current_target, player) then
+                self:clear_target("not_engageable")
+                return nil
+            end
             return self._current_target
         end
     end
@@ -1191,6 +1234,7 @@ end
 
 function TargetingService:clear_target(reason)
     if self._current_target then
+        self._log:info("target cleared: reason=%s", tostring(reason or "-"))
         self._event_bus:emit(Events.TARGET_LOST, {
             timestamp = get_now(),
             reason = reason,
@@ -1207,7 +1251,10 @@ function TargetingService:update()
     -- acquire a replacement so the combat BT has a valid target this same tick.
     -- Without this, a 1-2 frame gap lets exploration issue move_to(waypoint) in
     -- the opposite direction before combat re-acquires.
-    if not target and self._blackboard:get("player.in_combat", false) then
+    -- Guard: skip re-acquisition during the post-kill loot window so we don't
+    -- immediately pull a new mob while the corpse is waiting to be looted.
+    local loot_pending = self._blackboard:get("loot.pending_target") ~= nil
+    if not target and self._blackboard:get("player.in_combat", false) and not loot_pending then
         local ok, new_target = pcall(self.acquire_target, self)
         if ok and new_target then
             target = new_target
@@ -1215,9 +1262,31 @@ function TargetingService:update()
     end
     if target then
         self._blackboard:set("combat.target", target)
-        local current_count = tonumber(self._blackboard:get("combat.enemy_count", 0)) or 0
-        if current_count <= 0 then
-            self._blackboard:set("combat.enemy_count", 1)
+        -- Keep combat.enemy_count current with a live attacker scan every frame so
+        -- FleeService sees accurate multi-mob state even when the TargetingService BT
+        -- node is bypassed (CombatService holds the ReactiveSelector during combat).
+        local player = unwrap_game_object(self._blackboard:get("player.object"))
+        if player and safe_method(player, "is_valid") == true then
+            local objects = self:_get_visible_objects()
+            local attackers = 0
+            for i = 1, #objects do
+                local unit = unwrap_game_object(objects[i])
+                if unit and safe_method(unit, "is_valid") == true
+                    and safe_method(unit, "is_unit") == true
+                    and safe_method(unit, "is_basic_object") ~= true
+                    and safe_method(unit, "is_dead") ~= true then
+                    local unit_target = unwrap_game_object(safe_method(unit, "get_target"))
+                    if is_same_unit(unit_target, player) then
+                        attackers = attackers + 1
+                    end
+                end
+            end
+            self._blackboard:set("combat.enemy_count", math.max(1, attackers))
+        else
+            local current_count = tonumber(self._blackboard:get("combat.enemy_count", 0)) or 0
+            if current_count <= 0 then
+                self._blackboard:set("combat.enemy_count", 1)
+            end
         end
     end
 end

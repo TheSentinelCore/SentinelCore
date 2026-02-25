@@ -26,7 +26,7 @@ end
 ---@param blackboard Blackboard
 ---@param cfg table
 ---@return WorldDataAdapter
-function WorldDataAdapter:new(event_bus, blackboard, cfg)
+function WorldDataAdapter:new(event_bus, blackboard, cfg, logger)
     local o = setmetatable({}, WorldDataAdapter)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -35,6 +35,7 @@ function WorldDataAdapter:new(event_bus, blackboard, cfg)
     o._last_health_check = 0
     o._last_dataset_check = 0
     o._pending_requests = 0
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     return o
 end
 
@@ -109,11 +110,13 @@ function WorldDataAdapter:_request(path, params, callback, attempt)
     attempt = attempt or 0
 
     if not core or not core.http_get then
+        self._log:warn("HTTP unavailable for %s", tostring(path))
         callback(false, nil, ErrorCodes.DEP_WORLDDATA_UNAVAILABLE)
         return
     end
 
     local url = self:_build_url(path, params)
+    self._log:debug("request %s (attempt=%d)", tostring(path), attempt)
     self._pending_requests = self._pending_requests + 1
 
     core.http_get(url, function(code, _, response)
@@ -144,7 +147,9 @@ function WorldDataAdapter:_request(path, params, callback, attempt)
             return
         end
 
-        callback(false, nil, self:_map_http_error(code, response or ""))
+        local mapped_err = self:_map_http_error(code, response or "")
+        self._log:warn("HTTP %d for %s: %s", code, tostring(path), tostring(mapped_err))
+        callback(false, nil, mapped_err)
     end)
 end
 
@@ -261,6 +266,9 @@ function WorldDataAdapter:resolve_context(runtime_ctx, callback)
             resolved = true,
             confidence = confidence,
         }
+
+        self._log:info("context resolved map=%d zone=%d area=%d conf=%.2f",
+            canonical.map_id, canonical.zone_id, canonical.area_id, confidence)
 
         self._event_bus:emit(Events.CONTEXT_RESOLVED, {
             timestamp = get_now(),

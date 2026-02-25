@@ -41,6 +41,15 @@ function Blackboard:set(key, value)
     if old == value and type(value) ~= "table" then
         return
     end
+    -- For vec3-like tables (positions, etc.), skip watchers when all components match.
+    -- Prevents per-frame watcher/EventBus spam when get_position() returns a new
+    -- table each call even though the position hasn't changed.
+    if type(value) == "table" and type(old) == "table"
+        and value.x ~= nil and value.y ~= nil
+        and value.x == old.x and value.y == old.y and value.z == old.z then
+        self._data[key] = value
+        return
+    end
 
     self._data[key] = value
 

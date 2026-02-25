@@ -74,7 +74,7 @@ ObjectiveService.__index = ObjectiveService
 ---@param blackboard Blackboard
 ---@param cfg table|nil
 ---@return ObjectiveService
-function ObjectiveService:new(event_bus, blackboard, cfg)
+function ObjectiveService:new(event_bus, blackboard, cfg, logger)
     local o = setmetatable({}, ObjectiveService)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -88,6 +88,7 @@ function ObjectiveService:new(event_bus, blackboard, cfg)
     o._last_progress_at = 0
     o._state = "idle"
     o._last_error = nil
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     o:_write_blackboard_state()
     return o
 end
@@ -119,6 +120,7 @@ function ObjectiveService:_publish_progress(objective, detail)
     if not objective then
         return
     end
+    self._log:debug("objective progress: %s", tostring(detail and detail.status or "-"))
     self._event_bus:emit(Events.OBJECTIVE_PROGRESS, {
         timestamp = self:_now(),
         mode = self._mode_id,
@@ -258,6 +260,7 @@ function ObjectiveService:_set_active_objective(objective, now)
     self._last_progress_at = 0
     self._state = "active"
     self._last_error = nil
+    self._log:info("objective selected: %s (%s)", tostring(normalized.label), tostring(normalized.kind))
     self:_publish_selected(normalized)
     self:_write_blackboard_state()
 end
@@ -269,10 +272,12 @@ end
 function ObjectiveService:_clear_active_objective(outcome, error_code, detail)
     local previous = self._active_objective
     if outcome == "completed" then
+        self._log:info("objective completed: %s", tostring(previous and previous.label or "?"))
         self:_publish_completed(previous, detail)
         self._last_error = nil
     elseif outcome == "failed" then
         self._last_error = error_code or ErrorCodes.OBJECTIVE_EXECUTION_FAILED
+        self._log:warn("objective failed: %s err=%s", tostring(previous and previous.label or "?"), tostring(self._last_error))
         self:_publish_failed(previous, self._last_error, detail)
     end
 

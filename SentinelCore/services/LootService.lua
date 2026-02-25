@@ -23,6 +23,7 @@ local safe_target_name = UnitQueries.safe_target_name
 ---@field private _approaching boolean
 ---@field private _last_error string|nil
 ---@field private _loot_blacklist table
+---@field private _corpse_discovered_at table -- guid -> timestamp of first discovery
 local LootService = {}
 LootService.__index = LootService
 
@@ -31,7 +32,7 @@ LootService.__index = LootService
 ---@param cfg table
 ---@param navigation? NavigationAdapter
 ---@return LootService
-function LootService:new(event_bus, blackboard, cfg, navigation)
+function LootService:new(event_bus, blackboard, cfg, navigation, logger)
     local o = setmetatable({}, LootService)
     o._event_bus = event_bus
     o._blackboard = blackboard
@@ -47,6 +48,8 @@ function LootService:new(event_bus, blackboard, cfg, navigation)
     o._approaching = false
     o._last_error = nil
     o._loot_blacklist = {} -- corpses that yielded 0 items (bag full, etc.)
+    o._corpse_discovered_at = {} -- guid -> get_now() when corpse was first seen
+    o._log = logger or { debug=function()end, info=function()end, warn=function()end, error=function()end }
     return o
 end
 
@@ -87,6 +90,7 @@ function LootService:start(target)
         self._blackboard:set("combat.was_looting", true)
     end
 
+    self._log:info("loot started: %s", safe_target_name(target))
     self._event_bus:emit(Events.LOOT_STARTED, {
         timestamp = now,
         target_name = safe_target_name(target),
@@ -96,6 +100,11 @@ function LootService:start(target)
 end
 
 function LootService:reset()
+    -- Stop any in-progress approach navigation so it doesn't bleed into the
+    -- next BT phase (combat chase, exploration, etc.).
+    if self._approaching and self._nav and type(self._nav.stop) == "function" then
+        pcall(self._nav.stop, self._nav)
+    end
     self._state = "idle"
     self._target = nil
     self._attempts = 0
@@ -174,8 +183,14 @@ function LootService:_ensure_loot_range(now)
     if self._approach_last_move_at <= 0 or (now - self._approach_last_move_at) >= approach_reissue then
         local corpse_pos = safe_method(self._target, "get_position")
         if corpse_pos then
-            pcall(self._nav.move_to, self._nav, corpse_pos)
             self._approach_last_move_at = now
+            self._nav:move_to(corpse_pos, function(ok)
+                -- On nav failure, expire approach immediately so the timeout
+                -- path fires on the next tick rather than waiting the full 8s.
+                if not ok and self._approaching then
+                    self._approach_started_at = -(approach_timeout + 1)
+                end
+            end)
         end
     end
 
@@ -198,6 +213,7 @@ function LootService:update()
     if now - self._started_at > timeout then
         self._state = "failed"
         self._last_error = ErrorCodes.LOOT_TIMEOUT
+        self._log:warn("loot timeout after %.1fs", now - self._started_at)
         self._event_bus:emit(Events.LOOT_FAILED, {
             timestamp = now,
             error_code = self._last_error,
@@ -207,6 +223,7 @@ function LootService:update()
 
     -- Target validity
     if not self._target or safe_method(self._target, "is_valid") ~= true then
+        self._log:warn("loot failed: target invalid")
         self._state = "failed"
         self._last_error = ErrorCodes.LOOT_FAILED
         self._event_bus:emit(Events.LOOT_FAILED, {
@@ -219,6 +236,7 @@ function LootService:update()
     -- Approach if not in range
     local range_ok, range_err, approaching = self:_ensure_loot_range(now)
     if not range_ok then
+        self._log:warn("loot failed: %s", tostring(range_err or "range"))
         self._state = "failed"
         self._last_error = range_err or ErrorCodes.LOOT_FAILED
         self._event_bus:emit(Events.LOOT_FAILED, {
@@ -273,10 +291,13 @@ function LootService:update()
         if core and core.input and core.input.close_loot then
             pcall(core.input.close_loot)
         end
+        -- Always blacklist so the scan never re-discovers this corpse on the next tick,
+        -- even if the SDK still briefly reports has_loot == true after pickup.
+        self:_blacklist_corpse(self._target)
         if remaining > 0 then
-            -- Items couldn't be picked up (bag full / capped quest item) — blacklist
-            self:_blacklist_corpse(self._target)
+            self._log:warn("loot partial: %s (%d remaining, bags full?)", safe_target_name(self._target), remaining)
         end
+        self._log:info("loot completed: %s (%d items)", safe_target_name(self._target), loot_count - remaining)
         self._state = "completed"
         self._event_bus:emit(Events.LOOT_COMPLETED, {
             timestamp = now,
@@ -323,6 +344,7 @@ function LootService:update()
     -- Blacklist this corpse so the scan doesn't re-discover it
     -- (handles bag-full / capped quest items that still show has_loot)
     self:_blacklist_corpse(self._target)
+    self._log:info("loot complete (no items): %s", safe_target_name(self._target))
     self._state = "completed"
     self._event_bus:emit(Events.LOOT_COMPLETED, {
         timestamp = now,
@@ -379,30 +401,31 @@ function LootService:_has_living_attackers()
 
     for i = 1, #objects do
         local unit = objects[i]
-        if unit and unit ~= player then
+        if unit and not rawequal(unit, player) then
             local valid = safe_method(unit, "is_valid")
             local dead = safe_method(unit, "is_dead")
             local in_combat = safe_method(unit, "is_in_combat")
             if valid == true and dead ~= true and in_combat == true then
                 local unit_target = safe_method(unit, "get_target")
                 if unit_target then
-                    -- Check if targeting player
-                    local is_player = (unit_target == player)
+                    -- Check if targeting player (rawequal for ref-identity; GUID fallback
+                    -- for different wrapper instances representing the same game entity).
+                    local is_player = rawequal(unit_target, player)
                     if not is_player then
                         local ut_guid = safe_method(unit_target, "get_guid")
                         local p_guid = safe_method(player, "get_guid")
-                        is_player = ut_guid and p_guid and ut_guid == p_guid
+                        is_player = ut_guid ~= nil and p_guid ~= nil and ut_guid == p_guid
                     end
                     if is_player then return true end
 
                     -- Check if targeting player's pet
                     local pet = safe_method(player, "get_pet")
                     if pet then
-                        local is_pet = (unit_target == pet)
+                        local is_pet = rawequal(unit_target, pet)
                         if not is_pet then
                             local ut_guid2 = safe_method(unit_target, "get_guid")
                             local pet_guid = safe_method(pet, "get_guid")
-                            is_pet = ut_guid2 and pet_guid and ut_guid2 == pet_guid
+                            is_pet = ut_guid2 ~= nil and pet_guid ~= nil and ut_guid2 == pet_guid
                         end
                         if is_pet then return true end
                     end
@@ -413,19 +436,29 @@ function LootService:_has_living_attackers()
     return false
 end
 
+-- WoW corpses despawn approximately 5 minutes (300 seconds) after the mob dies.
+-- Entries older than this are removed from the discovered_at registry and skipped.
+local CORPSE_DECAY_TTL = 300
+
 --- Scan nearby dead units with loot and build a distance-sorted queue.
+--- Stamps newly discovered corpses with a discovery timestamp and skips any
+--- that have exceeded the CORPSE_DECAY_TTL (likely already despawned).
 ---@private
 ---@return table[] array of lootable game_objects, nearest first
 function LootService:_scan_loot_queue()
     local player_pos = self._blackboard:get("player.position")
     if not player_pos then return {} end
 
+    local now = get_now()
     local scan_radius = tonumber(self._cfg.loot_scan_radius) or 40.0
     local objects = {}
     if core and core.object_manager and core.object_manager.get_visible_objects then
         local ok, value = pcall(core.object_manager.get_visible_objects)
         if ok and type(value) == "table" then objects = value end
     end
+
+    -- Collect GUIDs seen this scan so we can evict stale discovered_at entries
+    local seen_guids = {}
 
     local lootable = {}
     for i = 1, #objects do
@@ -436,13 +469,53 @@ function LootService:_scan_loot_queue()
             local has_loot = safe_method(unit, "has_loot")
             local can_loot = safe_method(unit, "can_be_looted")
             if valid == true and dead == true and (has_loot == true or can_loot == true) and not self:_is_blacklisted(unit) then
-                local pos = safe_method(unit, "get_position")
-                local dist = Helpers.distance_3d(player_pos, pos)
-                if dist and dist <= scan_radius then
-                    lootable[#lootable + 1] = { target = unit, distance = dist }
+                local guid = safe_method(unit, "get_guid")
+                if guid then
+                    seen_guids[guid] = true
+
+                    -- Stamp discovery time on first encounter
+                    if not self._corpse_discovered_at[guid] then
+                        self._corpse_discovered_at[guid] = now
+                    end
+
+                    -- Skip corpses that have exceeded the decay TTL
+                    local discovered_at = self._corpse_discovered_at[guid]
+                    if (now - discovered_at) > CORPSE_DECAY_TTL then
+                        self._log:debug(
+                            "Removing decayed corpse %s from loot queue",
+                            tostring(guid)
+                        )
+                        self._corpse_discovered_at[guid] = nil
+                        -- Skip this entry — corpse has likely despawned
+                    else
+                        local pos = safe_method(unit, "get_position")
+                        local dist = Helpers.distance_3d(player_pos, pos)
+                        if dist and dist <= scan_radius then
+                            lootable[#lootable + 1] = { target = unit, distance = dist }
+                        end
+                    end
+                else
+                    -- No GUID available — include without TTL tracking
+                    local pos = safe_method(unit, "get_position")
+                    local dist = Helpers.distance_3d(player_pos, pos)
+                    if dist and dist <= scan_radius then
+                        lootable[#lootable + 1] = { target = unit, distance = dist }
+                    end
                 end
             end
         end
+    end
+
+    -- Evict discovered_at entries for GUIDs no longer visible
+    -- to prevent unbounded growth of the registry over a long session.
+    local to_evict = {}
+    for guid, _ in pairs(self._corpse_discovered_at) do
+        if not seen_guids[guid] then
+            to_evict[#to_evict + 1] = guid
+        end
+    end
+    for i = 1, #to_evict do
+        self._corpse_discovered_at[to_evict[i]] = nil
     end
 
     table.sort(lootable, function(a, b) return a.distance < b.distance end)
@@ -488,15 +561,6 @@ function LootService:build()
                 end
             end
 
-            -- Discover AoE/DoT kills never promoted to pending
-            if not pending and not in_combat then
-                local queue = self:_scan_loot_queue()
-                if #queue > 0 then
-                    bb:set("loot.pending_target", queue[1])
-                    pending = queue[1]
-                end
-            end
-
             -- Skip blacklisted pending targets (bag full, capped quest items)
             if pending and self:_is_blacklisted(pending) then
                 bb:clear("loot.pending_target")
@@ -505,11 +569,38 @@ function LootService:build()
 
             -- Soft combat gate: allow looting when combat flag lingers
             -- but no living enemies are actually targeting us.
+            local has_real_combat = false
             if in_combat then
-                if self:_has_living_attackers() then
+                has_real_combat = self:_has_living_attackers()
+                if has_real_combat then
+                    -- Preempted by real combat. Stop any in-progress approach so
+                    -- stale corpse navigation doesn't fight the combat chase path.
+                    -- The stale-detection inside loot_corpse can't run when this
+                    -- condition returns false, so we clean up here instead.
+                    if self:is_active() then
+                        self:reset()
+                    end
                     return false
                 end
                 -- Combat flag lingers after kill — safe to loot
+            end
+
+            -- Discover AoE/DoT kills never promoted to pending.
+            -- Originally guarded by `not in_combat`, which blocked the scan during
+            -- the ~5s combat-flag-linger window after a kill.  During that window
+            -- TargetingService:update() (direct service call, independent of the BT)
+            -- may replace combat.target with a new living mob, causing LootService
+            -- to return FAILURE and PullService to start moving — then a tick later
+            -- the combat flag clears, the scan runs, finds the fresh corpse, and the
+            -- bot turns around.  We now also scan when the flag lingers with no real
+            -- attackers (has_real_combat == false covers both not-in-combat and
+            -- linger cases).
+            if not pending and not has_real_combat then
+                local queue = self:_scan_loot_queue()
+                if #queue > 0 then
+                    bb:set("loot.pending_target", queue[1])
+                    pending = queue[1]
+                end
             end
 
             -- Pending check with timeout
@@ -540,7 +631,9 @@ function LootService:build()
                 if self:is_active() then
                     local age = get_now() - self._started_at
                     local stale_timeout = tonumber(self._cfg.loot_stale_reset_timeout) or 8.0
-                    if age > stale_timeout or self._target ~= target then
+                    -- rawequal bypasses Sylvannas __eq metamethod to avoid
+                    -- "Invalid game object!" when self._target is a stale corpse.
+                    if age > stale_timeout or not rawequal(self._target, target) then
                         self:reset()
                     end
                 end
@@ -548,7 +641,7 @@ function LootService:build()
                 -- target changed — avoids restarting a just-completed loot cycle
                 -- that still needs its queue advance to run.
                 local st = self:get_state()
-                if st ~= "idle" and st ~= "looting" and self._target ~= target then
+                if st ~= "idle" and st ~= "looting" and not rawequal(self._target, target) then
                     self:reset()
                 end
 
@@ -562,7 +655,7 @@ function LootService:build()
                     -- Use queue's first entry if pending target isn't in queue
                     local found_pending = false
                     for i = 1, #loot_queue do
-                        if loot_queue[i] == target then
+                        if rawequal(loot_queue[i], target) then
                             queue_index = i
                             found_pending = true
                             break

@@ -5,18 +5,27 @@ local UnitQueries = require("lib/UnitQueries")
 local safe_method = UnitQueries.safe_method
 local unwrap_game_object = UnitQueries.unwrap_game_object
 
+local _hostile_player_last_detected = false
+local _last_zone_id = nil
+
 ---@class SentinelSensors
 ---@field private _blackboard Blackboard
 ---@field private _was_dead boolean
+---@field private _event_bus table|nil
+---@field private _events table|nil
 local Sensors = {}
 Sensors.__index = Sensors
 
 ---@param blackboard Blackboard
+---@param event_bus table|nil
+---@param events table|nil
 ---@return SentinelSensors
-function Sensors:new(blackboard)
+function Sensors:new(blackboard, event_bus, events)
     local o = setmetatable({}, Sensors)
     o._blackboard = blackboard
     o._was_dead = false
+    o._event_bus = event_bus
+    o._events = events
     return o
 end
 
@@ -144,6 +153,72 @@ function Sensors:update()
     bb:set("context.ui_map_id", map_id)
     bb:set("context.instance_type", instance_type)
     bb:set("context.position", pos)
+
+    -- Zone tracking
+    local zone_id = nil
+    local zone_name = nil
+    if core and core.game then
+        local ok_z, z = pcall(function()
+            return core.game.get_zone_id and core.game.get_zone_id()
+                or core.game.get_current_map_id and core.game.get_current_map_id()
+                or core.game.map_id and core.game.map_id()
+        end)
+        if ok_z then zone_id = tonumber(z) end
+
+        local ok_n, n = pcall(function()
+            return core.game.get_zone_name and core.game.get_zone_name()
+                or core.game.get_current_map_name and core.game.get_current_map_name()
+                or ""
+        end)
+        if ok_n and type(n) == "string" then zone_name = n end
+    end
+
+    if zone_id ~= nil then
+        bb:set("player.zone_id", zone_id)
+        if zone_name then bb:set("player.zone_name", zone_name) end
+        if _last_zone_id ~= nil and zone_id ~= _last_zone_id and self._event_bus and self._events then
+            self._event_bus:emit(self._events.ZONE_CHANGED, {
+                from = _last_zone_id,
+                to = zone_id,
+                name = zone_name or "",
+            })
+        end
+        _last_zone_id = zone_id
+    end
+
+    -- Hostile player detection
+    local hostile_player_nearby = false
+    local ok_units, all_units = pcall(function()
+        return core.object_manager.get_all_units and core.object_manager.get_all_units()
+            or {}
+    end)
+    if ok_units and type(all_units) == "table" then
+        local p_pos = bb:get("player.position")
+        for i = 1, #all_units do
+            local unit = all_units[i]
+            if unit then
+                local ok_player, is_p = pcall(function() return unit:is_player() end)
+                local ok_enemy, is_e = pcall(function() return unit:is_enemy() end)
+                if (ok_player and is_p == true) and (ok_enemy and is_e == true) then
+                    local u_pos = safe_method(unit, "get_position")
+                    if u_pos and p_pos then
+                        local dist_sq = (u_pos.x - p_pos.x)^2 + (u_pos.y - p_pos.y)^2
+                        if dist_sq < 3600 then
+                            hostile_player_nearby = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    bb:set("player.hostile_player_nearby", hostile_player_nearby)
+    if hostile_player_nearby and not _hostile_player_last_detected then
+        if self._event_bus and self._events then
+            self._event_bus:emit(self._events.HOSTILE_PLAYER_DETECTED, { detected = true })
+        end
+    end
+    _hostile_player_last_detected = hostile_player_nearby
 
     sensor_snapshot.player = {
         health = bb:get("player.health", 0),
