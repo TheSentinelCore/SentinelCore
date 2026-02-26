@@ -196,7 +196,8 @@ function RestService.build(bb, navigation)
 
     return BT.ReactiveSequence:new("rest", {
         -- Gate: needs recovery and not in combat (re-evaluated every tick)
-        -- Enters when HP < 50% OR mana < 30%. Stays until HP >= 90% AND mana >= 80%.
+        -- Defaults: enters when HP < 50% OR mana < 30%; stays until HP >= 90% AND mana >= 80%.
+        -- Thresholds can be overridden by the active tactic's rest_config via blackboard.
         BT.Condition:new("needs_rest", function()
             if bb:get("player.in_combat", false) then
                 if rest_start_time then
@@ -207,6 +208,13 @@ function RestService.build(bb, navigation)
                 end
                 return false
             end
+
+            -- Tactic rest_config overrides (written by GrindService each tick).
+            local rest_cfg = bb:get("tactical.rest_config")
+            local eat_below = (rest_cfg and tonumber(rest_cfg.eat_below)) or 0.50
+            local drink_below = (rest_cfg and tonumber(rest_cfg.drink_below)) or 0.30
+            local eat_until = (rest_cfg and tonumber(rest_cfg.eat_until)) or 0.90
+            local drink_until = (rest_cfg and tonumber(rest_cfg.drink_until)) or 0.80
 
             local hp = bb:get("player.health", 0)
             local max_hp = bb:get("player.max_health", 1)
@@ -220,7 +228,7 @@ function RestService.build(bb, navigation)
             -- idle waiting for mana we have no way to restore.
             if rest_start_time then
                 local has_drink = find_consumable(player, DRINK_ITEMS) ~= nil
-                if hp_pct >= 0.90 and (mana_pct >= 0.80 or not has_drink) then
+                if hp_pct >= eat_until and (mana_pct >= drink_until or not has_drink) then
                     rest_start_time = nil
                     bb:set("combat.was_resting", false)
                     return false
@@ -230,7 +238,7 @@ function RestService.build(bb, navigation)
 
             -- Not resting yet — only enter rest for low mana if we have a drink;
             -- sitting drinkless wastes time and burns player suspicion.
-            return hp_pct < 0.50 or (mana_pct < 0.30 and find_consumable(player, DRINK_ITEMS) ~= nil)
+            return hp_pct < eat_below or (mana_pct < drink_below and find_consumable(player, DRINK_ITEMS) ~= nil)
         end),
 
         -- Heal/eat/drink action
@@ -269,6 +277,11 @@ function RestService.build(bb, navigation)
                 end
             end
 
+            -- Tactic rest_config overrides (written by GrindService each tick).
+            local rest_cfg = bb:get("tactical.rest_config")
+            local eat_until = (rest_cfg and tonumber(rest_cfg.eat_until)) or 0.90
+            local drink_until = (rest_cfg and tonumber(rest_cfg.drink_until)) or 0.80
+
             local hp = bb:get("player.health", 0)
             local max_hp = bb:get("player.max_health", 1)
             local hp_pct = max_hp > 0 and (hp / max_hp) or 1
@@ -277,7 +290,7 @@ function RestService.build(bb, navigation)
             local mana_pct = get_mana_pct(player)
 
             -- Fully recovered
-            if hp_pct >= 0.90 and mana_pct >= 0.80 then
+            if hp_pct >= eat_until and mana_pct >= drink_until then
                 rest_start_time = nil
                 last_drink_time = 0
                 last_food_time = 0
@@ -292,7 +305,7 @@ function RestService.build(bb, navigation)
             -- Drink water: only apply if no active drink buff.
             -- Checking the buff prevents cancelling+restarting the drink on each tick.
             -- Also skip if mid-cast — starting a new item use would cancel the cast.
-            if mana_pct < 0.80
+            if mana_pct < drink_until
                 and not has_consumable_buff(player, DRINK_AURA_IDS)
                 and (now - last_drink_time) >= CONSUMABLE_REAPPLY_INTERVAL
                 and not is_casting then
@@ -305,7 +318,7 @@ function RestService.build(bb, navigation)
 
             -- Eat food: only apply if no active food buff.
             -- Skip if mid-cast — starting a new item use would cancel the cast.
-            if hp_pct < 0.90
+            if hp_pct < eat_until
                 and not has_consumable_buff(player, FOOD_AURA_IDS)
                 and (now - last_food_time) >= CONSUMABLE_REAPPLY_INTERVAL
                 and not is_casting then
@@ -321,7 +334,7 @@ function RestService.build(bb, navigation)
             --   2. player is NOT currently eating or drinking
             -- Use buff checks rather than last_food_time == 0 to avoid permanently
             -- blocking healing after the first food use even after the buff expires.
-            if hp_pct < 0.90 and mana_pct > 0.10 and not is_casting
+            if hp_pct < eat_until and mana_pct > 0.10 and not is_casting
                 and heal_spell_id and (now - last_heal_time) > 2.0
                 and not has_consumable_buff(player, FOOD_AURA_IDS)
                 and not has_consumable_buff(player, DRINK_AURA_IDS)
