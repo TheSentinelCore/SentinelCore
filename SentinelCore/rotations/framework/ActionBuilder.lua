@@ -84,6 +84,7 @@ function ActionBuilder.position_spell(spell_id, priority, opts)
     local action = build_action("cast_spell_position", priority, opts)
     action.spell_id = spell_id
     action.position = opts.position
+    action.resolve_position = opts.resolve_position
     return action
 end
 

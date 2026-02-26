@@ -40,6 +40,7 @@ local SPELLS = {
 local FROSTBOLT_RANGE      = 30.0
 local FIRE_BLAST_RANGE     = 20.0
 local ICE_LANCE_RANGE      = 30.0
+local BLIZZARD_RANGE       = 30.0
 local COUNTERSPELL_RANGE   = 30.0
 local CONE_OF_COLD_RANGE   = 10.0
 local FROST_NOVA_RANGE     = 10.0
@@ -254,6 +255,16 @@ local self_spell = function(spec, priority, opts)
     end
 
     return ActionBuilder.self_spell(function(ctx)
+        return resolve_spell(ctx, spec)
+    end, priority, opts)
+end
+
+local position_spell = function(spec, priority, opts)
+    if type(spec) == "number" or type(spec) == "function" then
+        return ActionBuilder.position_spell(spec, priority, opts)
+    end
+
+    return ActionBuilder.position_spell(function(ctx)
         return resolve_spell(ctx, spec)
     end, priority, opts)
 end
@@ -687,6 +698,31 @@ function Frost:aoe(ctx)
             condition = function(local_ctx)
                 local enemies = tonumber(local_ctx.nearby_enemy_count or local_ctx.aoe_target_count) or 0
                 return enemies >= 2
+            end,
+        }),
+
+        -- Blizzard (550) — channeled AoE at pack centroid, 3+ enemies, 25%+ mana
+        position_spell(SPELLS.BLIZZARD, 550, {
+            allow_movement = false,
+            intent = { "burst", "sustain" },
+            combat_modes = { "burst", "sustain" },
+            min_player_mana_pct = 0.25,
+            condition = function(local_ctx)
+                local enemies = tonumber(local_ctx.nearby_enemy_count or local_ctx.aoe_target_count or local_ctx.enemy_count) or 0
+                if enemies < 3 then return false end
+                local cx = tonumber(local_ctx.pack_centroid_x)
+                local cy = tonumber(local_ctx.pack_centroid_y)
+                local cz = tonumber(local_ctx.pack_centroid_z)
+                if not cx or not cy or not cz then return false end
+                if cx == 0 and cy == 0 and cz == 0 then return false end
+                return true
+            end,
+            resolve_position = function(local_ctx)
+                return {
+                    x = tonumber(local_ctx.pack_centroid_x) or 0,
+                    y = tonumber(local_ctx.pack_centroid_y) or 0,
+                    z = tonumber(local_ctx.pack_centroid_z) or 0,
+                }
             end,
         }),
 

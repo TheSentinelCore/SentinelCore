@@ -6,6 +6,7 @@ local function run()
         [27079] = true,  -- Fire Blast
         [30455] = true,  -- Ice Lance
         [27087] = true,  -- Cone of Cold
+        [27085] = true,  -- Blizzard
         [27082] = true,  -- Arcane Explosion
         [27088] = true,  -- Frost Nova
         [33405] = true,  -- Ice Barrier
@@ -397,12 +398,15 @@ local function run()
         "aoe should return non-empty action list")
 
     local cone_of_cold_action = nil
+    local blizzard_action = nil
     local arcane_explosion_action = nil
     local aoe_frostbolt_action = nil
     for i = 1, #aoe do
         local action = aoe[i]
         if action.action_type == "cast_spell_target" and tonumber(action.priority) == 555 then
             cone_of_cold_action = action
+        elseif action.action_type == "cast_spell_position" and tonumber(action.priority) == 550 then
+            blizzard_action = action
         elseif action.action_type == "cast_spell_self" and tonumber(action.priority) == 545 then
             arcane_explosion_action = action
         elseif action.action_type == "cast_spell_target" and tonumber(action.priority) == 530 then
@@ -410,6 +414,7 @@ local function run()
         end
     end
     T.assert_true(type(cone_of_cold_action) == "table", "aoe should include Cone of Cold action")
+    T.assert_true(type(blizzard_action) == "table", "aoe should include Blizzard action")
     T.assert_true(type(arcane_explosion_action) == "table", "aoe should include Arcane Explosion action")
     T.assert_true(type(aoe_frostbolt_action) == "table", "aoe should include fallback Frostbolt action")
     T.assert_eq(tonumber(cone_of_cold_action.max_target_distance), 10.0,
@@ -434,6 +439,52 @@ local function run()
         nearby_enemy_count = 2,
     }, arcane_explosion_action) == false,
         "Arcane Explosion should not trigger with fewer than 3 enemies")
+
+    -- Blizzard requires >= 3 enemies and valid pack centroid
+    T.assert_eq(tonumber(blizzard_action.priority), 550,
+        "Blizzard should have priority 550")
+    T.assert_true(blizzard_action.allow_movement == false,
+        "Blizzard should not allow movement (channeled)")
+    T.assert_eq(blizzard_action.min_player_mana_pct, 0.25,
+        "Blizzard should require 25% mana")
+
+    T.assert_true(blizzard_action.condition({
+        nearby_enemy_count = 3,
+        pack_centroid_x = -1630.5,
+        pack_centroid_y = 5251.2,
+        pack_centroid_z = 32.1,
+    }, blizzard_action) == true,
+        "Blizzard should trigger with 3+ enemies and valid centroid")
+    T.assert_true(blizzard_action.condition({
+        nearby_enemy_count = 2,
+        pack_centroid_x = -1630.5,
+        pack_centroid_y = 5251.2,
+        pack_centroid_z = 32.1,
+    }, blizzard_action) == false,
+        "Blizzard should not trigger with fewer than 3 enemies")
+    T.assert_true(blizzard_action.condition({
+        nearby_enemy_count = 4,
+    }, blizzard_action) == false,
+        "Blizzard should not trigger without pack centroid coordinates")
+    T.assert_true(blizzard_action.condition({
+        nearby_enemy_count = 3,
+        pack_centroid_x = 0,
+        pack_centroid_y = 0,
+        pack_centroid_z = 0,
+    }, blizzard_action) == false,
+        "Blizzard should not trigger with zero centroid (no valid pack)")
+
+    -- Blizzard resolve_position returns centroid coordinates
+    T.assert_true(type(blizzard_action.resolve_position) == "function",
+        "Blizzard should have a resolve_position function")
+    local blizzard_pos = blizzard_action.resolve_position({
+        pack_centroid_x = -1630.5,
+        pack_centroid_y = 5251.2,
+        pack_centroid_z = 32.1,
+    })
+    T.assert_eq(blizzard_pos.x, -1630.5, "Blizzard resolve_position x should match centroid")
+    T.assert_eq(blizzard_pos.y, 5251.2, "Blizzard resolve_position y should match centroid")
+    T.assert_eq(blizzard_pos.z, 32.1, "Blizzard resolve_position z should match centroid")
 
     -- AoE returns empty when stunned
     local stunned_aoe = provider:aoe({
