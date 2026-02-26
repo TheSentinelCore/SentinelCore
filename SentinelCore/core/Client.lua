@@ -42,6 +42,9 @@ local UtilityEvaluator = require("ai/UtilityEvaluator")
 local SwingTimer = require("ai/SwingTimer")
 local HumanTiming = require("ai/HumanTiming")
 local SessionBehavior = require("ai/SessionBehavior")
+local PackTracker = require("ai/PackTracker")
+local TacticalSelector = require("ai/TacticalSelector")
+local SingleTargetTactic = require("tactics/SingleTargetTactic")
 local RetUtil = require("rotations/paladin/RetributionUtility")
 
 ---@class SentinelClient
@@ -233,6 +236,15 @@ function Client:new(config)
     o._human_timing = HumanTiming:new()
     o._session_behavior = SessionBehavior:new()
     RetUtil.register_actions(o._utility_evaluator)
+
+    -- Tactical AI
+    local pack_tracker = PackTracker:new()
+    local tactical_selector = TacticalSelector:new(nil)  -- nil advisor for now (Phase 4)
+    tactical_selector:register(SingleTargetTactic:new())
+    tactical_selector:refresh_available({})
+
+    o._pack_tracker = pack_tracker
+    o._tactical_selector = tactical_selector
 
     o._grind_tree = nil
 
@@ -774,6 +786,8 @@ function Client:start(mode_id, opts)
             loot_service = self._services.loot,
             death_recovery_service = self._services.death_recovery,
             mount_service = self._services.mount,
+            tactical_selector = self._tactical_selector,
+            pack_tracker = self._pack_tracker,
         })
         -- Clear stale BT state from previous session
         self._blackboard:clear("loot.pending_target")
@@ -979,6 +993,27 @@ function Client:update()
             pcall(function() self._services.targeting:update() end)
             pcall(function() self._services.inventory:update() end)
             pcall(function() self._services.death_recovery:update() end)
+
+            -- Update PackTracker from TargetingService's visible hostiles
+            if self._pack_tracker and self._services.targeting then
+                local hostiles = self._services.targeting:get_visible_hostiles()
+                local player_pos = self._blackboard:get("player.position")
+                local player = self._blackboard:get("player.object")
+                local player_guid = ""
+                if player then
+                    local ok, guid = pcall(function() return player:get_guid() end)
+                    if ok and guid then player_guid = guid end
+                end
+                if hostiles and player_pos then
+                    self._pack_tracker:update(hostiles, player_pos, player_guid)
+                    local pack = self._pack_tracker:get_pack()
+                    self._blackboard:set("pack.count", pack.count)
+                    self._blackboard:set("pack.centroid", pack.centroid)
+                    self._blackboard:set("pack.spread", pack.spread)
+                    self._blackboard:set("pack.gathered_count", pack.gathered_count)
+                    self._blackboard:set("pack.nearest_dist", pack.nearest_dist)
+                end
+            end
 
             self._grind_tree:tick()
 
