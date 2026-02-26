@@ -51,8 +51,7 @@ local TOOLTIPS = {
     search_radius = "Max radius for querying nearby vendors from SentinelQueryServer.",
     expert_panel = "Shows advanced targeting and compatibility controls.",
     ret_section = "Retribution combat sustain settings. These values tune healing, potion, and consecration behavior.",
-    ret_flash_hp = "Flash of Light health threshold (used only in very-low-mana fallback mode).",
-    ret_flash_oom = "Maximum mana threshold where Flash of Light is allowed as the low-mana fallback heal.",
+    ret_flash_hp = "Flash of Light health threshold (fallback heal when mana too low for Holy Light).",
     ret_holy_hp = "Cast Holy Light as the primary sustain heal at or below this threshold.",
     ret_low_mana = "Below this mana threshold, the routine can downrank Flash of Light for efficiency.",
     ret_health_pot = "Use best health potion when HP is at or below this threshold in combat.",
@@ -1059,20 +1058,14 @@ local function register_tabs(ui, client)
                 {
                     type = "stepper", label = "Holy Light HP",
                     tooltip = TOOLTIPS.ret_holy_hp,
-                    element = retri_stepper("holy_light_hp_pct", 0.60),
+                    element = retri_stepper("holy_light_hp_pct", 0.65),
                     min = 0.10, max = 0.90, step = 0.02, decimals = 2,
                 },
                 {
                     type = "stepper", label = "Flash Heal HP",
                     tooltip = TOOLTIPS.ret_flash_hp,
-                    element = retri_stepper("flash_light_hp_pct", 0.45),
+                    element = retri_stepper("flash_light_hp_pct", 0.65),
                     min = 0.10, max = 0.80, step = 0.02, decimals = 2,
-                },
-                {
-                    type = "stepper", label = "Flash OOM Mana",
-                    tooltip = TOOLTIPS.ret_flash_oom,
-                    element = retri_stepper("flash_light_very_oom_mana_pct", 0.12),
-                    min = 0.03, max = 0.40, step = 0.01, decimals = 2,
                 },
                 {
                     type = "stepper", label = "Low Mana Downrank",
@@ -1514,6 +1507,42 @@ local function register_tabs(ui, client)
                     tooltip = TOOLTIPS.profile_manager,
                     value_fn = function()
                         return client and client.get_active_profile_id and client:get_active_profile_id() or "default"
+                    end,
+                },
+            },
+        })
+
+        -- 1b. Grinding Profile status
+        t:row_list({
+            label = "Grinding Profile",
+            elements = {
+                {
+                    type = "info",
+                    label = "Status",
+                    tooltip = "Grinding profile FSM state (idle / at_hotspot / traveling / vendor_trip)",
+                    value_fn = function()
+                        if not client then return "N/A" end
+                        return client.get_grinding_profile_state
+                            and client:get_grinding_profile_state() or "idle"
+                    end,
+                    color_fn = function()
+                        if not client then return nil end
+                        local state = client.get_grinding_profile_state
+                            and client:get_grinding_profile_state() or "idle"
+                        if state == "at_hotspot" then return color.new(48, 209, 88, 255) end
+                        if state == "traveling" then return color.new(255, 214, 10, 255) end
+                        if state == "vendor_trip" then return color.new(255, 159, 10, 255) end
+                        return nil
+                    end,
+                },
+                {
+                    type = "info",
+                    label = "Current Hotspot",
+                    value_fn = function()
+                        if not client then return "-" end
+                        local bb = client._services and client._services.blackboard
+                        local hs = bb and bb:get("profile.current_hotspot")
+                        return hs and tostring(hs.label or hs.id) or "-"
                     end,
                 },
             },
