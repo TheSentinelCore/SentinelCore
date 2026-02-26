@@ -90,6 +90,12 @@ local Events = {
     VENDOR_TRIP_COMPLETE = "profile.vendor_trip_complete",
     PROFILE_LOOP_COMPLETE = "profile.loop_complete",
 
+    -- Profile recorder
+    RECORDER_STARTED = "recorder.started",
+    RECORDER_STOPPED = "recorder.stopped",
+    RECORDER_HOTSPOT_ADDED = "recorder.hotspot_added",
+    RECORDER_HOTSPOT_REMOVED = "recorder.hotspot_removed",
+
     -- Blackboard
     BB_PREFIX = "bb.",
 }
