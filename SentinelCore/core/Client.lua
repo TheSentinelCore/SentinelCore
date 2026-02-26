@@ -25,6 +25,7 @@ local VendorService = require("services/VendorService")
 local RecoveryService = require("services/RecoveryService")
 local DeathRecoveryService = require("services/DeathRecoveryService")
 local MountService = require("services/MountService")
+local ProfileCoordinator = require("services/ProfileCoordinator")
 
 local get_now = require("lib/TimeHelper").get_now
 local AutoAttackHelper = require("lib/AutoAttackHelper")
@@ -178,6 +179,10 @@ function Client:new(config)
         o._event_bus, o._blackboard, runtime_cfg.death, navigation, Logger:new("DeathRecovery")
     )
     local mount = config.mount_service or MountService:new(o._event_bus, o._blackboard, runtime_cfg.mount, Logger:new("Mount"))
+    local profile_coordinator = config.profile_coordinator or ProfileCoordinator:new(
+        o._event_bus, o._blackboard, runtime_cfg.profiles or {},
+        navigation, targeting, Logger:new("ProfileCoord")
+    )
 
     o._services = {
         blackboard = o._blackboard,
@@ -194,11 +199,13 @@ function Client:new(config)
         recovery = recovery,
         death_recovery = death_recovery,
         mount = mount,
+        profile_coordinator = profile_coordinator,
     }
 
     o._service_update_order = {
         "objective",
         "targeting",
+        "profile_coordinator",
         "exploration",
         "combat",
         "loot",
@@ -1176,6 +1183,21 @@ end
 ---@return string
 function Client:get_active_profile_id()
     return self._config:get_active_profile_id()
+end
+
+---@param profile table  parsed profile data
+---@return boolean ok, string|nil error
+function Client:load_grinding_profile(profile)
+    return self._services.profile_coordinator:load_profile(profile)
+end
+
+function Client:unload_grinding_profile()
+    self._services.profile_coordinator:unload_profile()
+end
+
+---@return string  FSM state: "idle"|"at_hotspot"|"traveling"|"vendor_trip"
+function Client:get_grinding_profile_state()
+    return self._services.profile_coordinator:get_state()
 end
 
 ---@return table[]
