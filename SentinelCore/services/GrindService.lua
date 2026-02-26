@@ -137,6 +137,10 @@ local function build_tactical_combat_node(deps)
             local active = selector:select(ctx)
             if not active then return BT.Status.FAILURE end
 
+            bb:set("tactical.target_config", active:get_target_config())
+            bb:set("tactical.explore_config", active:get_explore_config())
+            bb:set("tactical.rest_config", active:get_rest_config())
+
             planner:set_tactic(active)
             return planner:tick(ctx, deps)
         end),

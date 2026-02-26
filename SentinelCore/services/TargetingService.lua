@@ -929,6 +929,33 @@ function TargetingService:score_target(target, opts)
     end
 
     local score = (kill_speed * w_kill) + (loot_value * w_loot) - (travel_cost * w_travel) - (risk * w_risk)
+
+    -- Cluster proximity bonus: when the active tactic prefers AoE clusters,
+    -- boost score for targets near other candidates.
+    local cluster_bonus = 0
+    local target_cfg = self._blackboard:get("tactical.target_config")
+    if type(target_cfg) == "table" and target_cfg.prefer_clusters == true
+        and type(opts) == "table" and type(opts.objects) == "table" then
+        local cluster_radius = tonumber(target_cfg.cluster_radius) or 15
+        local cluster_weight = tonumber(target_cfg.cluster_weight) or 0.15
+        local nearby_count = 0
+        for ci = 1, #opts.objects do
+            local other = unwrap_game_object(opts.objects[ci])
+            if other and not is_same_unit(other, target)
+                and safe_method(other, "is_valid") == true
+                and safe_method(other, "is_unit") == true
+                and safe_method(other, "is_dead") ~= true then
+                local other_pos = safe_method(other, "get_position")
+                local cdist = Helpers.distance_3d(target_pos, other_pos)
+                if cdist and cdist <= cluster_radius then
+                    nearby_count = nearby_count + 1
+                end
+            end
+        end
+        cluster_bonus = nearby_count * cluster_weight
+        score = score + cluster_bonus
+    end
+
     local pull_risk_budget = tonumber(type(opts) == "table" and opts.pull_risk_budget or nil) or 0
     local pull_risk_scale = tonumber(type(opts) == "table" and opts.pull_risk_scale or nil) or 0
     local pull_risk_deaths_per_hour = tonumber(type(opts) == "table" and opts.pull_risk_deaths_per_hour or nil) or 0
@@ -948,6 +975,7 @@ function TargetingService:score_target(target, opts)
             pull_risk_deaths_per_hour = pull_risk_deaths_per_hour,
             pull_pressure = pull_pressure,
             unreachable_penalty = unreachable_penalty,
+            cluster_bonus = cluster_bonus,
         })
     end
 
@@ -956,6 +984,7 @@ function TargetingService:score_target(target, opts)
         pull_pressure = pull_pressure,
         distance = distance,
         path_distance = path_distance,
+        cluster_bonus = cluster_bonus,
     }
 end
 
