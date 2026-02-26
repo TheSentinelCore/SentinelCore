@@ -49,6 +49,7 @@ local tests = {
     "tests/test_ai021_edge_case_fixes",
     "tests/test_ai022_tactical_planner",
     "tests/test_ai023_pack_tracker",
+    "tests/test_ai024_tactical_selector",
     "tests/test_sc025_logger",
     "tests/test_sc026_rest_interrupt_resume",
     "tests/test_sc027_flee_centroid",
