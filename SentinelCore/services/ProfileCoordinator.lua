@@ -327,4 +327,89 @@ function ProfileCoordinator:_resume_nearest_hotspot()
     self:_enter_traveling(best_idx)
 end
 
+-- ── File I/O ─────────────────────────────────────
+
+local PROFILE_DIR = "SentinelCore/profiles/"
+
+--- Load a profile from a JSON file in scripts_data/SentinelCore/profiles/.
+---@param filename string  e.g. "netherstorm_manaforge.json"
+---@return boolean ok, string|nil error
+function ProfileCoordinator:load_profile_from_file(filename)
+    local path = PROFILE_DIR .. filename
+    local content = core.read_data_file(path)
+    if not content or content == "" then
+        local msg = "file not found or empty: " .. path
+        self._log:error(msg)
+        return false, msg
+    end
+
+    local JSON = require("lib/JSON")
+    local profile, parse_err = JSON.decode(content)
+    if not profile or type(profile) ~= "table" then
+        local msg = "JSON parse error: " .. tostring(parse_err or "unknown")
+        self._log:error(msg)
+        return false, msg
+    end
+
+    return self:load_profile(profile)
+end
+
+--- Save the active profile to a JSON file.
+---@param filename string
+---@return boolean ok, string|nil error
+function ProfileCoordinator:save_profile_to_file(filename)
+    if not self._profile then
+        return false, "no active profile"
+    end
+
+    local JSON = require("lib/JSON")
+    self._profile.metadata.updated_at = math.floor(get_now())
+
+    local content, enc_err = JSON.encode(self._profile, true)
+    if not content then
+        return false, "encode failed: " .. tostring(enc_err)
+    end
+
+    local path = PROFILE_DIR .. filename
+    core.create_data_folder("SentinelCore/profiles")
+    core.write_data_file(path, content)
+
+    self._log:info("profile saved to %s", path)
+    return true
+end
+
+--- List profile JSON files via manifest in scripts_data/SentinelCore/profiles/.
+---@return table[]  array of { filename, name }
+function ProfileCoordinator:list_profile_files()
+    local manifest_path = PROFILE_DIR .. "manifest.json"
+    local content = core.read_data_file(manifest_path)
+    if not content or content == "" then
+        return {}
+    end
+
+    local JSON = require("lib/JSON")
+    local data = JSON.decode(content)
+    if type(data) ~= "table" then
+        return {}
+    end
+
+    local files = {}
+    local items = data.profiles or data
+    if type(items) == "table" then
+        for i = 1, #items do
+            local entry = items[i]
+            if type(entry) == "table" and entry.filename then
+                files[#files + 1] = {
+                    filename = entry.filename,
+                    name = entry.name or entry.filename,
+                }
+            elseif type(entry) == "string" then
+                files[#files + 1] = { filename = entry, name = entry }
+            end
+        end
+    end
+
+    return files
+end
+
 return ProfileCoordinator
