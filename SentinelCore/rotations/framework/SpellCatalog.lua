@@ -268,7 +268,7 @@ SpellCatalog.MAGE = {
         },
         FIRE_BLAST = {
             name = "fire blast",
-            ids = { 27079, 10199, 10197, 8413, 8412, 2138, 2136, 1953 },
+            ids = { 27079, 10199, 10197, 8413, 8412, 2138, 2136 },
         },
         ICE_LANCE = {
             name = "ice lance",

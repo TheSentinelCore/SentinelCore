@@ -338,7 +338,6 @@ end
 function Frost:resolve_combat_state(ctx)
     local p = policy(ctx)
     local mana_mode = self:_resolve_mana_mode(ctx, p)
-    local target_health_pct = tonumber(ctx and ctx.target_health_pct)
     local target_ttd = tonumber(ctx and ctx.target_ttd_seconds)
 
     local intents = {
@@ -680,7 +679,7 @@ function Frost:aoe(ctx)
 
     return {
         -- Cone of Cold (555) — instant, 10yd, off CD, 2+ enemies
-        self_spell(SPELLS.CONE_OF_COLD, 555, {
+        target_spell(SPELLS.CONE_OF_COLD, 555, {
             max_target_distance = CONE_OF_COLD_RANGE,
             intent = { "burst", "sustain" },
             combat_modes = { "burst", "sustain" },
