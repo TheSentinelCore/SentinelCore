@@ -44,6 +44,7 @@ local HumanTiming = require("ai/HumanTiming")
 local SessionBehavior = require("ai/SessionBehavior")
 local PackTracker = require("ai/PackTracker")
 local TacticalSelector = require("ai/TacticalSelector")
+local PerformanceAdvisor = require("ai/PerformanceAdvisor")
 local SingleTargetTactic = require("tactics/SingleTargetTactic")
 local AoEKiteTactic = require("tactics/AoEKiteTactic")
 local RetUtil = require("rotations/paladin/RetributionUtility")
@@ -66,6 +67,7 @@ local RetUtil = require("rotations/paladin/RetributionUtility")
 ---@field private _swing_timer table
 ---@field private _human_timing table
 ---@field private _session_behavior table
+---@field private _performance_advisor table
 ---@field private _grind_tree table|nil
 ---@field private _started boolean
 ---@field private _context_pending boolean
@@ -240,7 +242,9 @@ function Client:new(config)
 
     -- Tactical AI
     local pack_tracker = PackTracker:new()
-    local tactical_selector = TacticalSelector:new(nil)  -- nil advisor for now (Phase 4)
+    local advisor = PerformanceAdvisor:new(o._event_bus)
+    o._performance_advisor = advisor
+    local tactical_selector = TacticalSelector:new(advisor)
     tactical_selector:register(SingleTargetTactic:new())
     tactical_selector:register(AoEKiteTactic:new())
     tactical_selector:refresh_available({})
@@ -789,6 +793,7 @@ function Client:start(mode_id, opts)
             death_recovery_service = self._services.death_recovery,
             mount_service = self._services.mount,
             tactical_selector = self._tactical_selector,
+            performance_advisor = self._performance_advisor,
             pack_tracker = self._pack_tracker,
         })
         -- Clear stale BT state from previous session

@@ -122,6 +122,9 @@ local function build_tactical_sync_node(deps)
         selector:refresh_available(ctx)
 
         local active = selector:select(ctx)
+        if active and deps.performance_advisor then
+            pcall(function() deps.performance_advisor:set_active_tactic(active:get_name()) end)
+        end
         if active then
             bb:set("tactical.target_config", active:get_target_config())
             bb:set("tactical.explore_config", active:get_explore_config())
