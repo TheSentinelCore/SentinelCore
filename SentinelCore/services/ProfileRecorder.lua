@@ -36,6 +36,7 @@ end
 ---@field private _history table[]
 ---@field private _hotspot_radius number
 ---@field private _hotspot_counter number
+---@field private _keybind_was_pressed boolean
 local ProfileRecorder = {}
 ProfileRecorder.__index = ProfileRecorder
 
@@ -55,6 +56,7 @@ function ProfileRecorder:new(event_bus, blackboard, logger, keybind_element)
     o._history = {}
     o._hotspot_radius = 40
     o._hotspot_counter = 0
+    o._keybind_was_pressed = false
     return o
 end
 
@@ -281,14 +283,21 @@ function ProfileRecorder:cancel_recording()
     self._bus:emit(Events.RECORDER_STOPPED, { cancelled = true })
 end
 
----Per-frame update. If recording and keybind is pressed, adds a hotspot.
+---@return key_checkbox|nil
+function ProfileRecorder:get_keybind()
+    return self._keybind
+end
+
+---Per-frame update. If recording and keybind is pressed (rising edge), adds a hotspot.
 function ProfileRecorder:update()
     if self._state ~= "recording" then
         return
     end
-    if self._keybind and self._keybind:get_keybind_state() then
+    local pressed = self._keybind and self._keybind:get_keybind_state() or false
+    if pressed and not self._keybind_was_pressed then
         self:add_hotspot()
     end
+    self._keybind_was_pressed = pressed
 end
 
 return ProfileRecorder

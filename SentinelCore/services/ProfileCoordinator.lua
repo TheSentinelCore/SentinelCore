@@ -372,11 +372,24 @@ function ProfileCoordinator:save_profile_to_file(filename)
     if not self._profile then
         return false, "no active profile"
     end
+    return self:save_profile(self._profile, filename)
+end
+
+--- Save an arbitrary profile table to a JSON file (does not require it to be active).
+---@param profile table
+---@param filename string
+---@return boolean ok, string|nil error
+function ProfileCoordinator:save_profile(profile, filename)
+    if not profile then
+        return false, "nil profile"
+    end
 
     local JSON = require("lib/JSON")
-    self._profile.metadata.updated_at = math.floor(get_now())
+    if profile.metadata then
+        profile.metadata.updated_at = math.floor(get_now())
+    end
 
-    local content, enc_err = JSON.encode(self._profile, true)
+    local content, enc_err = JSON.encode(profile, true)
     if not content then
         return false, "encode failed: " .. tostring(enc_err)
     end
@@ -386,7 +399,8 @@ function ProfileCoordinator:save_profile_to_file(filename)
     core.write_data_file(path, content)
 
     self._log:info("profile saved to %s", path)
-    self:_update_manifest(filename, self._profile.metadata.name)
+    local name = profile.metadata and profile.metadata.name or filename
+    self:_update_manifest(filename, name)
     return true
 end
 

@@ -307,15 +307,11 @@ local function render_browse(t, client)
             if _selected_profile_index > #files then _selected_profile_index = math.max(1, #files) end
             local selected = files[_selected_profile_index]
 
-            -- Load
+            -- Load (load_profile_from_file internally calls load_profile which activates the coordinator)
             if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Load", selected ~= nil) then
                 local ok, err = coordinator:load_profile_from_file(selected.filename)
-                if ok then
-                    client:load_grinding_profile(coordinator._profile)
-                    _last_profile_result = "Loaded " .. tostring(selected.name)
-                else
-                    _last_profile_result = "Load failed: " .. tostring(err)
-                end
+                _last_profile_result = ok and ("Loaded " .. tostring(selected.name))
+                    or ("Load failed: " .. tostring(err))
             end
 
             -- Unload
@@ -580,7 +576,7 @@ local function render_edit(t, client)
             y_offset = y_offset + button_h + 8
 
             -- Keybind render
-            local keybind = recorder._keybind
+            local keybind = recorder:get_keybind()
             if keybind then
                 keybind:render("Add Hotspot (keybind)", "Press to add a hotspot at your current position")
                 y_offset = y_offset + 30
@@ -622,24 +618,19 @@ local function render_edit(t, client)
                         fname = fname .. ".json"
                     end
 
-                    -- Temporarily load into coordinator to save
                     local coordinator = client._services.profile_coordinator
-                    local prev_profile = coordinator._profile
-                    coordinator._profile = profile
-                    local ok_save, save_err = coordinator:save_profile_to_file(fname)
-                    coordinator._profile = prev_profile
+                    local ok_save, save_err = coordinator:save_profile(profile, fname)
 
                     if ok_save then
                         _last_profile_result = "Saved to " .. fname
+                        _editor_mode = "browse"
                     else
                         _last_profile_result = "Save failed: " .. tostring(save_err)
+                        -- Re-enter recording so user can retry
+                        recorder:start_recording(profile)
                     end
-
-                    _editor_mode = "browse"
                 else
-                    -- Validation failed, re-start recording with the working copy
                     _last_profile_result = "Validation failed: " .. tostring(err)
-                    -- Profile was discarded by finish_recording; restart editing with current form data
                 end
             end
 
@@ -655,19 +646,16 @@ local function render_edit(t, client)
                     end
 
                     local coordinator = client._services.profile_coordinator
-                    local prev_profile = coordinator._profile
-                    coordinator._profile = profile
-                    local ok_save, save_err = coordinator:save_profile_to_file(fname)
-                    coordinator._profile = prev_profile
+                    local ok_save, save_err = coordinator:save_profile(profile, fname)
 
                     if ok_save then
                         client:load_grinding_profile(profile)
                         _last_profile_result = "Saved and loaded " .. fname
+                        _editor_mode = "browse"
                     else
                         _last_profile_result = "Save failed: " .. tostring(save_err)
+                        recorder:start_recording(profile)
                     end
-
-                    _editor_mode = "browse"
                 else
                     _last_profile_result = "Validation failed: " .. tostring(err)
                 end
