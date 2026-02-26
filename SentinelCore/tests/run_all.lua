@@ -44,6 +44,7 @@ local tests = {
     "tests/test_ai016_anti_detection",
     "tests/test_ai017_client_integration",
     "tests/test_ai018_integration_smoke",
+    "tests/test_ai020_tactic",
     "tests/test_ai020_reactive_bt",
     "tests/test_ai021_edge_case_fixes",
     "tests/test_sc025_logger",
