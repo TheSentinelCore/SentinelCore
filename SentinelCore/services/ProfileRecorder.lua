@@ -109,7 +109,7 @@ function ProfileRecorder:start_recording(existing_profile)
 
     self._working_profile = profile
     self._history = {}
-    self._hotspot_counter = 0
+    self._hotspot_counter = #profile.hotspots
     self._state = "recording"
 
     -- Write blackboard keys

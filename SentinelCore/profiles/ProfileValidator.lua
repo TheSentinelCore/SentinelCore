@@ -55,8 +55,8 @@ function Validator.validate(profile)
         for i = 1, #profile.vendors do
             local v = profile.vendors[i]
             if type(v) == "table" then
-                if type(v.npc_id) ~= "number" or v.npc_id <= 0 then
-                    errors[#errors + 1] = string.format("vendor[%d] missing or invalid npc_id", i)
+                if v.npc_id ~= nil and (type(v.npc_id) ~= "number" or v.npc_id < 0) then
+                    errors[#errors + 1] = string.format("vendor[%d] invalid npc_id", i)
                 end
                 if type(v.x) ~= "number" or type(v.y) ~= "number" or type(v.z) ~= "number" then
                     errors[#errors + 1] = string.format("vendor[%d] missing x/y/z coordinates", i)
