@@ -386,7 +386,48 @@ function ProfileCoordinator:save_profile_to_file(filename)
     core.write_data_file(path, content)
 
     self._log:info("profile saved to %s", path)
+    self:_update_manifest(filename, self._profile.metadata.name)
     return true
+end
+
+---@private
+---@param filename string
+---@param profile_name string|nil
+function ProfileCoordinator:_update_manifest(filename, profile_name)
+    local manifest_path = PROFILE_DIR .. "manifest.json"
+    local JSON = require("lib/JSON")
+
+    local content = core.read_data_file(manifest_path)
+    local profiles = {}
+    if content and content ~= "" then
+        local parsed = JSON.decode(content)
+        if type(parsed) == "table" then
+            profiles = parsed.profiles or parsed
+            if type(profiles) ~= "table" then profiles = {} end
+        end
+    end
+
+    local found = false
+    for i = 1, #profiles do
+        local entry = profiles[i]
+        if type(entry) == "table" and entry.filename == filename then
+            entry.name = profile_name or filename
+            found = true
+            break
+        end
+    end
+
+    if not found then
+        profiles[#profiles + 1] = {
+            filename = filename,
+            name = profile_name or filename,
+        }
+    end
+
+    local out = JSON.encode({ profiles = profiles }, true)
+    if out then
+        core.write_data_file(manifest_path, out)
+    end
 end
 
 --- List profile JSON files via manifest in scripts_data/SentinelCore/profiles/.
