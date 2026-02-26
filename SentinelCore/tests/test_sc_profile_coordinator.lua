@@ -124,7 +124,76 @@ local function run()
     local current2 = bb:get("profile.current_hotspot")
     T.assert_eq(current2.id, "hs2", "current hotspot is now hs2")
 
-    -- ── Test 6: Unload profile → idle ──
+    -- ── Test 6: Vendor trip ──
+    -- Re-load profile at hs1 for vendor trip test
+    coord:load_profile(profile)
+    T.assert_eq(coord:get_state(), "at_hotspot", "re-loaded at hs1")
+
+    -- Trigger vendor trip via empty bags
+    bb:set("inventory.free_slots", 0)
+    bb:set("player.position", { x = 100, y = 200, z = 50 })
+    env.core._set_time(2000)
+    coord:update()
+    T.assert_eq(coord:get_state(), "vendor_trip", "vendor trip triggered by full bags")
+    T.assert_eq(bb:get("profile.state"), "vendor_trip", "blackboard state is vendor_trip")
+
+    -- vendor.state is nil (VendorService hasn't started) → should stay in vendor_trip
+    coord:update()
+    T.assert_eq(coord:get_state(), "vendor_trip", "stays in vendor_trip while vendor.state is nil")
+
+    -- VendorService completes
+    local trip_complete_event = nil
+    bus:on(Events.VENDOR_TRIP_COMPLETE, function(p) trip_complete_event = p end)
+    bb:set("vendor.state", "completed")
+    coord:update()
+    T.assert_eq(coord:get_state(), "traveling", "vendor trip done → traveling back")
+    T.assert_true(trip_complete_event ~= nil, "VENDOR_TRIP_COMPLETE emitted")
+    T.assert_eq(trip_complete_event.resume_hotspot_id, "hs1", "resume to hs1")
+
+    -- Clean up vendor state for remaining tests
+    bb:clear("vendor.state")
+    bb:set("inventory.free_slots", 10)
+
+    -- Arrive back at hs1
+    bb:set("player.position", { x = 100, y = 200, z = 50 })
+    coord:update()
+    T.assert_eq(coord:get_state(), "at_hotspot", "arrived back at hs1 after vendor trip")
+
+    -- ── Test 7: Loop wrap-around ──
+    -- Dry spell at hs1 → traveling to hs2
+    targeting_candidates = {}
+    env.core._set_time(3000)
+    coord:update()
+    env.core._set_time(3003)
+    coord:update()
+    T.assert_eq(coord:get_state(), "traveling", "dry spell at hs1 → traveling to hs2")
+
+    -- Arrive at hs2
+    bb:set("player.position", { x = 300, y = 400, z = 60 })
+    coord:update()
+    T.assert_eq(coord:get_state(), "at_hotspot", "at hs2")
+
+    -- Dry spell at hs2 → should loop back to hs1
+    local loop_event = nil
+    bus:on(Events.PROFILE_LOOP_COMPLETE, function(p) loop_event = p end)
+    env.core._set_time(4000)
+    coord:update()
+    env.core._set_time(4003)
+    coord:update()
+    T.assert_eq(coord:get_state(), "traveling", "dry spell at hs2 → traveling to hs1 (loop)")
+    T.assert_true(loop_event ~= nil, "PROFILE_LOOP_COMPLETE emitted")
+    T.assert_eq(loop_event.loop_count, 1, "loop_count is 1")
+
+    -- ── Test 8: Load failure ──
+    local fail_event = nil
+    bus:on(Events.PROFILE_LOAD_FAILED, function(p) fail_event = p end)
+    local bad_profile = Schema.defaults()
+    bad_profile.version = nil
+    local ok_bad, err_bad = coord:load_profile(bad_profile)
+    T.assert_true(ok_bad == false, "invalid profile fails to load")
+    T.assert_true(fail_event ~= nil, "PROFILE_LOAD_FAILED emitted")
+
+    -- ── Test 9: Unload profile → idle ──
     coord:unload_profile()
     T.assert_eq(coord:get_state(), "idle", "unload → idle")
     T.assert_true(bb:get("profile.active") ~= true, "profile.active cleared")
@@ -137,6 +206,9 @@ local function run()
         sc_coord_at_hotspot = true,
         sc_coord_dry_spell = true,
         sc_coord_arrive = true,
+        sc_coord_vendor_trip = true,
+        sc_coord_loop = true,
+        sc_coord_load_fail = true,
         sc_coord_unload = true,
     }
 end

@@ -250,27 +250,27 @@ function ProfileCoordinator:_tick_traveling()
 end
 
 function ProfileCoordinator:_tick_vendor_trip()
-    local now = get_now()
-    if (now - self._vendor_trip_started_at) < 1.0 then
+    local vendor_state = self._blackboard:get("vendor.state")
+
+    -- Wait for VendorService to positively complete or fail.
+    -- nil means VendorService hasn't started/acknowledged yet — keep waiting.
+    if vendor_state ~= "completed" and vendor_state ~= "failed" then
         return
     end
 
-    local vendor_state = self._blackboard:get("vendor.state")
+    self._event_bus:emit(Events.VENDOR_TRIP_COMPLETE, {
+        resume_hotspot_id = self._resume_hotspot_id,
+    })
 
-    if vendor_state == "completed" or vendor_state == "failed" or vendor_state == nil then
-        if self._resume_hotspot_id then
-            local idx = self:_find_hotspot_index(self._resume_hotspot_id)
-            if idx then
-                self._event_bus:emit(Events.VENDOR_TRIP_COMPLETE, {
-                    resume_hotspot_id = self._resume_hotspot_id,
-                })
-                self:_enter_traveling(idx)
-                self._resume_hotspot_id = nil
-                return
-            end
+    if self._resume_hotspot_id then
+        local idx = self:_find_hotspot_index(self._resume_hotspot_id)
+        if idx then
+            self:_enter_traveling(idx)
+            self._resume_hotspot_id = nil
+            return
         end
-        self:_resume_nearest_hotspot()
     end
+    self:_resume_nearest_hotspot()
 end
 
 -- Private: helpers
