@@ -41,4 +41,22 @@ AuraCatalog.WARLOCK = {
     },
 }
 
+AuraCatalog.MAGE = {
+    FROST = {
+        -- Player buffs
+        FROST_ARMOR = { 7301, 7300, 168 },
+        ICE_ARMOR = { 27124, 10220, 10219, 7320 },
+        ARCANE_INTELLECT = { 27126, 10157, 10156, 1461, 1459, 1008 },
+        ICE_BARRIER = { 33405, 13033, 13032, 13031, 11426 },
+        MANA_SHIELD = { 27131, 10193, 10192, 10191, 8494, 1463 },
+
+        -- Procs
+        FINGERS_OF_FROST = { 44544 },
+
+        -- Target debuffs
+        FROSTBITE = { 12494, 12496, 12497 },
+        WINTERS_CHILL = { 12579 },
+    },
+}
+
 return AuraCatalog
