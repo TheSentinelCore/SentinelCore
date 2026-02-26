@@ -5,6 +5,9 @@ local CATALOG = {
     [2] = {
         "rotations/paladin/Retribution",
     },
+    [8] = {
+        "rotations/mage/Frost",
+    },
     [9] = {
         "rotations/warlock/Affliction",
     },
