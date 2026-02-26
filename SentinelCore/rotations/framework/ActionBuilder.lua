@@ -83,8 +83,7 @@ function ActionBuilder.position_spell(spell_id, priority, opts)
     opts.skip_range = true
     local action = build_action("cast_spell_position", priority, opts)
     action.spell_id = spell_id
-    action.position = opts.position
-    action.resolve_position = opts.resolve_position
+    action.position = opts.resolve_position or opts.position
     return action
 end
 

@@ -91,6 +91,47 @@ local function idle_pause_node(bb, session_behavior, navigation)
     end)
 end
 
+--- Build a lightweight node that refreshes tactic selection and publishes configs
+--- every tick, even outside combat. This ensures TargetingService, ExplorationService,
+--- and RestService see the active tactic's config before combat begins.
+--- Always returns FAILURE so ReactiveSelector falls through to real children.
+local function build_tactical_sync_node(deps)
+    local selector = deps.tactical_selector
+    local bb = deps.bb
+
+    return BT.Action:new("tactical_sync", function()
+        local ctx = {
+            in_combat = bb:get("player.in_combat", false),
+            has_target = bb:get("combat.target") ~= nil,
+            target_alive = false,
+            enemy_count = bb:get("combat.enemy_count", 0),
+            player_mana_pct = 0,
+            pack_count = bb:get("pack.count", 0),
+        }
+
+        local player_obj = bb:get("player.object")
+        if player_obj then
+            local ok_cur, cur = pcall(function() return player_obj:get_power(0) end)
+            local ok_max, mx  = pcall(function() return player_obj:get_max_power(0) end)
+            if ok_cur and ok_max and type(cur) == "number" and type(mx) == "number" and mx > 0 then
+                ctx.player_mana_pct = cur / mx
+            end
+        end
+
+        -- Re-evaluate preconditions each tick so AoEKiteTactic can enter/exit
+        selector:refresh_available(ctx)
+
+        local active = selector:select(ctx)
+        if active then
+            bb:set("tactical.target_config", active:get_target_config())
+            bb:set("tactical.explore_config", active:get_explore_config())
+            bb:set("tactical.rest_config", active:get_rest_config())
+        end
+
+        return S.FAILURE
+    end)
+end
+
 --- Build a tactical combat node that delegates combat to TacticalSelector + TacticalPlanner.
 --- Used when deps.tactical_selector is provided; falls through to CombatService otherwise.
 local function build_tactical_combat_node(deps)
@@ -106,8 +147,11 @@ local function build_tactical_combat_node(deps)
                 or (bb:get("combat.target") ~= nil and not bb:get("player.is_dead", false))
         end),
 
-        -- Select best tactic and tick its planner
+        -- Tick the planner for the active tactic (selected by tactical_sync node)
         BT.Action:new("tactical_tick", function()
+            local active = selector:get_active()
+            if not active then return BT.Status.FAILURE end
+
             local ctx = {
                 in_combat = bb:get("player.in_combat", false),
                 has_target = bb:get("combat.target") ~= nil,
@@ -117,14 +161,12 @@ local function build_tactical_combat_node(deps)
                 pack_count = bb:get("pack.count", 0),
             }
 
-            -- Check target alive
             local target = bb:get("combat.target")
             if target then
                 local ok, hp = pcall(function() return target:get_health() end)
                 ctx.target_alive = ok and hp and hp > 0
             end
 
-            -- Player mana (read directly from game object; blackboard has no mana keys)
             local player_obj = bb:get("player.object")
             if player_obj then
                 local ok_cur, cur = pcall(function() return player_obj:get_power(0) end)
@@ -133,13 +175,6 @@ local function build_tactical_combat_node(deps)
                     ctx.player_mana_pct = cur / mx
                 end
             end
-
-            local active = selector:select(ctx)
-            if not active then return BT.Status.FAILURE end
-
-            bb:set("tactical.target_config", active:get_target_config())
-            bb:set("tactical.explore_config", active:get_explore_config())
-            bb:set("tactical.rest_config", active:get_rest_config())
 
             planner:set_tactic(active)
             return planner:tick(ctx, deps)
@@ -160,6 +195,7 @@ function GrindService.build(deps)
         fatigue_sync_node(deps.human_timing, deps.session_behavior),
         deps.death_recovery_service and deps.death_recovery_service:build() or noop_node("death_noop"),
         CombatInterruptService.build(deps.bb),
+        deps.tactical_selector and build_tactical_sync_node(deps) or noop_node("tactical_sync_noop"),
         deps.tactical_selector
             and build_tactical_combat_node(deps)
             or CombatService.build_bt(deps.bb, deps.evaluator, deps.swing_timer, deps.human_timing, deps.spell_executor, deps.navigation),
