@@ -1147,6 +1147,26 @@ function TargetingService:get_visible_candidates(opts)
     return candidates
 end
 
+---@return table[] Array of visible hostile game_object references for PackTracker
+function TargetingService:get_visible_hostiles()
+    local player = unwrap_game_object(self._blackboard:get("player.object"))
+    if not player or safe_method(player, "is_valid") ~= true then
+        return {}
+    end
+
+    local objects = self:_get_visible_objects()
+    local hostiles = {}
+
+    for i = 1, #objects do
+        local unit = unwrap_game_object(objects[i])
+        if is_valid_target(unit, player) then
+            hostiles[#hostiles + 1] = unit
+        end
+    end
+
+    return hostiles
+end
+
 ---@return game_object|nil
 ---@return string|nil
 function TargetingService:acquire_target()

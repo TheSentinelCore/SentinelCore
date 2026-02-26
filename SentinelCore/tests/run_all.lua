@@ -52,6 +52,7 @@ local tests = {
     "tests/test_ai024_tactical_selector",
     "tests/test_ai025_single_target_tactic",
     "tests/test_ai026_grind_tactical_integration",
+    "tests/test_ai027_targeting_visible_hostiles",
     "tests/test_sc025_logger",
     "tests/test_sc026_rest_interrupt_resume",
     "tests/test_sc027_flee_centroid",
