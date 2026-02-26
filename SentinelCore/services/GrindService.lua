@@ -124,10 +124,15 @@ local function build_tactical_combat_node(deps)
                 ctx.target_alive = ok and hp and hp > 0
             end
 
-            -- Player mana
-            local mana = bb:get("player.mana") or 0
-            local max_mana = bb:get("player.max_mana") or 1
-            ctx.player_mana_pct = max_mana > 0 and (mana / max_mana) or 0
+            -- Player mana (read directly from game object; blackboard has no mana keys)
+            local player_obj = bb:get("player.object")
+            if player_obj then
+                local ok_cur, cur = pcall(function() return player_obj:get_power(0) end)
+                local ok_max, mx  = pcall(function() return player_obj:get_max_power(0) end)
+                if ok_cur and ok_max and type(cur) == "number" and type(mx) == "number" and mx > 0 then
+                    ctx.player_mana_pct = cur / mx
+                end
+            end
 
             local active = selector:select(ctx)
             if not active then return BT.Status.FAILURE end
@@ -161,7 +166,7 @@ function GrindService.build(deps)
         deps.vendor_service and deps.vendor_service:build() or noop_node("vendor_noop"),
         MaintenanceService.build(deps.bb),
         mount_node(deps.mount_service),
-        PullService.build(deps.bb, deps.navigation, deps.rotation_engine),
+        deps.pull_node or PullService.build(deps.bb, deps.navigation, deps.rotation_engine),
         deps.targeting and deps.targeting:build() or noop_node("target_noop"),
         deps.exploration_service and deps.exploration_service:build() or noop_node("explore_noop"),
     })

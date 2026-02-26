@@ -54,7 +54,7 @@ return { run = function()
 
     -- 11. Phase predicates
     T.assert_true(phases[1].enter_if({ has_target = true, in_combat = false }), "engage enters")
-    T.assert_eq(phases[1].enter_if({ has_target = true, in_combat = true }), nil, "engage blocked in combat")
+    T.assert_eq(phases[1].enter_if({ has_target = true, in_combat = true }), false, "engage blocked in combat")
     T.assert_eq(phases[1].exit_if({ in_combat = true }), true, "engage exits on combat")
     T.assert_true(phases[2].enter_if({ in_combat = true }), "combat enters in combat")
     T.assert_true(phases[2].exit_if({ in_combat = false, target_alive = false }), "combat exits target dead")

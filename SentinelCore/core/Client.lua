@@ -995,25 +995,27 @@ function Client:update()
             pcall(function() self._services.death_recovery:update() end)
 
             -- Update PackTracker from TargetingService's visible hostiles
-            if self._pack_tracker and self._services.targeting then
-                local hostiles = self._services.targeting:get_visible_hostiles()
-                local player_pos = self._blackboard:get("player.position")
-                local player = self._blackboard:get("player.object")
-                local player_guid = ""
-                if player then
-                    local ok, guid = pcall(function() return player:get_guid() end)
-                    if ok and guid then player_guid = guid end
+            pcall(function()
+                if self._pack_tracker and self._services.targeting then
+                    local hostiles = self._services.targeting:get_visible_hostiles()
+                    local player_pos = self._blackboard:get("player.position")
+                    local player = self._blackboard:get("player.object")
+                    local player_guid = ""
+                    if player then
+                        local ok, guid = pcall(function() return player:get_guid() end)
+                        if ok and guid then player_guid = guid end
+                    end
+                    if hostiles and player_pos then
+                        self._pack_tracker:update(hostiles, player_pos, player_guid)
+                        local pack = self._pack_tracker:get_pack()
+                        self._blackboard:set("pack.count", pack.count)
+                        self._blackboard:set("pack.centroid", pack.centroid)
+                        self._blackboard:set("pack.spread", pack.spread)
+                        self._blackboard:set("pack.gathered_count", pack.gathered_count)
+                        self._blackboard:set("pack.nearest_dist", pack.nearest_dist)
+                    end
                 end
-                if hostiles and player_pos then
-                    self._pack_tracker:update(hostiles, player_pos, player_guid)
-                    local pack = self._pack_tracker:get_pack()
-                    self._blackboard:set("pack.count", pack.count)
-                    self._blackboard:set("pack.centroid", pack.centroid)
-                    self._blackboard:set("pack.spread", pack.spread)
-                    self._blackboard:set("pack.gathered_count", pack.gathered_count)
-                    self._blackboard:set("pack.nearest_dist", pack.nearest_dist)
-                end
-            end
+            end)
 
             self._grind_tree:tick()
 
