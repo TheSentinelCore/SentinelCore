@@ -35,7 +35,20 @@ function ProfileCoordinator:new(event_bus, blackboard, cfg, navigation, targetin
     o._loop_start_time = 0
     o._resume_hotspot_id = nil
     o._move_issued = false
-    o._vendor_trip_started_at = 0
+    o._vendor_trip_done = false -- set by event listener when VendorService finishes
+
+    -- Listen for VendorService terminal events
+    event_bus:on(Events.VENDOR_COMPLETED, function()
+        if o._state == "vendor_trip" then
+            o._vendor_trip_done = true
+        end
+    end)
+    event_bus:on(Events.VENDOR_FAILED, function()
+        if o._state == "vendor_trip" then
+            o._vendor_trip_done = true
+        end
+    end)
+
     return o
 end
 
@@ -173,7 +186,7 @@ function ProfileCoordinator:_enter_vendor_trip()
     self._resume_hotspot_id = current_hs and current_hs.id or nil
 
     self._state = "vendor_trip"
-    self._vendor_trip_started_at = get_now()
+    self._vendor_trip_done = false
     self._blackboard:set("profile.state", "vendor_trip")
     self._blackboard:clear("grind.anchor")
 
@@ -250,11 +263,9 @@ function ProfileCoordinator:_tick_traveling()
 end
 
 function ProfileCoordinator:_tick_vendor_trip()
-    local vendor_state = self._blackboard:get("vendor.state")
-
-    -- Wait for VendorService to positively complete or fail.
-    -- nil means VendorService hasn't started/acknowledged yet — keep waiting.
-    if vendor_state ~= "completed" and vendor_state ~= "failed" then
+    -- _vendor_trip_done is set by VENDOR_COMPLETED/VENDOR_FAILED event listeners.
+    -- This avoids polling a blackboard key that may not be written.
+    if not self._vendor_trip_done then
         return
     end
 

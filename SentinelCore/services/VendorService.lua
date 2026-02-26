@@ -324,6 +324,7 @@ end
 ---@param returned_to_anchor boolean
 function VendorService:_complete_vendor(now, returned_to_anchor)
     self._state = "completed"
+    self._blackboard:set("vendor.state", "completed")
     self._return_pending = false
     self._return_started_at = 0
     self:_update_cache(self._active_candidate, "ok", self._active_candidate and self._active_candidate.path_cost or nil)

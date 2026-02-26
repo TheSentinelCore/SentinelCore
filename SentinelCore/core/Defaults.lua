@@ -371,6 +371,7 @@ function Defaults.build_runtime(extra)
         telemetry = deep_copy(Defaults.telemetry),
         logging = deep_copy(Defaults.logging),
         mount = deep_copy(Defaults.mount),
+        profiles = deep_copy(Defaults.profiles),
         zone_overrides = deep_copy(Defaults.zone_overrides),
     }
 

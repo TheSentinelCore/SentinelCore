@@ -127,14 +127,13 @@ local function run()
     coord:update()
     T.assert_eq(coord:get_state(), "vendor_trip", "stays in vendor_trip while nil")
 
-    -- Complete vendor trip
-    bb:set("vendor.state", "completed")
+    -- Complete vendor trip (VendorService emits VENDOR_COMPLETED)
+    bus:emit(Events.VENDOR_COMPLETED, {})
     coord:update()
     T.assert_eq(coord:get_state(), "traveling", "vendor done → traveling back")
 
     -- Arrive back at a
     bb:set("player.position", { x = 0, y = 0, z = 0 })
-    bb:clear("vendor.state")
     bb:set("inventory.free_slots", 10)
     coord:update()
     T.assert_eq(coord:get_state(), "at_hotspot", "back at a after vendor trip")

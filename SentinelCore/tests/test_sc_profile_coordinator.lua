@@ -141,17 +141,16 @@ local function run()
     coord:update()
     T.assert_eq(coord:get_state(), "vendor_trip", "stays in vendor_trip while vendor.state is nil")
 
-    -- VendorService completes
+    -- VendorService completes (emits VENDOR_COMPLETED event)
     local trip_complete_event = nil
     bus:on(Events.VENDOR_TRIP_COMPLETE, function(p) trip_complete_event = p end)
-    bb:set("vendor.state", "completed")
+    bus:emit(Events.VENDOR_COMPLETED, {})
     coord:update()
     T.assert_eq(coord:get_state(), "traveling", "vendor trip done → traveling back")
     T.assert_true(trip_complete_event ~= nil, "VENDOR_TRIP_COMPLETE emitted")
     T.assert_eq(trip_complete_event.resume_hotspot_id, "hs1", "resume to hs1")
 
-    -- Clean up vendor state for remaining tests
-    bb:clear("vendor.state")
+    -- Clean up for remaining tests
     bb:set("inventory.free_slots", 10)
 
     -- Arrive back at hs1
