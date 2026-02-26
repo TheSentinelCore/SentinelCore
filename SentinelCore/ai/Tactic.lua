@@ -6,6 +6,7 @@
 ---@field _rest_config table|nil
 ---@field _target_config table|nil
 ---@field _explore_config table|nil
+---@field _on_reset function|nil
 local Tactic = {}
 Tactic.__index = Tactic
 
@@ -17,10 +18,10 @@ function Tactic:new(def)
     o._preconditions = def.preconditions or function() return true end
     o._utility = def.utility or function() return 0 end
     o._phases = def.phases or {}
-    o._rest_config = def.rest_config or nil
-    o._target_config = def.target_config or nil
-    o._explore_config = def.explore_config or nil
-    o._on_reset = def.on_reset or nil
+    o._rest_config = def.rest_config
+    o._target_config = def.target_config
+    o._explore_config = def.explore_config
+    o._on_reset = def.on_reset
     return o
 end
 
