@@ -379,7 +379,9 @@ end
 ---@param ctx table
 ---@return boolean
 function Frost:should_hold_maintenance(ctx)
-    return false
+    local p = policy(ctx)
+    local rest = rest_policy_thresholds(p)
+    return RestPolicy.should_hold(ctx, rest)
 end
 
 ---@param ctx table
@@ -475,14 +477,13 @@ function Frost:defensive(ctx)
     local p = policy(ctx)
 
     return {
-        -- Ice Block (990) — emergency < 12% HP, in combat, not stunned
+        -- Ice Block (990) — emergency < 12% HP, in combat (usable while stunned/feared)
         self_spell(SPELLS.ICE_BLOCK, 990, {
             max_player_health_pct = p.ice_block_hp_pct,
             intent = "defensive",
             combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true
-                    and local_ctx.player_is_stunned ~= true
             end,
         }),
 
