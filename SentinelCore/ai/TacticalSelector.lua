@@ -33,6 +33,20 @@ function TacticalSelector:refresh_available(ctx)
             self._available[#self._available + 1] = t
         end
     end
+    -- Clear active if it's no longer available
+    if self._active then
+        local still_available = false
+        for i = 1, #self._available do
+            if self._available[i] == self._active then
+                still_available = true
+                break
+            end
+        end
+        if not still_available then
+            self._active:reset()
+            self._active = nil
+        end
+    end
 end
 
 ---@return number
@@ -50,7 +64,13 @@ end
 ---@param ctx table
 ---@return Tactic|nil
 function TacticalSelector:select(ctx)
-    if #self._available == 0 then return nil end
+    if #self._available == 0 then
+        if self._active then
+            self._active:reset()
+            self._active = nil
+        end
+        return nil
+    end
 
     local best_tactic = nil
     local best_score = -1

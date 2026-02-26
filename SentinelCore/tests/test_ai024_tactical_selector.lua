@@ -91,10 +91,51 @@ return { run = function()
     local selected3 = selector2:select(ctx)
     T.assert_eq(selected3:get_name(), "dominant", "dominant tactic takes over")
 
-    -- 8. No available tactics → nil
+    -- 8. No available tactics → nil and clears stale active
     local empty_selector = TacticalSelector:new(advisor)
     local none = empty_selector:select(ctx)
     T.assert_eq(none, nil, "nil when no tactics available")
+    T.assert_eq(empty_selector:get_active(), nil, "active is nil when no tactics")
+
+    -- 9. Advisor bias flips winner
+    local bias_advisor = {
+        get_bias = function(self, name)
+            if name == "low" then return 2.0 end
+            return 0.5
+        end,
+    }
+    local bias_sel = TacticalSelector:new(bias_advisor)
+    bias_sel:register(low_tactic)   -- raw 0.3 * 2.0 = 0.6
+    bias_sel:register(high_tactic)  -- raw 0.8 * 0.5 = 0.4
+    bias_sel:refresh_available(ctx)
+    local biased = bias_sel:select(ctx)
+    T.assert_eq(biased:get_name(), "low", "bias flips winner from high to low")
+
+    -- 10. Advisor error falls back to raw scores
+    local bad_advisor = {
+        get_bias = function() error("advisor crash") end,
+    }
+    local err_sel = TacticalSelector:new(bad_advisor)
+    err_sel:register(low_tactic)
+    err_sel:register(high_tactic)
+    err_sel:refresh_available(ctx)
+    local err_selected = err_sel:select(ctx)
+    T.assert_eq(err_selected:get_name(), "high", "advisor error falls back to raw scores")
+
+    -- 11. refresh_available clears stale active
+    local refresh_sel = TacticalSelector:new(advisor)
+    local conditional_tactic = Tactic:new({
+        name = "conditional",
+        preconditions = function(c) return c.enabled == true end,
+        utility = function() return 0.9 end,
+        phases = low_tactic:get_phases(),
+    })
+    refresh_sel:register(conditional_tactic)
+    refresh_sel:refresh_available({ enabled = true })
+    refresh_sel:select({ enabled = true })
+    T.assert_eq(refresh_sel:get_active():get_name(), "conditional", "conditional activated")
+    refresh_sel:refresh_available({ enabled = false })
+    T.assert_eq(refresh_sel:get_active(), nil, "active cleared when tactic fails preconditions")
 
     return true
 end }
