@@ -47,7 +47,9 @@ local function run()
     local ok = vendor:start({ map_id = 530, zone_id = 1, area_id = 2 })
     T.assert_true(ok == true, "vendor start should initiate")
     T.assert_true(world.captured_opts ~= nil, "world_data request options should be captured")
-    T.assert_eq(world.captured_opts.faction, "alliance", "faction template id should normalize to alliance")
+    -- Faction filter is intentionally omitted from server request; client-side
+    -- _candidate_allowed() handles faction compatibility to include neutral vendors.
+    T.assert_true(world.captured_opts.faction == nil, "faction should not be sent to server (client-side filtering)")
     T.assert_eq(vendor:get_state(), "failed", "mismatched map candidate should fail closed")
     T.assert_eq(vendor:get_last_error(), ErrorCodes.VENDOR_NONE_VIABLE, "expected explicit no viable vendor reason")
 
