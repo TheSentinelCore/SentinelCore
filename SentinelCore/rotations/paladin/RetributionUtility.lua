@@ -85,30 +85,30 @@ function RetUtil.register_actions(evaluator)
         },
     })
 
-    -- Holy Light (big self-heal — only when critical, FoL preferred in combat)
+    -- Holy Light (big self-heal — preferred when mana allows, heals more per cast)
     register_if_learned(evaluator, {
         id = "holy_light",
         action_type = "cast_spell_self",
         spell_id = S.HOLY_LIGHT,
-        weight = 1.5,
+        weight = 2.5,
         bucket = 3,
         considerations = {
-            { input = "player_health_pct", curve = "inverse_linear", params = { min = 0.15, max = 0.45 } },
-            { input = "player_mana_pct", curve = "linear", params = { min = 0.22, max = 0.60 } },
+            { input = "player_health_pct", curve = "inverse_linear", params = { min = 0.15, max = 0.65 } },
+            { input = "player_mana_pct", curve = "linear", params = { min = 0.15, max = 0.50 } },
             { input = "player_is_moving", curve = "step_below", params = { threshold = 0.5 } },
         },
     })
 
-    -- Flash of Light (quick heal)
+    -- Flash of Light (quick heal — fallback when mana too low for Holy Light)
     register_if_learned(evaluator, {
         id = "flash_of_light",
         action_type = "cast_spell_self",
         spell_id = S.FLASH_OF_LIGHT,
-        weight = 2.0,
+        weight = 1.8,
         bucket = 3,
         considerations = {
-            { input = "player_health_pct", curve = "inverse_linear", params = { min = 0.25, max = 0.55 } },
-            { input = "player_mana_pct", curve = "linear", params = { min = 0.10, max = 0.40 } },
+            { input = "player_health_pct", curve = "inverse_linear", params = { min = 0.20, max = 0.65 } },
+            { input = "player_mana_pct", curve = "linear", params = { min = 0.05, max = 0.30 } },
             { input = "player_is_moving", curve = "step_below", params = { threshold = 0.5 } },
         },
     })
