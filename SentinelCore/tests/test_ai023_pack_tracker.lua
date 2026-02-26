@@ -45,7 +45,9 @@ return { run = function()
     pt:update(mobs, player_pos, player_guid)
     pack = pt:get_pack()
     T.assert_eq(pack.count, 4, "four mobs")
-    T.assert_true(pack.centroid ~= nil, "centroid computed")
+    -- centroid of (10,0,10),(12,0,11),(11,0,13),(13,0,12) = (11.5, 0, 11.5)
+    T.assert_true(math.abs(pack.centroid.x - 11.5) < 0.01, "centroid x correct")
+    T.assert_true(math.abs(pack.centroid.z - 11.5) < 0.01, "centroid z correct")
     T.assert_true(pack.spread < 10, "spread is small for tight cluster")
 
     -- 4. Gathered count: mobs targeting player
@@ -83,6 +85,17 @@ return { run = function()
     pt:update(near_mobs, player_pos, player_guid)
     pack = pt:get_pack()
     T.assert_true(pack.nearest_dist <= 3.1 and pack.nearest_dist >= 2.9, "nearest ~3yd")
+
+    -- 7. Erroring get_position is gracefully skipped
+    local bad_mob = {
+        get_position = function() error("invalid object") end,
+        is_in_combat = function() return false end,
+        get_target = function() return nil end,
+    }
+    local good_mob = make_mob(7, 0, 0)
+    pt:update({ bad_mob, good_mob }, player_pos, player_guid)
+    pack = pt:get_pack()
+    T.assert_eq(pack.count, 1, "bad mob skipped, good mob counted")
 
     return true
 end }

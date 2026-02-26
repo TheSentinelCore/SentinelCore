@@ -29,6 +29,7 @@ end
 ---@param player_guid string Player GUID for gathered detection
 function PackTracker:update(hostiles, player_pos, player_guid)
     local targets = {}
+    local positions = {}
     local sum_x, sum_y, sum_z = 0, 0, 0
     local nearest_dist = math.huge
     local gathered = 0
@@ -38,6 +39,7 @@ function PackTracker:update(hostiles, player_pos, player_guid)
         local ok, pos = pcall(function() return mob:get_position() end)
         if ok and pos then
             targets[#targets + 1] = mob
+            positions[#positions + 1] = pos
             sum_x = sum_x + (pos.x or 0)
             sum_y = sum_y + (pos.y or 0)
             sum_z = sum_z + (pos.z or 0)
@@ -70,13 +72,10 @@ function PackTracker:update(hostiles, player_pos, player_guid)
         centroid.y = sum_y / count
         centroid.z = sum_z / count
 
-        -- Spread = max distance from centroid
+        -- Spread = max distance from centroid (reuse cached positions)
         for i = 1, count do
-            local ok, pos = pcall(function() return targets[i]:get_position() end)
-            if ok and pos then
-                local d = Helpers.distance_3d(centroid, pos)
-                if d > spread then spread = d end
-            end
+            local d = Helpers.distance_3d(centroid, positions[i])
+            if d > spread then spread = d end
         end
     end
 
