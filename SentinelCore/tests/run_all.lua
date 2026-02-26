@@ -61,6 +61,7 @@ local tests = {
     "tests/test_sc028_pull_nav_unavailable",
     "tests/test_sc029_mount_service",
     "tests/test_sc030_zone_config_session",
+    "tests/test_sc031_positioning_service",
 }
 
 ---@return table
