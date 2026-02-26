@@ -23,6 +23,16 @@ local function run()
     T.assert_eq(d.loop, true, "loop defaults to true")
     T.assert_eq(d.dry_spell_secs, 15, "dry_spell_secs defaults to 15")
     T.assert_eq(d.travel_engage, true, "travel_engage defaults to true")
+    T.assert_true(type(d.overrides) == "table", "overrides present")
+    T.assert_eq(d.metadata.name, "New Profile", "metadata.name default")
+    T.assert_eq(d.metadata.author, "", "metadata.author default")
+    T.assert_eq(d.metadata.created_at, 0, "metadata.created_at default")
+    T.assert_eq(d.metadata.updated_at, 0, "metadata.updated_at default")
+    T.assert_eq(d.requirements.map_id, 0, "requirements.map_id default")
+    T.assert_eq(d.requirements.min_level, 1, "requirements.min_level default")
+    T.assert_eq(d.requirements.max_level, 80, "requirements.max_level default")
+    T.assert_eq(d.target_defaults.level_min, 1, "target_defaults.level_min default")
+    T.assert_eq(d.target_defaults.level_max, 80, "target_defaults.level_max default")
 
     -- Test 3: merge_target_filters merges hotspot overrides onto defaults
     local defaults = { level_min = 67, level_max = 70, creature_types = { "humanoid" }, npc_blacklist = { 100 }, npc_whitelist = {} }
