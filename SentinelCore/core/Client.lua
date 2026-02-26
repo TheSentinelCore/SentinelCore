@@ -26,6 +26,8 @@ local RecoveryService = require("services/RecoveryService")
 local DeathRecoveryService = require("services/DeathRecoveryService")
 local MountService = require("services/MountService")
 local ProfileCoordinator = require("services/ProfileCoordinator")
+local ProfileRecorder = require("services/ProfileRecorder")
+local ProfileOverlay = require("ui/ProfileOverlay")
 
 local get_now = require("lib/TimeHelper").get_now
 local AutoAttackHelper = require("lib/AutoAttackHelper")
@@ -184,6 +186,14 @@ function Client:new(config)
         navigation, targeting, Logger:new("ProfileCoord")
     )
 
+    -- Record hotspot keybind (Insert key = 0x2D = 45)
+    local record_hotspot_keybind = core.menu.key_checkbox(45, false, false, true, 0, "sc_record_hotspot")
+    local profile_recorder = config.profile_recorder or ProfileRecorder:new(
+        o._event_bus, o._blackboard, Logger:new("ProfileRec"), record_hotspot_keybind
+    )
+
+    local profile_overlay = ProfileOverlay:new(o._blackboard)
+
     o._services = {
         blackboard = o._blackboard,
         navigation = navigation,
@@ -200,12 +210,15 @@ function Client:new(config)
         death_recovery = death_recovery,
         mount = mount,
         profile_coordinator = profile_coordinator,
+        profile_recorder = profile_recorder,
+        profile_overlay = profile_overlay,
     }
 
     o._service_update_order = {
         "objective",
         "targeting",
         "profile_coordinator",
+        "profile_recorder",
         "exploration",
         "combat",
         "loot",
@@ -1198,6 +1211,26 @@ end
 ---@return string  FSM state: "idle"|"at_hotspot"|"traveling"|"vendor_trip"
 function Client:get_grinding_profile_state()
     return self._services.profile_coordinator:get_state()
+end
+
+---@param existing_profile? table  If provided, edit this profile instead of creating new
+---@return boolean ok
+function Client:start_recording(existing_profile)
+    return self._services.profile_recorder:start_recording(existing_profile)
+end
+
+---@return table|nil profile, string|nil error
+function Client:stop_recording()
+    return self._services.profile_recorder:finish_recording()
+end
+
+function Client:cancel_recording()
+    return self._services.profile_recorder:cancel_recording()
+end
+
+---@return string  "idle"|"recording"
+function Client:get_recorder_state()
+    return self._services.profile_recorder:get_state()
 end
 
 ---@return table[]
