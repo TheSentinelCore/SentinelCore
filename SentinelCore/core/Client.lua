@@ -45,6 +45,7 @@ local SessionBehavior = require("ai/SessionBehavior")
 local PackTracker = require("ai/PackTracker")
 local TacticalSelector = require("ai/TacticalSelector")
 local SingleTargetTactic = require("tactics/SingleTargetTactic")
+local AoEKiteTactic = require("tactics/AoEKiteTactic")
 local RetUtil = require("rotations/paladin/RetributionUtility")
 
 ---@class SentinelClient
@@ -241,6 +242,7 @@ function Client:new(config)
     local pack_tracker = PackTracker:new()
     local tactical_selector = TacticalSelector:new(nil)  -- nil advisor for now (Phase 4)
     tactical_selector:register(SingleTargetTactic:new())
+    tactical_selector:register(AoEKiteTactic:new())
     tactical_selector:refresh_available({})
 
     o._pack_tracker = pack_tracker
