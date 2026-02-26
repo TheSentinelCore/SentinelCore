@@ -271,6 +271,8 @@ function ExplorationService:_record_candidate_cells(now, candidates)
     local sighting_gain = cfg_number(self._cfg, "sighting_gain", 1.0)
     local sighting_cap = math.max(1.0, cfg_number(self._cfg, "sighting_cap", 8.0))
 
+    -- Track per-cell candidate counts for cluster sighting detection.
+    local cell_counts = {}
     for i = 1, #candidates do
         local entry = candidates[i]
         local target = entry and entry.target
@@ -283,6 +285,16 @@ function ExplorationService:_record_candidate_cells(now, candidates)
             cell.sighting_score = Helpers.clamp((tonumber(cell.sighting_score) or 0) + (sighting_gain * normalized), 0, sighting_cap)
             cell.last_seen_at = now
             cell.last_touched_at = now
+            local key = cell.key
+            cell_counts[key] = (cell_counts[key] or 0) + 1
+        end
+    end
+
+    -- If 3+ enemies were sighted in a single cell this update, record a cluster sighting.
+    for key, count in pairs(cell_counts) do
+        if count >= 3 and self._cells[key] then
+            local cell = self._cells[key]
+            cell.cluster_sightings = (tonumber(cell.cluster_sightings) or 0) + 1
         end
     end
 end
@@ -365,6 +377,10 @@ function ExplorationService:_select_frontier(now, player_pos, anchor)
     self._last_frontier_phase = (self._last_frontier_phase + 1) % rays
     local phase_offset = (self._last_frontier_phase / rays) * (math.pi * 2)
 
+    -- Read explore mode from active tactic (written by GrindService).
+    local explore_config = self._blackboard:get("tactical.explore_config")
+    local explore_mode = explore_config and explore_config.mode or "frontier"
+
     local best = nil
     local best_score = -math.huge
 
@@ -414,6 +430,14 @@ function ExplorationService:_select_frontier(now, player_pos, anchor)
                     - (travel_term * w_travel)
                     - (recently_visited * w_recent)
                     - (failure_count * w_failure)
+
+                -- cluster_seek mode: boost cells where enemy clusters were recently sighted.
+                if explore_mode == "cluster_seek" then
+                    local cs = tonumber(cell.cluster_sightings) or 0
+                    if cs > 0 then
+                        utility = utility + 0.4 * math.min(cs, 5) / 5
+                    end
+                end
 
                 if utility > best_score then
                     best_score = utility

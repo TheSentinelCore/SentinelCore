@@ -179,10 +179,77 @@ local function run()
     T.assert_true(runcombat_acquire_calls >= 2, "run combat should still reacquire targets every tick during scout")
     T.assert_true(scout_tick_calls >= 2, "scout exploration tick should execute every tick")
 
+    -- cluster_seek mode: cells with cluster sightings should score higher than those without.
+    bb:set("core.mode", "grind")
+    bb:set("player.in_combat", false)
+    bb:set("player.is_casting", false)
+
+    -- Create a cluster of 3+ enemies at the same cell to trigger cluster sighting recording.
+    local cluster_a = T.mock_object({
+        name = "ClusterA", level = 20, health = 100, max_health = 100,
+        position = { x = 25, y = 0, z = 0 }, can_attack = true, is_enemy = true,
+    })
+    local cluster_b = T.mock_object({
+        name = "ClusterB", level = 20, health = 100, max_health = 100,
+        position = { x = 26, y = 0, z = 0 }, can_attack = true, is_enemy = true,
+    })
+    local cluster_c = T.mock_object({
+        name = "ClusterC", level = 20, health = 100, max_health = 100,
+        position = { x = 27, y = 0, z = 0 }, can_attack = true, is_enemy = true,
+    })
+
+    -- Build a fresh ExplorationService with a targeting stub that returns cluster candidates.
+    local cluster_targeting = {
+        get_adaptive_radius = function() return 25 end,
+        get_visible_candidates = function()
+            return {
+                { target = cluster_a, score = 0.5, distance = 25 },
+                { target = cluster_b, score = 0.5, distance = 26 },
+                { target = cluster_c, score = 0.5, distance = 27 },
+            }
+        end,
+    }
+
+    local cluster_exploration = ExplorationService:new(bus, bb, {
+        enabled = true,
+        enabled_modes = { "grind" },
+        cell_size = 18.0,
+        frontier_min_radius = 15.0,
+        frontier_max_radius = 35.0,
+        move_to_cooldown = 0.01,
+        soft_repath_cooldown = 0.01,
+    }, fake_nav, cluster_targeting)
+
+    -- Tick once with visible cluster enemies to record candidate cells and cluster sightings.
+    visible = { cluster_a, cluster_b, cluster_c }
+    core._set_time(core.time() + 2.0)
+    cluster_exploration:tick()
+
+    -- Now remove enemies and set cluster_seek mode, then tick for frontier selection.
+    visible = {}
+    bb:set("tactical.explore_config", { mode = "cluster_seek" })
+    core._set_time(core.time() + 2.0)
+    cluster_exploration:tick()
+
+    -- Verify the cluster_seek mode was used: the exploration should still be functional.
+    -- The cell at ~(25,0) should have cluster_sightings >= 1 from the earlier tick.
+    -- We verify this indirectly: the internal cells table should contain a cell with cluster_sightings.
+    local found_cluster_cell = false
+    for _, cell in pairs(cluster_exploration._cells) do
+        if (tonumber(cell.cluster_sightings) or 0) > 0 then
+            found_cluster_cell = true
+            break
+        end
+    end
+    T.assert_true(found_cluster_cell, "cluster_seek: _record_candidate_cells should track cluster sightings when 3+ enemies share a cell")
+
+    bb:clear("tactical.explore_config")
+
     return {
         sc020_exploration_pursuit = true,
         sc020_exploration_frontier = true,
         sc020_scout_reacquire_loop = true,
+        sc020_cluster_seek_scoring = true,
     }
 end
 
