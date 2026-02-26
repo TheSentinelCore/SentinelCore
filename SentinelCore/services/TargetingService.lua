@@ -978,6 +978,74 @@ function TargetingService:_get_visible_objects()
     return objects
 end
 
+---@private
+---@param candidates table[]
+---@return table[]
+function TargetingService:_apply_profile_filters(candidates)
+    local filters = self._blackboard:get("profile.target_filters")
+    if not filters then return candidates end
+
+    local level_min = tonumber(filters.level_min) or 0
+    local level_max = tonumber(filters.level_max) or 999
+    local creature_types = filters.creature_types
+    local npc_blacklist = filters.npc_blacklist
+    local npc_whitelist = filters.npc_whitelist
+    local has_whitelist = type(npc_whitelist) == "table" and #npc_whitelist > 0
+    local has_creature_filter = type(creature_types) == "table" and #creature_types > 0
+
+    local result = {}
+    for i = 1, #candidates do
+        local entry = candidates[i]
+        local target = entry.target
+        local dominated = false
+
+        local level = tonumber(safe_method(target, "get_level")) or 0
+        if level < level_min or level > level_max then
+            dominated = true
+        end
+
+        if not dominated and has_creature_filter then
+            local ct = tostring(safe_method(target, "get_creature_type_name") or ""):lower()
+            local match = false
+            for j = 1, #creature_types do
+                if ct == tostring(creature_types[j]):lower() then
+                    match = true
+                    break
+                end
+            end
+            if not match then dominated = true end
+        end
+
+        local npc_id = tonumber(safe_method(target, "get_npc_id")) or 0
+
+        if not dominated and has_whitelist then
+            local on_list = false
+            for j = 1, #npc_whitelist do
+                if npc_id == tonumber(npc_whitelist[j]) then
+                    on_list = true
+                    break
+                end
+            end
+            if not on_list then dominated = true end
+        end
+
+        if not dominated and type(npc_blacklist) == "table" then
+            for j = 1, #npc_blacklist do
+                if npc_id == tonumber(npc_blacklist[j]) then
+                    dominated = true
+                    break
+                end
+            end
+        end
+
+        if not dominated then
+            result[#result + 1] = entry
+        end
+    end
+
+    return result
+end
+
 ---@param opts? table
 ---@return table
 function TargetingService:get_visible_candidates(opts)
@@ -1054,6 +1122,9 @@ function TargetingService:get_visible_candidates(opts)
             end
         end
     end
+
+    -- Apply profile target filters if active
+    candidates = self:_apply_profile_filters(candidates)
 
     table.sort(candidates, function(a, b)
         local a_def = a and a.defensive == true
