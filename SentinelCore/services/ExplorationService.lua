@@ -87,6 +87,12 @@ function ExplorationService:_is_enabled()
         return false
     end
 
+    -- Suppress during profile traveling/vendor states
+    local profile_state = self._blackboard:get("profile.state")
+    if profile_state == "traveling" or profile_state == "vendor_trip" then
+        return false
+    end
+
     local mode = normalize_mode(self._blackboard:get("core.mode"))
     if not mode then
         return true
@@ -610,7 +616,15 @@ function ExplorationService:_issue_navigation(active, now)
         local repath_cooldown = math.max(0.05, cfg_number(self._cfg, "soft_repath_cooldown", 0.45))
         local repath_delta = math.max(0.1, cfg_number(self._cfg, "soft_repath_distance", 1.0))
         local moved_distance = Helpers.distance_3d(active.destination, destination)
-        if moved_distance >= repath_delta and (now - (tonumber(active.last_soft_repath_at) or 0)) >= repath_cooldown then
+
+        -- Force immediate soft_repath for freshly activated goals that have never
+        -- been navigated.  Without this, a new goal activated while NavClient is
+        -- still moving to the OLD destination enters this branch but fails the
+        -- moved_distance check (destination == active.destination → 0), causing the
+        -- player to drift on stale waypoints until NavClient finishes → visible stop.
+        local is_first_nav = (tonumber(active.command_token) or 0) == 0
+
+        if is_first_nav or (moved_distance >= repath_delta and (now - (tonumber(active.last_soft_repath_at) or 0)) >= repath_cooldown) then
             active.last_soft_repath_at = now
             active.destination = destination
             active.pending_destination = nil
