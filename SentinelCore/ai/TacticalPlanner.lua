@@ -3,7 +3,6 @@ local BT = require("ai/BehaviorTree")
 ---@class TacticalPlanner
 ---@field _tactic Tactic|nil
 ---@field _current_phase table|nil
----@field _current_phase_index number|nil
 local TacticalPlanner = {}
 TacticalPlanner.__index = TacticalPlanner
 
@@ -11,7 +10,6 @@ function TacticalPlanner:new()
     return setmetatable({
         _tactic = nil,
         _current_phase = nil,
-        _current_phase_index = nil,
     }, self)
 end
 
@@ -42,7 +40,6 @@ function TacticalPlanner:tick(ctx, deps)
         local ok_exit, should_exit = pcall(self._current_phase.exit_if, ctx)
         if ok_exit and should_exit then
             self._current_phase = nil
-            self._current_phase_index = nil
         end
     end
 
@@ -53,7 +50,6 @@ function TacticalPlanner:tick(ctx, deps)
             local ok_enter, can_enter = pcall(phase.enter_if, ctx)
             if ok_enter and can_enter then
                 self._current_phase = phase
-                self._current_phase_index = i
                 break
             end
         end
@@ -73,9 +69,9 @@ function TacticalPlanner:tick(ctx, deps)
     return status or BT.Status.FAILURE
 end
 
+--- Reset phase state (current phase cleared). Tactic assignment is preserved.
 function TacticalPlanner:reset()
     self._current_phase = nil
-    self._current_phase_index = nil
 end
 
 return TacticalPlanner
