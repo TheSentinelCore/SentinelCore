@@ -398,7 +398,39 @@ end
 ---@param ctx table
 ---@return table[]
 function Frost:precombat(ctx)
-    return {}
+    if ctx.player_is_stunned or ctx.player_is_feared then
+        return {}
+    end
+
+    local actions = {}
+
+    -- Conjure Water (priority 200) — out of combat, mana > 30%
+    local water_id = resolve_spell(ctx, SPELLS.CONJURE_WATER)
+    if water_id then
+        actions[#actions + 1] = self_spell(water_id, 200, {
+            min_player_mana_pct = 0.30,
+            intent = "sustain",
+            condition = function(local_ctx)
+                return local_ctx.in_combat ~= true
+                    and local_ctx.in_combat ~= 1
+            end,
+        })
+    end
+
+    -- Conjure Food (priority 195) — out of combat, mana > 30%
+    local food_id = resolve_spell(ctx, SPELLS.CONJURE_FOOD)
+    if food_id then
+        actions[#actions + 1] = self_spell(food_id, 195, {
+            min_player_mana_pct = 0.30,
+            intent = "sustain",
+            condition = function(local_ctx)
+                return local_ctx.in_combat ~= true
+                    and local_ctx.in_combat ~= 1
+            end,
+        })
+    end
+
+    return actions
 end
 
 ---@param ctx table
