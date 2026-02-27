@@ -107,6 +107,7 @@ local function build_tactical_sync_node(deps)
             enemy_count = bb:get("combat.enemy_count", 0),
             player_mana_pct = 0,
             pack_count = bb:get("pack.count", 0),
+            player_level = bb:get("player.level", 0),
         }
 
         local player_obj = bb:get("player.object")
@@ -162,6 +163,7 @@ local function build_tactical_combat_node(deps)
                 enemy_count = bb:get("combat.enemy_count", 0),
                 player_mana_pct = 0,
                 pack_count = bb:get("pack.count", 0),
+                player_level = bb:get("player.level", 0),
             }
 
             local target = bb:get("combat.target")

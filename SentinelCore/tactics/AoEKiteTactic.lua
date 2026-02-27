@@ -5,6 +5,10 @@ local AoEKiteTactic = {}
 AoEKiteTactic.__index = AoEKiteTactic
 setmetatable(AoEKiteTactic, { __index = Tactic })
 
+-- Anti-detection: pack threshold varies between 3-4, re-rolls periodically
+local _pack_threshold = 3
+local _threshold_next_reroll = 0
+
 function AoEKiteTactic:new()
     local o = Tactic.new(self, {
         name = "aoe_kite",
@@ -12,7 +16,19 @@ function AoEKiteTactic:new()
         preconditions = function(ctx)
             local pack_count = tonumber(ctx.pack_count) or 0
             local mana_pct = tonumber(ctx.player_mana_pct) or 0
-            return pack_count >= 3 and mana_pct > 0.25
+            local level = tonumber(ctx.player_level) or 0
+
+            -- Level gate: need AoE spells (Blizzard available ~20)
+            if level < 20 then return false end
+
+            -- Vary pack threshold for anti-detection (3 or 4)
+            local now = os.clock and os.clock() or 0
+            if now >= _threshold_next_reroll then
+                _pack_threshold = 3 + (math.random() < 0.35 and 1 or 0)
+                _threshold_next_reroll = now + 45 + math.random() * 30
+            end
+
+            return pack_count >= _pack_threshold and mana_pct > 0.25
         end,
 
         utility = function(ctx, advisor)

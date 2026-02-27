@@ -1,4 +1,9 @@
+local PathEntropy = require("ai/PathEntropy")
+
 local PositioningService = {}
+
+-- Shared entropy instance for position jitter
+local _entropy = PathEntropy:new({ waypoint_jitter_radius = 2.0 })
 
 --- Compute the centroid (average position) of a list of positions.
 ---@param positions table[] Array of {x, y, z}
@@ -70,6 +75,28 @@ function PositioningService.in_range(pos, ref, range)
     local dy = (pos.y or 0) - (ref.y or 0)
     local dz = (pos.z or 0) - (ref.z or 0)
     return math.sqrt(dx * dx + dy * dy + dz * dz) <= range
+end
+
+--- Compute kite position with anti-detection jitter applied.
+---@param from_pos table {x, y, z}
+---@param threat_centroid table {x, y, z}
+---@param distance number
+---@return table {x, y, z}
+function PositioningService.jitter_kite_position(from_pos, threat_centroid, distance)
+    local base = PositioningService.kite_position(from_pos, threat_centroid, distance)
+    if not base then return base end
+    return _entropy:jitter_position(base)
+end
+
+--- Compute AoE center with anti-detection jitter applied.
+---@param player_pos table {x, y, z}
+---@param enemy_positions table[] Array of {x, y, z}
+---@param max_range number
+---@return table|nil {x, y, z}
+function PositioningService.jitter_aoe_center(player_pos, enemy_positions, max_range)
+    local base = PositioningService.aoe_center(player_pos, enemy_positions, max_range)
+    if not base then return base end
+    return _entropy:jitter_position(base)
 end
 
 return PositioningService
