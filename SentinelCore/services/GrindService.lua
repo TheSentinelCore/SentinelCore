@@ -209,7 +209,7 @@ function GrindService.build(deps)
         deps.loot_service and deps.loot_service:build() or noop_node("loot_noop"),
         RestService.build(deps.bb, deps.navigation),
         deps.vendor_service and deps.vendor_service:build() or noop_node("vendor_noop"),
-        MaintenanceService.build(deps.bb),
+        MaintenanceService.build(deps.bb, deps.rotation_engine),
         mount_node(deps.mount_service),
         deps.pull_node or PullService.build(deps.bb, deps.navigation, deps.rotation_engine),
         deps.targeting and deps.targeting:build() or noop_node("target_noop"),

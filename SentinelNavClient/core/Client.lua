@@ -383,6 +383,13 @@ function Client:move_direct(target, callback)
 
     -- Set waypoints directly (single waypoint)
     local destination = to_vec3(target)
+    if not destination then
+        self:_invoke_command_callback(callback, false, FAIL_REASONS.UNREACHABLE, {
+            code = FAIL_REASONS.UNREACHABLE,
+            detail = "invalid destination",
+        })
+        return
+    end
     local waypoints = { destination }
     self._blackboard:set("path.destination", destination)
     self._blackboard:set("path.waypoints", waypoints)
@@ -635,9 +642,13 @@ function Client:validate_destination(target, callback)
 
     self.nav_client:find_path(player:get_position(), target, function(ok, data, err)
         if ok and data and data.waypoints and #data.waypoints > 0 then
-            callback(true, nil, data.distance)
+            if callback then
+                callback(true, nil, data.distance)
+            end
         else
-            callback(false, err or "unreachable", nil)
+            if callback then
+                callback(false, err or "unreachable", nil)
+            end
         end
     end)
 end

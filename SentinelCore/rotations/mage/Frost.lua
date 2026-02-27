@@ -71,7 +71,52 @@ local DEFAULT_POLICY = {
 
     arcane_intellect_refresh_sec = 60.0,
     armor_refresh_sec           = 60.0,
+    combat_contact_floor_range  = 8.0,
+    combat_frozen_min_range     = 25.0,
 }
+
+-- Conjured item IDs — used to skip conjure actions when we already have stock.
+local CONJURED_FOOD_IDS = {
+    34062,  -- Conjured Manna Biscuit (lvl 65, food+water)
+    22019,  -- Conjured Croissant (lvl 65)
+    22895,  -- Conjured Cinnamon Roll (lvl 55)
+    8076,   -- Conjured Sweet Roll (lvl 45)
+    8075,   -- Conjured Sourdough (lvl 35)
+    1487,   -- Conjured Pumpernickel (lvl 25)
+    1114,   -- Conjured Rye (lvl 15)
+    1113,   -- Conjured Bread (lvl 5)
+    5349,   -- Conjured Muffin (lvl 1)
+}
+
+local CONJURED_WATER_IDS = {
+    34062,  -- Conjured Manna Biscuit (lvl 65, food+water)
+    22018,  -- Conjured Glacier Water (lvl 65)
+    30703,  -- Conjured Mountain Spring Water (lvl 60)
+    8079,   -- Conjured Crystal Water (lvl 55)
+    8078,   -- Conjured Sparkling Water (lvl 45)
+    8077,   -- Conjured Mineral Water (lvl 35)
+    3772,   -- Conjured Spring Water (lvl 25)
+    2136,   -- Conjured Purified Water (lvl 15)
+    2288,   -- Conjured Fresh Water (lvl 5)
+    5350,   -- Conjured Water (lvl 1)
+}
+
+--- Check if the player has any item from a list of IDs.
+---@param player game_object
+---@param item_ids number[]
+---@return boolean
+local function has_any_item(player, item_ids)
+    if not player or type(player.has_item) ~= "function" then
+        return false
+    end
+    for i = 1, #item_ids do
+        local ok, result = pcall(player.has_item, player, item_ids[i])
+        if ok and result == true then
+            return true
+        end
+    end
+    return false
+end
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -404,28 +449,40 @@ function Frost:precombat(ctx)
 
     local actions = {}
 
-    -- Conjure Water (priority 200) — out of combat, mana > 30%
+    -- Conjure Water (priority 200) — out of combat, mana > 30%, skip if already stocked
     local water_id = resolve_spell(ctx, SPELLS.CONJURE_WATER)
     if water_id then
         actions[#actions + 1] = self_spell(water_id, 200, {
             min_player_mana_pct = 0.30,
             intent = "sustain",
             condition = function(local_ctx)
-                return local_ctx.in_combat ~= true
-                    and local_ctx.in_combat ~= 1
+                if local_ctx.in_combat == true or local_ctx.in_combat == 1 then
+                    return false
+                end
+                local player = local_ctx.player
+                if has_any_item(player, CONJURED_WATER_IDS) then
+                    return false
+                end
+                return true
             end,
         })
     end
 
-    -- Conjure Food (priority 195) — out of combat, mana > 30%
+    -- Conjure Food (priority 195) — out of combat, mana > 30%, skip if already stocked
     local food_id = resolve_spell(ctx, SPELLS.CONJURE_FOOD)
     if food_id then
         actions[#actions + 1] = self_spell(food_id, 195, {
             min_player_mana_pct = 0.30,
             intent = "sustain",
             condition = function(local_ctx)
-                return local_ctx.in_combat ~= true
-                    and local_ctx.in_combat ~= 1
+                if local_ctx.in_combat == true or local_ctx.in_combat == 1 then
+                    return false
+                end
+                local player = local_ctx.player
+                if has_any_item(player, CONJURED_FOOD_IDS) then
+                    return false
+                end
+                return true
             end,
         })
     end
@@ -545,13 +602,13 @@ function Frost:defensive(ctx)
             end,
         }),
 
-        -- Ice Barrier (950) — preemptive < 85% HP, not already buffed, off CD
+        -- Ice Barrier (950) — proactive shield, cast whenever buff is missing
         self_spell(SPELLS.ICE_BARRIER, 950, {
-            max_player_health_pct = p.ice_barrier_hp_pct,
             intent = "defensive",
             combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
-                return not has_any_aura(local_ctx, FROST_AURAS.ICE_BARRIER)
+                return local_ctx.in_combat == true
+                    and not has_any_aura(local_ctx, FROST_AURAS.ICE_BARRIER)
             end,
         }),
 
@@ -614,10 +671,11 @@ end
 ---@return table[]
 function Frost:interrupt(ctx)
     return {
-        -- Counterspell (980) — target must be casting, 30yd range
+        -- Counterspell (980) — instant, target must be casting, 30yd range
         target_spell(SPELLS.COUNTERSPELL, 980, {
             target_must_be_casting = true,
             max_target_distance = COUNTERSPELL_RANGE,
+            allow_movement = true,
             intent = "interrupt",
             condition = function(local_ctx)
                 local cs = resolve_spell(local_ctx, SPELLS.COUNTERSPELL)
@@ -676,6 +734,7 @@ function Frost:combat(ctx)
         -- Ice Lance (555) — instant, only on Fingers of Frost proc or Frostbite on target
         target_spell(SPELLS.ICE_LANCE, 555, {
             max_target_distance = ICE_LANCE_RANGE,
+            allow_movement = true,
             intent = "burst",
             combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
@@ -696,8 +755,24 @@ function Frost:combat(ctx)
         -- Fire Blast (545) — instant weave, off CD
         target_spell(SPELLS.FIRE_BLAST, 545, {
             max_target_distance = FIRE_BLAST_RANGE,
+            allow_movement = true,
             intent = "sustain",
             combat_modes = { "burst", "sustain" },
+        }),
+
+        -- Frost Nova (542) — offensive kite: freeze mob at melee range to create
+        -- distance for another Frostbolt. Lower priority than Fire Blast so we
+        -- weave the instant damage first, then root for distance.
+        self_spell(SPELLS.FROST_NOVA, 542, {
+            intent = "sustain",
+            combat_modes = { "burst", "sustain", "recovery" },
+            condition = function(local_ctx)
+                if local_ctx.in_combat ~= true then
+                    return false
+                end
+                local distance = tonumber(local_ctx.target_distance) or 999
+                return distance <= FROST_NOVA_RANGE
+            end,
         }),
 
         -- Frostbolt (540) — primary nuke, all modes
@@ -725,15 +800,16 @@ function Frost:aoe(ctx)
         -- Cone of Cold (555) — instant, 10yd, off CD, 2+ enemies
         target_spell(SPELLS.CONE_OF_COLD, 555, {
             max_target_distance = CONE_OF_COLD_RANGE,
+            allow_movement = true,
             intent = { "burst", "sustain" },
             combat_modes = { "burst", "sustain" },
             condition = function(local_ctx)
-                local enemies = tonumber(local_ctx.nearby_enemy_count or local_ctx.aoe_target_count) or 0
+                local enemies = tonumber(local_ctx.nearby_enemy_count or local_ctx.aoe_target_count or local_ctx.enemy_count) or 0
                 return enemies >= 2
             end,
         }),
 
-        -- Blizzard (550) — channeled AoE at pack centroid, 3+ enemies, 25%+ mana
+        -- Blizzard (550) — channeled AoE at pack centroid (or target position), 3+ enemies, 25%+ mana
         position_spell(SPELLS.BLIZZARD, 550, {
             allow_movement = false,
             intent = { "burst", "sustain" },
@@ -742,19 +818,40 @@ function Frost:aoe(ctx)
             condition = function(local_ctx)
                 local enemies = tonumber(local_ctx.nearby_enemy_count or local_ctx.aoe_target_count or local_ctx.enemy_count) or 0
                 if enemies < 3 then return false end
+                -- Need a valid position: pack centroid or target position
                 local cx = tonumber(local_ctx.pack_centroid_x)
                 local cy = tonumber(local_ctx.pack_centroid_y)
                 local cz = tonumber(local_ctx.pack_centroid_z)
-                if not cx or not cy or not cz then return false end
-                if cx == 0 and cy == 0 and cz == 0 then return false end
-                return true
+                if cx and cy and cz and not (cx == 0 and cy == 0 and cz == 0) then
+                    return true
+                end
+                -- Fall back to target position
+                local tp = local_ctx.target_position
+                if tp then
+                    local tx = tonumber(tp.x or tp[1])
+                    local ty = tonumber(tp.y or tp[2])
+                    local tz = tonumber(tp.z or tp[3])
+                    if tx and ty and tz then return true end
+                end
+                return false
             end,
             resolve_position = function(local_ctx)
-                return {
-                    x = tonumber(local_ctx.pack_centroid_x) or 0,
-                    y = tonumber(local_ctx.pack_centroid_y) or 0,
-                    z = tonumber(local_ctx.pack_centroid_z) or 0,
-                }
+                local cx = tonumber(local_ctx.pack_centroid_x)
+                local cy = tonumber(local_ctx.pack_centroid_y)
+                local cz = tonumber(local_ctx.pack_centroid_z)
+                if cx and cy and cz and not (cx == 0 and cy == 0 and cz == 0) then
+                    return { x = cx, y = cy, z = cz }
+                end
+                -- Fall back to target position
+                local tp = local_ctx.target_position
+                if tp then
+                    return {
+                        x = tonumber(tp.x or tp[1]) or 0,
+                        y = tonumber(tp.y or tp[2]) or 0,
+                        z = tonumber(tp.z or tp[3]) or 0,
+                    }
+                end
+                return { x = 0, y = 0, z = 0 }
             end,
         }),
 
@@ -765,7 +862,7 @@ function Frost:aoe(ctx)
             intent = { "burst", "sustain" },
             combat_modes = { "burst", "sustain" },
             condition = function(local_ctx)
-                local enemies = tonumber(local_ctx.nearby_enemy_count or local_ctx.aoe_target_count) or 0
+                local enemies = tonumber(local_ctx.nearby_enemy_count or local_ctx.aoe_target_count or local_ctx.enemy_count) or 0
                 return enemies >= 3
             end,
         }),
@@ -820,9 +917,35 @@ end
 ---@param ctx table
 ---@return table
 function Frost:get_movement_profile(ctx)
+    local p = policy(ctx)
+    local contact_floor = tonumber(p.combat_contact_floor_range) or 8.0
+    local frozen_min = tonumber(p.combat_frozen_min_range) or (FROSTBOLT_RANGE - 5.0)
+
+    -- Keep movement profile valid and deterministic.
+    if contact_floor < 0 then
+        contact_floor = 0
+    elseif contact_floor >= FROSTBOLT_RANGE then
+        contact_floor = FROSTBOLT_RANGE - 0.5
+    end
+    if frozen_min < contact_floor then
+        frozen_min = contact_floor
+    elseif frozen_min >= FROSTBOLT_RANGE then
+        frozen_min = FROSTBOLT_RANGE - 0.5
+    end
+
+    -- Maintain a contact floor even without root to avoid standing in melee.
+    -- Escalate to full kite distance only while the target is frozen.
+    local min_range = contact_floor
+    if type(ctx) == "table" and type(ctx.target_has_aura) == "function" then
+        local frozen = ctx.target_has_aura(FROST_AURAS.FROST_NOVA_ROOT)
+                    or ctx.target_has_aura(FROST_AURAS.FROSTBITE)
+        if frozen then
+            min_range = frozen_min
+        end
+    end
     return {
         combat_chase_range = FROSTBOLT_RANGE,
-        min_combat_range = 20,
+        min_combat_range = min_range,
     }
 end
 

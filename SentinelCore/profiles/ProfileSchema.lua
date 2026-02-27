@@ -14,7 +14,7 @@ function Schema.defaults()
             updated_at = 0,
         },
         requirements = {
-            map_id = 0,
+            map_id = -1,
             min_level = 1,
             max_level = 80,
             class_restrictions = {},

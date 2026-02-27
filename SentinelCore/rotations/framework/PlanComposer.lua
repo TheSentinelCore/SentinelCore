@@ -600,6 +600,13 @@ function PlanComposer.compose_maintenance(provider, ctx)
         append_actions(plan, provider:maintenance(ctx), "recover")
     end
 
+    if provider and provider.precombat then
+        local ok_pre, pre_actions = pcall(provider.precombat, provider, ctx)
+        if ok_pre and type(pre_actions) == "table" then
+            append_actions(plan, pre_actions, "recover")
+        end
+    end
+
     apply_maintenance_scheduler(plan, ctx)
     stable_priority_sort(plan)
     return plan

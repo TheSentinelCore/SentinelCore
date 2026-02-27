@@ -22,7 +22,7 @@ function Validator.validate(profile)
     local req = profile.requirements
     if type(req) ~= "table" then
         errors[#errors + 1] = "missing 'requirements' table"
-    elseif not req.map_id or type(req.map_id) ~= "number" or req.map_id <= 0 then
+    elseif req.map_id == nil or type(req.map_id) ~= "number" or req.map_id < 0 then
         errors[#errors + 1] = "missing or invalid 'requirements.map_id'"
     end
 

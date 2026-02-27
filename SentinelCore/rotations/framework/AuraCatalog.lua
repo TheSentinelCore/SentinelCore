@@ -53,7 +53,8 @@ AuraCatalog.MAGE = {
         -- Procs
         FINGERS_OF_FROST = { 44544 },
 
-        -- Target debuffs
+        -- Target debuffs (roots)
+        FROST_NOVA_ROOT = { 27088, 10230, 6131, 122 },
         FROSTBITE = { 12494, 12496, 12497 },
         WINTERS_CHILL = { 12579 },
     },

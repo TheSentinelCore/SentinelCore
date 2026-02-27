@@ -513,6 +513,25 @@ local function run()
     T.assert_true(type(movement) == "table", "movement profile should be a table")
     T.assert_eq(tonumber(movement.combat_chase_range), 30.0,
         "movement profile should use 30-yard chase range matching Frostbolt range")
+    T.assert_eq(tonumber(movement.min_combat_range), 8.0,
+        "movement profile should keep a contact floor to avoid melee range")
+
+    local frozen_movement = provider:get_movement_profile({
+        class_id = 8,
+        target_has_aura = function(aura_ids)
+            if type(aura_ids) ~= "table" then
+                return false
+            end
+            for i = 1, #aura_ids do
+                if aura_ids[i] == 122 then -- Frost Nova root rank
+                    return true
+                end
+            end
+            return false
+        end,
+    })
+    T.assert_eq(tonumber(frozen_movement.min_combat_range), 25.0,
+        "movement profile should enable ranged kiting window while target is frozen")
 
     -- -----------------------------------------------------------------------
     -- 11. mana_mode transitions — hysteresis thresholds

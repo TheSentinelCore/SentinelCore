@@ -1796,6 +1796,7 @@ function RotationEngine:get_movement_profile()
 
     return {
         combat_chase_range = tonumber(movement.combat_chase_range),
+        min_combat_range = tonumber(movement.min_combat_range),
     }
 end
 

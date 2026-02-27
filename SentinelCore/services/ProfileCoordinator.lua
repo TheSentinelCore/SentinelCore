@@ -396,6 +396,7 @@ function ProfileCoordinator:save_profile(profile, filename)
 
     local path = PROFILE_DIR .. filename
     core.create_data_folder("SentinelCore/profiles")
+    core.create_data_file(path)
     core.write_data_file(path, content)
 
     self._log:info("profile saved to %s", path)
@@ -440,6 +441,7 @@ function ProfileCoordinator:_update_manifest(filename, profile_name)
 
     local out = JSON.encode({ profiles = profiles }, true)
     if out then
+        core.create_data_file(manifest_path)
         core.write_data_file(manifest_path, out)
     end
 end

@@ -2,17 +2,17 @@
 --
 -- Profile browser + editor tab for the Sentinel Control Center.
 -- Two modes: "browse" (list / load / unload / delete) and "edit" (record + metadata form).
+--
+-- AstroUI's add_tab build_fn runs ONCE. We use visible_when guards to toggle
+-- browse vs edit groups. All form inputs use AstroUI-native widgets (row_list
+-- with stepper/toggle, text_input_list) — NOT raw core.menu.* elements.
 
 local vec2   = require("common/geometry/vector_2")
 local enums  = require("common/enums")
 local color  = require("common/color")
 local AstroUI = require("lib/AstroUI")
-local TimeHelper = require("lib/TimeHelper")
-local Schema    = require("profiles/ProfileSchema")
-local Validator = require("profiles/ProfileValidator")
 
 local LAYOUT = AstroUI.LAYOUT
-local get_now = TimeHelper.get_now
 
 --------------------------------------------------------------------------------
 -- Module state
@@ -24,19 +24,20 @@ local _editor_mode = "browse"   -- "browse" | "edit"
 local _selected_profile_index = 1
 local _last_profile_result = nil
 
--- Persistent menu elements (created once)
-local _elements_created = false
-local _el_name           = nil  ---@type text_input|nil
-local _el_min_level      = nil  ---@type slider_int|nil
-local _el_max_level      = nil  ---@type slider_int|nil
-local _el_target_min     = nil  ---@type slider_int|nil
-local _el_target_max     = nil  ---@type slider_int|nil
-local _el_npc_blacklist  = nil  ---@type text_input|nil
-local _el_npc_whitelist  = nil  ---@type text_input|nil
-local _el_loop           = nil  ---@type checkbox|nil
-local _el_dry_spell      = nil  ---@type slider_int|nil
-local _el_hs_radius      = nil  ---@type slider_int|nil
-local _el_filename       = nil  ---@type text_input|nil
+-- Form state (plain Lua tables, synced to/from working profile)
+local _form = {
+    name = "New Profile",
+    min_level = 1,
+    max_level = 80,
+    target_min = 1,
+    target_max = 80,
+    npc_blacklist = "",
+    npc_whitelist = "",
+    loop = true,
+    dry_spell = 15,
+    hs_radius = 40,
+    filename = "",
+}
 
 --------------------------------------------------------------------------------
 -- Helpers
@@ -107,80 +108,110 @@ local function join_id_list(list)
     return table.concat(parts, ", ")
 end
 
---------------------------------------------------------------------------------
--- Edit-mode lifecycle
---------------------------------------------------------------------------------
+local function is_browse() return _editor_mode == "browse" end
+local function is_edit()   return _editor_mode == "edit" end
 
-local function create_elements()
-    if _elements_created then return end
-    _el_name          = core.menu.text_input("sc_pe_name", false)
-    _el_min_level     = core.menu.slider_int(1, 80, 1, "sc_pe_min_level")
-    _el_max_level     = core.menu.slider_int(1, 80, 80, "sc_pe_max_level")
-    _el_target_min    = core.menu.slider_int(1, 80, 1, "sc_pe_target_min")
-    _el_target_max    = core.menu.slider_int(1, 80, 80, "sc_pe_target_max")
-    _el_npc_blacklist = core.menu.text_input("sc_pe_npc_bl", false)
-    _el_npc_whitelist = core.menu.text_input("sc_pe_npc_wl", false)
-    _el_loop          = core.menu.checkbox(true, "sc_pe_loop")
-    _el_dry_spell     = core.menu.slider_int(5, 120, 15, "sc_pe_dry_spell")
-    _el_hs_radius     = core.menu.slider_int(5, 120, 40, "sc_pe_hs_radius")
-    _el_filename      = core.menu.text_input("sc_pe_filename", false)
-    _elements_created = true
+--- Grab current target's NPC ID and name.
+---@return number|nil, string|nil
+local function get_target_npc()
+    if not core or not core.object_manager then return nil, nil end
+    local player = core.object_manager.get_local_player()
+    if not player then return nil, nil end
+    local target = player:get_target()
+    if not target or not target:is_valid() then return nil, nil end
+    local npc_id = target:get_npc_id()
+    if not npc_id or npc_id == 0 then return nil, nil end
+    return npc_id, target:get_name() or ""
 end
 
---- Sync form element values into the working profile on blackboard every frame.
+--- Add current target's NPC ID to a form field string.
+---@param field_key string
+local function add_npc_to_field(field_key)
+    local npc_id = get_target_npc()
+    if not npc_id then return end
+    local ids = parse_id_list(_form[field_key])
+    for i = 1, #ids do
+        if ids[i] == npc_id then return end
+    end
+    ids[#ids + 1] = npc_id
+    _form[field_key] = join_id_list(ids)
+end
+
+--------------------------------------------------------------------------------
+-- Virtual element factories (AstroUI-compatible get/set wrappers)
+--------------------------------------------------------------------------------
+
+--- Creates a stepper element backed by _form[key].
+local function form_stepper(key)
+    return {
+        get = function() return _form[key] end,
+        set = function(_, v) _form[key] = v end,
+    }
+end
+
+--- Creates a toggle element backed by _form[key].
+local function form_toggle(key)
+    return {
+        get_state = function() return _form[key] == true end,
+        set = function(_, v) _form[key] = v end,
+    }
+end
+
+--------------------------------------------------------------------------------
+-- Form ↔ profile sync
+--------------------------------------------------------------------------------
+
+--- Sync _form values into the working profile.
 ---@param client table
 local function sync_form_to_profile(client)
     local recorder = client._services.profile_recorder
     local wp = recorder:get_working_profile()
     if not wp then return end
 
-    -- Metadata
-    wp.metadata.name = _el_name:get_text()
+    wp.metadata.name = _form.name
+    wp.requirements.min_level = _form.min_level
+    wp.requirements.max_level = _form.max_level
 
-    -- Requirements
-    wp.requirements.min_level = _el_min_level:get()
-    wp.requirements.max_level = _el_max_level:get()
-
-    -- Target defaults
     wp.target_defaults = wp.target_defaults or {}
-    wp.target_defaults.level_min = _el_target_min:get()
-    wp.target_defaults.level_max = _el_target_max:get()
-    wp.target_defaults.npc_blacklist = parse_id_list(_el_npc_blacklist:get_text())
-    wp.target_defaults.npc_whitelist = parse_id_list(_el_npc_whitelist:get_text())
+    wp.target_defaults.level_min = _form.target_min
+    wp.target_defaults.level_max = _form.target_max
+    wp.target_defaults.npc_blacklist = parse_id_list(_form.npc_blacklist)
+    wp.target_defaults.npc_whitelist = parse_id_list(_form.npc_whitelist)
 
-    -- Behavior
-    wp.loop = _el_loop:get_state()
-    wp.dry_spell_secs = _el_dry_spell:get()
+    wp.loop = _form.loop
+    wp.dry_spell_secs = _form.dry_spell
 
-    -- Recorder hotspot radius
-    recorder:set_hotspot_radius(_el_hs_radius:get())
+    recorder:set_hotspot_radius(_form.hs_radius)
 end
 
---- Populate form elements FROM a profile table.
+--- Populate _form FROM a profile table.
 ---@param profile table
 local function populate_form(profile)
     local meta = profile.metadata or {}
     local req  = profile.requirements or {}
     local td   = profile.target_defaults or {}
 
-    _el_name:set(meta.name or "New Profile")
-    _el_min_level:set(req.min_level or 1)
-    _el_max_level:set(req.max_level or 80)
-    _el_target_min:set(td.level_min or 1)
-    _el_target_max:set(td.level_max or 80)
-    _el_npc_blacklist:set(join_id_list(td.npc_blacklist))
-    _el_npc_whitelist:set(join_id_list(td.npc_whitelist))
-    _el_loop:set(profile.loop ~= false)
-    _el_dry_spell:set(profile.dry_spell_secs or 15)
-    _el_hs_radius:set(40)
-    _el_filename:set("")
+    _form.name = meta.name or "New Profile"
+    _form.min_level = req.min_level or 1
+    _form.max_level = req.max_level or 80
+    _form.target_min = td.level_min or 1
+    _form.target_max = td.level_max or 80
+    _form.npc_blacklist = join_id_list(td.npc_blacklist)
+    _form.npc_whitelist = join_id_list(td.npc_whitelist)
+    _form.loop = profile.loop ~= false
+    _form.dry_spell = profile.dry_spell_secs or 15
+    _form.hs_radius = 40
+    _form.filename = ""
 end
 
---- Enter edit mode. If existing is provided, edits a copy; otherwise starts fresh.
+--------------------------------------------------------------------------------
+-- Edit-mode lifecycle
+--------------------------------------------------------------------------------
+
+--- Enter edit mode.
 ---@param client table
 ---@param existing table|nil
 local function enter_edit_mode(client, existing)
-    create_elements()
     client:start_recording(existing)
 
     local wp = client._services.profile_recorder:get_working_profile()
@@ -192,7 +223,7 @@ local function enter_edit_mode(client, existing)
     _editor_mode = "edit"
 end
 
---- Exit edit mode and optionally cancel recording.
+--- Exit edit mode and cancel recording.
 ---@param client table
 local function exit_edit_mode(client)
     _editor_mode = "browse"
@@ -202,15 +233,20 @@ local function exit_edit_mode(client)
 end
 
 --------------------------------------------------------------------------------
--- Browse-mode rendering
+-- Build: adds ALL groups (browse + edit) with visible_when guards
 --------------------------------------------------------------------------------
 
 ---@param t any TabBuilder
 ---@param client table
-local function render_browse(t, client)
-    -- 1. Active Profile (row_list type=info)
+function profile_tab.render(t, client)
+    ---------------------------------------------------------------------------
+    -- BROWSE MODE groups
+    ---------------------------------------------------------------------------
+
+    -- B1. Active Profile
     t:row_list({
         label = "Active Profile",
+        visible_when = is_browse,
         elements = {
             {
                 type = "info",
@@ -223,14 +259,15 @@ local function render_browse(t, client)
         },
     })
 
-    -- 2. Grinding Profile status
+    -- B2. Grinding Profile status
     t:row_list({
         label = "Grinding Profile",
+        visible_when = is_browse,
         elements = {
             {
                 type = "info",
                 label = "Status",
-                tooltip = "Grinding profile FSM state (idle / at_hotspot / traveling / vendor_trip)",
+                tooltip = "Grinding profile FSM state",
                 value_fn = function()
                     if not client then return "N/A" end
                     return client.get_grinding_profile_state
@@ -259,10 +296,11 @@ local function render_browse(t, client)
         },
     })
 
-    -- 3. Saved Profiles (listbox)
+    -- B3. Saved Profiles listbox
     t:listbox({
         label = "Saved Profiles",
         id = "profiles_list",
+        visible_when = is_browse,
         elements = {
             {
                 id = "profile_listbox",
@@ -286,8 +324,9 @@ local function render_browse(t, client)
         },
     })
 
-    -- 4. Actions (custom_render)
+    -- B4. Browse actions (Load / Unload / Delete / New / Edit)
     t:custom_render({
+        visible_when = is_browse,
         render_fn = function(self, y_offset)
             local window = self.window
             local colors = self.colors
@@ -302,12 +341,11 @@ local function render_browse(t, client)
             local btn_w = math.floor((width - gap * 4) / 5)
             local bx = x
 
-            -- Clamp selection
             if _selected_profile_index < 1 then _selected_profile_index = 1 end
             if _selected_profile_index > #files then _selected_profile_index = math.max(1, #files) end
             local selected = files[_selected_profile_index]
 
-            -- Load (load_profile_from_file internally calls load_profile which activates the coordinator)
+            -- Load
             if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Load", selected ~= nil) then
                 local ok, err = coordinator:load_profile_from_file(selected.filename)
                 _last_profile_result = ok and ("Loaded " .. tostring(selected.name))
@@ -326,7 +364,6 @@ local function render_browse(t, client)
             -- Delete
             bx = bx + btn_w + gap
             if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Delete", selected ~= nil and #files > 0) then
-                -- Delete by removing from manifest (coordinator doesn't have delete_file)
                 _last_profile_result = "Delete not yet implemented"
             end
 
@@ -339,7 +376,6 @@ local function render_browse(t, client)
             -- Edit
             bx = bx + btn_w + gap
             if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Edit", selected ~= nil) then
-                -- Load the selected profile from file, then enter edit mode with it
                 local JSON = require("lib/JSON")
                 local path = "SentinelCore/profiles/" .. selected.filename
                 local content = core.read_data_file(path)
@@ -357,7 +393,6 @@ local function render_browse(t, client)
 
             y_offset = y_offset + button_h + 8
 
-            -- Status feedback
             if _last_profile_result then
                 local fb = "Status: " .. tostring(_last_profile_result)
                 window:render_text(enums.window_enums.font_id.FONT_SMALL,
@@ -368,109 +403,169 @@ local function render_browse(t, client)
             return y_offset
         end,
     })
-end
 
---------------------------------------------------------------------------------
--- Edit-mode rendering
---------------------------------------------------------------------------------
+    ---------------------------------------------------------------------------
+    -- EDIT MODE groups (AstroUI-native widgets)
+    ---------------------------------------------------------------------------
 
----@param t any TabBuilder
----@param client table
-local function render_edit(t, client)
-    local recorder = client._services.profile_recorder
-    local wp = recorder:get_working_profile()
-
-    -- Continuously sync form -> working profile
-    if wp then
-        sync_form_to_profile(client)
-    end
-
-    -- 1. Metadata section
-    t:custom_render({
+    -- E1. Metadata — text input for name, steppers for levels
+    t:text_input_list({
         label = "Metadata",
-        render_fn = function(self, y_offset)
-            local window = self.window
-            local colors = self.colors
-            local x = LAYOUT.padding_side
-            local width = window:get_size().x - (2 * LAYOUT.padding_side)
-            local line_h = 30
-
-            -- Name
-            _el_name:render("Profile Name", "Display name for this grinding profile")
-            y_offset = y_offset + line_h
-
-            -- Min/Max level
-            _el_min_level:render("Min Level", "Minimum player level for this profile")
-            y_offset = y_offset + line_h
-
-            _el_max_level:render("Max Level", "Maximum player level for this profile")
-            y_offset = y_offset + line_h
-
-            -- Map ID (info only)
-            local map_id = wp and wp.requirements and wp.requirements.map_id or 0
-            window:render_text(enums.window_enums.font_id.FONT_SMALL,
-                vec2.new(x, y_offset),
-                colors.text_secondary,
-                string.format("Map ID: %d (auto-detected)", map_id))
-            y_offset = y_offset + 20
-
-            return y_offset
-        end,
+        id = "pe_metadata_inputs",
+        visible_when = is_edit,
+        elements = {
+            {
+                label = "Profile Name",
+                id = "pe_name",
+                tooltip = "Display name for this grinding profile",
+                value_fn = function() return _form.name end,
+                on_change = function(v) _form.name = v end,
+                placeholder = "Enter profile name...",
+            },
+        },
     })
 
-    -- 2. Target filters
-    t:custom_render({
+    t:row_list({
+        label = "Requirements",
+        visible_when = is_edit,
+        elements = {
+            {
+                type = "slider",
+                label = "Min Level",
+                tooltip = "Minimum player level for this profile",
+                element = form_stepper("min_level"),
+                min = 1, max = 80,
+            },
+            {
+                type = "slider",
+                label = "Max Level",
+                tooltip = "Maximum player level for this profile",
+                element = form_stepper("max_level"),
+                min = 1, max = 80,
+            },
+        },
+    })
+
+    -- E2. Target filters
+    t:row_list({
         label = "Target Filters",
-        render_fn = function(self, y_offset)
-            local line_h = 30
-
-            _el_target_min:render("Target Level Min", "Minimum target mob level")
-            y_offset = y_offset + line_h
-
-            _el_target_max:render("Target Level Max", "Maximum target mob level")
-            y_offset = y_offset + line_h
-
-            _el_npc_blacklist:render("NPC Blacklist (IDs)", "Comma-separated NPC IDs to ignore")
-            y_offset = y_offset + line_h
-
-            _el_npc_whitelist:render("NPC Whitelist (IDs)", "Comma-separated NPC IDs to prefer")
-            y_offset = y_offset + line_h
-
-            return y_offset
-        end,
+        visible_when = is_edit,
+        elements = {
+            {
+                type = "slider",
+                label = "Level Min",
+                tooltip = "Minimum target mob level",
+                element = form_stepper("target_min"),
+                min = 1, max = 80,
+            },
+            {
+                type = "slider",
+                label = "Level Max",
+                tooltip = "Maximum target mob level",
+                element = form_stepper("target_max"),
+                min = 1, max = 80,
+            },
+        },
     })
 
-    -- 3. Behavior
-    t:custom_render({
+    -- E2b. NPC Blacklist
+    t:row_list({
+        label = "NPC Blacklist",
+        visible_when = is_edit,
+        elements = {
+            {
+                type = "info",
+                label = "IDs",
+                value_fn = function()
+                    return _form.npc_blacklist ~= "" and _form.npc_blacklist or "(none)"
+                end,
+            },
+            {
+                type = "button",
+                label = "Add Target",
+                text = "+ Add",
+                on_click = function() add_npc_to_field("npc_blacklist") end,
+            },
+            {
+                type = "button",
+                label = "Clear List",
+                text = "Clear",
+                visible_when = function() return _form.npc_blacklist ~= "" end,
+                on_click = function() _form.npc_blacklist = "" end,
+            },
+        },
+    })
+
+    -- E2c. NPC Whitelist
+    t:row_list({
+        label = "NPC Whitelist",
+        visible_when = is_edit,
+        elements = {
+            {
+                type = "info",
+                label = "IDs",
+                value_fn = function()
+                    return _form.npc_whitelist ~= "" and _form.npc_whitelist or "(none)"
+                end,
+            },
+            {
+                type = "button",
+                label = "Add Target",
+                text = "+ Add",
+                on_click = function() add_npc_to_field("npc_whitelist") end,
+            },
+            {
+                type = "button",
+                label = "Clear List",
+                text = "Clear",
+                visible_when = function() return _form.npc_whitelist ~= "" end,
+                on_click = function() _form.npc_whitelist = "" end,
+            },
+        },
+    })
+
+    -- E3. Behavior
+    t:row_list({
         label = "Behavior",
-        render_fn = function(self, y_offset)
-            local line_h = 30
-
-            _el_loop:render("Loop Hotspots", "Restart from the first hotspot after reaching the last")
-            y_offset = y_offset + line_h
-
-            _el_dry_spell:render("Dry Spell (secs)", "Seconds without kills before advancing to next hotspot")
-            y_offset = y_offset + line_h
-
-            return y_offset
-        end,
+        visible_when = is_edit,
+        elements = {
+            {
+                type = "toggle",
+                label = "Loop Hotspots",
+                tooltip = "Restart from the first hotspot after reaching the last",
+                element = form_toggle("loop"),
+            },
+            {
+                type = "stepper",
+                label = "Dry Spell (secs)",
+                tooltip = "Seconds without kills before advancing to next hotspot",
+                element = form_stepper("dry_spell"),
+                min = 5, max = 120, step = 5, decimals = 0,
+            },
+        },
     })
 
-    -- 4. Hotspot list
+    -- E4. Hotspot list (custom render for dynamic list)
     t:custom_render({
         label = "Hotspots",
+        visible_when = is_edit,
         render_fn = function(self, y_offset)
             local window = self.window
             local colors = self.colors
             local x = LAYOUT.padding_side
             local width = window:get_size().x - (2 * LAYOUT.padding_side)
 
+            -- Sync form to profile each frame
+            sync_form_to_profile(client)
+
+            local recorder = client._services.profile_recorder
+            local wp = recorder:get_working_profile()
             local hotspots = wp and wp.hotspots or {}
 
             if #hotspots == 0 then
                 window:render_text(enums.window_enums.font_id.FONT_SMALL,
                     vec2.new(x, y_offset), colors.text_disabled,
-                    "No hotspots recorded. Use keybind or Add Hotspot button.")
+                    "No hotspots recorded. Use keybind or walk and press Insert.")
                 y_offset = y_offset + 20
                 return y_offset
             end
@@ -489,7 +584,6 @@ local function render_edit(t, client)
                         i, hs.label, hs.x or 0, hs.y or 0, hs.z or 0, hs.radius or 40)
                 end
 
-                -- Clickable row to select hotspot for overlay highlight
                 local row_s = vec2.new(x, y_offset)
                 local row_e = vec2.new(x + width - del_btn_w - 8, y_offset + line_h)
                 local row_hov = window:is_mouse_hovering_rect(row_s, row_e)
@@ -502,18 +596,13 @@ local function render_edit(t, client)
                     vec2.new(x + 4, y_offset + 2), text_col, label)
 
                 if row_hov and window:is_rect_clicked(row_s, row_e) then
-                    if overlay then
-                        overlay:set_selected_index(i)
-                    end
+                    if overlay then overlay:set_selected_index(i) end
                 end
 
-                -- Per-item Delete button
                 local dbx = x + width - del_btn_w
                 if make_btn(window, colors, dbx, del_btn_w, y_offset, line_h, "Del", true) then
-                    -- Remove this specific hotspot
                     table.remove(hotspots, i)
                     if overlay then overlay:set_selected_index(0) end
-                    -- Break out since we mutated the list
                     y_offset = y_offset + line_h + 2
                     return y_offset
                 end
@@ -525,15 +614,31 @@ local function render_edit(t, client)
         end,
     })
 
-    -- 5. Recording controls
-    t:custom_render({
+    -- E5. Recording controls
+    t:row_list({
         label = "Recording",
+        visible_when = is_edit,
+        elements = {
+            {
+                type = "stepper",
+                label = "Hotspot Radius",
+                tooltip = "Radius for new hotspots (yards)",
+                element = form_stepper("hs_radius"),
+                min = 5, max = 120, step = 5, decimals = 0,
+            },
+        },
+    })
+
+    t:custom_render({
+        visible_when = is_edit,
         render_fn = function(self, y_offset)
             local window = self.window
             local colors = self.colors
             local x = LAYOUT.padding_side
             local width = window:get_size().x - (2 * LAYOUT.padding_side)
 
+            local recorder = client._services.profile_recorder
+            local wp = recorder:get_working_profile()
             local is_recording = recorder:get_state() == "recording"
             local hotspot_count = wp and wp.hotspots and #wp.hotspots or 0
 
@@ -546,28 +651,26 @@ local function render_edit(t, client)
                 vec2.new(x, y_offset), status_color, status_text)
             y_offset = y_offset + 22
 
-            -- Hotspot radius slider
-            _el_hs_radius:render("Hotspot Radius", "Radius for new hotspots (yards)")
-            y_offset = y_offset + 30
-
-            -- Action buttons row
+            -- Action buttons
             local button_h = 28
             local gap = 8
-            local btn_w = math.floor((width - gap * 2) / 3)
+            local btn_w = math.floor((width - gap * 3) / 4)
             local bx = x
 
-            -- Add Vendor
+            if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Add Hotspot", is_recording) then
+                recorder:add_hotspot()
+            end
+
+            bx = bx + btn_w + gap
             if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Add Vendor", is_recording) then
                 recorder:add_vendor()
             end
 
-            -- Add Blackspot
             bx = bx + btn_w + gap
             if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Add Blackspot", is_recording) then
                 recorder:add_blackspot()
             end
 
-            -- Undo Last
             bx = bx + btn_w + gap
             if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Undo Last", is_recording) then
                 recorder:remove_last()
@@ -575,48 +678,56 @@ local function render_edit(t, client)
 
             y_offset = y_offset + button_h + 8
 
-            -- Keybind render
-            local keybind = recorder:get_keybind()
-            if keybind then
-                keybind:render("Add Hotspot (keybind)", "Press to add a hotspot at your current position")
-                y_offset = y_offset + 30
-            end
+            -- Keybind info
+            window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                vec2.new(x, y_offset), colors.text_secondary,
+                "Press Insert key to add hotspot at current position")
+            y_offset = y_offset + 20
 
             return y_offset
         end,
     })
 
-    -- 6. Save / Cancel
-    t:custom_render({
+    -- E6. Save / Cancel
+    t:text_input_list({
         label = "Save",
+        id = "pe_save_inputs",
+        visible_when = is_edit,
+        elements = {
+            {
+                label = "Filename",
+                id = "pe_filename",
+                tooltip = "Filename for the profile (e.g. my_profile.json)",
+                value_fn = function() return _form.filename end,
+                on_change = function(v) _form.filename = v end,
+                placeholder = "my_profile.json",
+            },
+        },
+    })
+
+    t:custom_render({
+        visible_when = is_edit,
         render_fn = function(self, y_offset)
             local window = self.window
             local colors = self.colors
             local x = LAYOUT.padding_side
             local width = window:get_size().x - (2 * LAYOUT.padding_side)
 
-            -- Filename input
-            _el_filename:render("Filename", "Filename for the profile (e.g. my_profile.json)")
-            y_offset = y_offset + 30
-
-            -- Buttons row
+            local recorder = client._services.profile_recorder
             local button_h = 28
             local gap = 8
             local btn_w = math.floor((width - gap * 2) / 3)
             local bx = x
 
-            local filename_raw = _el_filename:get_text()
-            local has_filename = type(filename_raw) == "string" and filename_raw ~= ""
+            local has_filename = type(_form.filename) == "string" and _form.filename ~= ""
 
             -- Save
             if make_btn(window, colors, bx, btn_w, y_offset, button_h, "Save", has_filename) then
                 sync_form_to_profile(client)
                 local profile, err = recorder:finish_recording()
                 if profile then
-                    local fname = filename_raw
-                    if not fname:match("%.json$") then
-                        fname = fname .. ".json"
-                    end
+                    local fname = _form.filename
+                    if not fname:match("%.json$") then fname = fname .. ".json" end
 
                     local coordinator = client._services.profile_coordinator
                     local ok_save, save_err = coordinator:save_profile(profile, fname)
@@ -626,7 +737,6 @@ local function render_edit(t, client)
                         _editor_mode = "browse"
                     else
                         _last_profile_result = "Save failed: " .. tostring(save_err)
-                        -- Re-enter recording so user can retry
                         recorder:start_recording(profile)
                     end
                 else
@@ -640,10 +750,8 @@ local function render_edit(t, client)
                 sync_form_to_profile(client)
                 local profile, err = recorder:finish_recording()
                 if profile then
-                    local fname = filename_raw
-                    if not fname:match("%.json$") then
-                        fname = fname .. ".json"
-                    end
+                    local fname = _form.filename
+                    if not fname:match("%.json$") then fname = fname .. ".json" end
 
                     local coordinator = client._services.profile_coordinator
                     local ok_save, save_err = coordinator:save_profile(profile, fname)
@@ -669,7 +777,6 @@ local function render_edit(t, client)
 
             y_offset = y_offset + button_h + 8
 
-            -- Status feedback
             if _last_profile_result then
                 window:render_text(enums.window_enums.font_id.FONT_SMALL,
                     vec2.new(x, y_offset), colors.text_secondary,
@@ -680,20 +787,6 @@ local function render_edit(t, client)
             return y_offset
         end,
     })
-end
-
---------------------------------------------------------------------------------
--- Public API
---------------------------------------------------------------------------------
-
----@param t any TabBuilder
----@param client table
-function profile_tab.render(t, client)
-    if _editor_mode == "edit" then
-        render_edit(t, client)
-    else
-        render_browse(t, client)
-    end
 end
 
 return profile_tab

@@ -49,6 +49,12 @@ function MountService:should_mount()
         return false
     end
 
+    -- Must not be casting (e.g. conjure from maintenance)
+    local player_casting = self._blackboard:get("player.is_casting", false) == true
+    if player_casting then
+        return false
+    end
+
     -- Must not already be mounted
     local is_mounted = false
     local player = nil

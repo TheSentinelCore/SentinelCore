@@ -103,10 +103,9 @@ function ProfileRecorder:start_recording(existing_profile)
         profile = Schema.defaults()
     end
 
-    -- Auto-fill map_id from blackboard when creating new or when existing has 0
-    local map_id = self._bb:get("player.map_id", 0)
-    if profile.requirements.map_id == 0 and map_id ~= 0 then
-        profile.requirements.map_id = map_id
+    -- Auto-fill map_id from blackboard when unset (-1 sentinel)
+    if profile.requirements.map_id < 0 then
+        profile.requirements.map_id = self._bb:get("player.map_id", 0)
     end
 
     self._working_profile = profile
