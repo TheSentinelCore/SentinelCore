@@ -67,6 +67,7 @@ local tests = {
     "tests/test_ai031_performance_advisor",
     "tests/test_ai032_intelligence_smoke",
     "tests/test_ai033_polish_smoke",
+    "tests/test_sc032_ranged_combat_chase",
 }
 
 ---@return table

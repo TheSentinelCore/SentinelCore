@@ -522,6 +522,7 @@ function CombatService:_resolve_movement_profile()
     resolved = resolved or {}
     return {
         combat_chase_range = tonumber(resolved.combat_chase_range) or tonumber(self._cfg.combat_chase_range) or 5.5,
+        min_combat_range = tonumber(resolved.min_combat_range) or 0,
     }
 end
 
@@ -1015,6 +1016,7 @@ end
 function CombatService:_apply_combat_chase(target, now, distance)
     local profile = self:_resolve_movement_profile()
     local chase_range = tonumber(profile.combat_chase_range) or tonumber(self._cfg.combat_chase_range) or 5.5
+    local min_range = tonumber(profile.min_combat_range) or 0
     if chase_range <= 0 then
         return
     end
@@ -1028,6 +1030,8 @@ function CombatService:_apply_combat_chase(target, now, distance)
     end
 
     distance = tonumber(distance) or self:_distance_to_target(target)
+
+    -- Too far: chase toward target
     if distance > chase_range then
         local target_pos = safe_method(target, "get_position")
         if target_pos then
@@ -1036,6 +1040,31 @@ function CombatService:_apply_combat_chase(target, now, distance)
         return
     end
 
+    -- Too close: move away to maintain minimum range (ranged classes)
+    if min_range > 0 and distance < min_range then
+        local player_pos = self._blackboard:get("player.position")
+        local target_pos = safe_method(target, "get_position")
+        if player_pos and target_pos then
+            local dx = (player_pos.x or 0) - (target_pos.x or 0)
+            local dy = (player_pos.y or 0) - (target_pos.y or 0)
+            local dz = (player_pos.z or 0) - (target_pos.z or 0)
+            local len = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if len < 0.001 then
+                dx, dy, dz = 1, 0, 0
+                len = 1
+            end
+            -- Compute point min_range yards from target along the away vector
+            local away_pos = {
+                x = (target_pos.x or 0) + (dx / len) * min_range,
+                y = (target_pos.y or 0) + (dy / len) * min_range,
+                z = (target_pos.z or 0) + (dz / len) * min_range,
+            }
+            self:_update_combat_navigation(away_pos, now)
+        end
+        return
+    end
+
+    -- Comfort zone: stop movement
     if self._combat_chasing then
         if self._nav and self._nav.stop then
             pcall(self._nav.stop, self._nav)

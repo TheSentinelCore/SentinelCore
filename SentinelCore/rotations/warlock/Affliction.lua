@@ -1686,6 +1686,7 @@ end
 function Affliction:get_movement_profile(ctx)
     return {
         combat_chase_range = CAST_RANGE,
+        min_combat_range = 20,
     }
 end
 
