@@ -787,13 +787,14 @@ end
 ---@param ctx table
 ---@return table
 function Frost:get_pull_profile(ctx)
-    -- Frostbolt at 30yd primary pull
+    -- Frostbolt at 30yd primary pull — stop nav at cast range, not melee
     local frostbolt = resolve_spell(ctx, SPELLS.FROSTBOLT)
     if frostbolt then
         return {
             pull_spell_id = frostbolt,
             max_pull_range = FROSTBOLT_RANGE,
-            melee_engage_range = MELEE_RANGE,
+            melee_engage_range = FROSTBOLT_RANGE,
+            disable_auto_attack = true,
         }
     end
 
@@ -803,7 +804,8 @@ function Frost:get_pull_profile(ctx)
         return {
             pull_spell_id = fire_blast,
             max_pull_range = FIRE_BLAST_RANGE,
-            melee_engage_range = MELEE_RANGE,
+            melee_engage_range = FIRE_BLAST_RANGE,
+            disable_auto_attack = true,
         }
     end
 
