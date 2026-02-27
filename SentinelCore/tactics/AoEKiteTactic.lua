@@ -1,5 +1,6 @@
 local Tactic = require("ai/Tactic")
 local BT = require("ai/BehaviorTree")
+local get_now = require("lib/TimeHelper").get_now
 
 local AoEKiteTactic = {}
 AoEKiteTactic.__index = AoEKiteTactic
@@ -22,7 +23,7 @@ function AoEKiteTactic:new()
             if level < 20 then return false end
 
             -- Vary pack threshold for anti-detection (3 or 4)
-            local now = os.clock and os.clock() or 0
+            local now = get_now()
             if now >= _threshold_next_reroll then
                 _pack_threshold = 3 + (math.random() < 0.35 and 1 or 0)
                 _threshold_next_reroll = now + 45 + math.random() * 30

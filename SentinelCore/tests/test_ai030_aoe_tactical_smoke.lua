@@ -19,12 +19,13 @@ return { run = function()
     local selector = TacticalSelector:new(nil)
     selector:register(SingleTargetTactic:new())
     selector:register(AoEKiteTactic:new())
-    selector:refresh_available({ pack_count = 4, player_mana_pct = 0.8 })
+    selector:refresh_available({ pack_count = 4, player_mana_pct = 0.8, player_level = 60 })
 
     local ctx_aoe = {
         pack_count = 4,
         player_mana_pct = 0.8,
         enemy_count = 4,
+        player_level = 60,
     }
     local picked = selector:select(ctx_aoe)
     T.assert_eq(picked:get_name(), "aoe_kite", "selector picks AoE for pack=4")
@@ -35,12 +36,13 @@ return { run = function()
     local selector2 = TacticalSelector:new(nil)
     selector2:register(SingleTargetTactic:new())
     selector2:register(AoEKiteTactic:new())
-    selector2:refresh_available({ pack_count = 1, player_mana_pct = 0.8 })
+    selector2:refresh_available({ pack_count = 1, player_mana_pct = 0.8, player_level = 60 })
 
     local ctx_small = {
         pack_count = 1,
         player_mana_pct = 0.8,
         enemy_count = 1,
+        player_level = 60,
     }
     local picked_small = selector2:select(ctx_small)
     T.assert_eq(picked_small:get_name(), "single_target", "selector picks ST for pack=1")
@@ -52,12 +54,13 @@ return { run = function()
     selector3:register(SingleTargetTactic:new())
     selector3:register(AoEKiteTactic:new())
     -- refresh with low mana: AoE preconditions fail at 15%
-    selector3:refresh_available({ pack_count = 4, player_mana_pct = 0.15 })
+    selector3:refresh_available({ pack_count = 4, player_mana_pct = 0.15, player_level = 60 })
 
     local ctx_low_mana = {
         pack_count = 4,
         player_mana_pct = 0.15,
         enemy_count = 4,
+        player_level = 60,
     }
     local picked_low = selector3:select(ctx_low_mana)
     T.assert_eq(picked_low:get_name(), "single_target", "selector falls back to ST at low mana")

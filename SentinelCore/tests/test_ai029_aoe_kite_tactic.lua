@@ -12,20 +12,20 @@ return { run = function()
 
     -- 2. preconditions true: pack_count=3, mana_pct=0.5
     T.assert_true(
-        tactic:check_preconditions({ pack_count = 3, player_mana_pct = 0.5 }),
+        tactic:check_preconditions({ pack_count = 3, player_mana_pct = 0.5, player_level = 60 }),
         "preconditions pass with pack=3 mana=0.5"
     )
 
     -- 3. preconditions false (low pack): pack_count=2, mana_pct=0.5
     T.assert_eq(
-        tactic:check_preconditions({ pack_count = 2, player_mana_pct = 0.5 }),
+        tactic:check_preconditions({ pack_count = 2, player_mana_pct = 0.5, player_level = 60 }),
         false,
         "preconditions fail with low pack count"
     )
 
     -- 4. preconditions false (low mana): pack_count=3, mana_pct=0.20
     T.assert_eq(
-        tactic:check_preconditions({ pack_count = 3, player_mana_pct = 0.20 }),
+        tactic:check_preconditions({ pack_count = 3, player_mana_pct = 0.20, player_level = 60 }),
         false,
         "preconditions fail with low mana"
     )
