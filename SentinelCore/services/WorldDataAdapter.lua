@@ -279,6 +279,24 @@ function WorldDataAdapter:resolve_context(runtime_ctx, callback)
     end)
 end
 
+---@private
+---@param raw table  Raw vendor entity from QueryServer
+---@return table  Normalized vendor with fields expected by VendorService
+local function normalize_vendor(raw)
+    -- QueryServer returns `entry` (NPC template ID) — VendorService expects vendor_id / npc_id.
+    raw.vendor_id = raw.vendor_id or raw.entry or raw.guid or 0
+    raw.npc_id = raw.npc_id or raw.entry or 0
+    -- QueryServer returns faction_id + faction_team; VendorService expects faction_mask (bitmask).
+    if raw.faction_mask == nil and raw.faction_team then
+        local team = tostring(raw.faction_team):lower()
+        if team == "alliance" then raw.faction_mask = 1
+        elseif team == "horde" then raw.faction_mask = 2
+        elseif team == "neutral" then raw.faction_mask = 3
+        else raw.faction_mask = 0 end
+    end
+    return raw
+end
+
 ---@param canonical_ctx table
 ---@param opts table|nil
 ---@param callback fun(ok: boolean, vendors: table|nil, error_code: string|nil)
@@ -298,6 +316,7 @@ function WorldDataAdapter:get_nearby_vendors(canonical_ctx, opts, callback)
         y = pos.y,
         z = pos.z,
         radius = opts.radius,
+        limit = opts.limit,
         require_sell = opts.require_sell,
         require_repair = opts.require_repair,
         faction = faction_filter,
@@ -313,6 +332,10 @@ function WorldDataAdapter:get_nearby_vendors(canonical_ctx, opts, callback)
         if type(vendors) ~= "table" then
             callback(false, nil, ErrorCodes.VENDOR_FETCH_FAILED)
             return
+        end
+
+        for i = 1, #vendors do
+            normalize_vendor(vendors[i])
         end
 
         callback(true, vendors, nil)

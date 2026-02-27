@@ -1,0 +1,41 @@
+{
+  "role": "leader",
+  "profile": {
+    "name": "strath_duo_default"
+  },
+  "targeting": {
+    "scan_radius": 52.0,
+    "pull_range": 30.0,
+    "aoe_enemy_threshold": 3,
+    "npc_whitelist": [],
+    "npc_blacklist": []
+  },
+  "combat": {
+    "kite_min_range": 12.0,
+    "kite_ideal_range": 23.0,
+    "emergency_nova_health_pct": 0.50
+  },
+  "route": {
+    "loop": true,
+    "point_reach_tolerance": 2.2,
+    "point_timeout_secs": 4.5,
+    "collect_timeout_secs": 20.0,
+    "min_enemy_count_for_aoe": 8,
+    "default_focus_radius": 18.0,
+    "blizzard_strategy": "cluster_centroid",
+    "blizzard_scan_radius": 42.0,
+    "clamp_blizzard_to_lane": true,
+    "blizzard_lead_distance": 2.5,
+    "blizzard_smoothing_alpha": 0.35,
+    "segments": []
+  },
+  "farm": {
+    "enable_vendor": true,
+    "min_free_slots": 2,
+    "loot_enabled": true
+  },
+  "telemetry": {
+    "snapshot_interval": 1.0,
+    "report_interval": 10.0
+  }
+}

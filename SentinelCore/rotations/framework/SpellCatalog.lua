@@ -259,6 +259,94 @@ SpellCatalog.WARLOCK = {
     },
 }
 
+SpellCatalog.MAGE = {
+    FROST = {
+        -- Primary nukes
+        FROSTBOLT = {
+            name = "frostbolt",
+            ids = { 27072, 25304, 12506, 12505, 10181, 10180, 10179, 8408, 8407, 7322, 837, 205, 116 },
+        },
+        FIRE_BLAST = {
+            name = "fire blast",
+            ids = { 27079, 10199, 10197, 8413, 8412, 2138, 2136 },
+        },
+        ICE_LANCE = {
+            name = "ice lance",
+            ids = { 30455 },
+        },
+
+        -- AoE
+        BLIZZARD = {
+            name = "blizzard",
+            ids = { 27085, 10187, 10186, 10185, 6141, 10 },
+        },
+        CONE_OF_COLD = {
+            name = "cone of cold",
+            ids = { 27087, 10161, 10160, 10159, 8492, 120 },
+        },
+        ARCANE_EXPLOSION = {
+            name = "arcane explosion",
+            ids = { 27082, 10202, 10201, 8437, 8439, 1449 },
+        },
+
+        -- Defensive / Control
+        FROST_NOVA = {
+            name = "frost nova",
+            ids = { 27088, 10230, 6131, 122 },
+        },
+        ICE_BARRIER = {
+            name = "ice barrier",
+            ids = { 33405, 13033, 13032, 13031, 11426 },
+        },
+        ICE_BLOCK = {
+            name = "ice block",
+            ids = { 45438, 27619 },
+        },
+        BLINK = {
+            name = "blink",
+            ids = { 1953 },
+        },
+        MANA_SHIELD = {
+            name = "mana shield",
+            ids = { 27131, 10193, 10192, 10191, 8494, 1463 },
+        },
+        COLD_SNAP = {
+            name = "cold snap",
+            ids = { 11958 },
+        },
+        COUNTERSPELL = {
+            name = "counterspell",
+            ids = { 2139 },
+        },
+
+        -- Utility / Buffs
+        EVOCATION = {
+            name = "evocation",
+            ids = { 12051 },
+        },
+        ARCANE_INTELLECT = {
+            name = "arcane intellect",
+            ids = { 27126, 10157, 10156, 1461, 1459, 1008 },
+        },
+        FROST_ARMOR = {
+            name = "frost armor",
+            ids = { 7301, 7300, 168 },
+        },
+        ICE_ARMOR = {
+            name = "ice armor",
+            ids = { 27124, 10220, 10219, 7320 },
+        },
+        CONJURE_WATER = {
+            name = "conjure water",
+            ids = { 27090, 10140, 10139, 10138, 6127, 5506, 5505, 5504 },
+        },
+        CONJURE_FOOD = {
+            name = "conjure food",
+            ids = { 33717, 28612, 10145, 10144, 6129, 990, 597, 587 },
+        },
+    },
+}
+
 ---@param spec table
 ---@return string|nil
 function SpellCatalog.name(spec)

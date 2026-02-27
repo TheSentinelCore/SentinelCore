@@ -40,7 +40,7 @@ local CLASS_BUFFS = {
     },
 }
 
-function MaintenanceService.build(bb)
+function MaintenanceService.build(bb, rotation_engine)
     -- Lazy rank cache: refreshed every RANK_REFRESH_INTERVAL seconds so that
     -- training a new rank mid-session is picked up without a full relog.
     local rank_cache = { at = 0, class_id = 0 }
@@ -63,11 +63,28 @@ function MaintenanceService.build(bb)
             return not bb:get("player.in_combat", false)
         end),
 
-        -- Fire-and-forget buff refresh. Always returns FAILURE so the
-        -- ReactiveSelector continues to FindTarget/Pull/Explore.
+        -- Buff refresh. Returns RUNNING while a cast-time maintenance spell
+        -- (e.g. Conjure Water) is in progress so mount/pull/explore don't
+        -- cancel it. Returns FAILURE otherwise so the ReactiveSelector
+        -- continues to FindTarget/Pull/Explore.
         BT.Action:new("ensure_buffs", function()
             local player = bb:get("player.object")
             if not player then return S.FAILURE end
+
+            -- If the player is mid-cast from a previous maintenance tick
+            -- (e.g. Conjure Water/Food), stay RUNNING until it completes.
+            local function is_casting()
+                if player.is_casting_spell then
+                    local ok_c, casting = pcall(player.is_casting_spell, player)
+                    if ok_c and casting then return true end
+                end
+                if player.is_channelling_spell then
+                    local ok_ch, channelling = pcall(player.is_channelling_spell, player)
+                    if ok_ch and channelling then return true end
+                end
+                return false
+            end
+            if is_casting() then return S.RUNNING end
 
             local class_id = tonumber(bb:get("player.class_id", 0)) or 0
             local now = get_now()
@@ -112,10 +129,6 @@ function MaintenanceService.build(bb)
                 local fel_id   = rank_cache.fel_armor_id
                 local demon_id = rank_cache.demon_armor_id
                 local skin_id  = rank_cache.demon_skin_id
-                -- Nil-guard each component: has_aura(nil) returns true (skip), so we must
-                -- check fel_id/demon_id/skin_id are non-nil before calling has_aura().
-                -- Without the guard, a nil fel_id (not yet trained) would short-circuit the
-                -- whole check to true and no armor would ever be cast.
                 local has_armor = (fel_id and has_aura(fel_id))
                                or (demon_id and has_aura(demon_id))
                                or (skin_id and has_aura(skin_id))
@@ -124,7 +137,19 @@ function MaintenanceService.build(bb)
                 end
             end
 
-            -- Always FAILURE: non-blocking side effect, selector continues
+            -- Generic rotation-engine maintenance for ALL classes.
+            -- Handles buffs defined in the rotation's maintenance() method
+            -- (e.g. Mage: Arcane Intellect, Frost/Ice Armor, conjure food/water).
+            if rotation_engine and type(rotation_engine.tick_maintenance_once) == "function" then
+                pcall(rotation_engine.tick_maintenance_once, rotation_engine)
+            end
+
+            -- If a cast-time spell just started (e.g. Conjure Water/Food),
+            -- return RUNNING so the ReactiveSelector stays here until the
+            -- cast completes. Otherwise mount/pull/explore would cancel it.
+            if is_casting() then return S.RUNNING end
+
+            -- FAILURE: non-blocking side effect, selector continues
             return S.FAILURE
         end),
     })

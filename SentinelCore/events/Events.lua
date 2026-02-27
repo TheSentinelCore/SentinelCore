@@ -79,6 +79,23 @@ local Events = {
     HOSTILE_PLAYER_DETECTED = "world.hostile_player_detected",
     ZONE_CHANGED = "world.zone_changed",
 
+    -- Profile coordinator
+    PROFILE_LOADED = "profile.loaded",
+    PROFILE_UNLOADED = "profile.unloaded",
+    PROFILE_LOAD_FAILED = "profile.load_failed",
+    HOTSPOT_ENTERED = "profile.hotspot_entered",
+    HOTSPOT_ADVANCED = "profile.hotspot_advanced",
+    HOTSPOT_TRAVEL_START = "profile.hotspot_travel_start",
+    VENDOR_TRIP_START = "profile.vendor_trip_start",
+    VENDOR_TRIP_COMPLETE = "profile.vendor_trip_complete",
+    PROFILE_LOOP_COMPLETE = "profile.loop_complete",
+
+    -- Profile recorder
+    RECORDER_STARTED = "recorder.started",
+    RECORDER_STOPPED = "recorder.stopped",
+    RECORDER_HOTSPOT_ADDED = "recorder.hotspot_added",
+    RECORDER_HOTSPOT_REMOVED = "recorder.hotspot_removed",
+
     -- Blackboard
     BB_PREFIX = "bb.",
 }

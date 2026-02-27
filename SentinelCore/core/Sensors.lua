@@ -26,6 +26,7 @@ function Sensors:new(blackboard, event_bus, events)
     o._was_dead = false
     o._event_bus = event_bus
     o._events = events
+    o._last_player_level = nil
     return o
 end
 
@@ -123,7 +124,20 @@ function Sensors:update()
 
     -- Aggro detection: true if player is in combat or any nearby enemy is in combat with us
     bb:set("combat.has_aggro", in_combat)
-    bb:set("player.level", safe_method(player, "get_level") or 1)
+    local current_level = safe_method(player, "get_level") or 1
+    bb:set("player.level", current_level)
+
+    -- Level-up detection
+    local prev_level = self._last_player_level or current_level
+    if current_level > prev_level and prev_level > 0 then
+        if self._event_bus then
+            self._event_bus:emit("player.level_up", {
+                previous_level = prev_level,
+                new_level = current_level,
+            })
+        end
+    end
+    self._last_player_level = current_level
     bb:set("player.xp", safe_method(player, "get_xp") or 0)
     bb:set("player.max_xp", safe_method(player, "get_max_xp") or 1)
     bb:set("player.class_id", safe_method(player, "get_class") or 0)

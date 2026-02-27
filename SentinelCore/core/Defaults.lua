@@ -104,9 +104,9 @@ Defaults.exploration = {
     destination_switch_distance = 2.5,
     destination_switch_cooldown = 0.75,
     destination_switch_min_gain = 0.05,
-    move_to_cooldown = 0.85,
-    soft_repath_cooldown = 0.45,
-    soft_repath_distance = 2.0,
+    move_to_cooldown = 0.30,
+    soft_repath_cooldown = 0.25,
+    soft_repath_distance = 1.5,
     arrive_distance = 6.5,
     cell_failure_cooldown = 8.0,
     max_failures_before_reset = 2,
@@ -163,10 +163,9 @@ Defaults.rotation = {
             loh_hp_pct = 0.10,
             divine_shield_hp_pct = 0.20,
             divine_protection_hp_pct = 0.35,
-            holy_light_hp_pct = 0.60,
-            holy_light_min_mana_pct = 0.22,
-            flash_light_hp_pct = 0.45,
-            flash_light_very_oom_mana_pct = 0.12,
+            holy_light_hp_pct = 0.65,
+            holy_light_min_mana_pct = 0.15,
+            flash_light_hp_pct = 0.65,
             heal_low_mana_threshold = 0.22,
             heal_critical_mana_threshold = 0.08,
             health_potion_hp_pct = 0.30,
@@ -248,7 +247,8 @@ Defaults.loot = {
 Defaults.inventory = {}  -- bag capacity computed dynamically from equipped bags
 
 Defaults.vendor = {
-    search_radius = 250.0,
+    search_radius = 2000.0,
+    candidate_fetch_limit = 10,
     min_free_slots = 2,
     interaction_timeout = 10.0,
     return_timeout = 25.0,
@@ -332,10 +332,11 @@ Defaults.vendor_cache = {
 }
 
 Defaults.profiles = {
-    schema_version = "runtime_profiles.v1",
-    active_profile_id = "default",
-    profiles = {},
-    updated_at_unix = 0,
+    dry_spell_secs = 15,
+    travel_engage = true,
+    loop = true,
+    hotspot_arrival_radius_mult = 1.0,
+    vendor_durability_threshold = 0.25,
 }
 
 ---@param value any
@@ -370,6 +371,7 @@ function Defaults.build_runtime(extra)
         telemetry = deep_copy(Defaults.telemetry),
         logging = deep_copy(Defaults.logging),
         mount = deep_copy(Defaults.mount),
+        profiles = deep_copy(Defaults.profiles),
         zone_overrides = deep_copy(Defaults.zone_overrides),
     }
 

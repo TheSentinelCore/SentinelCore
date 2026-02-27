@@ -49,6 +49,16 @@ local function find_best_segment_2d(current_pos, path_waypoints, seg_start, seg_
     return best_dist, best_t, best_seg
 end
 
+local function invoke_callback(callback, valid, first_invalid_segment)
+    if not callback then
+        return
+    end
+    local ok, err = pcall(callback, valid, first_invalid_segment)
+    if not ok and core and core.log_error then
+        core.log_error("[PathValidationService] Callback error: " .. tostring(err))
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Constructor
 --------------------------------------------------------------------------------
@@ -114,7 +124,7 @@ end
 ---@param callback function callback(valid: boolean, first_invalid_segment: number|nil)
 function PathValidationService:check_path_validity(nav_service, current_pos, remaining_waypoints, callback)
     if not remaining_waypoints or #remaining_waypoints < 3 then
-        callback(true, nil)  -- Too few waypoints to validate
+        invoke_callback(callback, true, nil)  -- Too few waypoints to validate
         return
     end
 
@@ -123,10 +133,10 @@ function PathValidationService:check_path_validity(nav_service, current_pos, rem
 
     nav_service:check_path(current_pos, sample, function(success, data, err)
         if not success then
-            callback(true, nil)  -- Can't validate, assume OK
+            invoke_callback(callback, true, nil)  -- Can't validate, assume OK
             return
         end
-        callback(data.valid ~= false, data.first_invalid_segment)
+        invoke_callback(callback, data.valid ~= false, data.first_invalid_segment)
     end)
 end
 

@@ -87,6 +87,12 @@ function ExplorationService:_is_enabled()
         return false
     end
 
+    -- Suppress during profile traveling/vendor states
+    local profile_state = self._blackboard:get("profile.state")
+    if profile_state == "traveling" or profile_state == "vendor_trip" then
+        return false
+    end
+
     local mode = normalize_mode(self._blackboard:get("core.mode"))
     if not mode then
         return true
@@ -265,6 +271,8 @@ function ExplorationService:_record_candidate_cells(now, candidates)
     local sighting_gain = cfg_number(self._cfg, "sighting_gain", 1.0)
     local sighting_cap = math.max(1.0, cfg_number(self._cfg, "sighting_cap", 8.0))
 
+    -- Track per-cell candidate counts for cluster sighting detection.
+    local cell_counts = {}
     for i = 1, #candidates do
         local entry = candidates[i]
         local target = entry and entry.target
@@ -277,6 +285,16 @@ function ExplorationService:_record_candidate_cells(now, candidates)
             cell.sighting_score = Helpers.clamp((tonumber(cell.sighting_score) or 0) + (sighting_gain * normalized), 0, sighting_cap)
             cell.last_seen_at = now
             cell.last_touched_at = now
+            local key = cell.key
+            cell_counts[key] = (cell_counts[key] or 0) + 1
+        end
+    end
+
+    -- If 3+ enemies were sighted in a single cell this update, record a cluster sighting.
+    for key, count in pairs(cell_counts) do
+        if count >= 3 and self._cells[key] then
+            local cell = self._cells[key]
+            cell.cluster_sightings = (tonumber(cell.cluster_sightings) or 0) + 1
         end
     end
 end
@@ -359,6 +377,10 @@ function ExplorationService:_select_frontier(now, player_pos, anchor)
     self._last_frontier_phase = (self._last_frontier_phase + 1) % rays
     local phase_offset = (self._last_frontier_phase / rays) * (math.pi * 2)
 
+    -- Read explore mode from active tactic (written by GrindService).
+    local explore_config = self._blackboard:get("tactical.explore_config")
+    local explore_mode = explore_config and explore_config.mode or "frontier"
+
     local best = nil
     local best_score = -math.huge
 
@@ -408,6 +430,14 @@ function ExplorationService:_select_frontier(now, player_pos, anchor)
                     - (travel_term * w_travel)
                     - (recently_visited * w_recent)
                     - (failure_count * w_failure)
+
+                -- cluster_seek mode: boost cells where enemy clusters were recently sighted.
+                if explore_mode == "cluster_seek" then
+                    local cs = tonumber(cell.cluster_sightings) or 0
+                    if cs > 0 then
+                        utility = utility + 0.4 * math.min(cs, 5) / 5
+                    end
+                end
 
                 if utility > best_score then
                     best_score = utility
@@ -610,7 +640,15 @@ function ExplorationService:_issue_navigation(active, now)
         local repath_cooldown = math.max(0.05, cfg_number(self._cfg, "soft_repath_cooldown", 0.45))
         local repath_delta = math.max(0.1, cfg_number(self._cfg, "soft_repath_distance", 1.0))
         local moved_distance = Helpers.distance_3d(active.destination, destination)
-        if moved_distance >= repath_delta and (now - (tonumber(active.last_soft_repath_at) or 0)) >= repath_cooldown then
+
+        -- Force immediate soft_repath for freshly activated goals that have never
+        -- been navigated.  Without this, a new goal activated while NavClient is
+        -- still moving to the OLD destination enters this branch but fails the
+        -- moved_distance check (destination == active.destination → 0), causing the
+        -- player to drift on stale waypoints until NavClient finishes → visible stop.
+        local is_first_nav = (tonumber(active.command_token) or 0) == 0
+
+        if is_first_nav or (moved_distance >= repath_delta and (now - (tonumber(active.last_soft_repath_at) or 0)) >= repath_cooldown) then
             active.last_soft_repath_at = now
             active.destination = destination
             active.pending_destination = nil

@@ -108,6 +108,113 @@ local function is_defensive_target(target, player)
     return false
 end
 
+---@private
+---@param profile table|nil
+---@param cfg table|nil
+---@return number
+---@return number
+local function resolve_combat_ranges(profile, cfg)
+    local chase_range = tonumber(profile and profile.combat_chase_range)
+        or tonumber(cfg and cfg.combat_chase_range)
+        or 5.5
+    if chase_range < 0 then
+        chase_range = 0
+    end
+
+    local min_range = tonumber(profile and profile.min_combat_range) or 0
+    if min_range < 0 then
+        min_range = 0
+    end
+
+    if chase_range <= 0 then
+        return 0, 0
+    end
+
+    -- Keep a valid comfort band so movement decisions don't oscillate forever.
+    if min_range >= chase_range then
+        min_range = math.max(0, chase_range - 0.5)
+    end
+
+    return chase_range, min_range
+end
+
+---@private
+---@param chase_range number
+---@param min_range number
+---@return number
+---@return number
+---@return number
+local function resolve_range_hysteresis(chase_range, min_range)
+    local chase_enter = Helpers.clamp((tonumber(chase_range) or 0) * 0.05, 0.75, 2.00)
+    local chase_exit = Helpers.clamp((tonumber(chase_range) or 0) * 0.03, 0.50, 1.50)
+    local retreat_exit = Helpers.clamp(math.max(6.0, tonumber(min_range) or 0) * 0.05, 0.50, 1.50)
+    return chase_enter, chase_exit, retreat_exit
+end
+
+---@private
+---@param player_pos vec3|table|nil
+---@param target_pos vec3|table|nil
+---@param min_range number
+---@return vec3|nil
+local function compute_away_position(player_pos, target_pos, min_range)
+    if type(player_pos) ~= "table" or type(target_pos) ~= "table" then
+        return nil
+    end
+
+    local dx = (player_pos.x or 0) - (target_pos.x or 0)
+    local dy = (player_pos.y or 0) - (target_pos.y or 0)
+    local dz = (player_pos.z or 0) - (target_pos.z or 0)
+    local len = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if len < 0.001 then
+        dx, dy, dz, len = 1, 0, 0, 1
+    end
+
+    return {
+        x = (target_pos.x or 0) + (dx / len) * min_range,
+        y = (target_pos.y or 0) + (dy / len) * min_range,
+        z = (target_pos.z or 0) + (dz / len) * min_range,
+    }
+end
+
+---@private
+---@param distance number|nil
+---@param chase_range number
+---@param min_range number
+---@param last_state string|nil
+---@return string
+local function decide_range_movement(distance, chase_range, min_range, last_state)
+    local dist = tonumber(distance) or math.huge
+    local prev = tostring(last_state or "hold")
+
+    if chase_range <= 0 then
+        return "hold"
+    end
+
+    local chase_enter, chase_exit, retreat_exit = resolve_range_hysteresis(chase_range, min_range)
+
+    if min_range > 0 then
+        local retreat_stop = min_range + retreat_exit
+        if prev == "retreat" then
+            if dist < retreat_stop then
+                return "retreat"
+            end
+        elseif dist < min_range then
+            return "retreat"
+        end
+    end
+
+    local chase_stop = math.max(min_range, chase_range - chase_exit)
+    if prev == "chase" then
+        if dist > chase_stop then
+            return "chase"
+        end
+    elseif dist > (chase_range + chase_enter) then
+        return "chase"
+    end
+
+    return "hold"
+end
+
 ---@class CombatService
 ---@field private _event_bus EventBus
 ---@field private _blackboard Blackboard
@@ -126,6 +233,7 @@ end
 ---@field private _pull_nav_repath_pending boolean
 ---@field private _pull_in_range_since number
 ---@field private _pull_auto_attack_last_at number
+---@field private _auto_attack_suppress_last_at number
 ---@field private _combat_nav_last_dest vec3|nil
 ---@field private _combat_nav_last_move_at number
 ---@field private _combat_nav_last_repath_at number
@@ -133,6 +241,7 @@ end
 ---@field private _combat_chasing boolean
 ---@field private _combat_face_last_at number
 ---@field private _combat_face_last_target_pos vec3|nil
+---@field private _combat_range_state string
 ---@field private _last_error string|nil
 local CombatService = {}
 CombatService.__index = CombatService
@@ -164,6 +273,7 @@ function CombatService:new(event_bus, blackboard, navigation, targeting, rotatio
     o._pull_nav_repath_pending = false
     o._pull_in_range_since = 0
     o._pull_auto_attack_last_at = 0
+    o._auto_attack_suppress_last_at = 0
     o._combat_nav_last_dest = nil
     o._combat_nav_last_move_at = 0
     o._combat_nav_last_repath_at = 0
@@ -171,6 +281,7 @@ function CombatService:new(event_bus, blackboard, navigation, targeting, rotatio
     o._combat_chasing = false
     o._combat_face_last_at = 0
     o._combat_face_last_target_pos = nil
+    o._combat_range_state = "hold"
     o._last_error = nil
     o._combat_target_last_health_pct = nil
     o._combat_target_was_in_combat = false
@@ -233,6 +344,74 @@ function CombatService:_resolve_pull_auto_attack_commit_range(pull_profile, mele
     local max_commit = tonumber(melee_range) or 5.5
     commit_range = Helpers.clamp(commit_range, 1.5, max_commit)
     return commit_range
+end
+
+---@private
+---@return table
+function CombatService:_resolve_pull_profile()
+    local pull_profile = nil
+    if self._rotation and type(self._rotation.get_pull_profile) == "function" then
+        local ok_profile, resolved = pcall(self._rotation.get_pull_profile, self._rotation)
+        if ok_profile and type(resolved) == "table" then
+            pull_profile = resolved
+        end
+    end
+    return pull_profile or {}
+end
+
+---@private
+---@return boolean
+function CombatService:_auto_attack_disabled()
+    local pull_profile = self:_resolve_pull_profile()
+    return pull_profile.disable_auto_attack == true
+end
+
+---@private
+---@param target game_object|nil
+---@param now number|nil
+---@return boolean
+function CombatService:_suppress_auto_attack(target, now)
+    if not self:_auto_attack_disabled() then
+        return false
+    end
+
+    local player = self._blackboard and self._blackboard:get("player.object")
+    if safe_method(player, "is_auto_attacking") ~= true then
+        return false
+    end
+
+    now = tonumber(now) or get_now()
+    local cooldown = tonumber(self._cfg.auto_attack_suppress_cooldown) or 0.35
+    if cooldown < 0 then
+        cooldown = 0
+    end
+    if (now - (tonumber(self._auto_attack_suppress_last_at) or 0)) < cooldown then
+        return false
+    end
+    self._auto_attack_suppress_last_at = now
+
+    if core and core.input and type(core.input.set_target) == "function" and target then
+        pcall(core.input.set_target, target)
+    end
+
+    local aa = AutoAttackHelper.get()
+    if aa and type(aa.stop_attack) == "function" then
+        local ok = pcall(function()
+            aa:stop_attack(target, aa.ATTACK_TYPE and aa.ATTACK_TYPE.MELEE or 6603)
+        end)
+        if ok then
+            return true
+        end
+    end
+
+    if core and core.input and type(core.input.cast_target_spell) == "function" and target then
+        local ok = pcall(core.input.cast_target_spell, 6603, target)
+        if ok then
+            return true
+        end
+    end
+
+    return false
 end
 
 ---@private
@@ -495,6 +674,7 @@ function CombatService:_reset_pull_navigation()
     self._pull_nav_repath_pending = false
     self._pull_in_range_since = 0
     self._pull_auto_attack_last_at = 0
+    self._auto_attack_suppress_last_at = 0
 end
 
 ---@private
@@ -506,6 +686,10 @@ function CombatService:_reset_combat_navigation()
     self._combat_chasing = false
     self._combat_face_last_at = 0
     self._combat_face_last_target_pos = nil
+    self._combat_range_state = "hold"
+    if self._blackboard and self._blackboard.set then
+        self._blackboard:set("combat.range_state", "hold")
+    end
 end
 
 ---@private
@@ -520,9 +704,46 @@ function CombatService:_resolve_movement_profile()
     end
 
     resolved = resolved or {}
+    local chase_range, min_range = resolve_combat_ranges(resolved, self._cfg)
     return {
-        combat_chase_range = tonumber(resolved.combat_chase_range) or tonumber(self._cfg.combat_chase_range) or 5.5,
+        combat_chase_range = chase_range,
+        min_combat_range = min_range,
     }
+end
+
+---@private
+---@param target game_object|nil
+---@param distance number|nil
+---@return string
+---@return vec3|nil
+---@return number
+---@return number
+function CombatService:_resolve_combat_range_decision(target, distance)
+    local profile = self:_resolve_movement_profile()
+    local chase_range = tonumber(profile.combat_chase_range) or 0
+    local min_range = tonumber(profile.min_combat_range) or 0
+
+    local target_pos = safe_method(target, "get_position")
+    local player_pos = self._blackboard and self._blackboard:get("player.position")
+
+    local state = decide_range_movement(distance, chase_range, min_range, self._combat_range_state)
+    local destination = nil
+    if state == "chase" then
+        destination = copy_vec3(target_pos) or target_pos
+    elseif state == "retreat" then
+        destination = compute_away_position(player_pos, target_pos, min_range)
+    end
+
+    if destination == nil then
+        state = "hold"
+    end
+
+    self._combat_range_state = state
+    if self._blackboard and self._blackboard.set then
+        self._blackboard:set("combat.range_state", state)
+    end
+
+    return state, destination, chase_range, min_range
 end
 
 ---@private
@@ -1014,8 +1235,12 @@ end
 ---@param distance number|nil
 function CombatService:_apply_combat_chase(target, now, distance)
     local profile = self:_resolve_movement_profile()
-    local chase_range = tonumber(profile.combat_chase_range) or tonumber(self._cfg.combat_chase_range) or 5.5
+    local chase_range = tonumber(profile.combat_chase_range) or 0
     if chase_range <= 0 then
+        self._combat_range_state = "hold"
+        if self._blackboard and self._blackboard.set then
+            self._blackboard:set("combat.range_state", "hold")
+        end
         return
     end
 
@@ -1028,14 +1253,13 @@ function CombatService:_apply_combat_chase(target, now, distance)
     end
 
     distance = tonumber(distance) or self:_distance_to_target(target)
-    if distance > chase_range then
-        local target_pos = safe_method(target, "get_position")
-        if target_pos then
-            self:_update_combat_navigation(target_pos, now)
-        end
+    local _, destination = self:_resolve_combat_range_decision(target, distance)
+    if destination then
+        self:_update_combat_navigation(destination, now)
         return
     end
 
+    -- Comfort zone: stop movement
     if self._combat_chasing then
         if self._nav and self._nav.stop then
             pcall(self._nav.stop, self._nav)
@@ -1267,18 +1491,13 @@ end
 ---@return string|nil
 function CombatService:_execute_pull(target)
     local now = get_now()
+    self:_suppress_auto_attack(target, now)
     local pull_timeout = tonumber(self._cfg.pull_timeout) or 8.0
     if now - self._pull_started_at > pull_timeout then
         return false, ErrorCodes.PULL_FAILED
     end
 
-    local pull_profile = nil
-    local ok_profile, resolved = pcall(self._rotation.get_pull_profile, self._rotation)
-    if ok_profile and type(resolved) == "table" then
-        pull_profile = resolved
-    else
-        pull_profile = {}
-    end
+    local pull_profile = self:_resolve_pull_profile()
     local pull_range = tonumber(pull_profile.max_pull_range) or 30
     local engage_padding = tonumber(self._cfg.pull_engage_range_padding) or 0.35
     local engage_range = math.max(1.0, pull_range - math.max(0, engage_padding))
@@ -1513,6 +1732,7 @@ function CombatService:update()
     end
 
     if self._state == "combat" then
+        self:_suppress_auto_attack(target, now)
         if not self._blackboard:get("combat.entered_at") then
             self._blackboard:set("combat.entered_at", now)
         end
@@ -1550,7 +1770,7 @@ end
 ---@param spell_executor fun(action: table)
 ---@param navigation NavigationAdapter
 ---@return table BT node
-function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_executor, navigation)
+function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_executor, navigation, rotation_engine)
     local pending_action = nil
     local pending_delay_until = nil
     local combat_start_time = nil
@@ -1568,6 +1788,100 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
     -- server into re-evaluating the target, which often unsticks cast failures.
     local last_action_at = 0
     local last_stuck_recovery_at = 0
+    local range_motion_state = "hold"
+    local cached_disable_auto_attack = nil
+    local cached_disable_auto_attack_at = 0
+    local auto_attack_suppress_last_at = 0
+    local DISABLE_AUTO_ATTACK_REFRESH = 0.5
+    local AUTO_ATTACK_SUPPRESS_COOLDOWN = 0.35
+
+    -- Resolve movement profile from rotation engine.
+    -- Refreshed every 0.5s so rotations can return dynamic values (e.g. frost
+    -- mage: kite only when target is frozen, stay put otherwise).
+    local cached_move_profile = nil
+    local cached_move_profile_at = 0
+    local MOVE_PROFILE_REFRESH = 0.5
+    local function resolve_bt_movement_profile()
+        local now_mp = get_now()
+        if cached_move_profile and (now_mp - cached_move_profile_at) < MOVE_PROFILE_REFRESH then
+            return cached_move_profile
+        end
+        if rotation_engine and type(rotation_engine.get_movement_profile) == "function" then
+            local ok, profile = pcall(rotation_engine.get_movement_profile, rotation_engine)
+            if ok and type(profile) == "table" then
+                local chase_range, min_range = resolve_combat_ranges(profile, nil)
+                cached_move_profile = {
+                    chase_range = chase_range,
+                    min_range = min_range,
+                }
+                cached_move_profile_at = now_mp
+                return cached_move_profile
+            end
+        end
+        cached_move_profile = { chase_range = 5.0, min_range = 0 }
+        cached_move_profile_at = now_mp
+        return cached_move_profile
+    end
+
+    local function resolve_bt_disable_auto_attack()
+        local now_aa = get_now()
+        if cached_disable_auto_attack ~= nil
+            and (now_aa - cached_disable_auto_attack_at) < DISABLE_AUTO_ATTACK_REFRESH then
+            return cached_disable_auto_attack == true
+        end
+
+        local disabled = false
+        if rotation_engine and type(rotation_engine.get_pull_profile) == "function" then
+            local ok, pull_profile = pcall(rotation_engine.get_pull_profile, rotation_engine)
+            if ok and type(pull_profile) == "table" and pull_profile.disable_auto_attack == true then
+                disabled = true
+            end
+        end
+
+        cached_disable_auto_attack = disabled
+        cached_disable_auto_attack_at = now_aa
+        return disabled
+    end
+
+    local function suppress_bt_auto_attack(target)
+        if not resolve_bt_disable_auto_attack() then
+            return false
+        end
+
+        local player_obj = bb:get("player.object")
+        if safe_method(player_obj, "is_auto_attacking") ~= true then
+            return false
+        end
+
+        local now_aa = get_now()
+        if (now_aa - auto_attack_suppress_last_at) < AUTO_ATTACK_SUPPRESS_COOLDOWN then
+            return false
+        end
+        auto_attack_suppress_last_at = now_aa
+
+        if core and core.input and type(core.input.set_target) == "function" and target then
+            pcall(core.input.set_target, target)
+        end
+
+        local aa = AutoAttackHelper.get()
+        if aa and type(aa.stop_attack) == "function" then
+            local ok = pcall(function()
+                aa:stop_attack(target, aa.ATTACK_TYPE and aa.ATTACK_TYPE.MELEE or 6603)
+            end)
+            if ok then
+                return true
+            end
+        end
+
+        if core and core.input and type(core.input.cast_target_spell) == "function" and target then
+            local ok = pcall(core.input.cast_target_spell, 6603, target)
+            if ok then
+                return true
+            end
+        end
+
+        return false
+    end
 
     return BT.ReactiveSequence:new("combat", {
         -- Gate: must be in combat WITH a valid living target.
@@ -1589,6 +1903,11 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                 nav_stop_at = 0
                 last_action_at = 0
                 last_stuck_recovery_at = 0
+                cached_move_profile = nil
+                cached_disable_auto_attack = nil
+                auto_attack_suppress_last_at = 0
+                range_motion_state = "hold"
+                bb:set("combat.range_state", "hold")
                 return false
             end
             local target = bb:get("combat.target")
@@ -1629,6 +1948,11 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             last_chase_dest = nil
             chase_repath_pending = false
             last_chase_target = nil
+            cached_move_profile = nil
+            cached_disable_auto_attack = nil
+            auto_attack_suppress_last_at = 0
+            range_motion_state = "hold"
+            bb:set("combat.range_state", "hold")
             return false
         end),
 
@@ -1668,7 +1992,12 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                 last_chase_dest = nil
                 chase_repath_pending = false
                 nav_fail_until = 0
+                auto_attack_suppress_last_at = 0
+                range_motion_state = "hold"
+                bb:set("combat.range_state", "hold")
             end
+
+            suppress_bt_auto_attack(target)
 
             local ok, tpos = pcall(function() return target:get_position() end)
             if not ok or not tpos then return BTStatus.SUCCESS end
@@ -1678,19 +2007,41 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
 
             local dist = Helpers.distance_3d(player_pos, tpos)
 
-            if dist <= 5 then
-                -- Unconditionally stop nav in melee range every tick.
-                -- NavClient:stop() may not abort the current in-progress waypoint on
-                -- the first call (it prevents NEW moves but the current move completes).
-                -- Repeated stop() calls ensure it halts before the next waypoint starts.
-                -- NavigationAdapter:stop() is a fast synchronous Lua call — safe to call
-                -- every frame.
+            -- Don't issue ANY movement while casting/channelling — matches
+            -- _apply_combat_chase() guard. Without this, a target moving past
+            -- chase_range during a Frostbolt cast would trigger move_to(),
+            -- interrupting the cast and causing chase/cast oscillation.
+            local player_obj = bb:get("player.object")
+            if safe_method(player_obj, "is_casting_spell") == true
+                or safe_method(player_obj, "is_channelling_spell") == true then
+                return BTStatus.SUCCESS
+            end
+
+            local mp = resolve_bt_movement_profile()
+            local chase_range = mp.chase_range
+            local min_range = mp.min_range
+
+            local move_state = decide_range_movement(dist, chase_range, min_range, range_motion_state)
+            local move_dest = nil
+            if move_state == "chase" then
+                move_dest = copy_vec3(tpos) or tpos
+            elseif move_state == "retreat" then
+                move_dest = compute_away_position(player_pos, tpos, min_range)
+            end
+            if move_dest == nil then
+                move_state = "hold"
+            end
+            range_motion_state = move_state
+            bb:set("combat.range_state", move_state)
+
+            -- Comfort zone: stop nav and handle stuck detection
+            if not move_dest then
                 if navigation then
                     pcall(function() navigation:stop() end)
                     last_chase_dest = nil
                     chase_repath_pending = false
                 end
-                -- R6: In-melee stuck detection — if no action has landed for 8s
+                -- R6: In-range stuck detection — if no action has landed for 8s
                 -- re-face and re-set target to unjam the rotation evaluator.
                 local now_s = get_now()
                 local reset_point = math.max(last_action_at, combat_start_time or 0)
@@ -1731,9 +2082,9 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                     -- On failure, back off 2s before retrying so we don't hammer
                     -- a down server or unreachable destination every frame.
                     if get_now() >= nav_fail_until then
-                        last_chase_dest = tpos
-                        navigation:move_to(tpos, function(ok)
-                            if not ok then
+                        last_chase_dest = move_dest
+                        navigation:move_to(move_dest, function(nav_ok)
+                            if not nav_ok then
                                 nav_fail_until = get_now() + 2.0
                                 last_chase_dest = nil
                             end
@@ -1751,11 +2102,11 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                     nav_stop_at = get_now()
 
                 elseif moving and not chase_repath_pending and last_chase_dest then
-                    if Helpers.distance_3d(last_chase_dest, tpos) > 2.0 then
+                    if Helpers.distance_3d(last_chase_dest, move_dest) > 2.0 then
                         chase_repath_pending = true
-                        last_chase_dest = tpos
+                        last_chase_dest = move_dest
                         pcall(function()
-                            navigation:soft_repath(tpos, function()
+                            navigation:soft_repath(move_dest, function()
                                 chase_repath_pending = false
                             end)
                         end)
@@ -1766,12 +2117,12 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             return BTStatus.SUCCESS
         end),
 
-        -- Facing: only call look_at when truly in melee range.
-        -- During the chase phase (dist > 5) the NavClient controls character
-        -- rotation toward path waypoints. Calling look_at here would oscillate
-        -- with the NavClient — character snapping between mob direction and the
-        -- next waypoint direction every tick. Let NavClient own rotation while
-        -- chasing; take over only once we stop in melee range.
+        -- Facing: only call look_at when in comfort zone (not chasing).
+        -- During the chase phase (dist > chase_range) the NavClient controls
+        -- character rotation toward path waypoints. Calling look_at here would
+        -- oscillate with the NavClient — character snapping between mob direction
+        -- and the next waypoint direction every tick. Let NavClient own rotation
+        -- while chasing; take over once we stop (comfort zone or backing away paused).
         BT.Action:new("face_target", function()
             local target = bb:get("combat.target")
             if not target then return BTStatus.SUCCESS end
@@ -1779,7 +2130,8 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             local player_pos = bb:get("player.position")
             if player_pos then
                 local ok_d, tpos_face = pcall(function() return target:get_position() end)
-                if ok_d and tpos_face and Helpers.distance_3d(player_pos, tpos_face) > 5 then
+                local face_mp = resolve_bt_movement_profile()
+                if ok_d and tpos_face and Helpers.distance_3d(player_pos, tpos_face) > face_mp.chase_range then
                     return BTStatus.SUCCESS  -- chasing: leave rotation to NavClient
                 end
             end
@@ -1865,6 +2217,15 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                 result = human_timing:stochastic_select(top, 0.05)
             end
             if not result then
+                -- Fallback: delegate to RotationEngine for classes without
+                -- utility-based actions (e.g. mage, warlock). The rotation
+                -- engine handles its own GCD/cooldown/cast-guard checks.
+                if rotation_engine and type(rotation_engine.tick_once) == "function" then
+                    local ok_tick, tick_ok = pcall(rotation_engine.tick_once, rotation_engine)
+                    if ok_tick and tick_ok then
+                        last_action_at = get_now()
+                    end
+                end
                 return BTStatus.RUNNING
             end
 

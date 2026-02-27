@@ -176,6 +176,20 @@ function CombatContext.build(bb, swing_timer)
         enemy_count = bb:get("combat.enemy_count", 0)
     end
 
+    -- Pack data (populated by PackTracker in Client.lua)
+    local pack_count = bb:get("pack.count", 0)
+    local pack_spread = bb:get("pack.spread", 0)
+    local pack_centroid_x = 0
+    local pack_centroid_y = 0
+    local pack_centroid_z = 0
+    local pack_centroid = bb:get("pack.centroid")
+    if pack_centroid then
+        pack_centroid_x = pack_centroid.x or 0
+        pack_centroid_y = pack_centroid.y or 0
+        pack_centroid_z = pack_centroid.z or 0
+    end
+    local pack_gathered_count = bb:get("pack.gathered_count", 0)
+
     local ctx = {
         -- Player
         player_health_pct = p_max_health > 0 and (p_health / p_max_health) or 0,
@@ -198,6 +212,14 @@ function CombatContext.build(bb, swing_timer)
         enemy_count = enemy_count,
         time_in_combat = bb:get("combat.time_in_combat", 0),
         nearest_enemy_distance = nearest_enemy_dist,
+
+        -- Pack (from PackTracker)
+        pack_count = pack_count,
+        pack_spread = pack_spread,
+        pack_centroid_x = pack_centroid_x,
+        pack_centroid_y = pack_centroid_y,
+        pack_centroid_z = pack_centroid_z,
+        pack_gathered_count = pack_gathered_count,
 
         -- Spell state (GCD from auto_attack_helper if available, else spell_book)
         spell_cooldown_remaining = 0,

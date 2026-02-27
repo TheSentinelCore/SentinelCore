@@ -111,8 +111,57 @@ local function run()
     )
     T.assert_true(last_url:find("faction=neutral", 1, true) ~= nil, "neutral faction template id should normalize")
 
+    -- ---------------------------------------------------------------
+    -- Vendor field normalization: QueryServer returns `entry` + `faction_team`,
+    -- WorldDataAdapter must map them to `vendor_id`, `npc_id`, `faction_mask`.
+    -- ---------------------------------------------------------------
+    T.install_core_stub({
+        http_get = function(url, cb)
+            if url:find("/vendors/nearby", 1, true) then
+                cb(200, "application/json", [[{"items":[
+                    {"guid":99,"entry":1234,"name":"Test Vendor","map_id":530,"x":10,"y":20,"z":30,"distance":15.5,"npc_flags":128,"can_sell":true,"can_repair":true,"vendor_item_count":12,"faction_id":69,"faction_team":"alliance"},
+                    {"guid":100,"entry":5678,"name":"Horde Vendor","map_id":530,"x":50,"y":60,"z":70,"distance":45.0,"npc_flags":128,"can_sell":true,"can_repair":false,"vendor_item_count":8,"faction_id":67,"faction_team":"horde"}
+                ]}]], "")
+                return
+            end
+            cb(200, "application/json", [[{"status":"ok"}]], "")
+        end,
+    })
+
+    local bus2 = EventBus:new()
+    local bb2 = Blackboard:new(bus2)
+    local adapter2 = WorldDataAdapter:new(bus2, bb2, {
+        base_url = "http://127.0.0.1:48100",
+        api_version_prefix = "/api/v1",
+    })
+
+    local norm_vendors = nil
+    adapter2:get_nearby_vendors(
+        { map_id = 530 },
+        { position = { x = 0, y = 0, z = 0 }, radius = 250 },
+        function(ok, vendors)
+            if ok then norm_vendors = vendors end
+        end
+    )
+
+    T.assert_true(norm_vendors ~= nil, "normalized vendors should be returned")
+    T.assert_eq(#norm_vendors, 2, "should return 2 vendors")
+
+    -- First vendor: alliance
+    T.assert_eq(norm_vendors[1].vendor_id, 1234, "vendor_id should be mapped from entry")
+    T.assert_eq(norm_vendors[1].npc_id, 1234, "npc_id should be mapped from entry")
+    T.assert_eq(norm_vendors[1].faction_mask, 1, "alliance faction_team should map to mask 1")
+    T.assert_eq(norm_vendors[1].can_sell, true, "can_sell should pass through")
+    T.assert_eq(norm_vendors[1].can_repair, true, "can_repair should pass through")
+
+    -- Second vendor: horde
+    T.assert_eq(norm_vendors[2].vendor_id, 5678, "vendor_id should be mapped from entry")
+    T.assert_eq(norm_vendors[2].npc_id, 5678, "npc_id should be mapped from entry")
+    T.assert_eq(norm_vendors[2].faction_mask, 2, "horde faction_team should map to mask 2")
+
     return {
         sc006_context_resolve = true,
+        sc006_vendor_normalization = true,
     }
 end
 

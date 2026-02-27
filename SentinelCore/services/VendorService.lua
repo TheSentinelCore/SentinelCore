@@ -324,6 +324,7 @@ end
 ---@param returned_to_anchor boolean
 function VendorService:_complete_vendor(now, returned_to_anchor)
     self._state = "completed"
+    self._blackboard:set("vendor.state", "completed")
     self._return_pending = false
     self._return_started_at = 0
     self:_update_cache(self._active_candidate, "ok", self._active_candidate and self._active_candidate.path_cost or nil)
@@ -404,12 +405,76 @@ function VendorService:start(canonical_ctx)
     })
 
     local request_opts = {
-        radius = tonumber(self._cfg.search_radius) or 250,
+        radius = tonumber(self._cfg.search_radius) or 2000,
+        limit = tonumber(self._cfg.candidate_fetch_limit) or 10,
         require_sell = self._cfg.require_sell == true,
         require_repair = self._cfg.require_repair == true,
-        faction = FactionResolver.resolve_team(self._blackboard:get("player.faction_id")),
+        -- No server-side faction filter: neutral vendors are usable by both factions
+        -- but the server's strict filter excludes them.  Client-side _candidate_allowed()
+        -- handles faction compatibility via faction_mask.
         position = self._blackboard:get("player.position"),
     }
+
+    -- Profile vendor override: use profile-defined vendors instead of HTTP fetch
+    local profile_vendors = self._blackboard:get("profile.vendors")
+    if type(profile_vendors) == "table" and #profile_vendors > 0 then
+        self._log:info("using %d profile-defined vendors (skip server fetch)", #profile_vendors)
+        -- Ensure profile vendors have required fields for the pipeline
+        local pv = {}
+        for i = 1, #profile_vendors do
+            local v = profile_vendors[i]
+            pv[i] = {
+                vendor_id = v.vendor_id or v.npc_id or v.entry or 0,
+                npc_id = v.npc_id or v.entry or 0,
+                name = v.name or "Unknown",
+                x = v.x or 0, y = v.y or 0, z = v.z or 0,
+                map_id = canonical_ctx.map_id,
+                can_sell = v.sell ~= false,
+                can_repair = v.repair == true,
+                faction_mask = v.faction_mask or 3,
+                npc_flags = v.npc_flags or 0,
+                distance = 0,
+            }
+        end
+        -- Feed directly into the fetch callback path
+        self._candidates = self:_filter_candidates(pv)
+        if #self._candidates == 0 then
+            self._state = "failed"
+            self._last_error = ErrorCodes.VENDOR_NONE_VIABLE
+            self._event_bus:emit(Events.VENDOR_FAILED, {
+                timestamp = get_now(),
+                error_code = self._last_error,
+                candidates = #pv,
+            })
+            return true, nil
+        end
+        self._state = "ranking"
+        self:_rank_candidates(function(rank_ok, rank_error)
+            if self._state ~= "ranking" then return end
+            if not rank_ok then
+                self._state = "failed"
+                self._last_error = rank_error or ErrorCodes.VENDOR_NONE_VIABLE
+                self._event_bus:emit(Events.VENDOR_FAILED, { timestamp = get_now(), error_code = self._last_error })
+                return
+            end
+            self._active_candidate = self._reachable[1]
+            self._state = "travel"
+            self:_travel_to_vendor(self._active_candidate, function(travel_ok, travel_error)
+                if self._state ~= "travel" then return end
+                if not travel_ok then
+                    self._log:warn("vendor travel failed: %s", tostring(travel_error or "unreachable"))
+                    self._state = "failed"
+                    self._last_error = travel_error or ErrorCodes.VENDOR_UNREACHABLE
+                    self._event_bus:emit(Events.VENDOR_FAILED, { timestamp = get_now(), error_code = self._last_error })
+                    return
+                end
+                self._state = "interact"
+                self._interaction_started_at = get_now()
+                self._sub_state = ""
+            end)
+        end)
+        return true, nil
+    end
 
     self._world:get_nearby_vendors(canonical_ctx, request_opts, function(ok, vendors, error_code)
         if self._state ~= "fetching" then

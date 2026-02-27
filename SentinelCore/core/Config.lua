@@ -109,7 +109,6 @@ local RETRIBUTION_POLICY_BOUNDS = {
     holy_light_hp_pct = { 0.0, 1.0 },
     holy_light_min_mana_pct = { 0.0, 1.0 },
     flash_light_hp_pct = { 0.0, 1.0 },
-    flash_light_very_oom_mana_pct = { 0.0, 1.0 },
     heal_low_mana_threshold = { 0.0, 1.0 },
     heal_critical_mana_threshold = { 0.0, 1.0 },
     health_potion_hp_pct = { 0.0, 1.0 },

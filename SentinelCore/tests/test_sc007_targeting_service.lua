@@ -459,6 +459,93 @@ local function run()
     T.assert_true(targeting_unreachable:is_target_blacklisted(unreachable_target) == true,
         "unreachable candidate should be temporarily blacklisted from future pulls")
 
+    -- Cluster scoring bias: when tactical.target_config.prefer_clusters is true,
+    -- targets surrounded by other enemies should receive a score bonus.
+    local cluster_isolated = T.mock_object({
+        name = "ClusterIsolated",
+        level = 10,
+        health = 50,
+        max_health = 100,
+        position = { x = 12, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local cluster_center = T.mock_object({
+        name = "ClusterCenter",
+        level = 10,
+        health = 50,
+        max_health = 100,
+        position = { x = 20, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local cluster_neighbor_1 = T.mock_object({
+        name = "ClusterNeighbor1",
+        level = 10,
+        health = 50,
+        max_health = 100,
+        position = { x = 22, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+    local cluster_neighbor_2 = T.mock_object({
+        name = "ClusterNeighbor2",
+        level = 10,
+        health = 50,
+        max_health = 100,
+        position = { x = 18, y = 0, z = 0 },
+        can_attack = true,
+        is_enemy = true,
+    })
+
+    local cluster_objects = { cluster_isolated, cluster_center, cluster_neighbor_1, cluster_neighbor_2 }
+    core.object_manager.get_visible_objects = function()
+        return cluster_objects
+    end
+
+    -- Without cluster bias: score isolated and center targets without prefer_clusters
+    local targeting_no_cluster = TargetingService:new(bus, bb, {
+        base_radius = 45,
+        max_radius = 60,
+        pull_risk_budget = 5.0,
+    })
+    bb:clear("tactical.target_config")
+    local score_isolated_no_bias = targeting_no_cluster:score_target(cluster_isolated, {
+        objects = cluster_objects,
+        suppress_debug = true,
+    })
+    local score_center_no_bias = targeting_no_cluster:score_target(cluster_center, {
+        objects = cluster_objects,
+        suppress_debug = true,
+    })
+
+    -- With cluster bias: set prefer_clusters on the blackboard.
+    -- Move isolated target far from the cluster so it has 0 neighbors within 15 yd.
+    bb:set("tactical.target_config", { prefer_clusters = true })
+    cluster_isolated._position = { x = 40, y = 40, z = 0 }
+    local score_isolated_far = targeting_no_cluster:score_target(cluster_isolated, {
+        objects = cluster_objects,
+        suppress_debug = true,
+    })
+    local score_center_clustered, center_meta2 = targeting_no_cluster:score_target(cluster_center, {
+        objects = cluster_objects,
+        suppress_debug = true,
+    })
+
+    -- ClusterCenter has 2 neighbors within 15 yd; isolated (now at 40,40) has 0 neighbors
+    T.assert_true(
+        (tonumber(center_meta2.cluster_bonus) or 0) > 0,
+        "cluster scoring bias should add bonus for targets near other enemies"
+    )
+    -- The center should score higher than the far isolated target due to the cluster bonus
+    -- compared to the no-bias baseline difference
+    local diff_no_bias = score_center_no_bias - score_isolated_no_bias
+    local diff_biased = score_center_clustered - score_isolated_far
+    T.assert_true(diff_biased > diff_no_bias,
+        "cluster bias should increase relative advantage of clustered targets over isolated ones")
+
+    bb:clear("tactical.target_config")
+
     return {
         sc007_target_scoring = true,
         sc007_faction_defense_only = true,
@@ -466,6 +553,7 @@ local function run()
         sc007_target_blacklist_ttl = true,
         sc007_target_risk_budget_and_path_cost = true,
         sc007_adaptive_pull_risk_budget = true,
+        sc007_cluster_scoring_bias = true,
     }
 end
 

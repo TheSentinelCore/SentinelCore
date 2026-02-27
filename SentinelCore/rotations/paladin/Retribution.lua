@@ -60,11 +60,10 @@ local DEFAULT_POLICY = {
     divine_shield_hp_pct = 0.20,
     divine_protection_hp_pct = 0.35,
 
-    holy_light_hp_pct = 0.60,
-    holy_light_min_mana_pct = 0.22,
+    holy_light_hp_pct = 0.65,
+    holy_light_min_mana_pct = 0.15,
 
-    flash_light_hp_pct = 0.45,
-    flash_light_very_oom_mana_pct = 0.12,
+    flash_light_hp_pct = 0.65,
     heal_low_mana_threshold = 0.22,
     heal_critical_mana_threshold = 0.08,
 
@@ -897,12 +896,11 @@ function Retribution:defensive(ctx)
         }),
         self_spell(flash_light, 935, {
             max_player_health_pct = p.flash_light_hp_pct,
-            max_player_mana_pct = p.flash_light_very_oom_mana_pct,
             allow_movement = false,
-            intent = "recover",
-            -- Defensive healing must fire in all mana modes — a player can drop
-            -- to critical health while at 50% mana (sustain/burst mode), in which
-            -- case the recovery-only gate would silently suppress Flash of Light.
+            intent = "defensive",
+            -- Flash of Light is the fallback heal when Holy Light can't fire
+            -- (mana too low for HL's min_player_mana_pct gate).  No mana ceiling
+            -- so it always acts as a safety net across all mana levels.
             combat_modes = { "burst", "sustain", "recovery" },
             condition = function(local_ctx)
                 return local_ctx.in_combat == true

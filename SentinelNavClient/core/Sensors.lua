@@ -26,7 +26,14 @@ function Sensors:update()
     bb:set("_tick", bb:get("_tick", 0) + 1)
 
     local player = core.object_manager.get_local_player()
-    if not player or not player:is_valid() then return end
+    if not player or not player:is_valid() then
+        -- Avoid stale sensor state when player is not available (loading screens, relog).
+        bb:clear("player.position")
+        bb:set("player.speed", 0)
+        bb:set("player.is_casting", false)
+        bb:set("player.is_mounted", false)
+        return
+    end
 
     bb:set("player.position", player:get_position())
     bb:set("player.speed", player:get_movement_speed() or 0)

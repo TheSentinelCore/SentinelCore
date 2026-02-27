@@ -595,6 +595,21 @@ local function is_indoor()
     return ui_map_id ~= nil and INDOOR_UI_MAPS[ui_map_id] == true
 end
 
+---Invoke consumer callback safely; callback errors must not break nav loop.
+---@param callback function|nil
+---@param success boolean
+---@param data table|nil
+---@param err string|nil
+local function invoke_callback(callback, success, data, err)
+    if not callback then
+        return
+    end
+    local ok, callback_err = pcall(callback, success, data, err)
+    if not ok and core and core.log_error then
+        core.log_error("[NavigationService] Callback error: " .. tostring(callback_err))
+    end
+end
+
 -- ============================================================================
 -- Constructor
 -- ============================================================================
@@ -688,7 +703,7 @@ function NavigationService:_request(url, callback, attempt)
             code = code,
             url = url,
         })
-        if callback then callback(false, nil, err_msg) end
+        invoke_callback(callback, false, nil, err_msg)
     end
 
     core.http_get(url, function(code, content_type, response, headers)
@@ -718,11 +733,11 @@ function NavigationService:_request(url, callback, attempt)
                     url = url,
                     domain_error = true,
                 })
-                if callback then callback(false, nil, msg) end
+                invoke_callback(callback, false, nil, msg)
                 return
             end
 
-            if callback then callback(true, data, nil) end
+            invoke_callback(callback, true, data, nil)
             return
         end
 
@@ -786,7 +801,7 @@ end
 ---@param opts? table
 function NavigationService:find_path(start_pos, dest, callback, opts)
     if not start_pos or not dest then
-        if callback then callback(false, nil, "Missing start or dest") end
+        invoke_callback(callback, false, nil, "Missing start or dest")
         return
     end
     opts = opts or {}
@@ -815,15 +830,15 @@ function NavigationService:find_path(start_pos, dest, callback, opts)
 
     self:_request(self:_build_url(endpoint, params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
         local wps = extract_waypoints(data)
         if #wps == 0 then
-            if callback then callback(false, nil, "Empty path") end
+            invoke_callback(callback, false, nil, "Empty path")
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             waypoints = wps,
             distance = data.distance or 0,
             partial = data.partial or false,
@@ -838,7 +853,7 @@ end
 ---@param opts? table
 function NavigationService:find_route_tsp(nodes, callback, opts)
     if not nodes or #nodes < 2 then
-        if callback then callback(false, nil, "Need at least 2 nodes") end
+        invoke_callback(callback, false, nil, "Need at least 2 nodes")
         return
     end
     opts = opts or {}
@@ -848,7 +863,7 @@ function NavigationService:find_route_tsp(nodes, callback, opts)
         if player and player:is_valid() then
             start_pos = player:get_position()
         else
-            if callback then callback(false, nil, "No start position") end
+            invoke_callback(callback, false, nil, "No start position")
             return
         end
     end
@@ -884,7 +899,7 @@ function NavigationService:find_route_tsp(nodes, callback, opts)
 
     self:_request(self:_build_url("/api/v1/path-tsp", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
         local visit_order = {}
@@ -893,7 +908,7 @@ function NavigationService:find_route_tsp(nodes, callback, opts)
                 visit_order[#visit_order + 1] = data.visit_order[i] + 1
             end
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             waypoints = extract_waypoints(data),
             visit_order = visit_order,
             leg_boundaries = data.leg_boundaries or {},
@@ -909,7 +924,7 @@ end
 ---@param opts? table
 function NavigationService:find_route_multi(stops, callback, opts)
     if not stops or #stops < 2 then
-        if callback then callback(false, nil, "Need at least 2 stops") end
+        invoke_callback(callback, false, nil, "Need at least 2 stops")
         return
     end
     opts = opts or {}
@@ -932,10 +947,10 @@ function NavigationService:find_route_multi(stops, callback, opts)
 
     self:_request(self:_build_url("/api/v1/path-multi", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             waypoints = extract_waypoints(data),
             leg_boundaries = data.leg_boundaries or {},
             leg_distances = data.leg_distances or {},
@@ -951,7 +966,7 @@ end
 ---@param opts? table
 function NavigationService:check_path(current_pos, waypoints, callback, opts)
     if not current_pos or not waypoints or #waypoints == 0 then
-        if callback then callback(false, nil, "Missing pos or waypoints") end
+        invoke_callback(callback, false, nil, "Missing pos or waypoints")
         return
     end
     opts = opts or {}
@@ -966,10 +981,10 @@ function NavigationService:check_path(current_pos, waypoints, callback, opts)
 
     self:_request(self:_build_url("/api/v1/path/check", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             valid = data.valid or false,
             first_invalid_segment = data.first_invalid_segment,
             player_on_navmesh = data.player_on_navmesh or false,
@@ -984,7 +999,7 @@ end
 ---@param opts? table
 function NavigationService:find_path_corridor(start_pos, dest, callback, opts)
     if not start_pos or not dest then
-        if callback then callback(false, nil, "Missing start or dest") end
+        invoke_callback(callback, false, nil, "Missing start or dest")
         return
     end
     opts = opts or {}
@@ -1013,15 +1028,15 @@ function NavigationService:find_path_corridor(start_pos, dest, callback, opts)
 
     self:_request(self:_build_url("/api/v1/path/corridor", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
         local wps = extract_waypoints(data)
         if #wps == 0 then
-            if callback then callback(false, nil, "Empty path") end
+            invoke_callback(callback, false, nil, "Empty path")
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             waypoints = wps,
             corridor_widths = data.corridor_widths or {},
             distance = data.distance or 0,
@@ -1046,7 +1061,7 @@ function NavigationService:find_path_avoid(start_pos, dest, avoid_zones, callbac
         return self:find_path(start_pos, dest, callback, opts)
     end
     if not start_pos or not dest then
-        if callback then callback(false, nil, "Missing start or dest") end
+        invoke_callback(callback, false, nil, "Missing start or dest")
         return
     end
     opts = opts or {}
@@ -1079,10 +1094,10 @@ function NavigationService:find_path_avoid(start_pos, dest, avoid_zones, callbac
         end
         local wps = extract_waypoints(data)
         if #wps == 0 then
-            if callback then callback(false, nil, "Empty path") end
+            invoke_callback(callback, false, nil, "Empty path")
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             waypoints = wps,
             distance = data.distance or 0,
             partial = data.partial or false,
@@ -1102,7 +1117,7 @@ end
 ---@param opts? table
 function NavigationService:raycast(start_pos, dest, callback, opts)
     if not start_pos or not dest then
-        if callback then callback(false, nil, "Missing start or dest") end
+        invoke_callback(callback, false, nil, "Missing start or dest")
         return
     end
     opts = opts or {}
@@ -1117,10 +1132,10 @@ function NavigationService:raycast(start_pos, dest, callback, opts)
     }
     self:_request(self:_build_url("/api/v1/raycast", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             hit = data.hit or false,
             t = data.t or 1.0,
         }, nil)
@@ -1133,7 +1148,7 @@ end
 ---@param opts? table
 function NavigationService:get_height(pos, callback, opts)
     if not pos then
-        if callback then callback(false, nil, "Missing position") end
+        invoke_callback(callback, false, nil, "Missing position")
         return
     end
     opts = opts or {}
@@ -1145,10 +1160,10 @@ function NavigationService:get_height(pos, callback, opts)
     }
     self:_request(self:_build_url("/api/v1/height", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, { height = data.height }, nil)
+        invoke_callback(callback, true, { height = data.height }, nil)
     end)
 end
 
@@ -1158,7 +1173,7 @@ end
 ---@param opts? table
 function NavigationService:get_all_heights(pos, callback, opts)
     if not pos then
-        if callback then callback(false, nil, "Missing position") end
+        invoke_callback(callback, false, nil, "Missing position")
         return
     end
     opts = opts or {}
@@ -1181,10 +1196,10 @@ function NavigationService:get_all_heights(pos, callback, opts)
 
     self:_request(self:_build_url("/api/v1/heights", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             heights = data.heights or {},
             count = data.count or 0,
         }, nil)
@@ -1205,10 +1220,10 @@ function NavigationService:random_point(callback, opts)
     end
     self:_request(self:_build_url("/api/v1/random", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, { point = to_vec3({ x = data.x, y = data.y, z = data.z }) }, nil)
+        invoke_callback(callback, true, { point = to_vec3({ x = data.x, y = data.y, z = data.z }) }, nil)
     end)
 end
 
@@ -1223,7 +1238,7 @@ end
 ---@param opts? table
 function NavigationService:flee(player_pos, threats, callback, opts)
     if not player_pos or not threats or #threats == 0 then
-        if callback then callback(false, nil, "Missing player_pos or threats") end
+        invoke_callback(callback, false, nil, "Missing player_pos or threats")
         return
     end
     opts = opts or {}
@@ -1248,10 +1263,10 @@ function NavigationService:flee(player_pos, threats, callback, opts)
 
     self:_request(self:_build_url("/api/v1/tactical/flee", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             waypoints = extract_waypoints(data),
             distance = data.distance or 0,
             min_threat_distance = data.min_threat_distance or 0,
@@ -1266,7 +1281,7 @@ end
 ---@param opts? table
 function NavigationService:kite(player_pos, target_pos, callback, opts)
     if not player_pos or not target_pos then
-        if callback then callback(false, nil, "Missing player_pos or target_pos") end
+        invoke_callback(callback, false, nil, "Missing player_pos or target_pos")
         return
     end
     opts = opts or {}
@@ -1293,10 +1308,10 @@ function NavigationService:kite(player_pos, target_pos, callback, opts)
 
     self:_request(self:_build_url("/api/v1/tactical/kite", params), function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             waypoints = extract_waypoints(data),
             waypoint_count = data.waypoint_count or 0,
         }, nil)
@@ -1312,10 +1327,10 @@ end
 function NavigationService:health_check(callback)
     self:_request(self._base_url .. "/health", function(ok, data, err)
         if not ok then
-            if callback then callback(false, nil, err) end
+            invoke_callback(callback, false, nil, err)
             return
         end
-        callback(true, {
+        invoke_callback(callback, true, {
             status = data.status,
             version = data.version,
             uptime_secs = data.uptime_secs,

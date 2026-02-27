@@ -25,6 +25,9 @@ local VendorService = require("services/VendorService")
 local RecoveryService = require("services/RecoveryService")
 local DeathRecoveryService = require("services/DeathRecoveryService")
 local MountService = require("services/MountService")
+local ProfileCoordinator = require("services/ProfileCoordinator")
+local ProfileRecorder = require("services/ProfileRecorder")
+local ProfileOverlay = require("ui/ProfileOverlay")
 
 local get_now = require("lib/TimeHelper").get_now
 local AutoAttackHelper = require("lib/AutoAttackHelper")
@@ -39,6 +42,11 @@ local UtilityEvaluator = require("ai/UtilityEvaluator")
 local SwingTimer = require("ai/SwingTimer")
 local HumanTiming = require("ai/HumanTiming")
 local SessionBehavior = require("ai/SessionBehavior")
+local PackTracker = require("ai/PackTracker")
+local TacticalSelector = require("ai/TacticalSelector")
+local PerformanceAdvisor = require("ai/PerformanceAdvisor")
+local SingleTargetTactic = require("tactics/SingleTargetTactic")
+local AoEKiteTactic = require("tactics/AoEKiteTactic")
 local RetUtil = require("rotations/paladin/RetributionUtility")
 
 ---@class SentinelClient
@@ -59,6 +67,7 @@ local RetUtil = require("rotations/paladin/RetributionUtility")
 ---@field private _swing_timer table
 ---@field private _human_timing table
 ---@field private _session_behavior table
+---@field private _performance_advisor table
 ---@field private _grind_tree table|nil
 ---@field private _started boolean
 ---@field private _context_pending boolean
@@ -178,6 +187,18 @@ function Client:new(config)
         o._event_bus, o._blackboard, runtime_cfg.death, navigation, Logger:new("DeathRecovery")
     )
     local mount = config.mount_service or MountService:new(o._event_bus, o._blackboard, runtime_cfg.mount, Logger:new("Mount"))
+    local profile_coordinator = config.profile_coordinator or ProfileCoordinator:new(
+        o._event_bus, o._blackboard, runtime_cfg.profiles or {},
+        navigation, targeting, Logger:new("ProfileCoord")
+    )
+
+    -- Record hotspot keybind (Insert key = 0x2D = 45)
+    local record_hotspot_keybind = core.menu.key_checkbox(45, false, false, true, 0, "sc_record_hotspot")
+    local profile_recorder = config.profile_recorder or ProfileRecorder:new(
+        o._event_bus, o._blackboard, Logger:new("ProfileRec"), record_hotspot_keybind
+    )
+
+    local profile_overlay = ProfileOverlay:new(o._blackboard)
 
     o._services = {
         blackboard = o._blackboard,
@@ -194,11 +215,16 @@ function Client:new(config)
         recovery = recovery,
         death_recovery = death_recovery,
         mount = mount,
+        profile_coordinator = profile_coordinator,
+        profile_recorder = profile_recorder,
+        profile_overlay = profile_overlay,
     }
 
     o._service_update_order = {
         "objective",
         "targeting",
+        "profile_coordinator",
+        "profile_recorder",
         "exploration",
         "combat",
         "loot",
@@ -213,6 +239,18 @@ function Client:new(config)
     o._human_timing = HumanTiming:new()
     o._session_behavior = SessionBehavior:new()
     RetUtil.register_actions(o._utility_evaluator)
+
+    -- Tactical AI
+    local pack_tracker = PackTracker:new()
+    local advisor = PerformanceAdvisor:new(o._event_bus)
+    o._performance_advisor = advisor
+    local tactical_selector = TacticalSelector:new(advisor)
+    tactical_selector:register(SingleTargetTactic:new())
+    tactical_selector:register(AoEKiteTactic:new())
+    tactical_selector:refresh_available({})
+
+    o._pack_tracker = pack_tracker
+    o._tactical_selector = tactical_selector
 
     o._grind_tree = nil
 
@@ -754,6 +792,9 @@ function Client:start(mode_id, opts)
             loot_service = self._services.loot,
             death_recovery_service = self._services.death_recovery,
             mount_service = self._services.mount,
+            tactical_selector = self._tactical_selector,
+            performance_advisor = self._performance_advisor,
+            pack_tracker = self._pack_tracker,
         })
         -- Clear stale BT state from previous session
         self._blackboard:clear("loot.pending_target")
@@ -959,6 +1000,29 @@ function Client:update()
             pcall(function() self._services.targeting:update() end)
             pcall(function() self._services.inventory:update() end)
             pcall(function() self._services.death_recovery:update() end)
+
+            -- Update PackTracker from TargetingService's visible hostiles
+            pcall(function()
+                if self._pack_tracker and self._services.targeting then
+                    local hostiles = self._services.targeting:get_visible_hostiles()
+                    local player_pos = self._blackboard:get("player.position")
+                    local player = self._blackboard:get("player.object")
+                    local player_guid = ""
+                    if player then
+                        local ok, guid = pcall(function() return player:get_guid() end)
+                        if ok and guid then player_guid = guid end
+                    end
+                    if hostiles and player_pos then
+                        self._pack_tracker:update(hostiles, player_pos, player_guid)
+                        local pack = self._pack_tracker:get_pack()
+                        self._blackboard:set("pack.count", pack.count)
+                        self._blackboard:set("pack.centroid", pack.centroid)
+                        self._blackboard:set("pack.spread", pack.spread)
+                        self._blackboard:set("pack.gathered_count", pack.gathered_count)
+                        self._blackboard:set("pack.nearest_dist", pack.nearest_dist)
+                    end
+                end
+            end)
 
             self._grind_tree:tick()
 
@@ -1176,6 +1240,41 @@ end
 ---@return string
 function Client:get_active_profile_id()
     return self._config:get_active_profile_id()
+end
+
+---@param profile table  parsed profile data
+---@return boolean ok, string|nil error
+function Client:load_grinding_profile(profile)
+    return self._services.profile_coordinator:load_profile(profile)
+end
+
+function Client:unload_grinding_profile()
+    self._services.profile_coordinator:unload_profile()
+end
+
+---@return string  FSM state: "idle"|"at_hotspot"|"traveling"|"vendor_trip"
+function Client:get_grinding_profile_state()
+    return self._services.profile_coordinator:get_state()
+end
+
+---@param existing_profile? table  If provided, edit this profile instead of creating new
+---@return boolean ok
+function Client:start_recording(existing_profile)
+    return self._services.profile_recorder:start_recording(existing_profile)
+end
+
+---@return table|nil profile, string|nil error
+function Client:stop_recording()
+    return self._services.profile_recorder:finish_recording()
+end
+
+function Client:cancel_recording()
+    return self._services.profile_recorder:cancel_recording()
+end
+
+---@return string  "idle"|"recording"
+function Client:get_recorder_state()
+    return self._services.profile_recorder:get_state()
 end
 
 ---@return table[]

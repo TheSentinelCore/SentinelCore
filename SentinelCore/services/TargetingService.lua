@@ -929,6 +929,33 @@ function TargetingService:score_target(target, opts)
     end
 
     local score = (kill_speed * w_kill) + (loot_value * w_loot) - (travel_cost * w_travel) - (risk * w_risk)
+
+    -- Cluster proximity bonus: when the active tactic prefers AoE clusters,
+    -- boost score for targets near other candidates.
+    local cluster_bonus = 0
+    local target_cfg = self._blackboard:get("tactical.target_config")
+    if type(target_cfg) == "table" and target_cfg.prefer_clusters == true
+        and type(opts) == "table" and type(opts.objects) == "table" then
+        local cluster_radius = tonumber(target_cfg.cluster_radius) or 15
+        local cluster_weight = tonumber(target_cfg.cluster_weight) or 0.15
+        local nearby_count = 0
+        for ci = 1, #opts.objects do
+            local other = unwrap_game_object(opts.objects[ci])
+            if other and not is_same_unit(other, target)
+                and safe_method(other, "is_valid") == true
+                and safe_method(other, "is_unit") == true
+                and safe_method(other, "is_dead") ~= true then
+                local other_pos = safe_method(other, "get_position")
+                local cdist = Helpers.distance_3d(target_pos, other_pos)
+                if cdist and cdist <= cluster_radius then
+                    nearby_count = nearby_count + 1
+                end
+            end
+        end
+        cluster_bonus = nearby_count * cluster_weight
+        score = score + cluster_bonus
+    end
+
     local pull_risk_budget = tonumber(type(opts) == "table" and opts.pull_risk_budget or nil) or 0
     local pull_risk_scale = tonumber(type(opts) == "table" and opts.pull_risk_scale or nil) or 0
     local pull_risk_deaths_per_hour = tonumber(type(opts) == "table" and opts.pull_risk_deaths_per_hour or nil) or 0
@@ -948,6 +975,7 @@ function TargetingService:score_target(target, opts)
             pull_risk_deaths_per_hour = pull_risk_deaths_per_hour,
             pull_pressure = pull_pressure,
             unreachable_penalty = unreachable_penalty,
+            cluster_bonus = cluster_bonus,
         })
     end
 
@@ -956,6 +984,7 @@ function TargetingService:score_target(target, opts)
         pull_pressure = pull_pressure,
         distance = distance,
         path_distance = path_distance,
+        cluster_bonus = cluster_bonus,
     }
 end
 
@@ -976,6 +1005,74 @@ function TargetingService:_get_visible_objects()
     self._visible_cache.at = now
     self._visible_cache.objects = objects
     return objects
+end
+
+---@private
+---@param candidates table[]
+---@return table[]
+function TargetingService:_apply_profile_filters(candidates)
+    local filters = self._blackboard:get("profile.target_filters")
+    if not filters then return candidates end
+
+    local level_min = tonumber(filters.level_min) or 0
+    local level_max = tonumber(filters.level_max) or 999
+    local creature_types = filters.creature_types
+    local npc_blacklist = filters.npc_blacklist
+    local npc_whitelist = filters.npc_whitelist
+    local has_whitelist = type(npc_whitelist) == "table" and #npc_whitelist > 0
+    local has_creature_filter = type(creature_types) == "table" and #creature_types > 0
+
+    local result = {}
+    for i = 1, #candidates do
+        local entry = candidates[i]
+        local target = entry.target
+        local dominated = false
+
+        local level = tonumber(safe_method(target, "get_level")) or 0
+        if level < level_min or level > level_max then
+            dominated = true
+        end
+
+        if not dominated and has_creature_filter then
+            local ct = tostring(safe_method(target, "get_creature_type_name") or ""):lower()
+            local match = false
+            for j = 1, #creature_types do
+                if ct == tostring(creature_types[j]):lower() then
+                    match = true
+                    break
+                end
+            end
+            if not match then dominated = true end
+        end
+
+        local npc_id = tonumber(safe_method(target, "get_npc_id")) or 0
+
+        if not dominated and has_whitelist then
+            local on_list = false
+            for j = 1, #npc_whitelist do
+                if npc_id == tonumber(npc_whitelist[j]) then
+                    on_list = true
+                    break
+                end
+            end
+            if not on_list then dominated = true end
+        end
+
+        if not dominated and type(npc_blacklist) == "table" then
+            for j = 1, #npc_blacklist do
+                if npc_id == tonumber(npc_blacklist[j]) then
+                    dominated = true
+                    break
+                end
+            end
+        end
+
+        if not dominated then
+            result[#result + 1] = entry
+        end
+    end
+
+    return result
 end
 
 ---@param opts? table
@@ -1055,6 +1152,9 @@ function TargetingService:get_visible_candidates(opts)
         end
     end
 
+    -- Apply profile target filters if active
+    candidates = self:_apply_profile_filters(candidates)
+
     table.sort(candidates, function(a, b)
         local a_def = a and a.defensive == true
         local b_def = b and b.defensive == true
@@ -1074,6 +1174,26 @@ function TargetingService:get_visible_candidates(opts)
     end)
 
     return candidates
+end
+
+---@return table[] Array of visible hostile game_object references for PackTracker
+function TargetingService:get_visible_hostiles()
+    local player = unwrap_game_object(self._blackboard:get("player.object"))
+    if not player or safe_method(player, "is_valid") ~= true then
+        return {}
+    end
+
+    local objects = self:_get_visible_objects()
+    local hostiles = {}
+
+    for i = 1, #objects do
+        local unit = unwrap_game_object(objects[i])
+        if is_valid_target(unit, player) then
+            hostiles[#hostiles + 1] = unit
+        end
+    end
+
+    return hostiles
 end
 
 ---@return game_object|nil
