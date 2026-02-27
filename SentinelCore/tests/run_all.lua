@@ -65,6 +65,7 @@ local tests = {
     "tests/test_sc030_zone_config_session",
     "tests/test_sc031_positioning_service",
     "tests/test_ai031_performance_advisor",
+    "tests/test_ai032_intelligence_smoke",
 }
 
 ---@return table
