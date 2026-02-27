@@ -192,7 +192,7 @@ end
 function GrindService.build(deps)
     -- Wire existing combat/pull nodes for SingleTargetTactic phase delegation
     if deps.tactical_selector then
-        deps.combat_node = CombatService.build_bt(deps.bb, deps.evaluator, deps.swing_timer, deps.human_timing, deps.spell_executor, deps.navigation)
+        deps.combat_node = CombatService.build_bt(deps.bb, deps.evaluator, deps.swing_timer, deps.human_timing, deps.spell_executor, deps.navigation, deps.rotation_engine)
         deps.pull_node = PullService.build(deps.bb, deps.navigation, deps.rotation_engine)
     end
 
@@ -203,7 +203,7 @@ function GrindService.build(deps)
         deps.tactical_selector and build_tactical_sync_node(deps) or noop_node("tactical_sync_noop"),
         deps.tactical_selector
             and build_tactical_combat_node(deps)
-            or CombatService.build_bt(deps.bb, deps.evaluator, deps.swing_timer, deps.human_timing, deps.spell_executor, deps.navigation),
+            or CombatService.build_bt(deps.bb, deps.evaluator, deps.swing_timer, deps.human_timing, deps.spell_executor, deps.navigation, deps.rotation_engine),
         FleeService.build(deps.bb, deps.navigation),
         idle_pause_node(deps.bb, deps.session_behavior, deps.navigation),
         deps.loot_service and deps.loot_service:build() or noop_node("loot_noop"),

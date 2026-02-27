@@ -36,7 +36,7 @@ function M.run()
         executed_actions[#executed_actions + 1] = action
     end
 
-    local tree = CombatService.build_bt(bb, eval, nil, ht, spell_executor, nil)
+    local tree = CombatService.build_bt(bb, eval, nil, ht, spell_executor, nil, nil)
 
     -- Test 1: FAILURE when not in combat
     bb:set("player.in_combat", false)

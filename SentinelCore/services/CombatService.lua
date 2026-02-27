@@ -1579,7 +1579,7 @@ end
 ---@param spell_executor fun(action: table)
 ---@param navigation NavigationAdapter
 ---@return table BT node
-function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_executor, navigation)
+function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_executor, navigation, rotation_engine)
     local pending_action = nil
     local pending_delay_until = nil
     local combat_start_time = nil
@@ -1597,6 +1597,24 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
     -- server into re-evaluating the target, which often unsticks cast failures.
     local last_action_at = 0
     local last_stuck_recovery_at = 0
+
+    -- Resolve movement profile from rotation engine (cached per combat session).
+    local cached_move_profile = nil
+    local function resolve_bt_movement_profile()
+        if cached_move_profile then return cached_move_profile end
+        if rotation_engine and type(rotation_engine.get_movement_profile) == "function" then
+            local ok, profile = pcall(rotation_engine.get_movement_profile, rotation_engine)
+            if ok and type(profile) == "table" then
+                cached_move_profile = {
+                    chase_range = tonumber(profile.combat_chase_range) or 5.0,
+                    min_range = tonumber(profile.min_combat_range) or 0,
+                }
+                return cached_move_profile
+            end
+        end
+        cached_move_profile = { chase_range = 5.0, min_range = 0 }
+        return cached_move_profile
+    end
 
     return BT.ReactiveSequence:new("combat", {
         -- Gate: must be in combat WITH a valid living target.
@@ -1618,6 +1636,7 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                 nav_stop_at = 0
                 last_action_at = 0
                 last_stuck_recovery_at = 0
+                cached_move_profile = nil
                 return false
             end
             local target = bb:get("combat.target")
@@ -1658,6 +1677,7 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             last_chase_dest = nil
             chase_repath_pending = false
             last_chase_target = nil
+            cached_move_profile = nil
             return false
         end),
 
@@ -1706,20 +1726,48 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             if not player_pos then return BTStatus.SUCCESS end
 
             local dist = Helpers.distance_3d(player_pos, tpos)
+            local mp = resolve_bt_movement_profile()
+            local chase_range = mp.chase_range
+            local min_range = mp.min_range
 
-            if dist <= 5 then
-                -- Unconditionally stop nav in melee range every tick.
-                -- NavClient:stop() may not abort the current in-progress waypoint on
-                -- the first call (it prevents NEW moves but the current move completes).
-                -- Repeated stop() calls ensure it halts before the next waypoint starts.
-                -- NavigationAdapter:stop() is a fast synchronous Lua call — safe to call
-                -- every frame.
+            -- Determine desired movement: toward target, away, or none
+            local move_dest = nil  -- nil = comfort zone (no movement needed)
+            if dist <= chase_range then
+                -- In range. Check if too close (ranged classes maintain distance).
+                if min_range > 0 and dist < min_range then
+                    -- Don't back away while casting/channelling
+                    local player_obj = bb:get("player.object")
+                    local casting = safe_method(player_obj, "is_casting_spell") == true
+                        or safe_method(player_obj, "is_channelling_spell") == true
+                    if not casting then
+                        -- Compute point min_range yards from target, along away vector
+                        local dx = (player_pos.x or 0) - (tpos.x or 0)
+                        local dy = (player_pos.y or 0) - (tpos.y or 0)
+                        local dz = (player_pos.z or 0) - (tpos.z or 0)
+                        local len = math.sqrt(dx * dx + dy * dy + dz * dz)
+                        if len < 0.001 then dx, dy, dz, len = 1, 0, 0, 1 end
+                        move_dest = {
+                            x = (tpos.x or 0) + (dx / len) * min_range,
+                            y = (tpos.y or 0) + (dy / len) * min_range,
+                            z = (tpos.z or 0) + (dz / len) * min_range,
+                        }
+                    end
+                    -- else: casting, stay put (move_dest stays nil)
+                end
+                -- else: in comfort zone [min_range, chase_range], move_dest stays nil
+            else
+                -- Too far: chase toward target
+                move_dest = tpos
+            end
+
+            -- Comfort zone: stop nav and handle stuck detection
+            if not move_dest then
                 if navigation then
                     pcall(function() navigation:stop() end)
                     last_chase_dest = nil
                     chase_repath_pending = false
                 end
-                -- R6: In-melee stuck detection — if no action has landed for 8s
+                -- R6: In-range stuck detection — if no action has landed for 8s
                 -- re-face and re-set target to unjam the rotation evaluator.
                 local now_s = get_now()
                 local reset_point = math.max(last_action_at, combat_start_time or 0)
@@ -1760,9 +1808,9 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                     -- On failure, back off 2s before retrying so we don't hammer
                     -- a down server or unreachable destination every frame.
                     if get_now() >= nav_fail_until then
-                        last_chase_dest = tpos
-                        navigation:move_to(tpos, function(ok)
-                            if not ok then
+                        last_chase_dest = move_dest
+                        navigation:move_to(move_dest, function(nav_ok)
+                            if not nav_ok then
                                 nav_fail_until = get_now() + 2.0
                                 last_chase_dest = nil
                             end
@@ -1780,11 +1828,11 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
                     nav_stop_at = get_now()
 
                 elseif moving and not chase_repath_pending and last_chase_dest then
-                    if Helpers.distance_3d(last_chase_dest, tpos) > 2.0 then
+                    if Helpers.distance_3d(last_chase_dest, move_dest) > 2.0 then
                         chase_repath_pending = true
-                        last_chase_dest = tpos
+                        last_chase_dest = move_dest
                         pcall(function()
-                            navigation:soft_repath(tpos, function()
+                            navigation:soft_repath(move_dest, function()
                                 chase_repath_pending = false
                             end)
                         end)
@@ -1795,12 +1843,12 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             return BTStatus.SUCCESS
         end),
 
-        -- Facing: only call look_at when truly in melee range.
-        -- During the chase phase (dist > 5) the NavClient controls character
-        -- rotation toward path waypoints. Calling look_at here would oscillate
-        -- with the NavClient — character snapping between mob direction and the
-        -- next waypoint direction every tick. Let NavClient own rotation while
-        -- chasing; take over only once we stop in melee range.
+        -- Facing: only call look_at when in comfort zone (not chasing).
+        -- During the chase phase (dist > chase_range) the NavClient controls
+        -- character rotation toward path waypoints. Calling look_at here would
+        -- oscillate with the NavClient — character snapping between mob direction
+        -- and the next waypoint direction every tick. Let NavClient own rotation
+        -- while chasing; take over once we stop (comfort zone or backing away paused).
         BT.Action:new("face_target", function()
             local target = bb:get("combat.target")
             if not target then return BTStatus.SUCCESS end
@@ -1808,7 +1856,8 @@ function CombatService.build_bt(bb, evaluator, swing_timer, human_timing, spell_
             local player_pos = bb:get("player.position")
             if player_pos then
                 local ok_d, tpos_face = pcall(function() return target:get_position() end)
-                if ok_d and tpos_face and Helpers.distance_3d(player_pos, tpos_face) > 5 then
+                local face_mp = resolve_bt_movement_profile()
+                if ok_d and tpos_face and Helpers.distance_3d(player_pos, tpos_face) > face_mp.chase_range then
                     return BTStatus.SUCCESS  -- chasing: leave rotation to NavClient
                 end
             end
