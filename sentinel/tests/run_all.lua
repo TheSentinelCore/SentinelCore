@@ -46,6 +46,7 @@ local test_modules = {
     "tests/modules/combat/profiles/mage/test_frost_actions",
     "tests/modules/combat/profiles/mage/test_maintenance_tree",
     "tests/modules/combat/profiles/mage/test_aoe_tree",
+    "tests/modules/combat/profiles/mage/test_frost_tbc",
 }
 
 local failures = 0
