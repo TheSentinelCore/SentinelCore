@@ -18,6 +18,37 @@ local SPELLS = {
     hammer_of_wrath = { key = "hammer_of_wrath", ranks = { 24275, 24274, 24239, 27180 }, gcd = true, description = "Hammer of Wrath" },
     hammer_of_justice = { key = "hammer_of_justice", ranks = { 853, 5588, 5589, 10308 }, gcd = true, description = "Hammer of Justice" },
     repentance = { key = "repentance", id = 20066, gcd = true, description = "Repentance" },
+
+    -- Mage: Frost Combat
+    frostbolt = { key = "frostbolt", ranks = { 116, 205, 837, 7322, 8406, 8407, 8408, 10179, 10180, 10181, 25304, 27071, 27072, 38697 }, gcd = true, description = "Frostbolt" },
+    frost_nova = { key = "frost_nova", ranks = { 122, 865, 6131, 10230, 27088 }, gcd = true, description = "Frost Nova" },
+    cone_of_cold = { key = "cone_of_cold", ranks = { 120, 8492, 10159, 10160, 10161, 27087 }, gcd = true, description = "Cone of Cold" },
+    blizzard = { key = "blizzard", ranks = { 10, 6141, 8427, 10185, 10186, 10187, 27085 }, gcd = true, description = "Blizzard" },
+    ice_lance = { key = "ice_lance", id = 30455, gcd = true, description = "Ice Lance" },
+
+    -- Mage: Fire/Arcane Combat
+    fire_blast = { key = "fire_blast", ranks = { 2136, 2137, 2138, 8412, 8413, 10197, 10199, 27078, 27079 }, gcd = true, description = "Fire Blast" },
+    counterspell = { key = "counterspell", id = 2139, gcd = true, description = "Counterspell" },
+
+    -- Mage: Defensive
+    ice_barrier = { key = "ice_barrier", ranks = { 11426, 13031, 13032, 13033, 27134, 33405 }, gcd = false, ogcd = true, description = "Ice Barrier" },
+    ice_block = { key = "ice_block", id = 45438, gcd = true, description = "Ice Block" },
+    blink = { key = "blink", id = 1953, gcd = true, description = "Blink" },
+    mana_shield = { key = "mana_shield", ranks = { 1463, 8494, 8495, 10191, 10192, 10193, 27131 }, gcd = true, description = "Mana Shield" },
+
+    -- Mage: Cooldowns
+    evocation = { key = "evocation", id = 12051, gcd = true, description = "Evocation" },
+    cold_snap = { key = "cold_snap", id = 11958, gcd = false, ogcd = true, description = "Cold Snap" },
+    icy_veins = { key = "icy_veins", id = 12472, gcd = false, ogcd = true, description = "Icy Veins" },
+
+    -- Mage: Buffs
+    frost_armor = { key = "frost_armor", ranks = { 168, 7300, 7301 }, gcd = true, description = "Frost Armor" },
+    ice_armor = { key = "ice_armor", ranks = { 7302, 7320, 10219, 10220, 27124 }, gcd = true, description = "Ice Armor" },
+    arcane_intellect = { key = "arcane_intellect", ranks = { 1459, 1460, 1461, 10156, 10157, 27126 }, gcd = true, description = "Arcane Intellect" },
+
+    -- Mage: Conjure
+    conjure_food = { key = "conjure_food", ranks = { 587, 597, 990, 6129, 10144, 10145, 28612, 33717 }, gcd = true, description = "Conjure Food" },
+    conjure_water = { key = "conjure_water", ranks = { 5504, 5505, 5506, 6127, 10138, 10139, 10140, 37420, 27090 }, gcd = true, description = "Conjure Water" },
 }
 
 local function shallow_copy(src)
