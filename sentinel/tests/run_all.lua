@@ -44,6 +44,8 @@ local test_modules = {
     "tests/modules/grind/test_stuck_detector",
     "tests/modules/combat/profiles/mage/test_frost_conditions",
     "tests/modules/combat/profiles/mage/test_frost_actions",
+    "tests/modules/combat/profiles/mage/test_maintenance_tree",
+    "tests/modules/combat/profiles/mage/test_aoe_tree",
 }
 
 local failures = 0
