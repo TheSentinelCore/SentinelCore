@@ -19,7 +19,7 @@ default_game = "tbc"
 [navmesh.games.tbc]
 # CMaNGOS TBC mmaps (3-digit map IDs, no underscores)
 mmap_path = "./mmaps"
-preload_maps = [0, 1, 530]
+preload_maps = [0, 1, 530, 30, 489, 529, 566]
 
 [navmesh.games.retail]
 # TrinityCore retail mmaps (4-digit map IDs, underscores)

@@ -276,6 +276,7 @@ end
 ---@param opts? table
 function Client:move_to(target, callback, opts)
     self:_clear_route_session()
+    opts = opts or {}
     local destination = to_vec3(target)
     if not destination then
         self:_invoke_command_callback(callback, false, FAIL_REASONS.UNREACHABLE, {
@@ -301,6 +302,34 @@ function Client:move_to(target, callback, opts)
     -- Idempotent command behavior: if we're already moving to effectively the same
     -- destination, keep the active request/path instead of cancel/restarting it.
     if self._hsm:is_moving() and is_same_destination then
+        if callback then
+            self._callback = callback
+        end
+        return
+    end
+
+    -- Seamless retarget while already moving: keep movement running and request
+    -- a soft repath to the new destination instead of hard stop/reset.
+    if self._hsm:is_moving() and opts.soft_update == true then
+        self:_invalidate_active_requests()
+        self._blackboard:set("path.destination", destination)
+        self._blackboard:set("path.command_opts", Helpers.deep_copy(opts))
+        self._blackboard:set("deviation.needs_repath", true)
+        self._blackboard:clear("deviation.eval_tick")
+        self._blackboard:clear("deviation.eval_result")
+        self._blackboard:clear("deviation.repath_grace_until")
+        self._blackboard:clear("repath.retry_at")
+        self._blackboard:clear("repath.retry_owner")
+        self._blackboard:clear("nav.fail_reason")
+        self._blackboard:clear("nav.fail_detail")
+
+        local substate = self._hsm:get_substate()
+        if substate ~= NAV_SUBSTATES.AWAITING_PATH
+            and substate ~= NAV_SUBSTATES.FOLLOWING_PATH
+            and substate ~= NAV_SUBSTATES.RECOVERING then
+            self:_safe_set_substate(NAV_SUBSTATES.FOLLOWING_PATH, nil, "move_to(soft_update_following)", callback)
+        end
+
         if callback then
             self._callback = callback
         end
@@ -360,7 +389,7 @@ function Client:move_to(target, callback, opts)
     self._blackboard:set("repath.failures", 0)
     self._blackboard:clear("nav.fail_reason")
     self._blackboard:clear("nav.fail_detail")
-    self._blackboard:set("path.command_opts", opts and Helpers.deep_copy(opts) or nil)
+    self._blackboard:set("path.command_opts", Helpers.deep_copy(opts))
     self._callback = callback
 
     -- Transition HSM
@@ -589,16 +618,47 @@ function Client:follow_path(waypoints, callback, opts)
 end
 
 ---Re-request path from current position to current destination.
+---When possible this uses a soft repath request so movement does not hard stop.
 ---@param reason? string
-function Client:replan(reason)
-    if not self._hsm:is_moving() then return end
+---@param opts? table { soft?: boolean }
+function Client:replan(reason, opts)
+    opts = opts or {}
+    local use_soft = opts.soft ~= false
+
+    if not self._hsm:is_moving() then
+        return false
+    end
     if self._route_session and self._route_session.active then
         self:_replan_route(reason)
-        return
+        return true
     end
 
     local dest = self._blackboard:get("path.destination")
-    if not dest then return end
+    if not dest then
+        return false
+    end
+
+    if use_soft then
+        self._blackboard:clear("nav.fail_reason")
+        self._blackboard:clear("nav.fail_detail")
+        self._blackboard:set("deviation.needs_repath", true)
+        self._blackboard:clear("deviation.eval_tick")
+        self._blackboard:clear("deviation.eval_result")
+        self._blackboard:clear("repath.retry_at")
+        self._blackboard:clear("repath.retry_owner")
+        self._blackboard:set("repath.api_reason", tostring(reason or "api_replan"))
+
+        local has_path = self._blackboard:get("path.waypoints")
+        local substate = self._hsm:get_substate()
+        if not has_path or #has_path == 0 then
+            self._blackboard:set("path.index", 1)
+            self:_safe_set_substate(NAV_SUBSTATES.AWAITING_PATH, nil, "replan_soft(awaiting_path)", nil)
+        elseif substate ~= NAV_SUBSTATES.FOLLOWING_PATH and substate ~= NAV_SUBSTATES.RECOVERING then
+            self:_safe_set_substate(NAV_SUBSTATES.FOLLOWING_PATH, nil, "replan_soft(following_path)", nil)
+        end
+
+        return true
+    end
 
     self:_invalidate_active_requests()
     self.movement:stop()
@@ -628,6 +688,7 @@ function Client:replan(reason)
     self._nav_tree:reset()
 
     self:_safe_set_substate(NAV_SUBSTATES.AWAITING_PATH, nil, "replan(awaiting_path)", nil)
+    return true
 end
 
 ---Pre-validate whether a destination is reachable.

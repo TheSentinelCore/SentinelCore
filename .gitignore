@@ -26,3 +26,7 @@ SentinelFollower
 SentinelQueryServer/data/world.db
 .db
 tools
+OLD*
+StrathDuoMage*
+_scripts
+_dev

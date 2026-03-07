@@ -27,6 +27,8 @@ local Events = {
     FOLLOW_TARGET_CHANGED = "bg:follow_target_changed",
     COMBAT_ZONE_ENTERED = "bg:combat_zone_entered",
     COMBAT_ZONE_LEFT = "bg:combat_zone_left",
+    OBJECTIVE_INTERACTED = "bg:objective_interacted",
+    POST_REZ = "bg:post_rez",
 }
 
 return Events

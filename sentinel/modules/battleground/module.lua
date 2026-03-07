@@ -11,6 +11,8 @@ local ObjectiveTracker = require("modules/battleground/objective_tracker")
 local StrategyEngine = require("modules/battleground/strategy_engine")
 local Events = require("modules/battleground/events")
 local AllyTracker = require("modules/battleground/ally_tracker")
+local ObjectiveInteractor = require("modules/battleground/objective_interactor")
+local GatePositions = require("modules/battleground/data/gate_positions")
 local Humanization = require("shared/humanization")
 
 local ObjectiveCatalogs = {
@@ -35,6 +37,15 @@ local function distance(a, b)
     local dy = num(a.y) - num(b.y)
     local dz = num(a.z) - num(b.z)
     return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+end
+
+local function distance_2d(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return 99999
+    end
+    local dx = num(a.x) - num(b.x)
+    local dy = num(a.y) - num(b.y)
+    return math.sqrt((dx * dx) + (dy * dy))
 end
 
 local function shallow_copy(value)
@@ -123,11 +134,18 @@ function SentinelBG:new(event_bus, blackboard, nav_adapter)
     }
     o._humanization = Humanization.new()
     o._ally_tracker = AllyTracker:new(event_bus, blackboard, o._humanization)
+    o._interactor = ObjectiveInteractor:new(event_bus, blackboard, o._humanization)
     o._last_ally_nav_pos = nil
     o._last_movement_ms = 0
     o._last_spell_cast_ms = 0
     o._afk_idle_threshold_ms = 100000
     o._afk_spell_threshold_ms = 15000
+    o._stuck_check_pos = nil
+    o._stuck_check_ms = 0
+    o._stuck_counter = 0
+    o._stuck_check_interval_ms = 10000
+    o._gate_nav_issued = false
+    o._game_started = false
     return o
 end
 
@@ -300,9 +318,17 @@ function SentinelBG:_reset_eots_prep_state()
 end
 
 function SentinelBG:_prep_gate(runtime_signals, now_ms)
+    if self._game_started then
+        return false, "none"
+    end
+
     local in_prep = self._blackboard:get("bg.sensor.in_prep", false) == true
     if self._bg_key ~= "EOTS" then
-        return in_prep, in_prep and "battlefield_prep_fallback" or "none"
+        local blocked = in_prep
+        if not blocked then
+            self._game_started = true
+        end
+        return blocked, blocked and "battlefield_prep_fallback" or "none"
     end
 
     local supported = type(runtime_signals) == "table" and runtime_signals.visible_objects_supported == true
@@ -340,6 +366,7 @@ function SentinelBG:_prep_gate(runtime_signals, now_ms)
             return true, "release_grace"
         end
         if prep.active_state_seen and not barrier_blocking then
+            self._game_started = true
             return false, "none"
         end
         if (prep.armed and prep.barrier_seen_while_armed) or barrier_blocking then
@@ -348,6 +375,7 @@ function SentinelBG:_prep_gate(runtime_signals, now_ms)
         if in_prep then
             return true, "battlefield_prep_fallback"
         end
+        self._game_started = true
         return false, "none"
     end
 
@@ -402,6 +430,7 @@ end
 
 function SentinelBG:_activate(bg_key, bg_data)
     local player_pos = self._blackboard:get("player.position")
+    local player_obj = self._blackboard:get("player.object")
     self._bg_key = bg_key
     self._bg_data = bg_data
     self._definition = self._strategy_engine:get_definition(bg_key)
@@ -409,7 +438,7 @@ function SentinelBG:_activate(bg_key, bg_data)
         return false
     end
 
-    self._side = self._detector:resolve_side(self._bg_key, player_pos)
+    self._side = self._detector:resolve_side(self._bg_key, player_pos, player_obj)
     if not self._side then
         self._activation_wait_reason = "awaiting_player_position"
         self._blackboard:set("bg.activation_wait_reason", self._activation_wait_reason)
@@ -439,7 +468,12 @@ function SentinelBG:_activate(bg_key, bg_data)
     self._last_handoff_request_at_ms = 0
     self:_reset_eots_prep_state()
     self._ally_tracker:reset()
+    self._interactor:reset()
     self._last_ally_nav_pos = nil
+    self._stuck_check_pos = nil
+    self._stuck_check_ms = 0
+    self._stuck_counter = 0
+    self._gate_nav_issued = false
     self._nav:reset()
     self._blackboard:set("bg.active", true)
     self._blackboard:set("bg.key", self._bg_key)
@@ -449,7 +483,12 @@ function SentinelBG:_activate(bg_key, bg_data)
     self._blackboard:set("bg.prep_release_grace_until_ms", 0)
     self:_clear_retreat_state()
     if self._bg_key == "EOTS" then
-        self._eots_prep.armed = true
+        local bf_state = num(self._blackboard:get("bg.sensor.battlefield_state", 0))
+        if bf_state == 2 or bf_state == 0 then
+            self._eots_prep.armed = true
+        else
+            self._eots_prep.active_state_seen = true
+        end
     end
     self._event_bus:publish(Events.ENTERED, {
         bg_key = self._bg_key,
@@ -496,7 +535,13 @@ function SentinelBG:_deactivate(reason)
     }
     self._objective_tracker:reset()
     self._ally_tracker:reset()
+    self._interactor:reset()
     self._last_ally_nav_pos = nil
+    self._stuck_check_pos = nil
+    self._stuck_check_ms = 0
+    self._stuck_counter = 0
+    self._gate_nav_issued = false
+    self._game_started = false
     self:_clear_battleground_diagnostics()
 end
 
@@ -522,9 +567,9 @@ function SentinelBG:_trim_route_nodes(route_nodes, player_pos)
     end
 
     local nearest_index = 1
-    local nearest_distance = distance(player_pos, route_nodes[1])
+    local nearest_distance = distance_2d(player_pos, route_nodes[1])
     for index = 2, #route_nodes do
-        local current_distance = distance(player_pos, route_nodes[index])
+        local current_distance = distance_2d(player_pos, route_nodes[index])
         if current_distance < nearest_distance then
             nearest_distance = current_distance
             nearest_index = index
@@ -535,7 +580,7 @@ function SentinelBG:_trim_route_nodes(route_nodes, player_pos)
         return route_nodes
     end
 
-    while nearest_index < #route_nodes and distance(player_pos, route_nodes[nearest_index]) <= 10 do
+    while nearest_index < #route_nodes and distance_2d(player_pos, route_nodes[nearest_index]) <= 10 do
         nearest_index = nearest_index + 1
     end
 
@@ -694,6 +739,10 @@ function SentinelBG:_resolve_nav_plan(evaluation, player_pos, prep_blocked)
     local objective_handoff_target = objective_anchor or objective_center
     local objective_approach_source = objective_anchor and self._objective_approach_runtime.stage == "anchor" and "anchor" or "ring"
     local retreat_requested = self._blackboard:get("bg.retreat_requested", false) == true
+
+    if not prep_blocked then
+        self._gate_nav_issued = false
+    end
 
     if prep_blocked then
         self:_clear_retreat_state()
@@ -875,6 +924,24 @@ function SentinelBG:update(blackboard)
     self._queue:update()
     self._leave:update()
 
+    local player_obj = blackboard:get("player.object")
+    if player_obj then
+        local has_deserter = false
+        local ok_bm, buff_manager = pcall(require, "common/modules/buff_manager")
+        if ok_bm and buff_manager and type(buff_manager.has_buff) == "function" then
+            local ok_check, result = pcall(buff_manager.has_buff, player_obj, 26013)
+            if ok_check then
+                has_deserter = result == true
+            end
+        end
+        if has_deserter then
+            blackboard:set("bg.deserter_active", true)
+            return
+        else
+            blackboard:set("bg.deserter_active", false)
+        end
+    end
+
     local map_id = blackboard:get("system.map_id", 0)
     local map_name = blackboard:get("system.map_name", "")
     local instance_id = blackboard:get("system.instance_id", 0)
@@ -914,6 +981,19 @@ function SentinelBG:update(blackboard)
     self:_record_nav_failure_if_needed()
 
     self._ghost:update()
+
+    if self._blackboard:get("bg.ghost.post_rez_grace", false) == true then
+        self._context_builder:refresh({
+            active = true,
+            bg_key = self._bg_key,
+            side = self._side,
+            state = "POST_REZ",
+            nav_authority = "post_rez_grace",
+        })
+        self._blackboard:set("bg.activation_wait_reason", nil)
+        return
+    end
+
     if self._ghost:is_blocking_strategy() then
         self._context_builder:refresh({
             active = true,
@@ -955,6 +1035,41 @@ function SentinelBG:update(blackboard)
             }
             self._nav:issue_move_to(afk_target, { source = "bg", objective_id = "anti_afk" })
             self._last_movement_ms = now_ms
+        end
+    end
+
+    if type(player_pos) == "table" then
+        if self._stuck_check_ms == 0 then
+            self._stuck_check_ms = now_ms
+            self._stuck_check_pos = { x = num(player_pos.x), y = num(player_pos.y), z = num(player_pos.z) }
+        elseif (now_ms - self._stuck_check_ms) >= self._stuck_check_interval_ms then
+            local moved = distance(player_pos, self._stuck_check_pos)
+            if moved > 3 then
+                self._stuck_counter = 0
+            else
+                self._stuck_counter = self._stuck_counter + 1
+            end
+            self._stuck_check_ms = now_ms
+            self._stuck_check_pos = { x = num(player_pos.x), y = num(player_pos.y), z = num(player_pos.z) }
+
+            if self._stuck_counter >= 6 then
+                self._nav:stop("stuck_recovery_hard", "bg")
+                self._stuck_counter = 0
+                self._bootstrap.ready = false
+                self._bootstrap.phase = "active"
+            elseif self._stuck_counter >= 3 then
+                local angle = math.random() * math.pi * 2
+                local unstuck_pos = {
+                    x = num(player_pos.x) + math.cos(angle) * 10,
+                    y = num(player_pos.y) + math.sin(angle) * 10,
+                    z = num(player_pos.z),
+                }
+                self._nav:issue_move_to(unstuck_pos, {
+                    source = "bg",
+                    objective_id = "stuck_recovery",
+                    opts = { map_id = self._bg_data and self._bg_data.map_id or nil },
+                })
+            end
         end
     end
 
@@ -1004,6 +1119,11 @@ function SentinelBG:update(blackboard)
     self._blackboard:set("bg.activation_wait_reason", nil)
     self:_update_capture_hold(nav_plan.objective, player_pos)
 
+    if nav_plan.objective and not prep_blocked and type(player_pos) == "table" then
+        local interact_result = self._interactor:update(nav_plan.objective, player_pos, now_ms)
+        blackboard:set("bg.interact.status", interact_result)
+    end
+
     self._context_builder:refresh(self:_build_summary(evaluation, objective_states, nav_plan))
 
     local mount_target = nav_plan.nav_target
@@ -1023,7 +1143,16 @@ function SentinelBG:update(blackboard)
 
     if nav_plan.nav_authority == "pre_game_prep" then
         self:_clear_retreat_state()
-        if blackboard:get("nav.owner") == "bg" then
+        local gate_table = GatePositions[self._bg_key]
+        local gate_pos = gate_table and gate_table[self._side]
+        if gate_pos and not self._gate_nav_issued then
+            self._nav:issue_move_to(gate_pos, {
+                source = "bg",
+                objective_id = "gate_wait",
+                opts = { map_id = self._bg_data and self._bg_data.map_id or nil },
+            })
+            self._gate_nav_issued = true
+        elseif not gate_pos and blackboard:get("nav.owner") == "bg" then
             self._nav:stop(nav_plan.nav_authority, "bg")
         end
         return
