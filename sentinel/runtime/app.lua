@@ -7,6 +7,7 @@ local CallbackBridge = require("runtime/callback_bridge")
 local NavAdapter = require("integrations/nav_client/adapter")
 local SentinelCombat = require("modules/combat/module")
 local BattlegroundModule = require("modules/battleground/module")
+local SentinelGrind = require("modules/grind/module")
 local UIWindow = require("ui/window")
 
 local SentinelApp = {}
@@ -32,10 +33,13 @@ end
 function SentinelApp:initialize()
     self._combat = SentinelCombat:new(self._event_bus, self._blackboard, self._nav_adapter)
     self._battleground = BattlegroundModule:new(self._event_bus, self._blackboard, self._nav_adapter)
+    self._grind = SentinelGrind:new(self._event_bus, self._blackboard, self._nav_adapter)
     self._registry:register("combat", self._combat)
     self._registry:register("battleground", self._battleground)
+    self._registry:register("grind", self._grind)
     self._combat:initialize()
     self._battleground:initialize()
+    self._grind:initialize()
     self._ui = UIWindow
     self._ui.init(self)
 end
@@ -68,6 +72,9 @@ function SentinelApp:on_update()
     end
     self._error_boundary:wrap("battleground", "update", function()
         self._battleground:update(self._blackboard)
+    end)
+    self._error_boundary:wrap("grind", "update", function()
+        self._grind:update(self._blackboard)
     end)
     self._error_boundary:wrap("combat", "update", function()
         self._combat:update(self._blackboard)
