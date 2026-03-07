@@ -2,7 +2,9 @@ local SentinelUI = require("ui/lib/sentinel_ui")
 local DashboardTab = require("ui/tabs/dashboard_tab")
 local CombatTab = require("ui/tabs/combat_tab")
 local BattlegroundTab = require("ui/tabs/battleground_tab")
+local GrindTab = require("ui/tabs/grind_tab")
 local DebugTab = require("ui/tabs/debug_tab")
+local ProfileEditorTab = require("ui/tabs/profile_editor_tab")
 
 local Window = {}
 
@@ -12,6 +14,28 @@ local _ui = nil
 local _menu = nil
 local _menu_tree = nil
 local _open_button = nil
+
+-- Mode: 1 = Battleground, 2 = Grind
+local function get_mode()
+    return _menu and _menu.bot_mode and _menu.bot_mode:get() or 1
+end
+
+local function is_bg_mode()
+    return get_mode() == 1
+end
+
+local function is_grind_mode()
+    return get_mode() == 2
+end
+
+-- Class detection: 2 = Paladin
+local function is_paladin()
+    if not _app then
+        return true
+    end
+    local bb = _app:get_blackboard()
+    return (bb:get("player.class_id") or 2) == 2
+end
 
 local function queue_selection_key(value)
     local idx = tonumber(value) or 1
@@ -104,25 +128,42 @@ local function create_menu_elements()
         end,
     }
     return {
+        -- Global
+        bot_mode = menu_slider_int(1, 2, 1, "sentinel_ui_bot_mode"),
         combat_enabled = menu_checkbox(true, "sentinel_ui_combat_enabled"),
+        burst_enabled = menu_checkbox(true, "sentinel_ui_burst_enabled"),
+        combat_low_health_threshold = menu_slider_int(15, 70, 35, "sentinel_ui_combat_low_health_threshold"),
+        combat_retreat_outnumber_delta = menu_slider_int(1, 5, 2, "sentinel_ui_combat_retreat_outnumber_delta"),
+
+        -- Paladin-specific
+        allow_estimated_twist = menu_checkbox(false, "sentinel_ui_allow_estimated_twist"),
+        twist_window_ms = menu_slider_int(200, 450, 350, "sentinel_ui_twist_window_ms"),
+        twist_mode = menu_slider_int(1, 2, 1, "sentinel_ui_twist_mode"),
+        preferred_blessing = menu_slider_int(1, 2, 1, "sentinel_ui_preferred_blessing"),
+
+        -- Battleground
         bg_enabled = menu_checkbox(true, "sentinel_ui_bg_enabled"),
         bg_auto_engage = menu_checkbox(true, "sentinel_ui_bg_auto_engage"),
         bg_auto_queue = menu_checkbox(false, "sentinel_ui_bg_auto_queue"),
         bg_post_game_auto_leave = menu_checkbox(true, "sentinel_ui_bg_post_game_auto_leave"),
         bg_auto_mount = menu_checkbox(true, "sentinel_ui_bg_auto_mount"),
-        burst_enabled = menu_checkbox(true, "sentinel_ui_burst_enabled"),
-        allow_estimated_twist = menu_checkbox(false, "sentinel_ui_allow_estimated_twist"),
-        twist_window_ms = menu_slider_int(200, 450, 350, "sentinel_ui_twist_window_ms"),
-        twist_mode = menu_slider_int(1, 2, 1, "sentinel_ui_twist_mode"),
-        preferred_blessing = menu_slider_int(1, 2, 1, "sentinel_ui_preferred_blessing"),
-        combat_low_health_threshold = menu_slider_int(15, 70, 35, "sentinel_ui_combat_low_health_threshold"),
-        combat_retreat_outnumber_delta = menu_slider_int(1, 5, 2, "sentinel_ui_combat_retreat_outnumber_delta"),
         bg_low_health_threshold = menu_slider_int(15, 70, 35, "sentinel_ui_bg_low_health_threshold"),
         bg_engage_outnumber_grace = menu_slider_int(0, 3, 1, "sentinel_ui_bg_engage_outnumber_grace"),
         bg_retreat_outnumber_delta = menu_slider_int(1, 5, 2, "sentinel_ui_bg_retreat_outnumber_delta"),
         bg_queue_selection = menu_slider_int(1, 4, 1, "sentinel_ui_bg_queue_selection"),
         bg_mount_distance = menu_slider_int(10, 120, 45, "sentinel_ui_bg_mount_distance"),
         bg_preferred_mount_id = bg_preferred_mount_id,
+
+        -- Grind
+        grind_enabled = menu_checkbox(false, "sentinel_ui_grind_enabled"),
+        grind_health_eat_pct = menu_slider_int(20, 90, 50, "sentinel_ui_grind_health_eat_pct"),
+        grind_mana_drink_pct = menu_slider_int(20, 90, 40, "sentinel_ui_grind_mana_drink_pct"),
+        grind_health_flee_pct = menu_slider_int(5, 50, 20, "sentinel_ui_grind_health_flee_pct"),
+        grind_max_hostiles = menu_slider_int(1, 8, 3, "sentinel_ui_grind_max_hostiles"),
+        grind_show_overlay = menu_checkbox(true, "sentinel_ui_grind_show_overlay"),
+
+        -- Profile Editor
+        profile_editor_hotspot_radius = menu_slider_int(10, 100, 40, "sentinel_ui_profile_editor_hotspot_radius"),
     }
 end
 
@@ -130,11 +171,29 @@ local function register_tabs(ui, app, menu)
     ui:add_tab({ id = "dashboard", label = "Dashboard" }, function(t)
         DashboardTab.render(t, app, menu)
     end)
+    ui:add_tab({
+        id = "battleground",
+        label = "Battleground",
+        visible_when = is_bg_mode,
+    }, function(t)
+        BattlegroundTab.render(t, app, menu)
+    end)
+    ui:add_tab({
+        id = "grind",
+        label = "Grind",
+        visible_when = is_grind_mode,
+    }, function(t)
+        GrindTab.render(t, app, menu)
+    end)
+    ui:add_tab({
+        id = "profile_editor",
+        label = "Profile Editor",
+        visible_when = is_grind_mode,
+    }, function(t)
+        ProfileEditorTab.render(t, app, menu)
+    end)
     ui:add_tab({ id = "combat", label = "Combat" }, function(t)
         CombatTab.render(t, app, menu)
-    end)
-    ui:add_tab({ id = "battleground", label = "Battleground" }, function(t)
-        BattlegroundTab.render(t, app, menu)
     end)
     ui:add_tab({ id = "debug", label = "Debug" }, function(t)
         DebugTab.render(t, app, menu)
@@ -194,6 +253,9 @@ local function sync_to_runtime()
     local blackboard = _app:get_blackboard()
     local combat = _app:get_module("combat")
     local battleground = _app:get_module("battleground")
+    -- Mode sync: enable the active module, disable the other
+    local mode = get_mode()
+    blackboard:set("module.sentinel.bot_mode", mode == 2 and "grind" or "battleground")
 
     if combat and combat.set_enabled then
         combat:set_enabled(_menu.combat_enabled:get_state())
@@ -201,12 +263,20 @@ local function sync_to_runtime()
         blackboard:set("module.combat.enabled", _menu.combat_enabled:get_state() == true)
     end
 
+    -- BG module: only enabled in BG mode
+    local bg_active = mode == 1 and _menu.bg_enabled:get_state() == true
     if battleground and battleground.set_enabled then
-        battleground:set_enabled(_menu.bg_enabled:get_state())
+        battleground:set_enabled(bg_active)
     else
-        blackboard:set("module.bg.enabled", _menu.bg_enabled:get_state() == true)
+        blackboard:set("module.bg.enabled", bg_active)
     end
 
+    -- Grind module: only enabled in grind mode
+    local grind_active = mode == 2 and _menu.grind_enabled:get_state() == true
+    blackboard:set("module.grind.enabled", grind_active)
+    blackboard:set("module.grind.show_overlay", _menu.grind_show_overlay:get_state() == true)
+
+    -- BG settings
     blackboard:set("module.bg.auto_engage", _menu.bg_auto_engage:get_state() == true)
     blackboard:set("module.bg.auto_queue", _menu.bg_auto_queue:get_state() == true)
     blackboard:set("module.bg.queue_selection", queue_selection_key(_menu.bg_queue_selection:get()))
@@ -214,16 +284,28 @@ local function sync_to_runtime()
     blackboard:set("module.bg.auto_mount", _menu.bg_auto_mount:get_state() == true)
     blackboard:set("module.bg.mount_distance_threshold", _menu.bg_mount_distance:get() or 45)
     blackboard:set("module.bg.preferred_mount_id", tonumber(_menu.bg_preferred_mount_id:get()) or 184865)
-    blackboard:set("module.combat.enable_burst", _menu.burst_enabled:get_state() == true)
-    blackboard:set("module.combat.allow_estimated_twist", _menu.allow_estimated_twist:get_state() == true)
-    blackboard:set("module.combat.twist_window_ms", _menu.twist_window_ms:get())
-    blackboard:set("module.combat.twist_mode", _menu.twist_mode:get() == 2 and "force" or "auto")
-    blackboard:set("module.combat.preferred_blessing", _menu.preferred_blessing:get() == 2 and "kings" or "might")
-    blackboard:set("module.combat.low_health_threshold", (_menu.combat_low_health_threshold:get() or 35) / 100)
-    blackboard:set("module.combat.retreat_outnumber_delta", _menu.combat_retreat_outnumber_delta:get() or 2)
     blackboard:set("module.bg.low_health_threshold", (_menu.bg_low_health_threshold:get() or 35) / 100)
     blackboard:set("module.bg.engage_outnumber_grace", _menu.bg_engage_outnumber_grace:get() or 1)
     blackboard:set("module.bg.retreat_outnumber_delta", _menu.bg_retreat_outnumber_delta:get() or 2)
+
+    -- Combat settings
+    blackboard:set("module.combat.enable_burst", _menu.burst_enabled:get_state() == true)
+    blackboard:set("module.combat.low_health_threshold", (_menu.combat_low_health_threshold:get() or 35) / 100)
+    blackboard:set("module.combat.retreat_outnumber_delta", _menu.combat_retreat_outnumber_delta:get() or 2)
+
+    -- Paladin-specific combat settings
+    if is_paladin() then
+        blackboard:set("module.combat.allow_estimated_twist", _menu.allow_estimated_twist:get_state() == true)
+        blackboard:set("module.combat.twist_window_ms", _menu.twist_window_ms:get())
+        blackboard:set("module.combat.twist_mode", _menu.twist_mode:get() == 2 and "force" or "auto")
+        blackboard:set("module.combat.preferred_blessing", _menu.preferred_blessing:get() == 2 and "kings" or "might")
+    end
+
+    -- Grind settings
+    blackboard:set("module.grind.health_eat_pct", (_menu.grind_health_eat_pct:get() or 50) / 100)
+    blackboard:set("module.grind.mana_drink_pct", (_menu.grind_mana_drink_pct:get() or 40) / 100)
+    blackboard:set("module.grind.health_flee_pct", (_menu.grind_health_flee_pct:get() or 20) / 100)
+    blackboard:set("module.grind.max_hostiles", _menu.grind_max_hostiles:get() or 3)
 end
 
 function Window.init(app)

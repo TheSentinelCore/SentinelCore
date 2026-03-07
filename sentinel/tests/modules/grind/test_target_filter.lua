@@ -8,6 +8,8 @@ local function mock_unit(opts)
         get_position = function() return opts.x or 0, opts.y or 0, opts.z or 0 end,
         get_level = function() return opts.level or 10 end,
         get_name = function() return opts.name or "Mob" end,
+        get_npc_id = function() return opts.npc_id or 0 end,
+        get_creature_type = function() return opts.creature_type or 7 end,
         is_alive = function() return opts.alive ~= false end,
         is_tapped_by_other = function() return opts.tapped or false end,
         is_elite = function() return opts.elite or false end,
@@ -116,6 +118,49 @@ function M.run()
     local all_dead = { mock_unit({ alive = false }), mock_unit({ alive = false }) }
     local none = TargetFilter.select_best(all_dead, spot, 10, player_pos)
     T.assert_true(none == nil, "select_best returns nil when no valid units")
+
+    -- NpcRef blacklist: unit with matching npc_id -> fails
+    local npc_bl_spot = make_spot({
+        mob_blacklist = { { npc_id = 100, name = "Bad Mob" } },
+    })
+    local npc_bl_unit = mock_unit({ npc_id = 100, name = "Bad Mob", level = 10 })
+    T.assert_false(TargetFilter.passes(npc_bl_unit, npc_bl_spot, 10), "NpcRef blacklist by npc_id should fail")
+
+    -- NpcRef blacklist fallback: unit with npc_id=0, matching name -> fails
+    local npc_bl_name_unit = mock_unit({ npc_id = 0, name = "Bad Mob", level = 10 })
+    T.assert_false(TargetFilter.passes(npc_bl_name_unit, npc_bl_spot, 10), "NpcRef blacklist name fallback should fail")
+
+    -- NpcRef whitelist: unit with matching npc_id -> passes
+    local npc_wl_spot = make_spot({
+        mob_whitelist = { { npc_id = 200, name = "Good Mob" } },
+    })
+    local npc_wl_unit = mock_unit({ npc_id = 200, name = "Good Mob", level = 10 })
+    T.assert_true(TargetFilter.passes(npc_wl_unit, npc_wl_spot, 10), "NpcRef whitelist by npc_id should pass")
+
+    -- creature_types filter: unit with matching creature_type -> passes
+    local ct_spot = make_spot({ creature_types = { 1, 7 } })
+    local ct_match = mock_unit({ creature_type = 1, level = 10 })
+    T.assert_true(TargetFilter.passes(ct_match, ct_spot, 10), "creature_type 1 in {1,7} should pass")
+
+    -- creature_types filter: unit with non-matching creature_type -> fails
+    local ct_miss = mock_unit({ creature_type = 3, level = 10 })
+    T.assert_false(TargetFilter.passes(ct_miss, ct_spot, 10), "creature_type 3 not in {1,7} should fail")
+
+    -- Empty creature_types doesn't filter
+    local ct_empty_spot = make_spot({ creature_types = {} })
+    local ct_any = mock_unit({ creature_type = 5, level = 10 })
+    T.assert_true(TargetFilter.passes(ct_any, ct_empty_spot, 10), "empty creature_types should not filter")
+
+    -- Blackspot filter: unit inside blackspot -> fails
+    local bs_spot = make_spot({
+        blackspots = { { x = 10, y = 10, z = 0, radius = 5 } },
+    })
+    local bs_inside = mock_unit({ x = 10, y = 10, z = 0, level = 10 })
+    T.assert_false(TargetFilter.passes(bs_inside, bs_spot, 10), "unit inside blackspot should fail")
+
+    -- Blackspot filter: unit outside blackspot -> passes
+    local bs_outside = mock_unit({ x = 50, y = 50, z = 0, level = 10 })
+    T.assert_true(TargetFilter.passes(bs_outside, bs_spot, 10), "unit outside blackspot should pass")
 end
 
 return M

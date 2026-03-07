@@ -45,6 +45,16 @@ local Keys = {
     GRIND_LOOT_TARGET = "module.grind.loot_target",
     GRIND_AOE_GATHERED_COUNT = "module.grind.aoe_gathered_count",
     GRIND_AOE_TARGET_COUNT = "module.grind.aoe_target_count",
+
+    -- Grind profile system
+    GRIND_PROFILE_ACTIVE = "module.grind.profile_active",
+    GRIND_PROFILE_NAME = "module.grind.profile_name",
+    GRIND_PROFILE_STATE = "module.grind.profile_state",
+    GRIND_CURRENT_HOTSPOT_INDEX = "module.grind.current_hotspot_index",
+    GRIND_HOTSPOT_COUNT = "module.grind.hotspot_count",
+    GRIND_TARGET_FILTERS = "module.grind.target_filters",
+    GRIND_DRY_SPELL_START_MS = "module.grind.dry_spell_start_ms",
+    GRIND_LOOPS_COMPLETED = "module.grind.loops_completed",
 }
 
 return Keys
