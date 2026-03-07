@@ -39,6 +39,7 @@ local test_modules = {
     "tests/modules/battleground/test_wsg",
     "tests/modules/battleground/test_ab",
     "tests/modules/battleground/test_eots",
+    "tests/modules/grind/test_zone_profile",
 }
 
 local failures = 0
