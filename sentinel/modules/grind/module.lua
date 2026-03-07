@@ -1,4 +1,5 @@
 local Runner = require("core/bt/runner")
+local GrindTree = require("modules/grind/grind_tree")
 
 local SentinelGrind = {}
 SentinelGrind.__index = SentinelGrind
@@ -24,8 +25,7 @@ function SentinelGrind:initialize()
     bb:set("module.grind.needs_food", true)
     bb:set("module.grind.needs_water", true)
 
-    -- BT will be wired in Task 20 (grind_tree.lua)
-    -- For now, runner stays nil and update() is a no-op when disabled
+    self._runner = Runner:new(GrindTree.build(self._blackboard, self._event_bus, self._nav_adapter))
 end
 
 function SentinelGrind:update(blackboard)
