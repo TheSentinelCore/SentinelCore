@@ -124,6 +124,10 @@ function SentinelBG:new(event_bus, blackboard, nav_adapter)
     o._humanization = Humanization.new()
     o._ally_tracker = AllyTracker:new(event_bus, blackboard, o._humanization)
     o._last_ally_nav_pos = nil
+    o._last_movement_ms = 0
+    o._last_spell_cast_ms = 0
+    o._afk_idle_threshold_ms = 100000
+    o._afk_spell_threshold_ms = 15000
     return o
 end
 
@@ -196,6 +200,12 @@ function SentinelBG:initialize()
                 objective_id = self._selected_objective and self._selected_objective.id or nil,
             })
         end
+    end)
+    self:_subscribe("spell:manual_cast", function(_payload)
+        self._last_spell_cast_ms = num(self._blackboard:get("system.now_ms", 0))
+    end)
+    self:_subscribe("spell:world_cast", function(_payload)
+        self._last_spell_cast_ms = num(self._blackboard:get("system.now_ms", 0))
     end)
     self:_subscribe("nav:failed", function(payload)
         if self._active and self._blackboard:get("nav.owner") == "bg" then
@@ -921,6 +931,33 @@ function SentinelBG:update(blackboard)
     end
 
     local player_pos = blackboard:get("player.position")
+
+    if blackboard:get("player.is_moving", false) == true then
+        self._last_movement_ms = now_ms
+    end
+    if self._last_movement_ms == 0 then
+        self._last_movement_ms = now_ms
+    end
+    if self._last_spell_cast_ms == 0 then
+        self._last_spell_cast_ms = now_ms
+    end
+    if (now_ms - self._last_movement_ms) > self._afk_idle_threshold_ms
+        and (now_ms - self._last_spell_cast_ms) > self._afk_spell_threshold_ms then
+        local player = blackboard:get("player.object")
+        if player and type(player_pos) == "table" then
+            local facing = 0
+            local ok_f, f = pcall(player.get_facing, player)
+            if ok_f then facing = num(f) end
+            local afk_target = {
+                x = num(player_pos.x) + math.cos(facing) * 3,
+                y = num(player_pos.y) + math.sin(facing) * 3,
+                z = num(player_pos.z),
+            }
+            self._nav:issue_move_to(afk_target, { source = "bg", objective_id = "anti_afk" })
+            self._last_movement_ms = now_ms
+        end
+    end
+
     local objective_states, runtime_signals = self._objective_tracker:update(
         self._side,
         self._definition:get_objectives() or {},
