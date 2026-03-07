@@ -26,6 +26,25 @@ local Keys = {
     BG_COMBAT_ZONE = "bg.combat_zone",
     BG_COMBAT_ZONE_TIER = "bg.combat_zone_tier",
     NAV_STATE = "nav.state",
+
+    -- Grind module
+    GRIND_ENABLED = "module.grind.enabled",
+    GRIND_ZONE_PROFILE_ID = "module.grind.zone_profile_id",
+    GRIND_CURRENT_SPOT = "module.grind.current_spot",
+    GRIND_CURRENT_TARGET = "module.grind.current_target",
+    GRIND_PULL_STRATEGY = "module.grind.pull_strategy",
+    GRIND_PHASE = "module.grind.phase",
+    GRIND_FLEE_POSITION = "module.grind.flee_position",
+    GRIND_REST_POSITION = "module.grind.rest_position",
+    GRIND_HEALTH_FLEE_PCT = "module.grind.health_flee_pct",
+    GRIND_MAX_HOSTILES = "module.grind.max_hostiles",
+    GRIND_HEALTH_EAT_PCT = "module.grind.health_eat_pct",
+    GRIND_MANA_DRINK_PCT = "module.grind.mana_drink_pct",
+    GRIND_CORPSE_POSITION = "module.grind.corpse_position",
+    GRIND_STUCK_COUNT = "module.grind.stuck_count",
+    GRIND_LOOT_TARGET = "module.grind.loot_target",
+    GRIND_AOE_GATHERED_COUNT = "module.grind.aoe_gathered_count",
+    GRIND_AOE_TARGET_COUNT = "module.grind.aoe_target_count",
 }
 
 return Keys
