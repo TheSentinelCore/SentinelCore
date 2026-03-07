@@ -10,14 +10,14 @@ function CaptureHelper.capture_position()
         return nil
     end
 
-    local ok2, x, y, z = pcall(function()
+    local ok2, pos = pcall(function()
         return player:get_position()
     end)
-    if not ok2 or not x then
+    if not ok2 or not pos then
         return nil
     end
 
-    return { x = x, y = y, z = z }
+    return { x = pos.x, y = pos.y, z = pos.z }
 end
 
 ---Capture the player's position as a hotspot.
@@ -142,19 +142,19 @@ function CaptureHelper.capture_vendor(services)
         name = "unknown"
     end
 
-    local ok7, x, y, z = pcall(function()
+    local ok7, pos = pcall(function()
         return target:get_position()
     end)
-    if not ok7 or not x then
+    if not ok7 or not pos then
         return nil
     end
 
     return {
         npc_id = npc_id,
         name = name,
-        x = x,
-        y = y,
-        z = z,
+        x = pos.x,
+        y = pos.y,
+        z = pos.z,
         services = services or {},
     }
 end

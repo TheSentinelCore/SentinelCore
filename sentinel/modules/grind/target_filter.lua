@@ -78,7 +78,8 @@ function TargetFilter.passes(unit, spot, player_level)
     end
 
     -- 5. Must be within spot's radius from center
-    local ux, uy, uz = unit:get_position()
+    local upos = unit:get_position()
+    local ux, uy, uz = upos.x, upos.y, upos.z
     local center = spot.center
     local dist = distance_3d(ux, uy, uz, center.x, center.y, center.z)
     if dist > (spot.radius or 80) then
@@ -133,8 +134,8 @@ function TargetFilter.select_best(units, spot, player_level, player_pos)
 
     for _, unit in ipairs(units) do
         if TargetFilter.passes(unit, spot, player_level) then
-            local ux, uy, uz = unit:get_position()
-            local dist = distance_3d(ux, uy, uz, player_pos.x, player_pos.y, player_pos.z)
+            local upos = unit:get_position()
+            local dist = distance_3d(upos.x, upos.y, upos.z, player_pos.x, player_pos.y, player_pos.z)
             if dist < best_dist then
                 best_dist = dist
                 best = unit

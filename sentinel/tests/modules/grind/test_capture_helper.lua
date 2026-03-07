@@ -9,13 +9,13 @@ function M.run()
         object_manager = {
             get_local_player = function()
                 return {
-                    get_position = function() return 100, 200, 10 end,
+                    get_position = function() return { x = 100, y = 200, z = 10 } end,
                     get_level = function() return 35 end,
                     get_target = function()
                         return {
                             get_npc_id = function() return 1234 end,
                             get_name = function() return "Test Vendor" end,
-                            get_position = function() return 150, 250, 12 end,
+                            get_position = function() return { x = 150, y = 250, z = 12 } end,
                             is_unit = function() return true end,
                             is_player = function() return false end,
                         }

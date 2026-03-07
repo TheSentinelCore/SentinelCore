@@ -5,7 +5,7 @@ local M = {}
 
 local function mock_unit(opts)
     return {
-        get_position = function() return opts.x or 0, opts.y or 0, opts.z or 0 end,
+        get_position = function() return { x = opts.x or 0, y = opts.y or 0, z = opts.z or 0 } end,
         get_level = function() return opts.level or 10 end,
         get_name = function() return opts.name or "Mob" end,
         get_npc_id = function() return opts.npc_id or 0 end,
