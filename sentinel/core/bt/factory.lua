@@ -12,6 +12,10 @@ function BT.selector(name, children)
     return composites.Selector:new(name, children)
 end
 
+function BT.priority_selector(name, children)
+    return composites.PrioritySelector:new(name, children)
+end
+
 function BT.parallel(name, children, opts)
     return composites.Parallel:new(name, children, opts)
 end

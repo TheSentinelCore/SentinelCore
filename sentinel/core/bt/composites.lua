@@ -61,6 +61,23 @@ function Selector:reset()
     Node.reset(self)
 end
 
+local PrioritySelector = setmetatable({}, { __index = Node })
+PrioritySelector.__index = PrioritySelector
+
+function PrioritySelector:new(name, children)
+    return Node.new(self, "priority_selector", name, children)
+end
+
+function PrioritySelector:tick(blackboard)
+    for _, child in ipairs(self.children) do
+        local status = child:tick(blackboard)
+        if status == Status.RUNNING or status == Status.SUCCESS then
+            return status
+        end
+    end
+    return Status.FAILURE
+end
+
 local Parallel = setmetatable({}, { __index = Node })
 Parallel.__index = Parallel
 
@@ -102,5 +119,6 @@ end
 return {
     Sequence = Sequence,
     Selector = Selector,
+    PrioritySelector = PrioritySelector,
     Parallel = Parallel,
 }

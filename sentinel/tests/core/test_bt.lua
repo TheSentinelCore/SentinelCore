@@ -31,6 +31,55 @@ function M.run()
     T.assert_equal(attempts:tick(bb), "FAILURE")
     T.assert_equal(attempts:tick(bb), "FAILURE")
     T.assert_equal(attempts:tick(bb), "FAILURE")
+
+    -- PrioritySelector: always evaluates from child 1
+    local ps_call_log = {}
+    local ps = Runner:new(BT.priority_selector("ps", {
+        BT.action("high", function()
+            ps_call_log[#ps_call_log + 1] = "high"
+            return "FAILURE"
+        end),
+        BT.action("mid", function()
+            ps_call_log[#ps_call_log + 1] = "mid"
+            return "RUNNING"
+        end),
+        BT.action("low", function()
+            ps_call_log[#ps_call_log + 1] = "low"
+            return "FAILURE"
+        end),
+    }))
+
+    -- First tick: high fails, mid returns RUNNING
+    T.assert_equal(ps:tick(bb), "RUNNING")
+    T.assert_equal(#ps_call_log, 2, "ps tick 1: evaluated high and mid")
+    T.assert_equal(ps_call_log[1], "high")
+    T.assert_equal(ps_call_log[2], "mid")
+
+    -- Second tick: should re-evaluate from child 1 (high), not resume at mid
+    ps_call_log = {}
+    T.assert_equal(ps:tick(bb), "RUNNING")
+    T.assert_equal(#ps_call_log, 2, "ps tick 2: re-evaluated from child 1")
+    T.assert_equal(ps_call_log[1], "high")
+    T.assert_equal(ps_call_log[2], "mid")
+
+    -- PrioritySelector: high-priority preemption
+    local preempt_state = { high_active = false }
+    local ps2 = Runner:new(BT.priority_selector("ps2", {
+        BT.action("urgent", function()
+            if preempt_state.high_active then return "SUCCESS" end
+            return "FAILURE"
+        end),
+        BT.action("normal", function()
+            return "RUNNING"
+        end),
+    }))
+
+    -- Tick 1: urgent fails, normal runs
+    T.assert_equal(ps2:tick(bb), "RUNNING")
+
+    -- Tick 2: urgent becomes active, preempts normal
+    preempt_state.high_active = true
+    T.assert_equal(ps2:tick(bb), "SUCCESS")
 end
 
 return M

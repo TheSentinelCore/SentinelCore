@@ -22,20 +22,21 @@ function M.run()
     local inner = tree.children[1]
     T.assert_not_nil(inner, "cooldown has inner child")
     T.assert_equal(inner.name, "grind_root", "inner selector name")
-    T.assert_equal(inner.kind, "selector", "inner node is a selector")
+    T.assert_equal(inner.kind, "priority_selector", "inner node is a priority_selector")
 
-    -- The selector should have exactly 7 phase children
-    T.assert_equal(#inner.children, 7, "grind_root has 7 phase children")
+    -- The priority_selector should have exactly 8 phase children
+    T.assert_equal(#inner.children, 8, "grind_root has 8 phase children")
 
     -- Verify phase order by name
     local expected_names = {
-        "safety_flee",
+        "safety",
         "corpse_run",
-        "rest",
         "loot_nearby",
+        "rest",
+        "vendor_run",
         "combat_active",
         "pull_target",
-        "acquire_target",
+        "mode_acquire",
     }
     for i, name in ipairs(expected_names) do
         T.assert_equal(inner.children[i].name, name, "phase " .. i .. " is " .. name)
