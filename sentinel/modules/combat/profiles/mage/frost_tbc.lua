@@ -4,6 +4,7 @@ local Cond = require("modules/combat/profiles/mage/frost_conditions")
 local Act = require("modules/combat/profiles/mage/frost_actions")
 local MaintenanceTree = require("modules/combat/profiles/mage/maintenance_tree")
 local AoeTree = require("modules/combat/profiles/mage/aoe_tree")
+local Status = require("core/bt/status")
 
 local Profile = {}
 Profile.__index = Profile
@@ -86,6 +87,11 @@ local function build_gcd_root()
             BT.condition("frostbolt_ready", Cond.spell_ready("frostbolt")),
             BT.action("queue_frostbolt", Act.queue_frostbolt),
         }),
+        BT.sequence("fireball_fallback", {
+            BT.condition("gcd_ready", Cond.gcd_ready),
+            BT.condition("fireball_ready", Cond.spell_ready("fireball")),
+            BT.action("queue_fireball", Act.queue_fireball),
+        }),
         BT.action("fallback_noop", Act.noop),
     })
 end
@@ -101,6 +107,7 @@ function Profile.build(blackboard, event_bus)
         build_gcd_root(), { key = "combat_frost_gcd" }))
     o._aoe_tree = Runner:new(AoeTree.build())
     blackboard:set("rotation.profile_id", o.id)
+    blackboard:set("module.combat.combat_range", 28)
     event_bus:publish("rotation:profile_loaded", {
         rotation_id = o.id,
         class_id = 8,
@@ -143,7 +150,11 @@ function Profile:tick_pull(bb, target)
     if self:get_pull_strategy(bb) == "aoe" then
         return self._aoe_tree:tick(bb)
     end
-    return Act.queue_frostbolt(bb)
+    local result = Act.queue_frostbolt(bb)
+    if result ~= Status.SUCCESS then
+        result = Act.queue_fireball(bb)
+    end
+    return result
 end
 
 function Profile:prepare_rest(bb)
