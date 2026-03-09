@@ -36,6 +36,11 @@ function M.run()
     T.assert_equal(bb:get("module.grind.needs_food"), true, "needs_food default")
     T.assert_equal(bb:get("module.grind.needs_water"), true, "needs_water default")
 
+    -- initialize() sets up new subsystems on blackboard
+    T.assert_not_nil(bb:get("module.grind.durability_tracker"), "durability_tracker on blackboard")
+    T.assert_not_nil(bb:get("module.grind.mount_controller"), "mount_controller on blackboard")
+    T.assert_not_nil(bb:get("module.grind.threat_map"), "threat_map on blackboard")
+
     -- update() doesn't error when disabled
     bb:set("module.grind.enabled", false)
     grind:update(bb)

@@ -105,7 +105,6 @@ function M.run()
     end
 
     teardown_mock()
-    T.log("[test_durability_tracker] all tests passed")
 end
 
 return M
