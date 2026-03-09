@@ -1,60 +1,49 @@
+-- Polls repair cost to detect when gear needs repair.
+-- Uses core.inventory.get_total_repair_cost() (copper).
+-- No per-item durability API exists, so repair cost > threshold = needs_repair.
+
 local DurabilityTracker = {}
 DurabilityTracker.__index = DurabilityTracker
 
 local SAMPLE_INTERVAL_MS = 5000
-local DEFAULT_THRESHOLD = 0.25
+local DEFAULT_THRESHOLD_COPPER = 5000 -- 50 silver
 
----Create a new DurabilityTracker instance.
----@return table tracker
 function DurabilityTracker:new()
-    local o = {
+    return setmetatable({
         _last_sample_ms = nil,
-        _threshold = DEFAULT_THRESHOLD,
-    }
-    setmetatable(o, self)
-    return o
+        _threshold_copper = DEFAULT_THRESHOLD_COPPER,
+    }, self)
 end
 
----Set the durability threshold below which needs_repair is flagged.
----@param pct number Threshold as a fraction (0-1), e.g. 0.25 = 25%
-function DurabilityTracker:set_threshold(pct)
-    self._threshold = pct
+--- Set the repair cost threshold (in copper) above which needs_repair is flagged.
+--- 100 copper = 1 silver, 10000 copper = 1 gold.
+function DurabilityTracker:set_threshold_copper(copper)
+    self._threshold_copper = copper
 end
 
----Poll equipped item durability and write results to the blackboard.
----Throttled to SAMPLE_INTERVAL_MS (5s) between samples.
----@param bb table Blackboard
----@param now_ms number Current time in milliseconds
+--- Poll repair cost and update blackboard.
+--- Throttled to 5s intervals.
 function DurabilityTracker:sample(bb, now_ms)
     if self._last_sample_ms and (now_ms - self._last_sample_ms) < SAMPLE_INTERVAL_MS then
         return
     end
     self._last_sample_ms = now_ms
 
-    local lowest_pct = 1.0
-
-    local player = bb:get("player.object")
-    if player then
-        local ok_items, items = pcall(player.get_equipped_items, player)
-        if ok_items and type(items) == "table" then
-            for _, slot in ipairs(items) do
-                local obj = slot.object
-                if obj then
-                    local ok_dur, dur = pcall(obj.get_durability, obj)
-                    local ok_max, max_dur = pcall(obj.get_max_durability, obj)
-                    if ok_dur and ok_max and type(dur) == "number" and type(max_dur) == "number" and max_dur > 0 then
-                        local pct = dur / max_dur
-                        if pct < lowest_pct then
-                            lowest_pct = pct
-                        end
-                    end
-                end
-            end
+    local repair_cost = 0
+    if core and core.inventory and type(core.inventory.get_total_repair_cost) == "function" then
+        local ok, cost = pcall(core.inventory.get_total_repair_cost)
+        if ok and type(cost) == "number" then
+            repair_cost = cost
         end
     end
 
-    bb:set("module.grind.durability_pct", lowest_pct)
-    bb:set("module.grind.needs_repair", lowest_pct < self._threshold)
+    bb:set("module.grind.repair_cost_copper", repair_cost)
+    bb:set("module.grind.needs_repair", repair_cost >= self._threshold_copper)
+end
+
+--- Force a re-sample on next call (e.g., after visiting repair vendor).
+function DurabilityTracker:reset()
+    self._last_sample_ms = nil
 end
 
 return DurabilityTracker
