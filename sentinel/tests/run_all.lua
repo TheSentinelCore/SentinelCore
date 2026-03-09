@@ -49,6 +49,7 @@ local test_modules = {
     "tests/modules/grind/test_profile_manager",
     "tests/modules/grind/test_capture_helper",
     "tests/modules/grind/test_durability_tracker",
+    "tests/modules/grind/test_threat_map",
     "tests/modules/combat/profiles/mage/test_frost_conditions",
     "tests/modules/combat/profiles/mage/test_frost_actions",
     "tests/modules/combat/profiles/mage/test_maintenance_tree",
