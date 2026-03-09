@@ -141,7 +141,19 @@ function Cond.spell_ready(spell_key, mode, cast_target)
         local source = player
         local dest = cast_target == "self" and player or (target or player)
         local ok, castable = call_helper(helper.is_spell_castable, helper, spell_id, source, dest, true, true)
-        return ok and castable == true
+        if not ok or castable ~= true then
+            return false
+        end
+        -- Check line of sight for targeted spells (not self-cast)
+        if cast_target ~= "self" and dest and dest ~= source then
+            if type(helper.is_spell_in_line_of_sight) == "function" then
+                local los_ok, in_los = call_helper(helper.is_spell_in_line_of_sight, helper, spell_id, source, dest)
+                if los_ok and in_los ~= true then
+                    return false
+                end
+            end
+        end
+        return true
     end
 end
 
@@ -180,7 +192,7 @@ function Cond.target_casting_interruptible(blackboard)
     local ok_channel, channeling = safe_call(target, "is_channelling_spell")
     if (ok_casting and casting == true) or (ok_channel and channeling == true) then
         local ok_interruptible, interruptible = safe_call(target, "is_active_spell_interruptable")
-        return not ok_interruptible or interruptible == true
+        return ok_interruptible and interruptible == true
     end
     return false
 end
@@ -206,6 +218,227 @@ end
 function Cond.missing_arcane_intellect(blackboard)
     local player = blackboard:get("player.object")
     return not AuraCatalog.has_any(player, arcane_intellect_aura_ids)
+end
+
+function Cond.missing_ice_barrier(blackboard)
+    local player = blackboard:get("player.object")
+    return not AuraCatalog.has_any(player, AuraCatalog.ice_barrier_auras)
+end
+
+function Cond.missing_mana_shield(blackboard)
+    local player = blackboard:get("player.object")
+    return not AuraCatalog.has_any(player, AuraCatalog.mana_shield_auras)
+end
+
+function Cond.missing_water_elemental(blackboard)
+    return blackboard:get("combat.has_water_elemental", false) ~= true
+end
+
+-- ---------------------------------------------------------------------------
+-- Target health closures
+-- ---------------------------------------------------------------------------
+
+function Cond.target_health_below(threshold)
+    return function(blackboard)
+        local _, target = player_and_target(blackboard)
+        if not target then return false end
+        local ok, pct = safe_call(target, "get_health_percentage")
+        return ok and num(pct) < threshold
+    end
+end
+
+function Cond.target_health_above(threshold)
+    return function(blackboard)
+        local _, target = player_and_target(blackboard)
+        if not target then return false end
+        local ok, pct = safe_call(target, "get_health_percentage")
+        return ok and num(pct) > threshold
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Hostile count closures
+-- ---------------------------------------------------------------------------
+
+function Cond.hostile_count_at_least(count, radius)
+    return function(blackboard)
+        local key = "combat.enemy_count_" .. tostring(radius) .. "yd"
+        return num(blackboard:get(key, 0)) >= count
+    end
+end
+
+function Cond.hostile_count_below(count, radius)
+    return function(blackboard)
+        local key = "combat.enemy_count_" .. tostring(radius) .. "yd"
+        return num(blackboard:get(key, 0)) < count
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Range closures
+-- ---------------------------------------------------------------------------
+
+function Cond.target_in_range(range)
+    return function(blackboard)
+        return num(blackboard:get("combat.target_distance", 99999)) <= range
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Frozen / kill-secure (read from frost_combat_state)
+-- ---------------------------------------------------------------------------
+
+function Cond.target_is_frozen(blackboard)
+    return blackboard:get("combat.target_frozen", false) == true
+end
+
+function Cond.target_not_frozen(blackboard)
+    return blackboard:get("combat.target_frozen", false) ~= true
+end
+
+function Cond.target_killable_instant(blackboard)
+    return blackboard:get("combat.target_killable_instant", false) == true
+end
+
+-- ---------------------------------------------------------------------------
+-- Cast analysis (read from frost_combat_state)
+-- ---------------------------------------------------------------------------
+
+function Cond.should_cancel_cast(blackboard)
+    return blackboard:get("combat.should_cancel_cast", false) == true
+end
+
+function Cond.cast_is_overkill(blackboard)
+    return blackboard:get("combat.cast_overkill", false) == true
+end
+
+function Cond.not_casting_or_channeling(blackboard)
+    return blackboard:get("player.is_casting", false) ~= true
+        and blackboard:get("player.is_channeling", false) ~= true
+end
+
+-- ---------------------------------------------------------------------------
+-- Kite state (read from kite_controller via blackboard)
+-- ---------------------------------------------------------------------------
+
+function Cond.is_kiting(blackboard)
+    local state = blackboard:get("combat.kite_state", "NONE")
+    return state ~= "NONE"
+end
+
+function Cond.not_kiting(blackboard)
+    local state = blackboard:get("combat.kite_state", "NONE")
+    return state == "NONE"
+end
+
+function Cond.is_running_away(blackboard)
+    return blackboard:get("combat.kite_state", "NONE") == "RUNNING_AWAY"
+end
+
+function Cond.not_running_away(blackboard)
+    return blackboard:get("combat.kite_state", "NONE") ~= "RUNNING_AWAY"
+end
+
+-- ---------------------------------------------------------------------------
+-- AoE / Spellsteal / Mana gem (read from frost_combat_state)
+-- ---------------------------------------------------------------------------
+
+function Cond.should_use_aoe(blackboard)
+    return blackboard:get("combat.use_aoe_rotation", false) == true
+end
+
+function Cond.target_has_stealable_buff(blackboard)
+    return blackboard:get("combat.target_has_stealable_buff", false) == true
+end
+
+function Cond.has_mana_gem(blackboard)
+    return blackboard:get("combat.has_mana_gem", false) == true
+end
+
+function Cond.missing_mana_gem(blackboard)
+    return blackboard:get("combat.has_mana_gem", false) ~= true
+end
+
+-- ---------------------------------------------------------------------------
+-- Potion conditions
+-- ---------------------------------------------------------------------------
+
+function Cond.has_health_potion()
+    return function(blackboard)
+        return blackboard:get("combat.has_health_potion") == true
+    end
+end
+
+function Cond.has_mana_potion()
+    return function(blackboard)
+        return blackboard:get("combat.has_mana_potion") == true
+    end
+end
+
+function Cond.potion_ready()
+    return function(blackboard)
+        local now = blackboard:get("system.now_ms", 0)
+        return now >= (blackboard:get("combat.potion_cd_until_ms", 0))
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Pet conditions
+-- ---------------------------------------------------------------------------
+
+function Cond.has_pet()
+    return function(blackboard)
+        return blackboard:get("combat.has_water_elemental") == true
+    end
+end
+
+function Cond.pet_not_attacking_target()
+    return function(blackboard)
+        local pet_ctrl = blackboard:get("module.combat.pet_controller")
+        local target = blackboard:get("combat.target") or blackboard:get("player.target")
+        if not pet_ctrl or not target then return false end
+        return not pet_ctrl:already_sent_to(target)
+    end
+end
+
+function Cond.pet_freeze_useful()
+    return function(blackboard)
+        if blackboard:get("combat.target_frozen") then return false end
+        local catalog = blackboard:get("module.combat.catalog")
+        local cooldowns = blackboard:get("module.combat.cooldowns")
+        if not catalog or not cooldowns then return false end
+        local nova_id = catalog:resolve_best_rank("frost_nova")
+        if nova_id and cooldowns:spell_ready(nova_id) then return false end
+        return true
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Safety / defensive checks
+-- ---------------------------------------------------------------------------
+
+function Cond.safe_to_evocate(blackboard)
+    local enemy_count = num(blackboard:get("combat.enemy_count_10yd", 0))
+    if enemy_count > 0 then return false end
+    if num(blackboard:get("player.health_pct", 0)) < 0.50 then return false end
+    if blackboard:get("combat.kite_state", "NONE") ~= "NONE" then return false end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- PvP classification (read from frost_combat_state)
+-- ---------------------------------------------------------------------------
+
+function Cond.target_is_player(blackboard)
+    return blackboard:get("combat.target_is_player", false) == true
+end
+
+function Cond.target_is_caster(blackboard)
+    return blackboard:get("combat.target_is_caster", false) == true
+end
+
+function Cond.target_is_healer(blackboard)
+    return blackboard:get("combat.target_is_healer", false) == true
 end
 
 return Cond
