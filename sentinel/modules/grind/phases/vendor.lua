@@ -388,7 +388,6 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
                 sell_filtered_bag_items(keep_set, min_quality)
                 bb:set("module.grind.vendor_state", "buying_food")
                 bb:set("module.grind.current_target", nil)
-                event_bus:publish("grind:vendor_complete", {})
                 return Status.RUNNING
             end
 
@@ -447,6 +446,7 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
                 bb:set("module.grind.vendor_state", nil)
                 bb:set("module.grind.vendor_data", nil)
                 bb:set("module.grind.vendor_interact_at", nil)
+                event_bus:publish("grind:vendor_complete", {})
                 return Status.SUCCESS
             end
 
