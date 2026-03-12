@@ -10,9 +10,9 @@ local Combat = {}
 ---@return table BT node
 function Combat.build()
     return BT.sequence("combat_active", {
-        -- Gate: player must be in combat
-        BT.condition("player_in_combat", function(bb)
-            return bb:get("player.in_combat") == true
+        -- Gate: combat module must be actively engaged (not just WoW combat linger)
+        BT.condition("combat_engaged", function(bb)
+            return bb:get("combat.source") ~= nil
         end),
 
         -- Yield: combat module handles fighting

@@ -37,7 +37,8 @@ local function count_consumables()
                 end
                 if ConsumableIds.FOOD_ITEMS[item_id] then
                     food_count = food_count + stack
-                elseif ConsumableIds.WATER_ITEMS[item_id] then
+                end
+                if ConsumableIds.WATER_ITEMS[item_id] then
                     water_count = water_count + stack
                 end
             end
@@ -113,6 +114,8 @@ function SentinelGrind:update(blackboard)
         if self._telemetry_initialized then
             self._telemetry_initialized = false
         end
+        -- Clear death loop flag so it can re-trigger correctly on re-enable
+        self._death_loop_responding = false
         -- Clear phase flags so Safety/Combat aren't blocked on re-enable
         if blackboard:get("module.grind.is_resting") then
             blackboard:set("module.grind.is_resting", false)
@@ -157,24 +160,44 @@ function SentinelGrind:update(blackboard)
         self._telemetry_initialized = true
     end
 
-    -- Kill detection: check if current grind target died or became stale.
-    -- pcall failure means the object was deallocated (mob despawned/evaded).
-    local grind_target = blackboard:get("module.grind.current_target")
-    if grind_target ~= self._last_grind_target then
-        self._kill_published = false
+    -- Kill detection: track all grind targets for death by GUID.
+    -- Uses GUID comparison to avoid issues with recycled userdata pointers.
+    if not self._pending_kill_targets then
+        self._pending_kill_targets = {}  -- { guid = target_object }
     end
-    if grind_target and self._last_grind_target == grind_target and not self._kill_published then
-        local ok_alive, alive = pcall(grind_target.is_alive, grind_target)
-        if not ok_alive or not alive then
-            if ok_alive then
-                -- Confirmed dead — publish kill event for telemetry
-                self._event_bus:publish("grind:kill", { target = grind_target })
-            end
-            self._kill_published = true
-            blackboard:clear("module.grind.current_target")
+
+    local grind_target = blackboard:get("module.grind.current_target")
+
+    -- Register new grind target into pending map (by GUID to avoid duplicates)
+    if grind_target then
+        local ok_guid, guid = pcall(grind_target.get_guid, grind_target)
+        local key = ok_guid and guid and tostring(guid) or nil
+        if key and not self._pending_kill_targets[key] then
+            self._pending_kill_targets[key] = grind_target
         end
     end
-    self._last_grind_target = grind_target
+
+    -- Check all pending targets for death and publish kill events
+    local to_remove = {}
+    for guid, target in pairs(self._pending_kill_targets) do
+        local ok_alive, alive = pcall(target.is_alive, target)
+        if not ok_alive or not alive then
+            to_remove[#to_remove + 1] = guid
+            -- Publish kill event for telemetry (both confirmed dead and despawned)
+            self._event_bus:publish("grind:kill", { target = target })
+            -- Clear current_target if it was the one that died
+            local cur = blackboard:get("module.grind.current_target")
+            if cur then
+                local ok_cg, cur_guid = pcall(cur.get_guid, cur)
+                if ok_cg and tostring(cur_guid) == guid then
+                    blackboard:clear("module.grind.current_target")
+                end
+            end
+        end
+    end
+    for _, guid in ipairs(to_remove) do
+        self._pending_kill_targets[guid] = nil
+    end
 
     -- Publish telemetry to blackboard
     if self._telemetry and self._telemetry_initialized then
@@ -230,7 +253,145 @@ function SentinelGrind:update(blackboard)
         self._last_threat_gc_ms = now_ms
     end
 
+    -- Death loop response
+    if self._telemetry and self._telemetry_initialized then
+        local in_death_loop = self._telemetry:is_death_loop(now_ms)
+        if in_death_loop and not self._death_loop_responding then
+            self._death_loop_responding = true
+            self:_handle_death_loop(blackboard, now_ms)
+        elseif not in_death_loop and self._death_loop_responding then
+            self._death_loop_responding = false
+        end
+    end
+
+    -- Pause gate (death loop pause or other)
+    local paused_until = blackboard:get("module.grind.paused_until_ms", 0)
+    if now_ms < paused_until then
+        return
+    end
+
+    -- PvP player scanning (throttled every 2s)
+    if not self._last_pvp_scan_ms or (now_ms - self._last_pvp_scan_ms) >= 2000 then
+        self._last_pvp_scan_ms = now_ms
+        self:_scan_enemy_players(blackboard, now_ms)
+    end
+
+    -- DIAGNOSTIC: detect combat.source transitions (one-shot on change)
+    local current_src = blackboard:get("combat.source")
+    if current_src ~= self._diag_prev_src then
+        if core and core.log then
+            pcall(core.log, string.format(
+                "[Grind] TRANSITION: combat.source %s→%s  hp=%.2f mp=%.2f inCombat=%s cast=%s tgt=%s",
+                tostring(self._diag_prev_src), tostring(current_src),
+                tonumber(blackboard:get("player.health_pct", 1)) or 1,
+                tonumber(blackboard:get("player.mana_pct", 1)) or 1,
+                tostring(blackboard:get("player.in_combat", false)),
+                tostring(blackboard:get("player.is_casting", false)),
+                tostring(blackboard:get("module.grind.current_target") ~= nil)))
+        end
+        self._diag_prev_src = current_src
+    end
+
+    -- DIAGNOSTIC: dump state every 1s to trace post-combat behaviour
+    if not self._diag_last_ms or (now_ms - self._diag_last_ms) >= 1000 then
+        self._diag_last_ms = now_ms
+        if core and core.log then
+            pcall(core.log, string.format(
+                "[Grind] DIAG: src=%s tgt=%s resting=%s looting=%s hp=%.2f mp=%.2f inCombat=%s casting=%s food=%d water=%d eat@%.0f%% drink@%.0f%%",
+                tostring(current_src),
+                tostring(blackboard:get("module.grind.current_target") ~= nil),
+                tostring(blackboard:get("module.grind.is_resting")),
+                tostring(blackboard:get("module.grind.is_looting")),
+                tonumber(blackboard:get("player.health_pct", 1)) or 1,
+                tonumber(blackboard:get("player.mana_pct", 1)) or 1,
+                tostring(blackboard:get("player.in_combat", false)),
+                tostring(blackboard:get("player.is_casting", false)),
+                tonumber(blackboard:get("module.grind.food_count", 0)) or 0,
+                tonumber(blackboard:get("module.grind.water_count", 0)) or 0,
+                (tonumber(blackboard:get("module.grind.health_eat_pct", 0.50)) or 0.50) * 100,
+                (tonumber(blackboard:get("module.grind.mana_drink_pct", 0.40)) or 0.40) * 100))
+        end
+    end
+
     self._runner:tick(blackboard)
+end
+
+-- ---------------------------------------------------------------------------
+-- Death loop handler: relocate to safest hotspot or pause
+-- ---------------------------------------------------------------------------
+function SentinelGrind:_handle_death_loop(bb, now_ms)
+    -- Threat entries already recorded by grind:death subscription.
+    -- Try to relocate to safest hotspot.
+    if self._profile_manager and self._profile_manager:is_profile_loaded() then
+        local _, best_heat = self._profile_manager:advance_to_safest_hotspot(self._threat_map, now_ms)
+        if best_heat and best_heat >= 8 then
+            -- All hotspots are dangerous — pause for 5 minutes
+            bb:set("module.grind.paused_until_ms", now_ms + 300000)
+            self._event_bus:publish("grind:paused", {
+                reason = "death_loop",
+                duration_ms = 300000,
+                resume_at_ms = now_ms + 300000,
+            })
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- PvP player scanning: detect nearby enemy players
+-- ---------------------------------------------------------------------------
+function SentinelGrind:_scan_enemy_players(bb, now_ms)
+    if bb:get("module.grind.pvp_avoidance", true) ~= true then
+        bb:set("module.grind.pvp_threat_nearby", false)
+        return
+    end
+
+    local player = bb:get("player.object")
+    if not player then
+        bb:set("module.grind.pvp_threat_nearby", false)
+        return
+    end
+
+    local player_pos = bb:get("player.position")
+    if not player_pos then
+        bb:set("module.grind.pvp_threat_nearby", false)
+        return
+    end
+
+    local found = false
+    if core and core.object_manager and core.object_manager.get_all_objects then
+        local ok, objects = pcall(core.object_manager.get_all_objects)
+        if ok and type(objects) == "table" then
+            for _, obj in ipairs(objects) do
+                local ok_p, is_p = pcall(obj.is_player, obj)
+                if ok_p and is_p then
+                    local ok_ga, ga = pcall(obj.get_guid, obj)
+                    local ok_gb, gb = pcall(player.get_guid, player)
+                    local is_self = ok_ga and ok_gb and tostring(ga) == tostring(gb)
+                    if not is_self then
+                        local ok_enemy, enemy = pcall(player.is_enemy_with, player, obj)
+                        if ok_enemy and enemy then
+                            local ok_alive, alive = pcall(obj.is_alive, obj)
+                            if ok_alive and alive then
+                                local ok_pos, pos = pcall(obj.get_position, obj)
+                                if ok_pos and pos then
+                                    local dx = (pos.x or 0) - (player_pos.x or 0)
+                                    local dy = (pos.y or 0) - (player_pos.y or 0)
+                                    local dz = (pos.z or 0) - (player_pos.z or 0)
+                                    local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                                    if dist <= 60 then
+                                        found = true
+                                        self._threat_map:record("PVP_PLAYER", pos, 8, now_ms)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    bb:set("module.grind.pvp_threat_nearby", found)
 end
 
 function SentinelGrind:get_profile_manager()

@@ -45,17 +45,25 @@ function bag_scanner.count_free_slots()
     return math.max(0, total_capacity - used)
 end
 
+---Find the highest-tier health and mana potions in bags.
+---Potion ID tables map item_id → min_level (higher = better tier).
 function bag_scanner.find_potions(health_potion_ids, mana_potion_ids)
     local best_health = nil
+    local best_health_tier = -1
     local best_mana = nil
+    local best_mana_tier = -1
     bag_scanner.for_each_item(function(obj)
         local ok, item_id = pcall(obj.get_item_id, obj)
         if ok and item_id then
-            if health_potion_ids[item_id] then
+            local h_tier = health_potion_ids[item_id]
+            if h_tier and h_tier > best_health_tier then
                 best_health = item_id
+                best_health_tier = h_tier
             end
-            if mana_potion_ids[item_id] then
+            local m_tier = mana_potion_ids[item_id]
+            if m_tier and m_tier > best_mana_tier then
                 best_mana = item_id
+                best_mana_tier = m_tier
             end
         end
     end)

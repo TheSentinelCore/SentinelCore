@@ -31,7 +31,7 @@ function Autoloader.scan()
             local path = AUTOLOADER_DIR .. "/" .. filename
             local read_ok, content = pcall(core.read_data_file, path)
             if read_ok and content then
-                local decode_ok, data = pcall(JSON.decode, JSON, content)
+                local decode_ok, data = pcall(JSON.decode, content)
                 if decode_ok and type(data) == "table" then
                     results[#results + 1] = {
                         filename = filename,
@@ -64,7 +64,7 @@ function Autoloader.load(filename)
         return false
     end
 
-    local decode_ok, data = pcall(JSON.decode, JSON, content)
+    local decode_ok, data = pcall(JSON.decode, content)
     if not decode_ok or type(data) ~= "table" then
         log_error("failed to decode JSON: " .. path)
         return false
@@ -166,13 +166,14 @@ function Autoloader.save(autoloader_table, filename)
         return false
     end
 
-    local encode_ok, json_str = pcall(JSON.encode, JSON, autoloader_table)
+    local encode_ok, json_str = pcall(JSON.encode, autoloader_table)
     if not encode_ok or type(json_str) ~= "string" then
         log_error("failed to encode autoloader table to JSON")
         return false
     end
 
     local path = AUTOLOADER_DIR .. "/" .. filename
+    pcall(core.create_data_file, path)
     local write_ok = pcall(core.write_data_file, path, json_str)
     if not write_ok then
         log_error("failed to write file: " .. path)

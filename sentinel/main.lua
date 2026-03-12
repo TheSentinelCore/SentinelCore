@@ -14,10 +14,25 @@ local function log_info(message)
     end
 end
 
+local function clear_module_cache()
+    if not package or not package.loaded then return end
+    local prefixes = { "runtime/", "core/bt/", "modules/", "shared/", "ui/" }
+    for key in pairs(package.loaded) do
+        for _, prefix in ipairs(prefixes) do
+            if key:sub(1, #prefix) == prefix then
+                package.loaded[key] = nil
+                break
+            end
+        end
+    end
+end
+
 local function ensure_initialized()
     if initialized and app then
         return true
     end
+
+    clear_module_cache()
 
     local ok, result = pcall(function()
         local SentinelApp = require("runtime/app")
@@ -122,6 +137,8 @@ local function on_unload()
     if app and type(app.shutdown) == "function" then
         app:shutdown()
     end
+    app = nil
+    initialized = false
     _G.Sentinel = nil
 end
 

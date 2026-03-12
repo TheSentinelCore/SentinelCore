@@ -3,6 +3,8 @@ local Status = require("core/bt/status")
 
 local Safety = {}
 
+local MAX_FLEE_DURATION_MS = 30000 -- 30s maximum flee before giving up
+
 ---Build the safety/flee phase sub-tree.
 ---@param event_bus table EventBus instance
 ---@param nav_adapter table NavAdapter instance
@@ -67,11 +69,12 @@ function Safety.build(event_bus, nav_adapter)
                 return Status.SUCCESS
             end),
 
-            -- Flee to safe point: move until within 5yd
+            -- Flee to safe point: move until within 5yd (with timeout)
             BT.action("flee_to_safe_point", function(bb)
                 -- If player died during flee, exit so corpse_run can handle
                 if bb:get("player.is_dead") == true or bb:get("player.is_ghost") == true then
                     nav_adapter:stop("safety_player_died")
+                    bb:set("module.grind._flee_start_ms", nil)
                     return Status.SUCCESS
                 end
 
@@ -85,20 +88,49 @@ function Safety.build(event_bus, nav_adapter)
                 local mobs_ok = not in_combat or enemies <= max_enemies
                 if health_ok and mobs_ok then
                     nav_adapter:stop("safety_flee_resolved")
+                    bb:set("module.grind._flee_start_ms", nil)
                     return Status.SUCCESS
                 end
 
+                -- Timeout: give up fleeing after MAX_FLEE_DURATION_MS
+                local now = bb:get("system.now_ms", 0)
+                local flee_start = bb:get("module.grind._flee_start_ms")
+                if not flee_start then
+                    bb:set("module.grind._flee_start_ms", now)
+                    flee_start = now
+                end
+                if now - flee_start > MAX_FLEE_DURATION_MS then
+                    nav_adapter:stop("safety_flee_timeout")
+                    bb:set("module.grind._flee_start_ms", nil)
+                    return Status.SUCCESS
+                end
+
+                local player_pos = bb:get("player.position")
+
                 local flee_pos = bb:get("module.grind.flee_position")
                 if not flee_pos then
+                    -- No explicit flee point — compute one 30yd AWAY from spot
+                    -- center (where mobs are), not toward it.
                     local spot = bb:get("module.grind.current_spot")
-                    if spot and spot.center then
-                        flee_pos = spot.center
+                    if spot and spot.center and player_pos then
+                        local cx = spot.center.x or 0
+                        local cy = spot.center.y or 0
+                        local px = player_pos.x or 0
+                        local py = player_pos.y or 0
+                        local away_dx = px - cx
+                        local away_dy = py - cy
+                        local away_len = math.sqrt(away_dx * away_dx + away_dy * away_dy)
+                        if away_len < 1 then away_dx, away_dy, away_len = 1, 0, 1 end
+                        local scale = 30 / away_len
+                        flee_pos = {
+                            x = px + away_dx * scale,
+                            y = py + away_dy * scale,
+                            z = player_pos.z or 0,
+                        }
                     else
                         return Status.FAILURE
                     end
                 end
-
-                local player_pos = bb:get("player.position")
                 if player_pos then
                     local dx = (player_pos.x or 0) - (flee_pos.x or 0)
                     local dy = (player_pos.y or 0) - (flee_pos.y or 0)

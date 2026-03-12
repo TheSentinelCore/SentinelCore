@@ -11,7 +11,7 @@ max_concurrent_requests = 100
 
 [navmesh]
 # Default game when no ?game= parameter is provided in requests "tbc" or "retail"
-default_game = "tbc"
+default_game = "retail"
 
 # Per-game mmap sources. Each game has its own mmap directory and preload list.
 # API requests select the game via ?game=<name> query parameter.
@@ -19,7 +19,7 @@ default_game = "tbc"
 [navmesh.games.tbc]
 # CMaNGOS TBC mmaps (3-digit map IDs, no underscores)
 mmap_path = "./mmaps"
-preload_maps = [0, 1, 530, 30, 489, 529, 566]
+# preload_maps = [0, 1, 530, 30, 489, 529, 566]
 
 [navmesh.games.retail]
 # TrinityCore retail mmaps (4-digit map IDs, underscores)

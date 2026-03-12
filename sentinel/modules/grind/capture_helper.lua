@@ -34,7 +34,7 @@ function CaptureHelper.capture_hotspot(radius, label)
     if label and label ~= "" then
         id = label:lower():gsub("%s+", "_"):gsub("[^%w_]", "")
     else
-        id = "hotspot_" .. os.time()
+        id = "hotspot_" .. tostring(math.floor(core.time()))
     end
 
     return {

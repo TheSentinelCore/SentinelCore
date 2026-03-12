@@ -159,35 +159,38 @@ function SensorHub:new(blackboard, event_bus)
     o._last_queue_popup = false
     o._battlefield_state_streak_5 = 0
     o._last_sensor_in_bg_ms = 0
+    o._was_dead = false
     return o
 end
 
 function SensorHub:_unit_health_pct(unit)
     if not unit then
-        return 0
+        return 1
     end
     if self._unit_helper and type(self._unit_helper.get_health_percentage) == "function" then
         local ok, value = pcall(self._unit_helper.get_health_percentage, self._unit_helper, unit)
         if ok and type(value) == "number" then
+            -- API returns 1..100; normalize to 0..1 for consistent blackboard scale
+            if value > 1 then value = value / 100 end
             return value
         end
     end
     local health = tonumber(safe_call(unit, "get_health") or 0) or 0
     local max_health = tonumber(safe_call(unit, "get_max_health") or 0) or 0
     if max_health <= 0 then
-        return 0
+        return 1
     end
     return health / max_health
 end
 
 function SensorHub:_unit_mana_pct(unit)
     if not unit then
-        return 0
+        return 1
     end
     local mana = tonumber(safe_call(unit, "get_power", 0) or 0) or 0
     local max_mana = tonumber(safe_call(unit, "get_max_power", 0) or 0) or 0
     if max_mana <= 0 then
-        return 0
+        return 1
     end
     return mana / max_mana
 end
@@ -350,11 +353,21 @@ function SensorHub:refresh()
     local position = safe_call(player, "get_position")
     self._blackboard:set("player.target", target)
     self._blackboard:set("player.position", position)
-    self._blackboard:set("player.health_pct", self:_unit_health_pct(player))
-    self._blackboard:set("player.mana_pct", self:_unit_mana_pct(player))
+    self._blackboard:set("player.health_pct", player and self:_unit_health_pct(player) or 1)
+    self._blackboard:set("player.mana_pct", player and self:_unit_mana_pct(player) or 1)
     self._blackboard:set("player.in_combat", safe_call(player, "is_in_combat") == true)
-    self._blackboard:set("player.is_dead", safe_call(player, "is_dead") == true)
-    self._blackboard:set("player.is_ghost", safe_call(player, "is_ghost") == true)
+    local is_dead = safe_call(player, "is_dead") == true
+    local is_ghost = safe_call(player, "is_ghost") == true
+    self._blackboard:set("player.is_dead", is_dead)
+    self._blackboard:set("player.is_ghost", is_ghost)
+
+    -- Track death position on transition (for corpse run)
+    if is_dead and not self._was_dead and position then
+        self._blackboard:set("player.death_position", { x = position.x, y = position.y, z = position.z })
+    elseif not is_dead and not is_ghost and self._was_dead then
+        self._blackboard:clear("player.death_position")
+    end
+    self._was_dead = is_dead or is_ghost
     self._blackboard:set("player.is_mounted", safe_call(player, "is_mounted") == true)
     local outdoors = safe_call(player, "is_outdoors")
     if outdoors == nil then
@@ -366,6 +379,13 @@ function SensorHub:refresh()
     self._blackboard:set("player.is_moving", safe_call(player, "is_moving") == true)
     self._blackboard:set("player.is_auto_attacking", safe_call(player, "is_auto_attacking") == true)
     self._blackboard:set("player.attack_speed_s", tonumber(safe_call(player, "get_attack_speed") or 0) or 0)
+
+    local player_level = 0
+    if player then
+        local ok_lv, lv = pcall(player.get_level, player)
+        if ok_lv and type(lv) == "number" then player_level = lv end
+    end
+    self._blackboard:set("player.level", player_level)
 
     local corpse_position = nil
     local resurrect_delay_s = 0

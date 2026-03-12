@@ -41,7 +41,7 @@ local function resolve_spell_helper()
         local ok, mod = pcall(require, "common/utility/spell_helper")
         if ok and mod then
             _spell_helper_ref = mod
-            _spell_helper_call_style = "plain"
+            _spell_helper_call_style = "self"
         end
         _spell_helper_resolved = true
     end
@@ -238,21 +238,23 @@ end
 -- Target health closures
 -- ---------------------------------------------------------------------------
 
+--- threshold is 0-1 scale; get_health_percentage returns 1-100.
 function Cond.target_health_below(threshold)
     return function(blackboard)
         local _, target = player_and_target(blackboard)
         if not target then return false end
         local ok, pct = safe_call(target, "get_health_percentage")
-        return ok and num(pct) < threshold
+        return ok and num(pct) / 100 < threshold
     end
 end
 
+--- threshold is 0-1 scale; get_health_percentage returns 1-100.
 function Cond.target_health_above(threshold)
     return function(blackboard)
         local _, target = player_and_target(blackboard)
         if not target then return false end
         local ok, pct = safe_call(target, "get_health_percentage")
-        return ok and num(pct) > threshold
+        return ok and num(pct) / 100 > threshold
     end
 end
 
@@ -404,6 +406,8 @@ end
 function Cond.pet_freeze_useful()
     return function(blackboard)
         if blackboard:get("combat.target_frozen") then return false end
+        -- Don't waste pet freeze while kiting (pet could die in Blizzard AoE)
+        if blackboard:get("combat.kite_state", "NONE") ~= "NONE" then return false end
         local catalog = blackboard:get("module.combat.catalog")
         local cooldowns = blackboard:get("module.combat.cooldowns")
         if not catalog or not cooldowns then return false end
@@ -423,6 +427,22 @@ function Cond.safe_to_evocate(blackboard)
     if num(blackboard:get("player.health_pct", 0)) < 0.50 then return false end
     if blackboard:get("combat.kite_state", "NONE") ~= "NONE" then return false end
     return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Add handling (read from frost_combat_state)
+-- ---------------------------------------------------------------------------
+
+function Cond.has_low_health_add(blackboard)
+    return blackboard:get("combat.low_health_add") ~= nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Emergency escape (read from frost_combat_state)
+-- ---------------------------------------------------------------------------
+
+function Cond.should_emergency_escape(blackboard)
+    return blackboard:get("combat.can_emergency_escape", false) == true
 end
 
 -- ---------------------------------------------------------------------------

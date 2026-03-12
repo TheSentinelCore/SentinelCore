@@ -11,7 +11,18 @@ function Runner:tick(blackboard)
     if not self._root then
         return "FAILURE"
     end
-    return self._root:tick(blackboard)
+    local ok, result = pcall(self._root.tick, self._root, blackboard)
+    if not ok then
+        -- Reset tree state to prevent corrupted _running_index
+        if self._root.reset then
+            pcall(self._root.reset, self._root)
+        end
+        if core and type(core.log) == "function" then
+            pcall(core.log, "[BT] tick error: " .. tostring(result))
+        end
+        return "FAILURE"
+    end
+    return result
 end
 
 function Runner:reset()

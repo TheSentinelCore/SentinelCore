@@ -7,9 +7,10 @@ local STUCK_SAMPLES = 3
 local MAX_ATTEMPTS = 3
 
 local function distance_3d(a, b)
-    local dx = a.x - b.x
-    local dy = a.y - b.y
-    local dz = a.z - b.z
+    if not a or not b then return math.huge end
+    local dx = (a.x or 0) - (b.x or 0)
+    local dy = (a.y or 0) - (b.y or 0)
+    local dz = (a.z or 0) - (b.z or 0)
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
@@ -21,6 +22,7 @@ function StuckDetector:new()
         last_position = nil,
         low_movement_count = 0,
         attempt_count = 0,
+        _last_phase = nil,
     }
     setmetatable(o, self)
     return o
@@ -28,9 +30,15 @@ end
 
 ---Record a position sample at the given timestamp.
 ---Ignores samples within SAMPLE_INTERVAL_MS of the last sample.
+---When phase_tag is provided, auto-resets if the phase changed since last sample.
 ---@param now_ms number Current time in milliseconds
 ---@param position table { x, y, z }
-function StuckDetector:sample(now_ms, position)
+---@param phase_tag string|nil Optional phase identifier for cross-phase reset
+function StuckDetector:sample(now_ms, position, phase_tag)
+    if phase_tag and phase_tag ~= self._last_phase then
+        self:reset()
+        self._last_phase = phase_tag
+    end
     if self.last_sample_time and (now_ms - self.last_sample_time) < SAMPLE_INTERVAL_MS then
         return
     end

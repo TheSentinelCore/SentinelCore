@@ -37,8 +37,15 @@ function DurabilityTracker:sample(bb, now_ms)
         end
     end
 
+    self._last_repair_cost = repair_cost
     bb:set("module.grind.repair_cost_copper", repair_cost)
     bb:set("module.grind.needs_repair", repair_cost >= self._threshold_copper)
+end
+
+--- Get the last sampled repair cost in copper.
+---@return number
+function DurabilityTracker:get_repair_cost()
+    return self._last_repair_cost or 0
 end
 
 --- Force a re-sample on next call (e.g., after visiting repair vendor).

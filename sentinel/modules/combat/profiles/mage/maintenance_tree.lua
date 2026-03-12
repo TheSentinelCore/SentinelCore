@@ -27,19 +27,36 @@ function MaintenanceTree.build()
         }),
         BT.sequence("conjure_food", {
             BT.condition("not_in_combat", Cond.not_in_combat),
+            BT.condition("not_casting", Cond.not_casting_or_channeling),
+            BT.condition("not_moving", function(bb) return bb:get("player.is_moving", false) ~= true end),
             BT.condition("needs_food", function(bb)
-                return (bb:get("module.grind.needs_food", true))
+                if not bb:get("module.grind.needs_food", false) then return false end
+                local free = bb:get("module.grind.bag_free_slots", 0)
+                return free >= 4
             end),
             BT.condition("conjure_food_ready", Cond.spell_ready("conjure_food", nil, "self")),
             BT.action("queue_conjure_food", Act.queue_conjure_food),
         }),
         BT.sequence("conjure_water", {
             BT.condition("not_in_combat", Cond.not_in_combat),
+            BT.condition("not_casting", Cond.not_casting_or_channeling),
+            BT.condition("not_moving", function(bb) return bb:get("player.is_moving", false) ~= true end),
             BT.condition("needs_water", function(bb)
-                return (bb:get("module.grind.needs_water", true))
+                if not bb:get("module.grind.needs_water", false) then return false end
+                local free = bb:get("module.grind.bag_free_slots", 0)
+                return free >= 4
             end),
             BT.condition("conjure_water_ready", Cond.spell_ready("conjure_water", nil, "self")),
             BT.action("queue_conjure_water", Act.queue_conjure_water),
+        }),
+        BT.sequence("conjure_mana_gem", {
+            BT.condition("not_in_combat", Cond.not_in_combat),
+            BT.condition("not_casting", Cond.not_casting_or_channeling),
+            BT.condition("not_moving", function(bb) return bb:get("player.is_moving", false) ~= true end),
+            BT.condition("level_at_least_28", Cond.level_at_least(28)),
+            BT.condition("missing_mana_gem", Cond.missing_mana_gem),
+            BT.condition("mana_above_50", Cond.mana_above(0.50)),
+            BT.action("queue_conjure_mana_gem", Act.queue_conjure_mana_gem),
         }),
     })
 end

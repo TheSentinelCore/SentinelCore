@@ -9,6 +9,7 @@ function AoeTree.build()
     return BT.selector("frost_aoe_pull", {
         -- Gather phase: tag mobs with fire blast until we have enough
         BT.sequence("gather_phase", {
+            BT.condition("gcd_ready_gather", Cond.gcd_ready),
             BT.condition("need_more_mobs", function(bb)
                 local gathered = tonumber(bb:get("module.grind.aoe_gathered_count", 0)) or 0
                 local target_count = tonumber(bb:get("module.grind.aoe_target_count", 3)) or 3
@@ -19,6 +20,7 @@ function AoeTree.build()
         }),
         -- Nova and blink: freeze when mobs reach melee, then blink out
         BT.sequence("nova_and_blink", {
+            BT.condition("gcd_ready_nova", Cond.gcd_ready),
             BT.condition("enemies_in_melee_2", Cond.enemies_in_melee(2)),
             BT.condition("frost_nova_ready", Cond.spell_ready("frost_nova")),
             BT.action("queue_frost_nova", Act.queue_frost_nova),
@@ -35,12 +37,14 @@ function AoeTree.build()
         }),
         -- Blizzard the frozen pack
         BT.sequence("blizzard_pack", {
+            BT.condition("gcd_ready_blizzard", Cond.gcd_ready),
             BT.condition("level_at_least_20", Cond.level_at_least(20)),
             BT.condition("blizzard_ready", Cond.spell_ready("blizzard")),
             BT.action("queue_blizzard", Act.queue_blizzard),
         }),
         -- Re-freeze when mobs close in again
         BT.sequence("re_freeze", {
+            BT.condition("gcd_ready_refreeze", Cond.gcd_ready),
             BT.condition("enemies_in_melee_1", Cond.enemies_in_melee(1)),
             BT.selector("freeze_options", {
                 BT.sequence("cone_of_cold", {

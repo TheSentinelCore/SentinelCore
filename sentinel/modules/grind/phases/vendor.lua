@@ -178,11 +178,20 @@ local function get_min_keep_quality(bb)
     return DEFAULT_MIN_KEEP_QUALITY
 end
 
----Sell bag items filtered by keep_set and quality threshold.
+-- Max items to sell per tick to avoid overwhelming the server
+local SELL_BATCH_SIZE = 4
+
+---Sell up to SELL_BATCH_SIZE bag items filtered by keep_set and quality threshold.
+---Returns (sold_count, has_more) — caller should re-invoke if has_more is true.
 local function sell_filtered_bag_items(keep_set, min_keep_quality)
-    if not core or not core.input then return 0 end
+    if not core or not core.input then return 0, false end
     local sold = 0
+    local has_more = false
     bag_scanner.for_each_item(function(obj, bag, bag_slot)
+        if sold >= SELL_BATCH_SIZE then
+            has_more = true
+            return -- skip remaining this tick
+        end
         local ok_id, raw_id = pcall(obj.get_item_id, obj)
         if ok_id and raw_id then
             local item_id = tonumber(raw_id) or raw_id
@@ -196,7 +205,7 @@ local function sell_filtered_bag_items(keep_set, min_keep_quality)
             end
         end
     end)
-    return sold
+    return sold, has_more
 end
 
 ---Build the vendor phase sub-tree.
@@ -211,9 +220,9 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
             return bb:get("module.grind.enabled") == true
         end),
 
-        -- Gate: must not be in combat
-        BT.condition("not_in_combat", function(bb)
-            return bb:get("player.in_combat") ~= true
+        -- Gate: combat module must not be actively engaged
+        BT.condition("not_engaged", function(bb)
+            return bb:get("combat.source") == nil
         end),
 
         -- Gate: needs vendor visit (bags full, needs repair, needs food/water)
@@ -229,7 +238,7 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
                     if bb:get("module.grind.needs_food") and pm:get_nearest_vendor(player_pos, "food") then
                         return true
                     end
-                    if bb:get("module.grind.needs_water") and pm:get_nearest_vendor(player_pos, "food") then
+                    if bb:get("module.grind.needs_water") and pm:get_nearest_vendor(player_pos, "water") then
                         return true
                     end
                 end
@@ -241,9 +250,12 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
         BT.action("vendor_action", function(bb)
             local state = bb:get("module.grind.vendor_state") or "init"
 
-            -- Abort if entering combat
-            if bb:get("player.in_combat") == true then
+            -- Abort if combat module engaged
+            if bb:get("combat.source") ~= nil then
                 bb:set("module.grind.vendor_state", nil)
+                bb:set("module.grind.vendor_retries", nil)
+                _quality_cache = nil
+                _quality_pending = false
                 nav_adapter:stop("vendor_abort_combat")
                 return Status.FAILURE
             end
@@ -284,6 +296,20 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
                     nav_adapter:stop("vendor_arrived")
                     bb:set("module.grind.vendor_state", "interacting")
                     return Status.RUNNING
+                end
+
+                -- Stuck detection during vendor travel
+                local stuck = bb:get("module.grind.stuck_detector")
+                if stuck and player_pos then
+                    local now = bb:get("system.now_ms", 0)
+                    stuck:sample(now, player_pos, "vendor_travel")
+                    if stuck:is_stuck() then
+                        nav_adapter:stop("vendor_travel_stuck")
+                        stuck:reset()
+                        bb:set("module.grind.vendor_state", nil)
+                        bb:set("module.grind.vendor_data", nil)
+                        return Status.FAILURE
+                    end
                 end
 
                 if not nav_adapter:is_active() then
@@ -332,14 +358,24 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
             if state == "waiting_window" then
                 local ok_count, v_count = pcall(core.game_ui.get_vendor_item_count)
                 if ok_count and (v_count or 0) > 0 then
+                    bb:set("module.grind.vendor_retries", nil)
                     bb:set("module.grind.vendor_state", "repairing")
                     return Status.RUNNING
                 end
 
-                -- Timeout: retry interact after 2 seconds
+                -- Timeout: retry interact after 2 seconds, abort after 3 failed attempts
                 local now = bb:get("system.now_ms", 0)
                 local interact_at = bb:get("module.grind.vendor_interact_at", 0)
                 if now - interact_at > 2000 then
+                    local retries = bb:get("module.grind.vendor_retries", 0)
+                    if retries >= 3 then
+                        bb:set("module.grind.vendor_state", nil)
+                        bb:set("module.grind.vendor_retries", nil)
+                        bb:set("module.grind.vendor_data", nil)
+                        bb:set("module.grind.vendor_interact_at", nil)
+                        return Status.FAILURE
+                    end
+                    bb:set("module.grind.vendor_retries", retries + 1)
                     bb:set("module.grind.vendor_state", "interacting")
                 end
                 return Status.RUNNING
@@ -347,7 +383,10 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
 
             if state == "repairing" then
                 if not vendor_has_service(bb, "repair") or bb:get("module.grind.needs_repair") ~= true then
-                    bb:set("module.grind.vendor_state", "selling")
+                    -- Skip selling if bags aren't full (repair-only visit)
+                    local free = bb:get("module.grind.bag_free_slots", 999)
+                    local next_state = free <= 2 and "selling" or "buying_food"
+                    bb:set("module.grind.vendor_state", next_state)
                     return Status.RUNNING
                 end
                 if core and core.input and type(core.input.repair_all_items) == "function" then
@@ -356,7 +395,10 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
                 -- Reset durability tracker so it re-samples immediately after repair
                 local dt = bb:get("module.grind.durability_tracker")
                 if dt then dt:reset() end
-                bb:set("module.grind.vendor_state", "selling")
+                -- Skip selling if bags aren't full (repair-only visit)
+                local free = bb:get("module.grind.bag_free_slots", 999)
+                local next_state = free <= 2 and "selling" or "buying_food"
+                bb:set("module.grind.vendor_state", next_state)
                 return Status.RUNNING
             end
 
@@ -385,7 +427,10 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
                 -- Quality data arrived (or failed — sell_filtered handles nil cache safely)
                 local keep_set = build_keep_set(bb)
                 local min_quality = get_min_keep_quality(bb)
-                sell_filtered_bag_items(keep_set, min_quality)
+                local _, has_more = sell_filtered_bag_items(keep_set, min_quality)
+                if has_more then
+                    return Status.RUNNING -- continue selling next tick
+                end
                 bb:set("module.grind.vendor_state", "buying_food")
                 bb:set("module.grind.current_target", nil)
                 return Status.RUNNING
@@ -442,10 +487,15 @@ function Vendor.build(blackboard, event_bus, nav_adapter)
             end
 
             if state == "done" then
+                -- Close vendor window before walking away
+                if core and core.input and type(core.input.close_vendor) == "function" then
+                    pcall(core.input.close_vendor)
+                end
                 -- Clean up vendor state
                 bb:set("module.grind.vendor_state", nil)
                 bb:set("module.grind.vendor_data", nil)
                 bb:set("module.grind.vendor_interact_at", nil)
+                bb:set("module.grind.vendor_retries", nil)
                 event_bus:publish("grind:vendor_complete", {})
                 return Status.SUCCESS
             end

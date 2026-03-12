@@ -16,7 +16,7 @@ local function resolve_spell_helper()
         local ok, mod = pcall(require, "common/utility/spell_helper")
         if ok and mod then
             _spell_helper_ref = mod
-            _spell_helper_call_style = "plain"
+            _spell_helper_call_style = "self"
         end
         _spell_helper_resolved = true
     end

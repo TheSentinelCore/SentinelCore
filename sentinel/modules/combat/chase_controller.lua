@@ -22,13 +22,16 @@ local function safe_call(obj, method, ...)
     return pcall(obj[method], obj, ...)
 end
 
+local CHASE_RESUME_BUFFER = 3
+
 function ChaseController:new(event_bus, blackboard, nav_adapter)
     local o = setmetatable({}, ChaseController)
     o._event_bus = event_bus
     o._blackboard = blackboard
     o._nav_adapter = nav_adapter
     o._last_target_position = nil
-    o._melee_range = 4.5
+    o._last_move_ms = 0
+    o._in_range = false
     return o
 end
 
@@ -47,17 +50,41 @@ function ChaseController:update(target)
     local dist = distance(player_pos, target_pos)
     self._blackboard:set("combat.target_distance", dist)
 
-    if dist <= self._melee_range then
-        if owner == "combat" then
+    -- Always face the target
+    if core and core.input and core.input.look_at then
+        pcall(core.input.look_at, target_pos)
+    end
+
+    local combat_range = tonumber(self._blackboard:get("module.combat.combat_range")) or 4.5
+    if dist <= combat_range then
+        self._in_range = true
+        -- Stop any active navigation — including stale grind phase nav
+        -- that wasn't started by the chase controller (nav.owner unset).
+        if self._nav_adapter:is_active() then
             self._nav_adapter:stop("combat_in_range")
-            self._blackboard:set("nav.owner", nil)
         end
+        self._blackboard:set("nav.owner", nil)
         return false
     end
 
+    -- Hysteresis: don't resume chasing until target moves well beyond combat range
+    if self._in_range and dist <= combat_range + CHASE_RESUME_BUFFER then
+        return false
+    end
+    self._in_range = false
+
+    local now_ms = num(self._blackboard:get("system.now_ms", 0))
+
     local should_move = true
     if self._last_target_position then
-        should_move = distance(self._last_target_position, target_pos) > 2.0 or not self._nav_adapter:is_active()
+        local target_moved = distance(self._last_target_position, target_pos) > 2.0
+        local nav_idle = not self._nav_adapter:is_active()
+        should_move = target_moved or nav_idle
+    end
+
+    -- Debounce: don't re-request move_to() more than once per 500ms
+    if should_move and (now_ms - self._last_move_ms) < 500 and self._nav_adapter:is_active() then
+        should_move = false
     end
 
     if should_move then
@@ -66,6 +93,7 @@ function ChaseController:update(target)
         self._blackboard:set("nav.destination", target_pos)
         self._nav_adapter:move_to(target_pos, { use_navmesh = true })
         self._last_target_position = target_pos
+        self._last_move_ms = now_ms
         return true
     end
 
@@ -78,6 +106,7 @@ function ChaseController:stop(reason)
         self._blackboard:set("nav.owner", nil)
     end
     self._last_target_position = nil
+    self._in_range = false
 end
 
 return ChaseController

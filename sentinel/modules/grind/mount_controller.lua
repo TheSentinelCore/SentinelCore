@@ -123,8 +123,13 @@ function MountController:should_smart_dismount(bb, hostiles)
         local ok_hp, hpos = safe_method(hostile, "get_position")
         if ok_hp and type(hpos) == "table" and distance_3d(player_pos, hpos) <= THREAT_SCAN_RADIUS then
             local ok_t, target = safe_method(hostile, "get_target")
-            if ok_t and target == player then
-                return true
+            if ok_t and target then
+                -- Compare by GUID to handle API returning new userdata wrappers
+                local ok_tg, target_guid = pcall(target.get_guid, target)
+                local ok_pg, player_guid = pcall(player.get_guid, player)
+                if ok_tg and ok_pg and target_guid == player_guid then
+                    return true
+                end
             end
         end
     end
@@ -169,8 +174,23 @@ function MountController:begin_travel(bb, destination)
 end
 
 ---Tick every frame: check dismount triggers and clear state when needed.
+---Also detects external dismounts (e.g. combat module called core.input.dismount
+---directly) and syncs internal state so re-mounting works on next travel.
 ---@param bb table  blackboard
 function MountController:update(bb)
+    -- Sync state if externally dismounted while we thought we were mounting
+    if self._mounting then
+        local player = bb:get("player.object")
+        if player then
+            local ok_m, mounted = safe_method(player, "is_mounted")
+            if ok_m and mounted ~= true then
+                -- Player is not mounted but we think we are — external dismount
+                self:clear()
+                return
+            end
+        end
+    end
+
     if not self._mounting then return end
 
     if self:should_dismount(bb) then

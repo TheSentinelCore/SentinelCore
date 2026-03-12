@@ -4,6 +4,7 @@ ThreatMap.__index = ThreatMap
 local DANGER_THRESHOLD = 8
 local DEFAULT_QUERY_RADIUS = 60
 local GC_MIN_WEIGHT = 0.1
+local MAX_ENTRIES = 500
 
 local HALF_LIVES_MS = {
     DEATH           = 30 * 60 * 1000,  -- 30 min
@@ -53,6 +54,10 @@ function ThreatMap:record(threat_type, position, weight, timestamp)
     local half_life_ms = HALF_LIVES_MS[threat_type]
     if not half_life_ms then
         error("unknown threat type: " .. tostring(threat_type))
+    end
+    -- Enforce hard cap to prevent unbounded growth in long sessions
+    if #self._entries >= MAX_ENTRIES then
+        table.remove(self._entries, 1)
     end
     self._entries[#self._entries + 1] = {
         type = threat_type,

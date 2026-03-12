@@ -129,7 +129,13 @@ local function build_gcd_root()
             BT.condition("mana_shield_ready", Cond.spell_ready("mana_shield", nil, "self")),
             BT.action("queue_mana_shield", Act.queue_mana_shield),
         }),
-        -- 4. CC (PvE): Polymorph second hostile (2+ enemies, not AoE mode)
+        -- 4. EMERGENCY: Hard flee (all defensives exhausted, HP critical)
+        BT.sequence("emergency_escape", {
+            BT.condition("gcd_ready", Cond.gcd_ready),
+            BT.condition("should_escape", Cond.should_emergency_escape),
+            BT.action("escape", Act.emergency_escape),
+        }),
+        -- 5. CC (PvE): Polymorph second hostile (2+ enemies, not AoE mode)
         BT.sequence("polymorph_pve", {
             BT.condition("gcd_ready", Cond.gcd_ready),
             BT.condition("level_at_least_8", Cond.level_at_least(8)),
@@ -147,7 +153,15 @@ local function build_gcd_root()
             BT.condition("polymorph_ready", Cond.spell_ready("polymorph")),
             BT.action("queue_polymorph", Act.queue_polymorph),
         }),
-        -- 6. KILL-SECURE: Fire Blast (instant finish, 20yd range)
+        -- 6. ADD FINISH: Fire Blast low-HP secondary enemy
+        BT.sequence("finish_low_add", {
+            BT.condition("gcd_ready", Cond.gcd_ready),
+            BT.condition("has_low_add", Cond.has_low_health_add),
+            BT.condition("not_kiting", Cond.not_kiting),
+            BT.condition("fire_blast_ready", Cond.spell_ready("fire_blast")),
+            BT.action("finish_add", Act.finish_low_add),
+        }),
+        -- 7. KILL-SECURE: Fire Blast (instant finish, 20yd range)
         BT.sequence("fire_blast_kill", {
             BT.condition("gcd_ready", Cond.gcd_ready),
             BT.condition("not_running_away", Cond.not_running_away),
@@ -165,10 +179,15 @@ local function build_gcd_root()
             BT.condition("ice_lance_ready", Cond.spell_ready("ice_lance")),
             BT.action("queue_ice_lance_kill", Act.queue_ice_lance_frozen),
         }),
-        -- 8. KITE: Frost Nova + start kite (enemy in melee, not already kiting)
+        -- 8. KITE: Frost Nova + start kite (2+ melee OR 1 melee + HP < 40%)
         BT.sequence("frost_nova_kite", {
             BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("enemies_melee", Cond.enemies_in_melee(1)),
+            BT.condition("enemies_melee_or_emergency", function(bb)
+                local count = tonumber(bb:get("combat.enemy_count_10yd", 0)) or 0
+                if count >= 2 then return true end
+                if count >= 1 and (tonumber(bb:get("player.health_pct", 1)) or 1) < 0.40 then return true end
+                return false
+            end),
             BT.condition("not_kiting", Cond.not_kiting),
             BT.condition("frost_nova_ready", Cond.spell_ready("frost_nova")),
             BT.action("queue_frost_nova", Act.queue_frost_nova),
@@ -346,7 +365,46 @@ function Profile:tick_off_gcd(blackboard)
 end
 
 function Profile:tick_gcd(blackboard)
-    return self._gcd:tick(blackboard)
+    local status = self._gcd:tick(blackboard)
+    if status == "FAILURE" then
+        local now = blackboard:get("system.now_ms", 0)
+        -- Only log when the GCD tree actually evaluated (not just cooldown-throttled)
+        local cd_last = blackboard:get("module.bt.cooldown.combat_frost_gcd", 0)
+        local actually_evaluated = (now - cd_last) > 5
+        if actually_evaluated and (not self._last_gcd_diag_ms or (now - self._last_gcd_diag_ms) >= 2000) then
+            self._last_gcd_diag_ms = now
+            if core and type(core.log) == "function" then
+                local catalog = blackboard:get("module.combat.catalog")
+                local fb_id = catalog and catalog:resolve_best_rank("frostbolt")
+                local player = blackboard:get("player.object")
+                local target = blackboard:get("combat.target")
+                -- Test is_spell_castable directly
+                local helper = spell_helper or nil
+                if not helper then
+                    local ok_h, h = pcall(require, "common/utility/spell_helper")
+                    if ok_h then helper = h end
+                end
+                local castable_str = "no_helper"
+                if helper and type(helper.is_spell_castable) == "function" and fb_id then
+                    local ok1, v1 = pcall(helper.is_spell_castable, fb_id, player, target, true, true)
+                    local ok2, v2 = pcall(helper.is_spell_castable, helper, fb_id, player, target, true, true)
+                    castable_str = string.format("plain=%s/%s method=%s/%s",
+                        tostring(ok1), tostring(v1), tostring(ok2), tostring(v2))
+                end
+                local los_str = "no_helper"
+                if helper and type(helper.is_spell_in_line_of_sight) == "function" and fb_id then
+                    local ok3, v3 = pcall(helper.is_spell_in_line_of_sight, fb_id, player, target)
+                    local ok4, v4 = pcall(helper.is_spell_in_line_of_sight, helper, fb_id, player, target)
+                    los_str = string.format("plain=%s/%s method=%s/%s",
+                        tostring(ok3), tostring(v3), tostring(ok4), tostring(v4))
+                end
+                pcall(core.log, string.format(
+                    "[FrostGCD] fb_id=%s castable=[%s] los=[%s]",
+                    tostring(fb_id), castable_str, los_str))
+            end
+        end
+    end
+    return status
 end
 
 function Profile:reset()
@@ -384,16 +442,36 @@ function Profile:tick_pull(bb, _target)
 end
 
 function Profile:prepare_rest(bb)
-    self._maintenance:tick(bb)
-    -- Stay in rest when no water and mana isn't full — spirit regen will
-    -- eventually allow conjure_water to fire from the maintenance tree.
-    local water_count = bb:get("module.grind.water_count", 0)
-    if water_count == 0 and bb:get("player.mana_pct", 1) < 0.95 then
-        return Status.RUNNING
+    -- Skip maintenance during WoW combat linger (5-6s post-kill).
+    -- Buff re-applications (Ice Armor, Arcane Intellect) would race with
+    -- use_item(food), causing cast-while-sitting or silent food-use failure.
+    -- Conjure sequences already gate on not_in_combat so can't fire anyway.
+    -- Maintenance runs from combat IDLE handler after rest completes.
+    if bb:get("player.in_combat", false) ~= true then
+        self._maintenance:tick(bb)
     end
-    -- Maintenance FAILURE just means "nothing to conjure/buff right now"
-    -- (cooldown throttled, fully stocked, or bags full). The rest.lua
-    -- prepare_rest action handles the is_casting gate separately.
+
+    -- Stay in rest when missing conjured consumables we'll need.
+    -- Spirit regen will eventually provide enough mana to conjure them.
+    -- Only block when mana is low — if mana >= 0.95 the bot can proceed
+    -- (either it doesn't need the consumable or maintenance just conjured it).
+    local mana = bb:get("player.mana_pct", 1)
+    if mana < 0.95 then
+        local water_count = bb:get("module.grind.water_count", 0)
+        local food_count  = bb:get("module.grind.food_count", 0)
+        local hp          = bb:get("player.health_pct", 1)
+
+        local need_water = water_count == 0
+        -- Use 0.95 (matching sit_and_consume's target when food exists) instead
+        -- of eat_pct — frost mage hp is typically 70-90% after combat (shields),
+        -- well above eat_pct (50%), so that check never triggered.
+        local need_food  = food_count == 0 and hp < 0.95
+
+        if need_water or need_food then
+            return Status.RUNNING
+        end
+    end
+
     return Status.SUCCESS
 end
 

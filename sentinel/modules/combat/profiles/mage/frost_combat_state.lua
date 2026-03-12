@@ -54,6 +54,8 @@ function FrostCombatState:refresh(blackboard)
     self:_refresh_pvp_classification(bb, target)
     self:_refresh_mana_gem(bb, player)
     self:_refresh_water_elemental(bb, player)
+    self:_refresh_low_health_add(bb, player, target)
+    self:_refresh_emergency_escape(bb, player)
 
     local pet_ctrl = bb:get("module.combat.pet_controller")
     if pet_ctrl then
@@ -281,6 +283,85 @@ function FrostCombatState:_refresh_water_elemental(bb, player)
 end
 
 -- ---------------------------------------------------------------------------
+-- Low-health add detection: find a nearly-dead secondary enemy to finish off
+-- ---------------------------------------------------------------------------
+function FrostCombatState:_refresh_low_health_add(bb, player, target)
+    bb:set("combat.low_health_add", nil)
+    if not player then return end
+
+    local ok_enemies, enemies = safe_call(player, "get_enemies_in_range", 20)
+    if not ok_enemies or type(enemies) ~= "table" then return end
+
+    local best_add = nil
+    local best_hp_pct = 1.0
+
+    for _, enemy in ipairs(enemies) do
+        local dominated = false
+
+        -- Skip primary target
+        if not dominated and target then
+            local ok_ga, guid_a = safe_call(enemy, "get_guid")
+            local ok_gb, guid_b = safe_call(target, "get_guid")
+            if ok_ga and ok_gb and tostring(guid_a) == tostring(guid_b) then
+                dominated = true
+            end
+        end
+
+        -- Skip dead
+        if not dominated then
+            local ok_dead, dead = safe_call(enemy, "is_dead")
+            if ok_dead and dead == true then dominated = true end
+        end
+
+        if not dominated then
+            local ok_hp, hp = safe_call(enemy, "get_health")
+            local ok_max, max_hp = safe_call(enemy, "get_max_health")
+            if ok_hp and ok_max and hp and max_hp and num(max_hp) > 0 then
+                local pct = num(hp) / num(max_hp)
+                if pct > 0 and pct < 0.20 and pct < best_hp_pct then
+                    best_hp_pct = pct
+                    best_add = enemy
+                end
+            end
+        end
+    end
+
+    bb:set("combat.low_health_add", best_add)
+end
+
+-- ---------------------------------------------------------------------------
+-- Emergency escape: all defensives exhausted, must hard flee
+-- ---------------------------------------------------------------------------
+function FrostCombatState:_refresh_emergency_escape(bb, player)
+    bb:set("combat.can_emergency_escape", false)
+    if not player then return end
+
+    local hp_pct = num(bb:get("player.health_pct", 1))
+    if hp_pct >= 0.15 then return end
+
+    -- Ice Block available → not an emergency
+    local catalog = bb:get("module.combat.catalog")
+    local cooldowns = bb:get("module.combat.cooldowns")
+    if catalog and cooldowns then
+        local ib_id = catalog:resolve_best_rank("ice_block")
+        if ib_id and cooldowns:spell_ready(ib_id) then
+            return
+        end
+    end
+
+    -- Usable health potion available → not an emergency
+    if bb:get("combat.has_health_potion") == true then
+        local now = bb:get("system.now_ms", 0)
+        local cd = bb:get("combat.potion_cd_until_ms", 0)
+        if now >= cd then
+            return
+        end
+    end
+
+    bb:set("combat.can_emergency_escape", true)
+end
+
+-- ---------------------------------------------------------------------------
 -- Reset all state keys
 -- ---------------------------------------------------------------------------
 function FrostCombatState:reset()
@@ -298,6 +379,9 @@ function FrostCombatState:reset()
     bb:set("combat.mana_gem_item_id", nil)
     bb:set("combat.has_water_elemental", false)
     bb:set("combat.kite_state", "NONE")
+    bb:set("combat.low_health_add", nil)
+    bb:set("combat.can_emergency_escape", false)
+    bb:set("combat.emergency_flee", false)
 end
 
 -- Expose constants for other modules

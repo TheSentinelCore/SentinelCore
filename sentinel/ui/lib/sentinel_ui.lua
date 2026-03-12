@@ -78,7 +78,8 @@ local function menu_checkbox(default_value, id)
     if core and core.menu and core.menu.checkbox then
         return core.menu.checkbox(default_value, id)
     end
-    return nil
+    -- Fallback when core.menu is unavailable (avoids nil dereference in _is_enabled)
+    return { get_state = function() return default_value end, set = function() end }
 end
 
 -- ============================================================================
@@ -349,47 +350,47 @@ local THEMES = {
         text_footer      = color.new(235, 235, 245, 102),
     },
     sentinel = {
-        background        = color.new(17, 21, 24, 235),
-        border            = color.new(64, 90, 102, 220),
-        section_bg        = color.new(28, 34, 39, 220),
-        section_border    = color.new(58, 74, 84, 180),
-        primary_accent    = color.new(46, 179, 153, 255),
-        secondary_accent  = color.new(227, 168, 71, 255),
-        text_primary      = color.new(244, 247, 249, 245),
-        text_secondary    = color.new(204, 214, 219, 210),
-        text_disabled     = color.new(124, 133, 138, 180),
-        slider_fill       = color.new(46, 179, 153, 235),
-        slider_bg         = color.new(46, 54, 60, 215),
-        checkbox_active   = color.new(46, 179, 153, 255),
-        checkbox_inactive = color.new(60, 68, 74, 210),
-        checkbox_border   = color.new(90, 104, 112, 200),
-        keybind_bg        = color.new(34, 40, 45, 220),
-        keybind_border    = color.new(64, 82, 90, 190),
-        keybind_active    = color.new(227, 168, 71, 255),
-        keybind_inactive  = color.new(58, 70, 76, 210),
-        separator         = color.new(110, 129, 139, 110),
-        bg_tooltip        = color.new(24, 28, 32, 240),
-        bg_input          = color.new(34, 40, 45, 255),
-        bg_input_focused  = color.new(42, 50, 56, 255),
-        border_input      = color.new(64, 82, 90, 255),
-        border_input_focused = color.new(46, 179, 153, 255),
-        text_placeholder  = color.new(124, 133, 138, 180),
-        dropdown_hover    = color.new(46, 179, 153, 40),
-        listbox_selected  = color.new(46, 179, 153, 50),
-        progress_track    = color.new(46, 54, 60, 255),
-        bg_card           = color.new(28, 34, 39, 255),
-        bg_elevated       = color.new(38, 46, 52, 255),
-        bg_hover          = color.new(48, 56, 62, 255),
-        status_green      = color.new(48, 209, 88, 255),
-        status_red        = color.new(255, 69, 58, 255),
-        status_orange     = color.new(255, 159, 10, 255),
-        status_yellow     = color.new(255, 214, 10, 255),
-        status_purple     = color.new(191, 90, 242, 255),
-        toggle_track_on   = color.new(46, 179, 153, 255),
-        toggle_track_off  = color.new(120, 120, 128, 92),
-        toggle_thumb      = color.new(255, 255, 255, 255),
-        row_separator     = color.new(110, 129, 139, 50),
-        text_footer       = color.new(204, 214, 219, 130),
+        background        = color.new(14, 16, 20, 240),
+        border            = color.new(52, 60, 72, 200),
+        section_bg        = color.new(22, 26, 32, 230),
+        section_border    = color.new(44, 52, 64, 170),
+        primary_accent    = color.new(86, 140, 210, 255),
+        secondary_accent  = color.new(210, 160, 80, 255),
+        text_primary      = color.new(220, 225, 232, 245),
+        text_secondary    = color.new(160, 170, 182, 210),
+        text_disabled     = color.new(100, 108, 118, 170),
+        slider_fill       = color.new(86, 140, 210, 230),
+        slider_bg         = color.new(36, 42, 50, 215),
+        checkbox_active   = color.new(86, 140, 210, 255),
+        checkbox_inactive = color.new(48, 54, 64, 210),
+        checkbox_border   = color.new(72, 82, 96, 200),
+        keybind_bg        = color.new(28, 32, 40, 220),
+        keybind_border    = color.new(52, 60, 72, 190),
+        keybind_active    = color.new(210, 160, 80, 255),
+        keybind_inactive  = color.new(48, 54, 64, 210),
+        separator         = color.new(80, 90, 105, 100),
+        bg_tooltip        = color.new(18, 20, 26, 245),
+        bg_input          = color.new(28, 32, 40, 255),
+        bg_input_focused  = color.new(34, 40, 48, 255),
+        border_input      = color.new(52, 60, 72, 255),
+        border_input_focused = color.new(86, 140, 210, 255),
+        text_placeholder  = color.new(100, 108, 118, 170),
+        dropdown_hover    = color.new(86, 140, 210, 35),
+        listbox_selected  = color.new(86, 140, 210, 45),
+        progress_track    = color.new(36, 42, 50, 255),
+        bg_card           = color.new(22, 26, 32, 255),
+        bg_elevated       = color.new(30, 36, 44, 255),
+        bg_hover          = color.new(38, 44, 52, 255),
+        status_green      = color.new(72, 200, 110, 255),
+        status_red        = color.new(230, 80, 70, 255),
+        status_orange     = color.new(235, 150, 40, 255),
+        status_yellow     = color.new(235, 200, 50, 255),
+        status_purple     = color.new(170, 100, 230, 255),
+        toggle_track_on   = color.new(86, 140, 210, 255),
+        toggle_track_off  = color.new(100, 100, 110, 85),
+        toggle_thumb      = color.new(240, 242, 245, 255),
+        row_separator     = color.new(80, 90, 105, 45),
+        text_footer       = color.new(160, 170, 182, 120),
     }
 }
 
@@ -465,15 +466,15 @@ local function is_mouse_pressed_left(window)
     if not window then
         return false
     end
-    -- Some backends use 0-based (ImGui), others 1-based. Accept either.
-    return window:is_mouse_button_pressed(0) or window:is_mouse_button_pressed(1)
+    -- ImGui: button 0 = left, button 1 = right. Only accept left click.
+    return window:is_mouse_button_pressed(0)
 end
 
 local function is_mouse_clicked_left(window)
     if not window then
         return false
     end
-    return window:is_mouse_button_clicked(0) or window:is_mouse_button_clicked(1)
+    return window:is_mouse_button_clicked(0)
 end
 
 local function render_toggle_switch(window, colors, x, y, is_on)
@@ -636,6 +637,7 @@ function RotationSettingsUI.new(config)
     self._text_input_buffers = {}
     self._text_input_cursor = {}
     self._text_input_blink = 0
+    self._text_input_prev_keys = {}
 
     -- Listbox state
     self._listbox_scroll = {}
@@ -782,6 +784,7 @@ function TabBuilder:listbox(opts)
         label = opts and opts.label or nil,
         id = opts and opts.id or nil,
         elements = opts and opts.elements or nil,
+        footer = opts and opts.footer or nil,
         visible_when = opts and opts.visible_when or nil
     })
 end
@@ -1104,7 +1107,17 @@ function RotationSettingsUI:_render_active_tab_content(y_offset)
 
     local section = self.sections[self.active_tab_index]
     if not section or not self:_is_section_visible(section) then
-        return y_offset
+        -- Auto-select first visible tab instead of showing blank content
+        for i, s in ipairs(self.sections) do
+            if self:_is_section_visible(s) then
+                self.active_tab_index = i
+                section = s
+                break
+            end
+        end
+        if not section or not self:_is_section_visible(section) then
+            return y_offset
+        end
     end
 
     -- Render section content (NO header, just content)
@@ -2321,6 +2334,8 @@ function RotationSettingsUI:_render_text_input_list(section, y_offset)
     local now = (core and core.time and core.time()) or 0
     self._text_input_blink = now
 
+    local any_input_clicked = false
+
     for i, item in ipairs(section.elements) do
         if item and self:_is_entry_visible(item) then
             local label = item.label or ("Input " .. i)
@@ -2395,50 +2410,66 @@ function RotationSettingsUI:_render_text_input_list(section, y_offset)
                 self._text_input_focus_id = input_id
                 self._text_input_cursor[input_id] = #buffer
                 self.window:block_input_capture()
+                any_input_clicked = true
             end
 
             -- Handle keyboard input when focused
             if is_focused then
                 self.window:block_input_capture()
-                local shift_held = core.input.is_key_down(16)
+                local shift_held = core.input.is_input_bit_active(16)
+
+                -- Sample all tracked keys once this frame
+                local curr = {}
+                local control_vks = {27, 13, 8, 46, 37, 39, 36, 35}
+                for _, vk in ipairs(control_vks) do
+                    curr[vk] = core.input.is_key_pressed(vk) or false
+                end
+                for vk, _ in pairs(VK_CHAR_MAP) do
+                    curr[vk] = core.input.is_key_pressed(vk) or false
+                end
+
+                local prev = self._text_input_prev_keys
+                local function key_edge(vk)
+                    return curr[vk] and not prev[vk]
+                end
 
                 -- Escape → unfocus
-                if core.input.is_key_pressed(27) then
+                if key_edge(27) then
                     -- Revert to original value
                     self._text_input_focus_id = nil
                 -- Enter → commit
-                elseif core.input.is_key_pressed(13) then
+                elseif key_edge(13) then
                     if type(on_change) == "function" then
                         pcall(on_change, buffer)
                     end
                     self._text_input_focus_id = nil
                 -- Backspace
-                elseif core.input.is_key_pressed(8) then
+                elseif key_edge(8) then
                     if cursor_pos > 0 then
                         buffer = string.sub(buffer, 1, cursor_pos - 1) .. string.sub(buffer, cursor_pos + 1)
                         cursor_pos = cursor_pos - 1
                     end
                 -- Delete
-                elseif core.input.is_key_pressed(46) then
+                elseif key_edge(46) then
                     if cursor_pos < #buffer then
                         buffer = string.sub(buffer, 1, cursor_pos) .. string.sub(buffer, cursor_pos + 2)
                     end
                 -- Left arrow
-                elseif core.input.is_key_pressed(37) then
+                elseif key_edge(37) then
                     cursor_pos = math.max(0, cursor_pos - 1)
                 -- Right arrow
-                elseif core.input.is_key_pressed(39) then
+                elseif key_edge(39) then
                     cursor_pos = math.min(#buffer, cursor_pos + 1)
                 -- Home
-                elseif core.input.is_key_pressed(36) then
+                elseif key_edge(36) then
                     cursor_pos = 0
                 -- End
-                elseif core.input.is_key_pressed(35) then
+                elseif key_edge(35) then
                     cursor_pos = #buffer
                 else
                     -- Character input
                     for vk, chars in pairs(VK_CHAR_MAP) do
-                        if core.input.is_key_pressed(vk) then
+                        if key_edge(vk) then
                             local ch = shift_held and chars.upper or chars.lower
                             if #buffer < max_length then
                                 buffer = string.sub(buffer, 1, cursor_pos) .. ch .. string.sub(buffer, cursor_pos + 1)
@@ -2449,8 +2480,14 @@ function RotationSettingsUI:_render_text_input_list(section, y_offset)
                     end
                 end
 
+                -- Save current key state as prev for next frame
+                self._text_input_prev_keys = curr
+
                 self._text_input_buffers[input_id] = buffer
                 self._text_input_cursor[input_id] = cursor_pos
+            else
+                -- Clear prev key state when not focused
+                self._text_input_prev_keys = {}
             end
 
             y_offset = y_offset + LAYOUT.text_input_height + LAYOUT.element_spacing
@@ -2458,7 +2495,7 @@ function RotationSettingsUI:_render_text_input_list(section, y_offset)
     end
 
     -- Click outside any input → unfocus and commit
-    if self._text_input_focus_id and is_mouse_clicked_left(self.window) then
+    if self._text_input_focus_id and not any_input_clicked and is_mouse_clicked_left(self.window) then
         local focus_id = self._text_input_focus_id
         -- Find the matching item to commit
         for _, item in ipairs(section.elements) do
@@ -2468,7 +2505,7 @@ function RotationSettingsUI:_render_text_input_list(section, y_offset)
                 break
             end
         end
-        -- Unfocus is handled per-item above; this is a fallback
+        self._text_input_focus_id = nil
     end
 
     return y_offset + LAYOUT.section_padding_bottom

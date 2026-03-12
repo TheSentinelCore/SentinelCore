@@ -24,6 +24,7 @@ function M.run()
             end,
         },
         get_map_id = function() return 530 end,
+        time = function() return 1000 end,
         log = function() end,
     }
 

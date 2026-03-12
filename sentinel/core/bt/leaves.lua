@@ -30,6 +30,9 @@ end
 function Action:tick(blackboard)
     local ok, result = pcall(self._fn, blackboard)
     if not ok then
+        if core and core.log then
+            pcall(core.log, "[BT] Action '" .. (self.name or "?") .. "' error: " .. tostring(result))
+        end
         return Status.FAILURE
     end
     if result == Status.SUCCESS or result == Status.FAILURE or result == Status.RUNNING then

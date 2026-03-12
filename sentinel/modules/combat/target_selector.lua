@@ -78,7 +78,7 @@ local function resolve_spell_helper()
         local ok, mod = pcall(require, "common/utility/spell_helper")
         if ok and mod then
             _spell_helper_ref = mod
-            _spell_helper_call_style = "plain"
+            _spell_helper_call_style = "self"
         end
         _spell_helper_resolved = true
     end
@@ -208,7 +208,7 @@ function TargetSelector:_score(player, candidate, current_target, leash_center, 
     end
 
     local ok_hp, hp_pct = safe_call(candidate, "get_health_percentage")
-    if ok_hp and tonumber(hp_pct) and tonumber(hp_pct) <= 0.20 then
+    if ok_hp and tonumber(hp_pct) and tonumber(hp_pct) <= 20 then
         score = score + 15
     end
 

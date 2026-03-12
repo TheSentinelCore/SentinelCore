@@ -156,12 +156,18 @@ function ProfileVisualizer:_on_render()
     local ok_pos, player_pos = pcall(player.get_position, player)
     if not ok_pos or not player_pos then return end
 
-    -- Get profile
+    -- Get profile (active or editor preview)
+    local profile = nil
     local ok_loaded, loaded = pcall(self._profile_manager.is_profile_loaded, self._profile_manager)
-    if not ok_loaded or not loaded then return end
-
-    local ok_prof, profile = pcall(self._profile_manager.get_active_profile, self._profile_manager)
-    if not ok_prof or not profile then return end
+    if ok_loaded and loaded then
+        local ok_prof, p = pcall(self._profile_manager.get_active_profile, self._profile_manager)
+        if ok_prof and p then profile = p end
+    end
+    if not profile then
+        local ok_prev, prev = pcall(self._profile_manager.get_preview, self._profile_manager)
+        if ok_prev and prev then profile = prev end
+    end
+    if not profile then return end
 
     -- Current hotspot index
     local ok_idx, current_index = pcall(self._blackboard.get, self._blackboard, "module.grind.current_hotspot_index")

@@ -4,14 +4,23 @@ local function blackboard(app)
     return app:get_blackboard()
 end
 
-local function format_vec3(value)
-    if type(value) ~= "table" then
-        return "-"
+local function mode_label(menu)
+    local idx = menu and menu.bot_mode and menu.bot_mode:get() or 1
+    idx = tonumber(idx) or 1
+    if idx == 2 then
+        return "Grind"
     end
-    return string.format("%.1f %.1f %.1f", tonumber(value.x) or 0, tonumber(value.y) or 0, tonumber(value.z) or 0)
+    return "Battleground"
 end
 
-function DashboardTab.render(t, app, _menu)
+function DashboardTab.render(t, app, menu)
+    t:segmented_control({
+        label = "Bot Mode",
+        element = menu.bot_mode,
+        options = { "Battleground", "Grind" },
+        tooltip = "Switch between Battleground PvP and open-world Grinding modes. Only the selected mode's tab and module will be active.",
+    })
+
     t:metric_grid({
         label = "Live",
         elements = {
@@ -43,8 +52,15 @@ function DashboardTab.render(t, app, _menu)
     })
 
     t:row_list({
-        label = "State",
+        label = "Status",
         elements = {
+            {
+                type = "info",
+                label = "Mode",
+                value_fn = function()
+                    return mode_label(menu)
+                end,
+            },
             {
                 type = "info",
                 label = "Map",
@@ -62,39 +78,11 @@ function DashboardTab.render(t, app, _menu)
             },
             {
                 type = "info",
-                label = "Battleground State",
-                value_fn = function()
-                    local battleground = app:get_module("battleground")
-                    return battleground and battleground:get_state() or "-"
-                end,
-            },
-            {
-                type = "info",
                 label = "Nav State",
                 value_fn = function()
                     return tostring(blackboard(app):get("nav.state", "idle"))
                 end,
             },
-            {
-                type = "info",
-                label = "Objective",
-                value_fn = function()
-                    return tostring(blackboard(app):get("bg.objective_id", "-"))
-                end,
-            },
-            {
-                type = "info",
-                label = "Destination",
-                value_fn = function()
-                    return format_vec3(blackboard(app):get("nav.destination"))
-                end,
-            },
-        },
-    })
-
-    t:row_list({
-        label = "Actions",
-        elements = {
             {
                 type = "button",
                 label = "Combat",
@@ -104,18 +92,6 @@ function DashboardTab.render(t, app, _menu)
                     local combat = app:get_module("combat")
                     if combat then
                         combat:disengage("ui_disengage")
-                    end
-                end,
-            },
-            {
-                type = "button",
-                label = "Battleground",
-                text = "Regroup",
-                tooltip = "Force the battleground module into retreat/regroup flow.",
-                on_click = function()
-                    local battleground = app:get_module("battleground")
-                    if battleground then
-                        battleground:force_regroup("ui_force_regroup")
                     end
                 end,
             },

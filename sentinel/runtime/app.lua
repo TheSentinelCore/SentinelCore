@@ -70,6 +70,9 @@ function SentinelApp:on_update()
             self._ui.on_update()
         end)
     end
+    -- Poll nav adapter so all modules see fresh nav state (is_active, get_state)
+    self._nav_adapter:poll()
+
     self._error_boundary:wrap("battleground", "update", function()
         self._battleground:update(self._blackboard)
     end)

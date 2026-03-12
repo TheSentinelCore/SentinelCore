@@ -34,6 +34,7 @@ local FOOD_ITEMS = {
     [29393]=true,[29394]=true,[29448]=true,[29449]=true,[29450]=true,
     [29451]=true,[29452]=true,[30155]=true,[30458]=true,[30610]=true,
     [31673]=true,[33048]=true,[33052]=true,[33053]=true,
+    [34062]=true, -- Conjured Mana Strudel (Conjure Food Rank 8, also in WATER_ITEMS)
 }
 
 -- All water/drink item IDs (class=0, subclass=5, FoodType=0) from mangos-tbc item_template
@@ -89,10 +90,10 @@ local MANA_POTIONS = {
 }
 
 local HEALTH_POTION_IDS = {}
-for _, entry in ipairs(HEALTH_POTIONS) do HEALTH_POTION_IDS[entry.item_id] = true end
+for _, entry in ipairs(HEALTH_POTIONS) do HEALTH_POTION_IDS[entry.item_id] = entry.min_level end
 
 local MANA_POTION_IDS = {}
-for _, entry in ipairs(MANA_POTIONS) do MANA_POTION_IDS[entry.item_id] = true end
+for _, entry in ipairs(MANA_POTIONS) do MANA_POTION_IDS[entry.item_id] = entry.min_level end
 
 local VENDOR_FOOD = {
     { min_level = 1,  item_id = 117   }, -- Tough Jerky

@@ -311,6 +311,49 @@ function ProfileManager:get_nearest_hotspot(position)
     return best, best_index
 end
 
+---Advance to the safest hotspot (lowest threat heat).
+---Used by death loop response to relocate away from danger.
+---@param threat_map table ThreatMap instance
+---@param now_ms number Current time in milliseconds
+---@return table|nil hotspot The new hotspot, or nil
+---@return number best_heat The heat of the chosen hotspot
+function ProfileManager:advance_to_safest_hotspot(threat_map, now_ms)
+    if not self._profile or not self._profile.hotspots then
+        return nil, math.huge
+    end
+
+    local count = #self._profile.hotspots
+    if count == 0 then return nil, math.huge end
+
+    -- Build spots array with center field for threat_map API
+    local spots = {}
+    for i, hs in ipairs(self._profile.hotspots) do
+        spots[i] = { center = { x = hs.x, y = hs.y, z = hs.z } }
+    end
+
+    local safest_idx = threat_map:get_safest_hotspot(spots, now_ms)
+    if not safest_idx then return nil, math.huge end
+
+    local best_heat = threat_map:get_heat(spots[safest_idx].center, 60, now_ms)
+
+    if safest_idx ~= self._hotspot_index then
+        local from_index = self._hotspot_index
+        self._hotspot_index = safest_idx
+        self._dry_spell_start = nil
+
+        log("death loop: advanced to safest hotspot " .. safest_idx .. " (heat: " .. string.format("%.1f", best_heat) .. ")")
+        self._event_bus:publish("grind:hotspot_advanced", {
+            from_index = from_index,
+            to_index = safest_idx,
+            reason = "death_loop_safest",
+        })
+
+        self:_inject_hotspot()
+    end
+
+    return self._profile.hotspots[safest_idx], best_heat
+end
+
 -- ---------------------------------------------------------------------------
 -- Filters
 -- ---------------------------------------------------------------------------
@@ -445,6 +488,7 @@ function ProfileManager:save_profile(profile, filename)
     end
 
     local path = PROFILE_DIR .. "/" .. filename
+    pcall(core.create_data_file, path)
     local write_ok = pcall(core.write_data_file, path, json_str)
     if not write_ok then
         log_error("save_profile: failed to write file: " .. path)
@@ -506,11 +550,13 @@ function ProfileManager:update(player_level, map_id)
             max_level = max_level,
         })
 
-        -- Attempt autoloader transition
+        -- Attempt autoloader transition (guard against reloading the same profile)
         local resolved = Autoloader.resolve(player_level)
-        if resolved then
+        if resolved and resolved ~= self._profile_filename then
             log("autoloader resolved next profile: " .. resolved)
             self:load_profile(resolved)
+        elseif resolved then
+            log("autoloader resolved same profile (" .. resolved .. "), skipping reload")
         end
         return
     end
@@ -561,7 +607,14 @@ function ProfileManager:try_autoload(player_level, map_id)
         return false
     end
 
-    local success = self:load_profile(resolved)
+    local success, errors = self:load_profile(resolved)
+    if not success then
+        log_error("autoload failed for " .. resolved .. ": " .. table.concat(errors or {}, "; "))
+        self._event_bus:publish("grind:autoload_failed", {
+            filename = resolved,
+            errors = errors,
+        })
+    end
     return success
 end
 
@@ -630,6 +683,34 @@ end
 ---@return number
 function ProfileManager:get_loops_completed()
     return self._loops_completed
+end
+
+---Set a preview profile (unsaved editor data) for visualization.
+---@param editor_state table|nil The editor state table with hotspots, vendors, blackspots, etc.
+function ProfileManager:set_preview(editor_state)
+    self._preview = editor_state
+end
+
+---Get the preview profile for visualization, or nil if none set.
+---@return table|nil A profile-shaped table built from editor state
+function ProfileManager:get_preview()
+    if not self._preview then return nil end
+    local ed = self._preview
+    if (not ed.hotspots or #ed.hotspots == 0)
+        and (not ed.vendors or #ed.vendors == 0)
+        and (not ed.blackspots or #ed.blackspots == 0) then
+        return nil
+    end
+    return {
+        hotspots = ed.hotspots or {},
+        vendors = ed.vendors or {},
+        blackspots = ed.blackspots or {},
+        target_defaults = {
+            npc_whitelist = ed.whitelist or {},
+            npc_blacklist = ed.blacklist or {},
+        },
+        options = { loop = true },
+    }
 end
 
 return ProfileManager

@@ -161,9 +161,19 @@ local function create_menu_elements()
         grind_health_flee_pct = menu_slider_int(5, 50, 20, "sentinel_ui_grind_health_flee_pct"),
         grind_max_hostiles = menu_slider_int(1, 8, 3, "sentinel_ui_grind_max_hostiles"),
         grind_show_overlay = menu_checkbox(true, "sentinel_ui_grind_show_overlay"),
+        grind_mode = menu_slider_int(1, 2, 1, "sentinel_ui_grind_mode"),
+        grind_patrol_radius = menu_slider_int(20, 150, 60, "sentinel_ui_grind_patrol_radius"),
+        grind_vendor_sell_quality = menu_slider_int(0, 4, 2, "sentinel_ui_grind_vendor_sell_quality"),
+        grind_repair_threshold = menu_slider_int(0, 200, 50, "sentinel_ui_grind_repair_threshold"),
+        grind_pvp_avoidance = menu_checkbox(true, "sentinel_ui_grind_pvp_avoidance"),
 
         -- Profile Editor
         profile_editor_hotspot_radius = menu_slider_int(10, 100, 40, "sentinel_ui_profile_editor_hotspot_radius"),
+        profile_editor_detail_view = menu_slider_int(1, 2, 1, "sentinel_ui_profile_editor_detail_view"),
+
+        -- Segmented diagnostic views
+        bg_diagnostics_view = menu_slider_int(1, 5, 1, "sentinel_ui_bg_diagnostics_view"),
+        debug_view = menu_slider_int(1, 3, 1, "sentinel_ui_debug_view"),
     }
 end
 
@@ -306,6 +316,19 @@ local function sync_to_runtime()
     blackboard:set("module.grind.mana_drink_pct", (_menu.grind_mana_drink_pct:get() or 40) / 100)
     blackboard:set("module.grind.health_flee_pct", (_menu.grind_health_flee_pct:get() or 20) / 100)
     blackboard:set("module.grind.max_hostiles", _menu.grind_max_hostiles:get() or 3)
+    blackboard:set("module.grind.vendor_sell_quality", _menu.grind_vendor_sell_quality:get() or 2)
+    blackboard:set("module.grind.repair_threshold_copper", (_menu.grind_repair_threshold:get() or 50) * 100)
+    blackboard:set("module.grind.pvp_avoidance", _menu.grind_pvp_avoidance:get_state() == true)
+
+    local grind_mode_val = _menu.grind_mode:get() or 1
+    local new_mode = grind_mode_val == 2 and "patrol" or "profile"
+    local old_mode = blackboard:get("module.grind.mode")
+    blackboard:set("module.grind.mode", new_mode)
+    blackboard:set("module.grind.patrol_radius", _menu.grind_patrol_radius:get() or 60)
+    -- Signal patrol center reset when switching to patrol mode
+    if new_mode == "patrol" and old_mode ~= "patrol" then
+        blackboard:set("module.grind.patrol_center_reset", true)
+    end
 end
 
 function Window.init(app)

@@ -742,11 +742,16 @@ function NavigationService:_request(url, callback, attempt)
         end
 
         -- Retryable?
-        local retryable = (code == 0 or code == 500 or code == 502
-            or code == 503 or code == 504)
+        -- 422 is retried because the first request to a new map triggers tile
+        -- loading on the server; the triggering request itself fails with
+        -- "Position not on navmesh" before the tiles are ready.
+        local retryable = (code == 0 or code == 422 or code == 500
+            or code == 502 or code == 503 or code == 504)
 
         if retryable and attempt < self._max_retries then
-            local delay_secs = 0.5 * (2 ^ (attempt - 1))
+            -- 422 uses a longer base delay (2s) to allow tile loading to finish
+            local base = (code == 422) and 2.0 or 0.5
+            local delay_secs = base * (2 ^ (attempt - 1))
             self._event_bus:emit(Events.SERVER_RETRY, {
                 code = code,
                 attempt = attempt,

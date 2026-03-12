@@ -451,6 +451,39 @@ function Act.pet_passive(blackboard)
 end
 
 -- ---------------------------------------------------------------------------
+-- Add finishing (target low-HP secondary enemy with Fire Blast)
+-- ---------------------------------------------------------------------------
+
+function Act.finish_low_add(blackboard)
+    local add = blackboard:get("combat.low_health_add")
+    if not add then return Status.FAILURE end
+    local d = dispatcher(blackboard)
+    local spell_id = spell_id_for(blackboard, "fire_blast")
+    if not d or not spell_id then
+        return Status.FAILURE
+    end
+    if d:queue_target("finish_low_add", spell_id, add, QueuePriorities.BURST, "finish_low_add") then
+        return Status.SUCCESS
+    end
+    return Status.FAILURE
+end
+
+-- ---------------------------------------------------------------------------
+-- Emergency escape (Blink + signal hard flee)
+-- ---------------------------------------------------------------------------
+
+function Act.emergency_escape(blackboard)
+    blackboard:set("combat.emergency_flee", true)
+    local player = blackboard:get("player.object")
+    local d = dispatcher(blackboard)
+    local blink_id = spell_id_for(blackboard, "blink")
+    if d and blink_id and player then
+        d:queue_target("emergency_blink", blink_id, player, QueuePriorities.DEFENSIVE, "emergency_blink")
+    end
+    return Status.SUCCESS
+end
+
+-- ---------------------------------------------------------------------------
 -- Cast cancellation + kite start
 -- ---------------------------------------------------------------------------
 
