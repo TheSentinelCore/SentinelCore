@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo run:*)",
+      "Bash(\"C:/Users/Levi/Desktop/mangos-tbc/build/bin/x64_Release/Extractors/MoveMapGen.exe\" --configInputPath mmap_config.json --gameobjectCsvPath gameobject_spawns.csv 0 --tile 49,31)",
+      "Bash(\"C:/Users/Levi/Desktop/mangos-tbc/build/bin/x64_Release/Extractors/MoveMapGen.exe\" 0 --tile 49,31 --configInputPath mmap_config.json --gameobjectCsvPath gameobject_spawns.csv)",
+      "Read(//c//**)",
+      "Bash(wmic process where \"ProcessId=31088\" get CommandLine)",
+      "Bash(node -e \":*)",
+      "Bash(node -e \"const fs=require\\(''fs''\\);console.log\\(fs.readFileSync\\(''c:/Users/Levi/Desktop/Sylvannas/scripts/tools/lx-debug-server/node_modules/@modelcontextprotocol/sdk/package.json'',''utf8''\\).substring\\(0,200\\)\\)\")",
+      "mcp__lx-debug__game_read_log",
+      "Bash(luajit -v)",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore/ui/tabs/profile_tab.lua\")",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore/services/ProfileRecorder.lua\")",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore/services/ProfileCoordinator.lua\")",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore/ui/ProfileOverlay.lua\")",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore/ui/window.lua\")",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore/core/Client.lua\")",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore/init.lua\")",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore/main.lua\")",
+      "Bash(find \"/c/Users/Levi/Desktop/Sylvannas/scripts/SentinelCore\" -name \"*.lua\" -exec \"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p {} ;)",
+      "mcp__lx-debug__game_wait_reload",
+      "Bash(\"/c/Program Files \\(x86\\)/Lua/5.1/luac\" -p SentinelCore/ui/tabs/profile_tab.lua)",
+      "mcp__filesystem__directory_tree"
+    ]
+  }
+}

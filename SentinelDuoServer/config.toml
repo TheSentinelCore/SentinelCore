@@ -1,0 +1,12 @@
+[server]
+host = "127.0.0.1"
+port = 7300
+
+[session]
+heartbeat_timeout_ms = 5000      # Client considered disconnected after 5s without heartbeat
+barrier_timeout_ms = 90000       # Sync barrier breaks after 90s (e.g. loading screen)
+max_clients = 2
+
+[lockout]
+max_resets_per_hour = 5          # Hard limit; triggers wait state at 4 (1 buffer)
+warn_at = 4                      # Warn at 4 resets

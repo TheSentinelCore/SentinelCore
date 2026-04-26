@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git clean:*)",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" issue create:*)",
+      "Bash(git pull:*)",
+      "Bash(git diff-tree:*)",
+      "Bash(./vcpkg.exe install:*)",
+      "Bash(/c/Users/Levi/Desktop/vcpkg/vcpkg list:*)",
+      "Bash(# Count original 530 tiles ls /c/Users/Levi/Desktop/Sylvannas/scripts/NavBuddy/mmaps/530*.mmtile)",
+      "Bash(\"/c/Users/Levi/Desktop/mangos-tbc/build/bin/x64_Release/Extractors/MoveMapGen.exe\" \"0 1\" --silent)",
+      "Bash(# Start NavBuddy and test loading map 530 cd /c/Users/Levi/Desktop/Sylvannas/scripts/NavBuddy && ./target/release/navbuddy.exe 2>&1 & sleep 3 tasklist)",
+      "Read(//c/Users/Levi/Desktop/Sylvannas/scripts/**)",
+      "Bash(\"../build/bin/x64_Release/Extractors/MoveMapGen.exe\" 530)",
+      "Bash(__NEW_LINE_d3c0c83452492ccb__ echo \"=== Map 0 ===\")",
+      "Bash(__NEW_LINE_2bf0395988b94c74__ echo \"=== Map 1 ===\")",
+      "Bash(\"C:/Users/Levi/Desktop/mangos-tbc/build/bin/x64_Release/Extractors/MoveMapGen.exe\" 1 --tile 40,28 --configInputPath mmap_config.json)",
+      "Bash(cmd //c \"dir C:\\\\Users\\\\Levi\\\\Desktop\\\\mangos-tbc\\\\extracted\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Levi\\Desktop\\mangos-tbc\\extracted\\mmaps"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "lx-debug"
+  ],
+  "enableAllProjectMcpServers": true
+}
