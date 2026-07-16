@@ -171,22 +171,38 @@ local function register_tabs(ui, app, menu)
     local content_pad = 16 -- LAYOUT.padding_side
     
     ui:add_tab({ id = "quest_dashboard", label = "Quest Dashboard", visible_when = is_quest_mode }, function(t)
-        -- Dashboard is read-only info display, use custom render
+        -- Dashboard display (custom render for active quests, metrics)
         t:custom_render({
             render_fn = function(ui_instance, y_offset)
                 local window = ui_instance.window
                 local w = window:get_size()
                 local content_w = w.x - content_pad * 2
-                -- render_dashboard_tab expects (window, x, y, w, h) and returns new y
-                -- We call it with the current y_offset and return the result
                 local new_y = QuestWindow.render_dashboard_tab(window, content_pad, y_offset, content_w, 500)
                 return new_y
             end
         })
+        
+        -- Dashboard Visual Settings
+        t:checkbox_grid({
+            label = "Dashboard Display",
+            columns = 2,
+            elements = {
+                { element = menu.quest_show_overlay, label = "Show Quest Overlay" },
+                { element = menu.quest_show_path, label = "Show Path Visualization" },
+                { element = menu.quest_show_objectives, label = "Show Objectives on Map" },
+            }
+        })
+        
+        t:slider_list({
+            label = "Overlay Scale",
+            elements = {
+                { element = menu.quest_overlay_scale, label = "Overlay Scale", suffix = "%" },
+            }
+        })
     end)
     
     ui:add_tab({ id = "quest_planner", label = "Quest Planner", visible_when = is_quest_mode }, function(t)
-        -- Planner is read-only info display, use custom render
+        -- Planner display (custom render for plan visualization)
         t:custom_render({
             render_fn = function(ui_instance, y_offset)
                 local window = ui_instance.window
@@ -196,10 +212,28 @@ local function register_tabs(ui, app, menu)
                 return new_y
             end
         })
+        
+        -- Planner Behavior Settings
+        t:checkbox_grid({
+            label = "Auto-Planning",
+            columns = 2,
+            elements = {
+                { element = menu.quest_auto_start, label = "Auto Start Questing" },
+                { element = menu.quest_auto_replan, label = "Auto Replan on Changes" },
+            }
+        })
+        
+        t:slider_list({
+            label = "Planning Thresholds",
+            elements = {
+                { element = menu.quest_replan_interval, label = "Replan Interval", suffix = " sec" },
+                { element = menu.quest_max_active, label = "Max Active Quests in Plan" },
+            }
+        })
     end)
     
     ui:add_tab({ id = "quest_profiles", label = "Quest Profiles", visible_when = is_quest_mode }, function(t)
-        -- Profiles tab - mix of info and actions
+        -- Profiles display (custom render for profile list)
         t:custom_render({
             render_fn = function(ui_instance, y_offset)
                 local window = ui_instance.window
@@ -209,6 +243,18 @@ local function register_tabs(ui, app, menu)
                 return new_y
             end
         })
+        
+        -- Profile Auto-Load Settings
+        t:checkbox_grid({
+            label = "Profile Auto-Load",
+            columns = 1,
+            elements = {
+                -- Note: auto_load setting would need to be added to menu if not present
+            }
+        })
+        
+        -- Profile Override (if user wants to force a specific profile)
+        -- This could be a combo box to select a profile manually
     end)
     
     ui:add_tab({ id = "quest_settings", label = "Quest Settings", visible_when = is_quest_mode }, function(t)
