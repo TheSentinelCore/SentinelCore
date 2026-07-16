@@ -12,7 +12,6 @@ QuestWindow.__index = QuestWindow
 
 -- Window state
 local _app = nil
-local _window = nil
 local _menu = nil
 local _menu_tree = nil
 local _open_button = nil
@@ -140,17 +139,8 @@ function QuestWindow.init(app)
     _menu = create_menu_elements()
     _menu_tree = core.menu.tree_node()
 
-    -- Create window
-    _window = SentinelUI.new({
-        id = "sentinel_quest_control",
-        title = "Sentinel Questing",
-        default_x = 200,
-        default_y = 100,
-        default_w = 880,
-        default_h = 680,
-        theme = "sentinel",
-        render_layer = 1,
-    })
+    -- NO LONGER CREATE OUR OWN WINDOW - use main Window's SentinelUI instead
+    -- _window = SentinelUI.new({...})
 
     -- Seed runtime defaults
     seed_runtime_defaults(bb)
@@ -460,42 +450,6 @@ local function render_tab_bar(window, x, y, w, tab_h)
 
         if hover and core.input.is_key_pressed(1) then
             _current_tab = i
-        end
-    end
-end
-
--- ============================================================================
--- MAIN WINDOW RENDER
--- ============================================================================
-
-function QuestWindow.on_render()
-    if not _initialized or not _window then return end
-
-    local window = _window
-    local w, h = window:get_size()
-    local pad = 16
-    local tab_bar_h = 48
-    local content_y = tab_bar_h + 8
-    local content_h = h - content_y - 16
-
-    -- Background
-    window:render_rect(vec2.new(0, 0), vec2.new(w, h), Design.Colors.neutral.bg_primary, 12)
-    window:render_rect_outline(vec2.new(0, 0), vec2.new(w, h), Design.Colors.neutral.border_primary, 1, 12)
-
-    -- Tab bar
-    render_tab_bar(window, 0, 0, w, tab_bar_h)
-
-    -- Content area
-    local tab = TABS[_current_tab]
-    if tab then
-        if tab.id == "dashboard" then
-            render_dashboard_tab(window, pad, content_y, w - pad * 2, content_h)
-        elseif tab.id == "planner" then
-            render_planner_tab(window, pad, content_y, w - pad * 2, content_h)
-        elseif tab.id == "profiles" then
-            render_profiles_tab(window, pad, content_y, w - pad * 2, content_h)
-        elseif tab.id == "settings" then
-            render_settings_tab(window, pad, content_y, w - pad * 2, content_h)
         end
     end
 end
@@ -1120,14 +1074,13 @@ end
 function QuestWindow.shutdown()
     _initialized = false
     _app = nil
-    _window = nil
     _menu = nil
     _menu_tree = nil
     _open_button = nil
 end
 
 function QuestWindow.get_window()
-    return _window
+    return nil -- Now using main Window's SentinelUI
 end
 
 function QuestWindow.get_menu()
@@ -1137,7 +1090,6 @@ end
 return {
     init = QuestWindow.init,
     shutdown = QuestWindow.shutdown,
-    on_render = QuestWindow.on_render,
     on_update = QuestWindow.on_update,
     get_window = QuestWindow.get_window,
     get_menu = QuestWindow.get_menu,

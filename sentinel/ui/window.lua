@@ -374,7 +374,6 @@ function Window.on_render()
         return
     end
     _ui:on_render()
-    QuestWindow.on_render()
 end
 
 function Window.on_menu_render()
