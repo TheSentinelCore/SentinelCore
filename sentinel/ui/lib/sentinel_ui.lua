@@ -1367,9 +1367,9 @@ function RotationSettingsUI:_render_checkbox_grid(section, y_offset)
                 label_color, label)
 
             -- INPUT HANDLING
-            -- Click → Toggle (only on checkbox area, not label text)
+            -- Click → Toggle (on checkbox + label area)
             local click_start = vec2.new(x_pos, y_offset)
-            local click_end = vec2.new(x_pos + LAYOUT.checkbox_size, y_offset + LAYOUT.checkbox_size)
+            local click_end = vec2.new(x_pos + column_width, y_offset + LAYOUT.checkbox_size)
             self.window:is_mouse_hovering_rect_block_movement(click_start, click_end)
             if self.window:is_mouse_hovering_rect(click_start, click_end) and item.tooltip then
                 self._tooltip = item.tooltip
