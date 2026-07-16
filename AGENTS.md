@@ -2,19 +2,30 @@
 
 ## Domain Constraints
 
-- **Sylvannas API only** — never use WoW Lua APIs. API reference in `.api/` as IntelliSense stubs.
+- **Sylvannas API only** — never use WoW Lua APIs. API reference in `Documentation - Project Sylvannas/dev/api/` (see especially `core.md`, `input.md`, `geometry.md`).
 - **Lua scripts are NOT built** — loaded at runtime by Sylvannas injector. No compile step.
 - **Testing** — run `_G.SentinelCore.run_tests()` from Sylvannas console (in-game only). No `vitest` or external Lua test runners work due to Sylvannas environment.
 
 ## Project Structure
 
 ```
-sentinel/               # Main grind/combat bot (Lua)
+sentinel/                     # Main grind/combat bot (Lua)
 ├── modules/
-│   ├── grind/          # Grind phases: rest, loot, vendor, pull, acquire, combat
-│   └── combat/         # Rotation framework, spell dispatcher, target selector
-core/                   # Shared engine: behavior trees, blackboard, event bus
-integrations/           # Adapters for external systems (nav_client)
+│   ├── grind/              # Grind phases: rest, loot, vendor, pull, acquire
+│   │   └── phases/         # BT phase implementations
+│   ├── combat/             # Rotation framework, spell dispatcher, target selector
+│   ├── battleground/       # PvP battleground strategies
+│   ├── quest/              # Quest automation
+│   ├── lfg/              # Looking-for-group helpers
+│   └── mail/               # Mail automation
+├── core/                   # Shared engine (BT, blackboard, event_bus, geometry)
+├── integrations/           # Adapters for external systems (nav_client)
+├── shared/                 # Cross-cutting libraries
+├── runtime/                # Runtime infrastructure (sensors, module registry)
+├── tests/                  # Lua tests (run via _G.SentinelCore.run_tests())
+├── docs/
+│   └── adr/                # Architecture decisions
+└── CONTEXT.md              # Domain glossary
 ```
 
 ## Execution Model
@@ -34,7 +45,7 @@ SentinelNavClient → SentinelNavServer # path, raycast, random-points endpoints
 ## Require Resolution
 
 - Paths are relative to script folder
-- `.api/common/*` is global (shared SDK access)
+- `Documentation - Project Sylvannas/dev/api/*` provides Sylvannas SDK reference
 - Each sub-project may need its own `shared/` copy of libraries
 
 ## Key Anti-Patterns to Avoid
