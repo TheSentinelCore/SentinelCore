@@ -3,7 +3,8 @@ local JSON = require("lib/JSON")
 local QuestProfileManager = {}
 QuestProfileManager.__index = QuestProfileManager
 
-local PROFILE_DIR = "sentinel/data/profiles/quests"
+local PROFILE_DIR = "quest_profiles"
+local SOURCE_PROFILE_DIR = "sentinel/data/profiles/quests"
 
 ---Log a message
 local function log(msg)
@@ -17,6 +18,44 @@ local function log_error(msg)
     if core and core.log_error then
         core.log_error("[QuestProfileManager] " .. msg)
     end
+end
+
+---Ensure profiles are copied to scripts_data
+local function ensure_profiles_in_scripts_data()
+    -- Create the directory in scripts_data
+    pcall(core.create_data_folder, PROFILE_DIR)
+    
+    -- List all YAML files in source directory
+    local source_files = core.read_dir(SOURCE_PROFILE_DIR)
+    if not source_files then
+        log_error("failed to read source profile directory: " .. SOURCE_PROFILE_DIR)
+        return false
+    end
+    
+    -- Copy each YAML file to scripts_data if it doesn't exist or is different
+    for _, filename in ipairs(source_files) do
+        if filename:match("%.yaml$") then
+            local source_path = SOURCE_PROFILE_DIR .. "/" .. filename
+            local dest_path = PROFILE_DIR .. "/" .. filename
+            
+            -- Check if destination exists and is same content
+            local dest_content = core.read_data_file(dest_path)
+            local src_content = core.read_file(source_path)
+            
+            if src_content and (not dest_content or dest_content ~= src_content) then
+                -- Create file if needed and write content
+                pcall(core.create_data_file, dest_path)
+                local write_ok = pcall(core.write_data_file, dest_path, src_content)
+                if write_ok then
+                    log("copied profile to scripts_data: " .. filename)
+                else
+                    log_error("failed to write profile to scripts_data: " .. filename)
+                end
+            end
+        end
+    end
+    
+    return true
 end
 
 ---Create new QuestProfileManager
@@ -33,9 +72,20 @@ function QuestProfileManager.new(event_bus, blackboard)
     }, QuestProfileManager)
 end
 
----Ensure profile directory exists
-function QuestProfileManager:initialize()
+---Ensure YAML profiles are copied to scripts_data
+local function ensure_profiles_in_scripts_data()
     pcall(core.create_data_folder, PROFILE_DIR)
+    local files = core.read_dir(PROFILE_DIR) or {}
+    for _, filename in ipairs(files) do
+        if filename:match("%.yaml$") then
+            local source_path = "sentinel/data/profiles/quests/" .. filename
+            local dest_path = PROFILE_DIR .. "/" .. filename
+            local ok, content = pcall(core.read_file, source_path)
+            if ok and content and content ~= "" then
+                pcall(core.write_data_file, PROFILE_DIR .. "/" .. filename, content)
+            end
+        end
+    end
 end
 
 ---Load a quest profile by zone name
@@ -43,15 +93,12 @@ end
 ---@return boolean success
 ---@return string|nil error
 function QuestProfileManager:load_profile(zone_name)
+    ensure_profiles_in_scripts_data()
     local filename = zone_name:lower() .. ".yaml"
     local path = PROFILE_DIR .. "/" .. filename
     
     local read_ok, content = pcall(core.read_data_file, path)
     if not read_ok or not content or content == "" then
-        local err = "failed to read quest profile: " .. path
-        log_error(err)
-        return false, err
-    end
     
     local data = self:_parse_yaml(content)
     if not data then
