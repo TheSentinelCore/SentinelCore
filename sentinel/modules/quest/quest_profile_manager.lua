@@ -99,6 +99,10 @@ function QuestProfileManager:load_profile(zone_name)
     
     local read_ok, content = pcall(core.read_data_file, path)
     if not read_ok or not content or content == "" then
+        local err = "failed to read quest profile: " .. path
+        log_error(err)
+        return false, err
+    end
     
     local data = self:_parse_yaml(content)
     if not data then
