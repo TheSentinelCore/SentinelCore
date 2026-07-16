@@ -113,15 +113,6 @@ Design.Colors = {
         dungeon     = { text = color.new(220, 100, 255, 255), icon = color.new(200, 80, 240, 255) },
     },
 }
-    difficulty = {
-        trivial     = { text = color.new(120, 220, 140, 255), icon = color.new(100, 200, 120, 255) },
-        easy        = { text = color.new(100, 180, 255, 255), icon = color.new(80, 160, 240, 255) },
-        normal      = { text = color.new(255, 220, 100, 255), icon = color.new(240, 200, 80, 255) },
-        hard        = { text = color.new(255, 160, 80, 255), icon = color.new(255, 140, 60, 255) },
-        elite       = { text = color.new(255, 100, 100, 255), icon = color.new(255, 80, 80, 255) },
-        dungeon     = { text = color.new(220, 100, 255, 255), icon = color.new(200, 80, 240, 255) },
-    },
-}
 
 -- ============================================================================
 -- TYPOGRAPHY - Clear hierarchy, readable at small sizes
