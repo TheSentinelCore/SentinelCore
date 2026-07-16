@@ -1,18 +1,30 @@
 local Tracker = require("modules/quest/tracker")
 local Interactions = require("modules/quest/interactions")
 local Engine = require("modules/quest/engine")
+local QuestGraph = require("modules/quest/quest_graph")
+local QuestScorer = require("modules/quest/quest_scorer")
+local RuleEngine = require("modules/quest/rule_engine")
+local ProfileManager = require("modules/grind/profile_manager")
 
 local Quest = {}
 Quest.__index = Quest
 
-function Quest.new(event_bus, blackboard)
+function Quest.new(event_bus, blackboard, nav_adapter)
     return setmetatable({
         _event_bus = event_bus,
         _blackboard = blackboard,
+        _nav_adapter = nav_adapter,
         _tracker = Tracker.new(blackboard),
         _engine = Engine.new(blackboard),
+        _graph = QuestGraph.new(blackboard),
+        _scorer = QuestScorer.new(blackboard),
+        _rule_engine = RuleEngine,
+        _profile_manager = ProfileManager.new(event_bus, blackboard),
         _subscriptions = {},
         _enabled = false,
+        _last_plan_build = 0,
+        _plan_build_interval = 5000, -- 5 seconds
+        _current_plan = nil,
     }, Quest)
 end
 
@@ -22,10 +34,19 @@ function Quest:initialize()
     self._blackboard:set("module.quest.active_count", 0)
     self._blackboard:set("module.quest.interactions", Interactions)
     self._blackboard:set("module.quest.engine", self._engine)
+    self._blackboard:set("module.quest.graph", self._graph)
+    self._blackboard:set("module.quest.scorer", self._scorer)
+    self._blackboard:set("module.quest.rule_engine", self._rule_engine)
+
+    -- Initialize profile manager
+    self._profile_manager:initialize()
+    self._blackboard:set("module.quest.profile_manager", self._profile_manager)
 
     self._subscriptions[#self._subscriptions + 1] = self._event_bus:subscribe("game:quest_log_update", function()
         if self._enabled then
             self._tracker:refresh(self._blackboard:get("system.now_ms", 0))
+            -- Mark plan as dirty on quest log change
+            self._current_plan = nil
         end
     end)
 end
@@ -35,8 +56,53 @@ function Quest:update(blackboard)
         return
     end
     local now_ms = blackboard:get("system.now_ms", 0)
+    
+    -- Refresh tracker
     if now_ms - (self._tracker._last_refresh_ms or 0) >= 2000 then
         self._tracker:refresh(now_ms)
+    end
+    
+    -- Update profile manager
+    if self._profile_manager then
+        local player = blackboard:get("player.object")
+        local player_level = 70
+        if player and type(player.get_level) == "function" then
+            local ok, lv = pcall(player.get_level, player)
+            if ok and type(lv) == "number" then player_level = lv end
+        end
+        local map_id = blackboard:get("system.map_id", 0) or 0
+        
+        if not self._profile_manager:is_profile_loaded() and not self._autoload_attempted then
+            self._autoload_attempted = true
+            self._profile_manager:try_autoload(player_level, map_id)
+        end
+        
+        self._profile_manager:update(player_level, map_id)
+    end
+    
+    -- Rebuild quest plan if needed
+    if not self._current_plan or now_ms - self._last_plan_build > self._plan_build_interval then
+        local profile = self._profile_manager:get_active_quest_profile()
+        if profile then
+            local context = {
+                zone = profile.zone,
+                level_range = profile.level_range,
+                faction = profile.faction,
+                profile = profile,
+                top_k = 5,
+                player_pos = blackboard:get("player.position"),
+                nav_adapter = self._nav_adapter,
+                quest_graph = self._graph,
+            }
+            
+            local plan = self._engine:build_plan(context)
+            if plan then
+                self._current_plan = plan
+                self._last_plan_build = now_ms
+                blackboard:set("module.quest.current_plan", plan)
+                self._event_bus:publish("quest:plan_ready", {plan = plan})
+            end
+        end
     end
 end
 
@@ -44,11 +110,24 @@ function Quest:get_engine()
     return self._engine
 end
 
+function Quest:get_graph()
+    return self._graph
+end
+
+function Quest:get_scorer()
+    return self._scorer
+end
+
+function Quest:get_current_plan()
+    return self._current_plan
+end
+
 function Quest:set_enabled(enabled)
     self._enabled = enabled == true
     self._blackboard:set("module.quest.enabled", self._enabled)
     if self._enabled then
         self._tracker:refresh(self._blackboard:get("system.now_ms", 0))
+        self._current_plan = nil -- Force replan on enable
     end
 end
 
@@ -61,6 +140,9 @@ function Quest:shutdown()
         self._event_bus:unsubscribe(token)
     end
     self._subscriptions = {}
+    if self._profile_manager then
+        self._profile_manager:shutdown()
+    end
 end
 
 return Quest
