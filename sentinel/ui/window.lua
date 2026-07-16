@@ -1,7 +1,4 @@
 local SentinelUI = require("ui/lib/sentinel_ui")
-local UnifiedDashboardTab = require("ui/tabs/unified_dashboard_tab")
-local BattlegroundTab = require("ui/tabs/battleground_tab")
-local ProfileEditorTab = require("ui/tabs/profile_editor_tab")
 local QuestWindow = require("ui/quest_ui/window")
 
 local Window = {}
@@ -13,17 +10,9 @@ local _menu = nil
 local _menu_tree = nil
 local _open_button = nil
 
--- Mode: 1 = Battleground, 2 = Grind, 3 = Quest
+-- Mode: 3 = Quest (only mode we care about now)
 local function get_mode()
-    return _menu and _menu.bot_mode and _menu.bot_mode:get() or 1
-end
-
-local function is_bg_mode()
-    return get_mode() == 1
-end
-
-local function is_grind_mode()
-    return get_mode() == 2
+    return _menu and _menu.bot_mode and _menu.bot_mode:get() or 3
 end
 
 local function is_quest_mode()
@@ -33,26 +22,11 @@ end
 -- Class detection: 2 = Paladin
 local function is_paladin()
     if not _app then
-        return false -- No app available, assume not paladin to skip paladin-specific settings
+        return false
     end
     local bb = _app:get_blackboard()
     local class_id = bb:get("player.class_id")
-    -- Must be explicit paladin (class_id == 2), not nil or 0
     return class_id == 2
-end
-
-local function queue_selection_key(value)
-    local idx = tonumber(value) or 1
-    if idx == 2 then
-        return "WSG"
-    end
-    if idx == 3 then
-        return "AB"
-    end
-    if idx == 4 then
-        return "EOTS"
-    end
-    return "AV"
 end
 
 local function ensure_menu_controls()
@@ -129,18 +103,9 @@ local function menu_combo(default_value, options, id)
 end
 
 local function create_menu_elements()
-    local bg_preferred_mount_id = {
-        value = "184865",
-        get = function(self)
-            return self.value
-        end,
-        set = function(self, value)
-            self.value = tostring(value or "")
-        end,
-    }
     return {
         -- Global
-        bot_mode = menu_slider_int(1, 3, 3, "sentinel_ui_bot_mode"),
+        bot_mode = menu_slider_int(3, 3, 3, "sentinel_ui_bot_mode"),
         combat_enabled = menu_checkbox(true, "sentinel_ui_combat_enabled"),
         burst_enabled = menu_checkbox(true, "sentinel_ui_burst_enabled"),
         combat_low_health_threshold = menu_slider_int(15, 70, 35, "sentinel_ui_combat_low_health_threshold"),
@@ -151,19 +116,6 @@ local function create_menu_elements()
         twist_window_ms = menu_slider_int(200, 450, 350, "sentinel_ui_twist_window_ms"),
         twist_mode = menu_slider_int(1, 2, 1, "sentinel_ui_twist_mode"),
         preferred_blessing = menu_slider_int(1, 2, 1, "sentinel_ui_preferred_blessing"),
-
-        -- Battleground
-        bg_enabled = menu_checkbox(true, "sentinel_ui_bg_enabled"),
-        bg_auto_engage = menu_checkbox(true, "sentinel_ui_bg_auto_engage"),
-        bg_auto_queue = menu_checkbox(false, "sentinel_ui_bg_auto_queue"),
-        bg_post_game_auto_leave = menu_checkbox(true, "sentinel_ui_bg_post_game_auto_leave"),
-        bg_auto_mount = menu_checkbox(true, "sentinel_ui_bg_auto_mount"),
-        bg_low_health_threshold = menu_slider_int(15, 70, 35, "sentinel_ui_bg_low_health_threshold"),
-        bg_engage_outnumber_grace = menu_slider_int(0, 3, 1, "sentinel_ui_bg_engage_outnumber_grace"),
-        bg_retreat_outnumber_delta = menu_slider_int(1, 5, 2, "sentinel_ui_bg_retreat_outnumber_delta"),
-        bg_queue_selection = menu_slider_int(1, 4, 1, "sentinel_ui_bg_queue_selection"),
-        bg_mount_distance = menu_slider_int(10, 120, 45, "sentinel_ui_bg_mount_distance"),
-        bg_preferred_mount_id = bg_preferred_mount_id,
 
         -- Questing
         quest_enabled = menu_checkbox(true, "sentinel_ui_quest_enabled"),
@@ -210,51 +162,11 @@ local function create_menu_elements()
         -- Debug
         quest_debug_logging = menu_checkbox(false, "sentinel_ui_quest_debug_logging"),
         quest_verbose = menu_checkbox(false, "sentinel_ui_quest_verbose"),
-
-        -- Grind
-        grind_enabled = menu_checkbox(false, "sentinel_ui_grind_enabled"),
-        grind_health_eat_pct = menu_slider_int(20, 90, 50, "sentinel_ui_grind_health_eat_pct"),
-        grind_mana_drink_pct = menu_slider_int(20, 90, 40, "sentinel_ui_grind_mana_drink_pct"),
-        grind_health_flee_pct = menu_slider_int(5, 50, 20, "sentinel_ui_grind_health_flee_pct"),
-        grind_max_hostiles = menu_slider_int(1, 8, 3, "sentinel_ui_grind_max_hostiles"),
-        grind_show_overlay = menu_checkbox(true, "sentinel_ui_grind_show_overlay"),
-        grind_mode = menu_slider_int(1, 2, 1, "sentinel_ui_grind_mode"),
-        grind_patrol_radius = menu_slider_int(20, 150, 60, "sentinel_ui_grind_patrol_radius"),
-        grind_vendor_sell_quality = menu_slider_int(0, 4, 2, "sentinel_ui_grind_vendor_sell_quality"),
-        grind_repair_threshold = menu_slider_int(0, 200, 50, "sentinel_ui_grind_repair_threshold"),
-        grind_pvp_avoidance = menu_checkbox(true, "sentinel_ui_grind_pvp_avoidance"),
-        grind_attack_neutral = menu_checkbox(false, "sentinel_ui_grind_attack_neutral"),
-
-        -- Profile Editor
-        profile_editor_hotspot_radius = menu_slider_int(10, 100, 40, "sentinel_ui_profile_editor_hotspot_radius"),
-        profile_editor_detail_view = menu_slider_int(1, 2, 1, "sentinel_ui_profile_editor_detail_view"),
-
-        -- Segmented diagnostic views
-        bg_diagnostics_view = menu_slider_int(1, 5, 1, "sentinel_ui_bg_diagnostics_view"),
-        debug_view = menu_slider_int(1, 3, 1, "sentinel_ui_debug_view"),
     }
 end
 
 local function register_tabs(ui, app, menu)
-    ui:add_tab({ id = "dashboard", label = "Dashboard" }, function(t)
-        UnifiedDashboardTab.render(t, app, menu)
-    end)
-    ui:add_tab({
-        id = "battleground",
-        label = "Battleground",
-        visible_when = is_bg_mode,
-    }, function(t)
-        BattlegroundTab.render(t, app, menu)
-    end)
-    ui:add_tab({
-        id = "profile_editor",
-        label = "Profile Editor",
-        visible_when = is_grind_mode,
-    }, function(t)
-        ProfileEditorTab.render(t, app, menu)
-    end)
-
-    -- Quest UI tabs
+    -- Quest UI tabs only (new UI only)
     ui:add_tab({ id = "quest_dashboard", label = "Quest Dashboard", visible_when = is_quest_mode }, function(t)
         QuestWindow.render_dashboard_tab(t)
     end)
@@ -271,41 +183,34 @@ end
 
 local function seed_runtime_defaults(blackboard)
     local defaults = {
-        ["module.bg.queue_join_interval_s"] = 12,
-        ["module.bg.queue_accept_delay_min_s"] = 0.6,
-        ["module.bg.queue_accept_delay_max_s"] = 1.8,
-        ["module.bg.queue_accept_mode"] = "strict_pvp",
-        ["module.bg.queue_dependencies_policy"] = "accept_anyway",
-        ["module.bg.queue_accept_retry_interval_s"] = 0.35,
-        ["module.bg.queue_accept_max_attempts"] = 20,
-        ["module.bg.queue_accept_confirm_timeout_s"] = 2.5,
-        ["module.bg.queue_join_confirm_timeout_s"] = 5.0,
-        ["module.bg.queue_active_without_bg_timeout_s"] = 10.0,
-        ["module.bg.post_game_state5_streak_required"] = 1,
-        ["module.bg.post_game_leave_initial_delay_s"] = 2.0,
-        ["module.bg.post_game_leave_retry_interval_s"] = 1.0,
-        ["module.bg.post_game_leave_max_attempts"] = 25,
-        ["module.bg.auto_mount"] = true,
-        ["module.bg.preferred_mount_id"] = 184865,
-        ["module.bg.mount_distance_threshold"] = 45,
-        ["module.bg.mount_require_outdoors"] = true,
-        ["module.bg.mount_prefer_epic"] = true,
-        ["module.bg.mount_micro_stop_for_cast_s"] = 0.45,
-        ["module.bg.mount_settle_before_cast_s"] = 0.25,
-        ["module.bg.mount_no_cast_grace_s"] = 3.0,
-        ["module.bg.pregame_mount_early"] = true,
-        ["module.bg.dismount_on_player_threat"] = true,
-        ["module.bg.player_threat_scan_radius"] = 35,
-        ["module.bg.capture_radius"] = 12,
-        ["module.bg.capture_min_hold_s"] = 1.1,
-        ["module.bg.objective_approach_mode"] = "adaptive_ring",
-        ["module.bg.objective_approach_standoff_yd"] = 8,
-        ["module.bg.objective_ring_radius_gy"] = 7,
-        ["module.bg.objective_ring_radius_tower"] = 9,
-        ["module.bg.objective_ring_radius_node"] = 8,
-        ["module.bg.objective_ring_radius_flag"] = 6,
-        ["module.bg.objective_ring_variant_count"] = 6,
-        ["module.bg.ghost_mode"] = "release_wait",
+        ["module.quest.enabled"] = false,
+        ["module.quest.auto_start"] = true,
+        ["module.quest.auto_replan"] = true,
+        ["module.quest.replan_interval"] = 5,
+        ["module.quest.max_active"] = 3,
+        ["module.quest.skip_elites"] = true,
+        ["module.quest.skip_escorts"] = false,
+        ["module.quest.skip_dungeons"] = true,
+        ["module.quest.skip_pvp"] = true,
+        ["module.quest.max_travel"] = 1800,
+        ["module.quest.min_xp_per_min"] = 500,
+        ["module.quest.combat_enabled"] = true,
+        ["module.quest.combat_health_flee"] = 0.20,
+        ["module.quest.combat_max_hostiles"] = 3,
+        ["module.quest.min_bag_slots"] = 4,
+        ["module.quest.vendor_threshold_pct"] = 80,
+        ["module.quest.repair_threshold_pct"] = 40,
+        ["module.quest.min_food_stacks"] = 2,
+        ["module.quest.min_water_stacks"] = 2,
+        ["module.quest.use_flight_paths"] = true,
+        ["module.quest.hearthstone_threshold_minutes"] = 10,
+        ["module.quest.max_walk_distance"] = 800,
+        ["module.quest.reward_policy"] = "vendor_value",
+        ["module.quest.keep_quest_items"] = true,
+        ["module.quest.show_overlay"] = true,
+        ["module.quest.show_path"] = true,
+        ["module.quest.show_objectives"] = true,
+        ["module.quest.overlay_scale"] = 1.0,
     }
     for key, value in pairs(defaults) do
         if not blackboard:has(key) then
@@ -321,31 +226,19 @@ local function sync_to_runtime()
 
     local blackboard = _app:get_blackboard()
     local combat = _app:get_module("combat")
-    local battleground = _app:get_module("battleground")
     local quest = _app:get_module("quest")
-    -- Mode sync: enable the active module, disable the others
     local mode = get_mode()
-    local bot_mode = mode == 1 and "battleground" or (mode == 2 and "grind" or "quest")
+
+    -- Only Quest mode is supported now
+    local bot_mode = mode == 3 and "quest" or "quest"
     blackboard:set("module.sentinel.bot_mode", bot_mode)
 
+    -- Combat (global, always available)
     if combat and combat.set_enabled then
         combat:set_enabled(_menu.combat_enabled:get_state())
     else
         blackboard:set("module.combat.enabled", _menu.combat_enabled:get_state() == true)
     end
-
-    -- BG module: only enabled in BG mode
-    local bg_active = mode == 1 and _menu.bg_enabled:get_state() == true
-    if battleground and battleground.set_enabled then
-        battleground:set_enabled(bg_active)
-    else
-        blackboard:set("module.bg.enabled", bg_active)
-    end
-
-    -- Grind module: only enabled in grind mode
-    local grind_active = mode == 2 and _menu.grind_enabled:get_state() == true
-    blackboard:set("module.grind.enabled", grind_active)
-    blackboard:set("module.grind.show_overlay", _menu.grind_show_overlay:get_state() == true)
 
     -- Quest module: only enabled in quest mode
     local quest_active = mode == 3 and _menu.quest_enabled:get_state() == true
@@ -354,18 +247,6 @@ local function sync_to_runtime()
     else
         blackboard:set("module.quest.enabled", quest_active)
     end
-
-    -- BG settings
-    blackboard:set("module.bg.auto_engage", _menu.bg_auto_engage:get_state() == true)
-    blackboard:set("module.bg.auto_queue", _menu.bg_auto_queue:get_state() == true)
-    blackboard:set("module.bg.queue_selection", queue_selection_key(_menu.bg_queue_selection:get()))
-    blackboard:set("module.bg.post_game_auto_leave", _menu.bg_post_game_auto_leave:get_state() == true)
-    blackboard:set("module.bg.auto_mount", _menu.bg_auto_mount:get_state() == true)
-    blackboard:set("module.bg.mount_distance_threshold", _menu.bg_mount_distance:get() or 45)
-    blackboard:set("module.bg.preferred_mount_id", tonumber(_menu.bg_preferred_mount_id:get()) or 184865)
-    blackboard:set("module.bg.low_health_threshold", (_menu.bg_low_health_threshold:get() or 35) / 100)
-    blackboard:set("module.bg.engage_outnumber_grace", _menu.bg_engage_outnumber_grace:get() or 1)
-    blackboard:set("module.bg.retreat_outnumber_delta", _menu.bg_retreat_outnumber_delta:get() or 2)
 
     -- Combat settings
     blackboard:set("module.combat.enable_burst", _menu.burst_enabled:get_state() == true)
@@ -379,28 +260,6 @@ local function sync_to_runtime()
         blackboard:set("module.combat.twist_mode", _menu.twist_mode:get() == 2 and "force" or "auto")
         blackboard:set("module.combat.preferred_blessing", _menu.preferred_blessing:get() == 2 and "kings" or "might")
     end
-
-    -- Grind settings
-    blackboard:set("module.grind.health_eat_pct", (_menu.grind_health_eat_pct:get() or 50) / 100)
-    blackboard:set("module.grind.mana_drink_pct", (_menu.grind_mana_drink_pct:get() or 40) / 100)
-    blackboard:set("module.grind.health_flee_pct", (_menu.grind_health_flee_pct:get() or 20) / 100)
-    blackboard:set("module.grind.max_hostiles", _menu.grind_max_hostiles:get() or 3)
-    blackboard:set("module.grind.vendor_sell_quality", _menu.grind_vendor_sell_quality:get() or 2)
-    blackboard:set("module.grind.repair_threshold_copper", (_menu.grind_repair_threshold:get() or 50) * 100)
-    blackboard:set("module.grind.pvp_avoidance", _menu.grind_pvp_avoidance:get_state() == true)
-
-    local grind_mode_val = _menu.grind_mode:get() or 1
-    local new_mode = grind_mode_val == 2 and "patrol" or "profile"
-    local old_mode = blackboard:get("module.grind.mode")
-    blackboard:set("module.grind.mode", new_mode)
-    blackboard:set("module.grind.patrol_radius", _menu.grind_patrol_radius:get() or 60)
-    -- Signal patrol center reset when switching to patrol mode
-    if new_mode == "patrol" and old_mode ~= "patrol" then
-        blackboard:set("module.grind.patrol_center_reset", true)
-    end
-
-    -- Target filter settings
-    blackboard:set("module.grind.attack_neutral", _menu.grind_attack_neutral:get_state() == true)
 
     -- Quest settings
     blackboard:set("module.quest.enabled", _menu.quest_enabled:get_state())
