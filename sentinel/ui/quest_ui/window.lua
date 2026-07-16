@@ -207,6 +207,11 @@ function seed_runtime_defaults(bb)
     end
 end
 
+function QuestWindow.on_update()
+    -- Quest UI update logic can go here if needed
+    -- Currently no per-frame update logic required
+end
+
 -- ============================================================================
 -- RENDER HELPERS
 -- ============================================================================
