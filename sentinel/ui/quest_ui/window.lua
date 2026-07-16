@@ -1118,4 +1118,15 @@ function QuestWindow.get_menu()
     return _menu
 end
 
-return QuestWindow
+return {
+    init = QuestWindow.init,
+    shutdown = QuestWindow.shutdown,
+    on_render = QuestWindow.on_render,
+    on_update = QuestWindow.on_update,
+    get_window = QuestWindow.get_window,
+    get_menu = QuestWindow.get_menu,
+    render_dashboard_tab = render_dashboard_tab,
+    render_planner_tab = render_planner_tab,
+    render_profiles_tab = render_profiles_tab,
+    render_settings_tab = render_settings_tab,
+}

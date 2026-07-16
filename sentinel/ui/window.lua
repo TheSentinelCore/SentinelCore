@@ -2,6 +2,8 @@ local SentinelUI = require("ui/lib/sentinel_ui")
 local UnifiedDashboardTab = require("ui/tabs/unified_dashboard_tab")
 local BattlegroundTab = require("ui/tabs/battleground_tab")
 local ProfileEditorTab = require("ui/tabs/profile_editor_tab")
+local QuestWindow = require("ui/quest_ui/window")
+local QuestWindow = require("ui/quest_ui/window")
 
 local Window = {}
 
@@ -12,7 +14,7 @@ local _menu = nil
 local _menu_tree = nil
 local _open_button = nil
 
--- Mode: 1 = Battleground, 2 = Grind
+-- Mode: 1 = Battleground, 2 = Grind, 3 = Quest
 local function get_mode()
     return _menu and _menu.bot_mode and _menu.bot_mode:get() or 1
 end
@@ -23,6 +25,10 @@ end
 
 local function is_grind_mode()
     return get_mode() == 2
+end
+
+local function is_quest_mode()
+    return get_mode() == 3
 end
 
 -- Class detection: 2 = Paladin
@@ -128,7 +134,7 @@ local function create_menu_elements()
     }
     return {
         -- Global
-        bot_mode = menu_slider_int(1, 2, 1, "sentinel_ui_bot_mode"),
+        bot_mode = menu_slider_int(1, 3, 3, "sentinel_ui_bot_mode"),
         combat_enabled = menu_checkbox(true, "sentinel_ui_combat_enabled"),
         burst_enabled = menu_checkbox(true, "sentinel_ui_burst_enabled"),
         combat_low_health_threshold = menu_slider_int(15, 70, 35, "sentinel_ui_combat_low_health_threshold"),
@@ -152,6 +158,52 @@ local function create_menu_elements()
         bg_queue_selection = menu_slider_int(1, 4, 1, "sentinel_ui_bg_queue_selection"),
         bg_mount_distance = menu_slider_int(10, 120, 45, "sentinel_ui_bg_mount_distance"),
         bg_preferred_mount_id = bg_preferred_mount_id,
+
+        -- Questing
+        quest_enabled = menu_checkbox(true, "sentinel_ui_quest_enabled"),
+        quest_auto_start = menu_checkbox(true, "sentinel_ui_quest_auto_start"),
+        quest_auto_replan = menu_checkbox(true, "sentinel_ui_quest_auto_replan"),
+        quest_replan_interval = menu_slider_int(1, 30, 5, "sentinel_ui_quest_replan_interval"),
+
+        -- Quest Selection
+        quest_max_active = menu_slider_int(1, 5, 3, "sentinel_ui_quest_max_active"),
+        quest_skip_elites = menu_checkbox(true, "sentinel_ui_quest_skip_elites"),
+        quest_skip_escorts = menu_checkbox(false, "sentinel_ui_quest_skip_escorts"),
+        quest_skip_dungeons = menu_checkbox(true, "sentinel_ui_quest_skip_dungeons"),
+        quest_skip_pvp = menu_checkbox(true, "sentinel_ui_quest_skip_pvp"),
+        quest_max_travel = menu_slider_int(500, 5000, 1800, "sentinel_ui_quest_max_travel"),
+        quest_min_xp_per_min = menu_slider_int(100, 2000, 500, "sentinel_ui_quest_min_xp_per_min"),
+
+        -- Combat Integration
+        quest_combat_enabled = menu_checkbox(true, "sentinel_ui_quest_combat_enabled"),
+        quest_combat_health_flee = menu_slider_int(10, 50, 20, "sentinel_ui_quest_combat_health_flee"),
+        quest_combat_max_hostiles = menu_slider_int(1, 5, 3, "sentinel_ui_quest_combat_max_hostiles"),
+
+        -- Inventory Management
+        quest_min_bag_slots = menu_slider_int(2, 10, 4, "sentinel_ui_quest_min_bag_slots"),
+        quest_vendor_threshold = menu_slider_int(50, 95, 80, "sentinel_ui_quest_vendor_threshold"),
+        quest_repair_threshold = menu_slider_int(10, 80, 40, "sentinel_ui_quest_repair_threshold"),
+        quest_min_food = menu_slider_int(0, 20, 2, "sentinel_ui_quest_min_food"),
+        quest_min_water = menu_slider_int(0, 20, 2, "sentinel_ui_quest_min_water"),
+
+        -- Travel Optimization
+        quest_use_flight_paths = menu_checkbox(true, "sentinel_ui_quest_use_flight_paths"),
+        quest_hearthstone_threshold = menu_slider_int(5, 30, 10, "sentinel_ui_quest_hearthstone_threshold"),
+        quest_max_walk_distance = menu_slider_int(200, 2000, 800, "sentinel_ui_quest_max_walk_distance"),
+
+        -- Rewards
+        quest_reward_policy = menu_combo(1, {"Vendor Value", "Upgrade (ilvl)", "Keep All"}, "sentinel_ui_quest_reward_policy"),
+        quest_always_keep_quest_items = menu_checkbox(true, "sentinel_ui_quest_keep_quest_items"),
+
+        -- Visual
+        quest_show_overlay = menu_checkbox(true, "sentinel_ui_quest_show_overlay"),
+        quest_show_path = menu_checkbox(true, "sentinel_ui_quest_show_path"),
+        quest_show_objectives = menu_checkbox(true, "sentinel_ui_quest_show_objectives"),
+        quest_overlay_scale = menu_slider_int(80, 150, 100, "sentinel_ui_quest_overlay_scale"),
+
+        -- Debug
+        quest_debug_logging = menu_checkbox(false, "sentinel_ui_quest_debug_logging"),
+        quest_verbose = menu_checkbox(false, "sentinel_ui_quest_verbose"),
 
         -- Grind
         grind_enabled = menu_checkbox(false, "sentinel_ui_grind_enabled"),
@@ -194,6 +246,20 @@ local function register_tabs(ui, app, menu)
         visible_when = is_grind_mode,
     }, function(t)
         ProfileEditorTab.render(t, app, menu)
+    end)
+
+    -- Quest UI tabs
+    ui:add_tab({ id = "quest_dashboard", label = "Quest Dashboard", visible_when = is_quest_mode }, function(t)
+        QuestWindow.render_dashboard_tab(t)
+    end)
+    ui:add_tab({ id = "quest_planner", label = "Quest Planner", visible_when = is_quest_mode }, function(t)
+        QuestWindow.render_planner_tab(t)
+    end)
+    ui:add_tab({ id = "quest_profiles", label = "Quest Profiles", visible_when = is_quest_mode }, function(t)
+        QuestWindow.render_profiles_tab(t)
+    end)
+    ui:add_tab({ id = "quest_settings", label = "Quest Settings", visible_when = is_quest_mode }, function(t)
+        QuestWindow.render_settings_tab(t)
     end)
 end
 
@@ -319,6 +385,36 @@ local function sync_to_runtime()
 
     -- Target filter settings
     blackboard:set("module.grind.attack_neutral", _menu.grind_attack_neutral:get_state() == true)
+
+    -- Quest settings
+    blackboard:set("module.quest.enabled", _menu.quest_enabled:get_state())
+    blackboard:set("module.quest.auto_start", _menu.quest_auto_start:get_state())
+    blackboard:set("module.quest.auto_replan", _menu.quest_auto_replan:get_state())
+    blackboard:set("module.quest.replan_interval", _menu.quest_replan_interval:get())
+    blackboard:set("module.quest.max_active", _menu.quest_max_active:get())
+    blackboard:set("module.quest.skip_elites", _menu.quest_skip_elites:get_state())
+    blackboard:set("module.quest.skip_escorts", _menu.quest_skip_escorts:get_state())
+    blackboard:set("module.quest.skip_dungeons", _menu.quest_skip_dungeons:get_state())
+    blackboard:set("module.quest.skip_pvp", _menu.quest_skip_pvp:get_state())
+    blackboard:set("module.quest.max_travel", _menu.quest_max_travel:get())
+    blackboard:set("module.quest.min_xp_per_min", _menu.quest_min_xp_per_min:get())
+    blackboard:set("module.quest.combat_enabled", _menu.quest_combat_enabled:get_state())
+    blackboard:set("module.quest.combat_health_flee", _menu.quest_combat_health_flee:get() / 100)
+    blackboard:set("module.quest.combat_max_hostiles", _menu.quest_combat_max_hostiles:get())
+    blackboard:set("module.quest.min_bag_slots", _menu.quest_min_bag_slots:get())
+    blackboard:set("module.quest.vendor_threshold_pct", _menu.quest_vendor_threshold:get())
+    blackboard:set("module.quest.repair_threshold_pct", _menu.quest_repair_threshold:get())
+    blackboard:set("module.quest.min_food_stacks", _menu.quest_min_food:get())
+    blackboard:set("module.quest.min_water_stacks", _menu.quest_min_water:get())
+    blackboard:set("module.quest.use_flight_paths", _menu.quest_use_flight_paths:get_state())
+    blackboard:set("module.quest.hearthstone_threshold_minutes", _menu.quest_hearthstone_threshold:get())
+    blackboard:set("module.quest.max_walk_distance", _menu.quest_max_walk_distance:get())
+    blackboard:set("module.quest.reward_policy", _menu.quest_reward_policy:get())
+    blackboard:set("module.quest.keep_quest_items", _menu.quest_always_keep_quest_items:get_state())
+    blackboard:set("module.quest.show_overlay", _menu.quest_show_overlay:get_state())
+    blackboard:set("module.quest.show_path", _menu.quest_show_path:get_state())
+    blackboard:set("module.quest.show_objectives", _menu.quest_show_objectives:get_state())
+    blackboard:set("module.quest.overlay_scale", _menu.quest_overlay_scale:get() / 100)
 end
 
 function Window.init(app)
@@ -340,6 +436,9 @@ function Window.init(app)
         theme = "sentinel",
         render_layer = 1,
     })
+
+    -- Initialize Quest UI
+    QuestWindow.init(app)
 
     register_tabs(_ui, _app, _menu)
     if _ui and _ui.menu and _ui.menu.enable and _ui.menu.enable.set then
