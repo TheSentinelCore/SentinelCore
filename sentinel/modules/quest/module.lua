@@ -4,21 +4,28 @@ local Engine = require("modules/quest/engine")
 local QuestGraph = require("modules/quest/quest_graph")
 local QuestScorer = require("modules/quest/quest_scorer")
 local RuleEngine = require("modules/quest/rule_engine")
+local ObjectivePlanner = require("modules/quest/objective_planner")
+local QuestPlanner = require("modules/quest/quest_planner")
+local Heatmap = require("modules/quest/heatmap")
 local ProfileManager = require("modules/grind/profile_manager")
 
 local Quest = {}
 Quest.__index = Quest
 
 function Quest.new(event_bus, blackboard, nav_adapter)
+    local engine = Engine.new(blackboard)
     return setmetatable({
         _event_bus = event_bus,
         _blackboard = blackboard,
         _nav_adapter = nav_adapter,
         _tracker = Tracker.new(blackboard),
-        _engine = Engine.new(blackboard),
+        _engine = engine,
         _graph = QuestGraph.new(blackboard),
         _scorer = QuestScorer.new(blackboard),
         _rule_engine = RuleEngine,
+        _objective_planner = ObjectivePlanner.new(),
+        _quest_planner = QuestPlanner.new(blackboard, nav_adapter),
+        _heatmap = Heatmap.new(blackboard, engine._client),
         _profile_manager = ProfileManager.new(event_bus, blackboard),
         _subscriptions = {},
         _enabled = false,
@@ -37,6 +44,9 @@ function Quest:initialize()
     self._blackboard:set("module.quest.graph", self._graph)
     self._blackboard:set("module.quest.scorer", self._scorer)
     self._blackboard:set("module.quest.rule_engine", self._rule_engine)
+    self._blackboard:set("module.quest.objective_planner", self._objective_planner)
+    self._blackboard:set("module.quest.quest_planner", self._quest_planner)
+    self._blackboard:set("module.quest.heatmap", self._heatmap)
 
     -- Initialize profile manager
     self._profile_manager:initialize()
@@ -47,6 +57,7 @@ function Quest:initialize()
             self._tracker:refresh(self._blackboard:get("system.now_ms", 0))
             -- Mark plan as dirty on quest log change
             self._current_plan = nil
+            self._heatmap:mark_dirty()
         end
     end)
 end
@@ -95,7 +106,8 @@ function Quest:update(blackboard)
                 quest_graph = self._graph,
             }
             
-            local plan = self._engine:build_plan(context)
+            -- Use full QuestPlanner
+            local plan = self._quest_planner:plan(context)
             if plan then
                 self._current_plan = plan
                 self._last_plan_build = now_ms
@@ -116,6 +128,18 @@ end
 
 function Quest:get_scorer()
     return self._scorer
+end
+
+function Quest:get_objective_planner()
+    return self._objective_planner
+end
+
+function Quest:get_quest_planner()
+    return self._quest_planner
+end
+
+function Quest:get_heatmap()
+    return self._heatmap
 end
 
 function Quest:get_current_plan()

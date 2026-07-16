@@ -1,7 +1,7 @@
 ---
 id: 2
 title: "[Quest] QuestGraph — DAG builder from Mangos DB"
-state: open
+state: closed
 labels: ["enhancement", "ready-for-agent", "area:quest", "phase:1-foundation"]
 created: "2026-07-15T22:30:00Z"
 updated: "2026-07-15T22:30:00Z"
