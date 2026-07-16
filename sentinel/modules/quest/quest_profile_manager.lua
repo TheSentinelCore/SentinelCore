@@ -84,10 +84,11 @@ end
 ---@param faction string "Alliance" | "Horde" | "Both"
 ---@return boolean success
 function QuestProfileManager:try_autoload(player_level, map_id, faction)
-    -- Map map_id to zone names
+    -- Map map_id to zone names (only zones with existing YAML profiles)
+    -- map_id 0 = Eastern Kingdoms, 1 = Kalimdor
     local zone_map = {
-        [0] = {"westfall", "redridge", "duskwood", "loch_modan", "silverpine", "elwynn", "tirisfal"},
-        [1] = {"the_barrens", "darkshore", "mulgore", "durotar", "ashenvale", "stonetalon"},
+        [0] = {"westfall", "redridge", "duskwood", "loch_modan", "silverpine"},
+        [1] = {"the_barrens", "darkshore"},
     }
     
     local zones = zone_map[map_id] or zone_map[0]
