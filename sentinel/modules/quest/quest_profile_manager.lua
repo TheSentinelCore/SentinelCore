@@ -72,6 +72,11 @@ function QuestProfileManager.new(event_bus, blackboard)
     }, QuestProfileManager)
 end
 
+---Initialize the profile manager (copy YAML profiles to scripts_data)
+function QuestProfileManager:initialize()
+    ensure_profiles_in_scripts_data()
+end
+
 ---Ensure YAML profiles are copied to scripts_data
 local function ensure_profiles_in_scripts_data()
     pcall(core.create_data_folder, PROFILE_DIR)
