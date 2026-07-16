@@ -7,7 +7,7 @@ local RuleEngine = require("modules/quest/rule_engine")
 local ObjectivePlanner = require("modules/quest/objective_planner")
 local QuestPlanner = require("modules/quest/quest_planner")
 local Heatmap = require("modules/quest/heatmap")
-local ProfileManager = require("modules/grind/profile_manager")
+local QuestProfileManager = require("modules/quest/quest_profile_manager")
 
 local Quest = {}
 Quest.__index = Quest
@@ -26,7 +26,7 @@ function Quest.new(event_bus, blackboard, nav_adapter)
         _objective_planner = ObjectivePlanner.new(),
         _quest_planner = QuestPlanner.new(blackboard, nav_adapter),
         _heatmap = Heatmap.new(blackboard, engine._client),
-        _profile_manager = ProfileManager.new(event_bus, blackboard),
+        _quest_profile_manager = QuestProfileManager.new(event_bus, blackboard),
         _subscriptions = {},
         _enabled = false,
         _last_plan_build = 0,
@@ -48,9 +48,9 @@ function Quest:initialize()
     self._blackboard:set("module.quest.quest_planner", self._quest_planner)
     self._blackboard:set("module.quest.heatmap", self._heatmap)
 
-    -- Initialize profile manager
-    self._profile_manager:initialize()
-    self._blackboard:set("module.quest.profile_manager", self._profile_manager)
+    -- Initialize quest profile manager
+    self._quest_profile_manager:initialize()
+    self._blackboard:set("module.quest.quest_profile_manager", self._quest_profile_manager)
 
     self._subscriptions[#self._subscriptions + 1] = self._event_bus:subscribe("game:quest_log_update", function()
         if self._enabled then
@@ -73,8 +73,8 @@ function Quest:update(blackboard)
         self._tracker:refresh(now_ms)
     end
     
-    -- Update profile manager
-    if self._profile_manager then
+    -- Update quest profile manager
+    if self._quest_profile_manager then
         local player = blackboard:get("player.object")
         local player_level = 70
         if player and type(player.get_level) == "function" then
@@ -82,18 +82,23 @@ function Quest:update(blackboard)
             if ok and type(lv) == "number" then player_level = lv end
         end
         local map_id = blackboard:get("system.map_id", 0) or 0
+        local faction = blackboard:get("player.faction", "Alliance") or "Alliance"
         
-        if not self._profile_manager:is_profile_loaded() and not self._autoload_attempted then
-            self._autoload_attempted = true
-            self._profile_manager:try_autoload(player_level, map_id)
+        -- Get active quest profile for current zone/level
+        local profile = self._quest_profile_manager:get_active_quest_profile()
+        if not profile then
+            -- Try to auto-load
+            self._quest_profile_manager:try_autoload(player_level, map_id, faction)
+            profile = self._quest_profile_manager:get_active_quest_profile()
         end
-        
-        self._profile_manager:update(player_level, map_id)
+        if profile then
+            self._blackboard:set("module.quest.active_profile", profile)
+        end
     end
     
     -- Rebuild quest plan if needed
     if not self._current_plan or now_ms - self._last_plan_build > self._plan_build_interval then
-        local profile = self._profile_manager:get_active_quest_profile()
+        local profile = blackboard:get("module.quest.active_profile")
         if profile then
             local context = {
                 zone = profile.zone,
@@ -164,8 +169,8 @@ function Quest:shutdown()
         self._event_bus:unsubscribe(token)
     end
     self._subscriptions = {}
-    if self._profile_manager then
-        self._profile_manager:shutdown()
+    if self._quest_profile_manager then
+        self._quest_profile_manager:shutdown()
     end
 end
 

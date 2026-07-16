@@ -1,7 +1,7 @@
 ---
 id: 8
 title: "[Quest] NPCInteraction — Multi-service queue: turnin → accept → train → vendor → repair"
-state: open
+state: closed
 labels: ["enhancement", "ready-for-agent", "area:quest", "phase:3-execution"]
 created: "2026-07-15T22:30:00Z"
 updated: "2026-07-15T22:30:00Z"
