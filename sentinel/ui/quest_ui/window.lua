@@ -526,6 +526,7 @@ function render_dashboard_tab(window, x, y, w, h)
             local card_y = content_y + (i - 1) * (card_h + gap)
             render_quest_card(window, x, card_y, w - pad * 2, card_h, quest)
         end
+        content_y = content_y + #quests * (card_h + gap)
     else
         -- Empty state
         local empty_y = content_y + 40
@@ -537,10 +538,13 @@ function render_dashboard_tab(window, x, y, w, h)
         render_text_bold(window, x + w / 2 - 80, empty_y + 30, Design.Colors.neutral.text_secondary, Design.Typography.size.heading_medium, "No Active Quests")
         render_text(window, x + w / 2 - 100, empty_y + 65, Design.Colors.neutral.text_muted, Design.Typography.size.body_medium,
             "Enable questing and a profile to start")
+        content_y = empty_y + 120 + gap
     end
 
-    -- Bottom metrics row
+    -- Bottom metrics row (render at bottom of available space)
     render_metrics_row(window, x, y + h - 100, w - pad * 2)
+
+    return y + h
 end
 
 function render_quest_card(window, x, y, w, h, quest)
@@ -641,6 +645,8 @@ function render_planner_tab(window, x, y, w, h)
     -- Plan Visualization
     content_y = btn_y + btn_h + gap
     render_plan_visualization(window, x, content_y, w - pad * 2, h - (content_y - y) - pad)
+
+    return y + h
 end
 
 function render_profiles_tab(window, x, y, w, h)
@@ -700,7 +706,10 @@ function render_profiles_tab(window, x, y, w, h)
         if clicked then
             load_profile(profile.id)
         end
+        content_y = p_y + p_h + 8
     end
+
+    return y + h
 end
 
 function render_settings_tab(window, x, y, w, h)
@@ -742,6 +751,8 @@ function render_settings_tab(window, x, y, w, h)
 
     -- Visual/Debug
     card_h = render_section_visual(window, right_x, content_y, section_w)
+
+    return y + h
 end
 
 function render_section_quest_selection(window, x, y, w)

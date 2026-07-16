@@ -166,17 +166,46 @@ end
 
 local function register_tabs(ui, app, menu)
     -- Quest UI tabs only (new UI only)
+    -- Use SentinelUI's custom_render for proper integration
+    
     ui:add_tab({ id = "quest_dashboard", label = "Quest Dashboard", visible_when = is_quest_mode }, function(t)
-        QuestWindow.render_dashboard_tab(t)
+        t:custom_render({
+            render_fn = function(ui_instance, y_offset)
+                local window = ui_instance.window
+                local w = window:get_size()
+                return QuestWindow.render_dashboard_tab(window, 16, y_offset, w.x - 32, w.y - y_offset - 16)
+            end
+        })
     end)
+    
     ui:add_tab({ id = "quest_planner", label = "Quest Planner", visible_when = is_quest_mode }, function(t)
-        QuestWindow.render_planner_tab(t)
+        t:custom_render({
+            render_fn = function(ui_instance, y_offset)
+                local window = ui_instance.window
+                local w = window:get_size()
+                return QuestWindow.render_planner_tab(window, 16, y_offset, w.x - 32, w.y - y_offset - 16)
+            end
+        })
     end)
+    
     ui:add_tab({ id = "quest_profiles", label = "Quest Profiles", visible_when = is_quest_mode }, function(t)
-        QuestWindow.render_profiles_tab(t)
+        t:custom_render({
+            render_fn = function(ui_instance, y_offset)
+                local window = ui_instance.window
+                local w = window:get_size()
+                return QuestWindow.render_profiles_tab(window, 16, y_offset, w.x - 32, w.y - y_offset - 16)
+            end
+        })
     end)
+    
     ui:add_tab({ id = "quest_settings", label = "Quest Settings", visible_when = is_quest_mode }, function(t)
-        QuestWindow.render_settings_tab(t)
+        t:custom_render({
+            render_fn = function(ui_instance, y_offset)
+                local window = ui_instance.window
+                local w = window:get_size()
+                return QuestWindow.render_settings_tab(window, 16, y_offset, w.x - 32, w.y - y_offset - 16)
+            end
+        })
     end)
 end
 

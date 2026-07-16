@@ -1,0 +1,28 @@
+{
+  "zone": "Default",
+  "map_id": 0,
+  "level_range": {
+    "min": 1,
+    "max": 70
+  },
+  "faction": "Both",
+  "rules": {
+    "skip_elites": true,
+    "skip_escort": true,
+    "skip_dungeon_chains": true,
+    "skip_pvp": true,
+    "max_travel_yards": 1500,
+    "min_xp_per_minute": 300,
+    "vendor_threshold_pct": 85,
+    "repair_threshold_pct": 50,
+    "min_bag_slots": 6
+  },
+  "scoring": {
+    "xp_per_minute": 0.40,
+    "travel_efficiency": 0.30,
+    "objective_overlap": 0.15,
+    "reward_value": 0.10,
+    "chain_priority": 0.05
+  },
+  "objective_strategy": "minimize_travel"
+}
