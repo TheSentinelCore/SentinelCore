@@ -330,6 +330,7 @@ function Window.shutdown()
     _menu = nil
     _menu_tree = nil
     _open_button = nil
+    QuestWindow.shutdown()
 end
 
 function Window.on_update()
@@ -337,6 +338,7 @@ function Window.on_update()
         return
     end
     sync_to_runtime()
+    QuestWindow.on_update()
 end
 
 function Window.on_render()
@@ -344,6 +346,7 @@ function Window.on_render()
         return
     end
     _ui:on_render()
+    QuestWindow.on_render()
 end
 
 function Window.on_menu_render()
