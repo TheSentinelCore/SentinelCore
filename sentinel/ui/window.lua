@@ -165,46 +165,153 @@ local function create_menu_elements()
 end
 
 local function register_tabs(ui, app, menu)
-    -- Quest UI tabs only (new UI only)
-    -- Use SentinelUI's custom_render for proper integration
+    -- Quest UI tabs using SentinelUI declarative API
+    -- This properly renders checkboxes, sliders, combos using core.menu elements
+    
+    local content_pad = 16 -- LAYOUT.padding_side
     
     ui:add_tab({ id = "quest_dashboard", label = "Quest Dashboard", visible_when = is_quest_mode }, function(t)
+        -- Dashboard is read-only info display, use custom render
         t:custom_render({
             render_fn = function(ui_instance, y_offset)
                 local window = ui_instance.window
                 local w = window:get_size()
-                return QuestWindow.render_dashboard_tab(window, 16, y_offset, w.x - 32, w.y - y_offset - 16)
+                local content_w = w.x - content_pad * 2
+                -- render_dashboard_tab expects (window, x, y, w, h) and returns new y
+                -- We call it with the current y_offset and return the result
+                local new_y = QuestWindow.render_dashboard_tab(window, content_pad, y_offset, content_w, 500)
+                return new_y
             end
         })
     end)
     
     ui:add_tab({ id = "quest_planner", label = "Quest Planner", visible_when = is_quest_mode }, function(t)
+        -- Planner is read-only info display, use custom render
         t:custom_render({
             render_fn = function(ui_instance, y_offset)
                 local window = ui_instance.window
                 local w = window:get_size()
-                return QuestWindow.render_planner_tab(window, 16, y_offset, w.x - 32, w.y - y_offset - 16)
+                local content_w = w.x - content_pad * 2
+                local new_y = QuestWindow.render_planner_tab(window, content_pad, y_offset, content_w, 500)
+                return new_y
             end
         })
     end)
     
     ui:add_tab({ id = "quest_profiles", label = "Quest Profiles", visible_when = is_quest_mode }, function(t)
+        -- Profiles tab - mix of info and actions
         t:custom_render({
             render_fn = function(ui_instance, y_offset)
                 local window = ui_instance.window
                 local w = window:get_size()
-                return QuestWindow.render_profiles_tab(window, 16, y_offset, w.x - 32, w.y - y_offset - 16)
+                local content_w = w.x - content_pad * 2
+                local new_y = QuestWindow.render_profiles_tab(window, content_pad, y_offset, content_w, 500)
+                return new_y
             end
         })
     end)
     
     ui:add_tab({ id = "quest_settings", label = "Quest Settings", visible_when = is_quest_mode }, function(t)
-        t:custom_render({
-            render_fn = function(ui_instance, y_offset)
-                local window = ui_instance.window
-                local w = window:get_size()
-                return QuestWindow.render_settings_tab(window, 16, y_offset, w.x - 32, w.y - y_offset - 16)
-            end
+        -- Quest Selection section
+        t:checkbox_grid({
+            label = "Quest Selection",
+            columns = 2,
+            elements = {
+                { element = menu.quest_skip_elites, label = "Skip Elite Quests" },
+                { element = menu.quest_skip_escorts, label = "Skip Escort Quests" },
+                { element = menu.quest_skip_dungeons, label = "Skip Dungeon Chains" },
+                { element = menu.quest_skip_pvp, label = "Skip PvP Zones" },
+            }
+        })
+        
+        t:slider_list({
+            label = "Travel & XP Thresholds",
+            elements = {
+                { element = menu.quest_max_travel, label = "Max Travel Distance", suffix = " yd" },
+                { element = menu.quest_min_xp_per_min, label = "Min XP/Minute", suffix = " XP/min" },
+                { element = menu.quest_max_active, label = "Max Active Quests" },
+            }
+        })
+        
+        -- Combat Integration section
+        t:checkbox_grid({
+            label = "Combat Integration",
+            columns = 1,
+            elements = {
+                { element = menu.quest_combat_enabled, label = "Enable Combat During Quests" },
+            }
+        })
+        
+        t:slider_list({
+            label = "Combat Thresholds",
+            elements = {
+                { element = menu.quest_combat_health_flee, label = "Flee Health Threshold", suffix = "%" },
+                { element = menu.quest_combat_max_hostiles, label = "Max Simultaneous Hostiles" },
+            }
+        })
+        
+        -- Inventory Management section
+        t:slider_list({
+            label = "Inventory Management",
+            elements = {
+                { element = menu.quest_min_bag_slots, label = "Min Free Bag Slots" },
+                { element = menu.quest_vendor_threshold, label = "Vendor Threshold", suffix = "%" },
+                { element = menu.quest_repair_threshold, label = "Repair Threshold", suffix = "%" },
+                { element = menu.quest_min_food, label = "Min Food Stacks" },
+                { element = menu.quest_min_water, label = "Min Water Stacks" },
+            }
+        })
+        
+        -- Travel Optimization section
+        t:checkbox_grid({
+            label = "Travel Optimization",
+            columns = 1,
+            elements = {
+                { element = menu.quest_use_flight_paths, label = "Use Flight Paths" },
+            }
+        })
+        
+        t:slider_list({
+            label = "Travel Thresholds",
+            elements = {
+                { element = menu.quest_hearthstone_threshold, label = "Hearthstone Threshold", suffix = " min" },
+                { element = menu.quest_max_walk_distance, label = "Max Walk Before Mount/Flight", suffix = " yd" },
+            }
+        })
+        
+        -- Rewards section
+        t:combo_list({
+            label = "Reward Selection",
+            elements = {
+                { element = menu.quest_reward_policy, label = "Reward Policy", options = {"Vendor Value", "Upgrade (ilvl)", "Keep All"} },
+            }
+        })
+        
+        t:checkbox_grid({
+            label = "Reward Options",
+            columns = 1,
+            elements = {
+                { element = menu.quest_always_keep_quest_items, label = "Always Keep Quest Items" },
+            }
+        })
+        
+        -- Visual/Debug section
+        t:checkbox_grid({
+            label = "Visual Options",
+            columns = 2,
+            elements = {
+                { element = menu.quest_show_overlay, label = "Show Quest Overlay" },
+                { element = menu.quest_show_path, label = "Show Path Visualization" },
+                { element = menu.quest_show_objectives, label = "Show Objectives on Map" },
+                { element = menu.quest_debug_logging, label = "Debug Logging" },
+            }
+        })
+        
+        t:slider_list({
+            label = "Overlay Scale",
+            elements = {
+                { element = menu.quest_overlay_scale, label = "Overlay Scale", suffix = "%" },
+            }
         })
     end)
 end
