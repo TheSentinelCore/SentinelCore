@@ -11,6 +11,56 @@ local vec2 = require("common/geometry/vector_2")
 local Design = {}
 
 -- ============================================================================
+-- SEMANTIC COLORS - Quest-themed (defined first for forward references)
+-- ============================================================================
+
+Design.Semantic = {
+    -- Quest Blue - primary actions, active quests
+    quest = {
+        bg          = color.new(25, 45, 85, 200),
+        bg_light    = color.new(35, 60, 110, 220),
+        border      = color.new(70, 120, 200, 255),
+        text        = color.new(180, 210, 255, 255),
+        icon        = color.new(120, 180, 255, 255),
+    },
+
+    -- Success Green - completed quests, ready to turn in
+    success = {
+        bg          = color.new(20, 70, 40, 200),
+        bg_light    = color.new(30, 90, 50, 220),
+        border      = color.new(60, 160, 90, 255),
+        text        = color.new(160, 240, 200, 255),
+        icon        = color.new(100, 220, 140, 255),
+    },
+
+    -- Warning Amber - objectives in progress, low resources
+    warning = {
+        bg          = color.new(85, 65, 20, 200),
+        bg_light    = color.new(105, 85, 30, 220),
+        border      = color.new(190, 155, 50, 255),
+        text        = color.new(255, 220, 140, 255),
+        icon        = color.new(240, 200, 80, 255),
+    },
+
+    -- Danger Red - failed, dead, critical issues
+    danger = {
+        bg          = color.new(85, 25, 30, 200),
+        bg_light    = color.new(110, 35, 40, 220),
+        border      = color.new(200, 70, 80, 255),
+        text        = color.new(255, 170, 180, 255),
+        icon        = color.new(255, 100, 110, 255),
+    },
+
+    -- Neutral Gray - completed/turned in, disabled
+    neutral = {
+        bg          = color.new(40, 42, 48, 200),
+        border      = color.new(70, 72, 80, 200),
+        text        = color.new(140, 142, 150, 255),
+        icon        = color.new(100, 102, 110, 255),
+    },
+}
+
+-- ============================================================================
 -- COLOR PALETTE - Modern, accessible, game-friendly
 -- ============================================================================
 
@@ -34,58 +84,14 @@ Design.Colors = {
         text_disabled   = color.new(80, 84, 90, 200),    -- Disabled text
         text_on_accent  = color.new(255, 255, 255, 255), -- Text on colored backgrounds
 
-        -- Accent colors for interactive elements
-        accent          = Design.Colors.semantic.quest.border,
-        accent_bg       = Design.Colors.semantic.quest.bg,
-        accent_hover    = Design.Colors.semantic.quest.bg_light,
+        -- Accent colors for interactive elements (using Design.Semantic which is now defined)
+        accent          = Design.Semantic.quest.border,
+        accent_bg       = Design.Semantic.quest.bg,
+        accent_hover    = Design.Semantic.quest.bg_light,
     },
 
-    -- Semantic colors - Quest-themed
-    semantic = {
-        -- Quest Blue - primary actions, active quests
-        quest = {
-            bg          = color.new(25, 45, 85, 200),
-            bg_light    = color.new(35, 60, 110, 220),
-            border      = color.new(70, 120, 200, 255),
-            text        = color.new(180, 210, 255, 255),
-            icon        = color.new(120, 180, 255, 255),
-        },
-
-        -- Success Green - completed quests, ready to turn in
-        success = {
-            bg          = color.new(20, 70, 40, 200),
-            bg_light    = color.new(30, 90, 50, 220),
-            border      = color.new(60, 160, 90, 255),
-            text        = color.new(160, 240, 200, 255),
-            icon        = color.new(100, 220, 140, 255),
-        },
-
-        -- Warning Amber - objectives in progress, low resources
-        warning = {
-            bg          = color.new(85, 65, 20, 200),
-            bg_light    = color.new(105, 85, 30, 220),
-            border      = color.new(190, 155, 50, 255),
-            text        = color.new(255, 220, 140, 255),
-            icon        = color.new(240, 200, 80, 255),
-        },
-
-        -- Danger Red - failed, dead, critical issues
-        danger = {
-            bg          = color.new(85, 25, 30, 200),
-            bg_light    = color.new(110, 35, 40, 220),
-            border      = color.new(200, 70, 80, 255),
-            text        = color.new(255, 170, 180, 255),
-            icon        = color.new(255, 100, 110, 255),
-        },
-
-        -- Neutral Gray - completed/turned in, disabled
-        neutral = {
-            bg          = color.new(40, 42, 48, 200),
-            border      = color.new(70, 72, 80, 200),
-            text        = color.new(140, 142, 150, 255),
-            icon        = color.new(100, 102, 110, 255),
-        },
-    },
+    -- Semantic colors - Quest-themed (alias for Design.Semantic)
+    semantic = Design.Semantic,
 
     -- Objective type colors
     objective = {
@@ -98,6 +104,15 @@ Design.Colors = {
     },
 
     -- Difficulty tiers
+    difficulty = {
+        trivial     = { text = color.new(120, 220, 140, 255), icon = color.new(100, 200, 120, 255) },
+        easy        = { text = color.new(100, 180, 255, 255), icon = color.new(80, 160, 240, 255) },
+        normal      = { text = color.new(255, 220, 100, 255), icon = color.new(240, 200, 80, 255) },
+        hard        = { text = color.new(255, 160, 80, 255), icon = color.new(255, 140, 60, 255) },
+        elite       = { text = color.new(255, 100, 100, 255), icon = color.new(255, 80, 80, 255) },
+        dungeon     = { text = color.new(220, 100, 255, 255), icon = color.new(200, 80, 240, 255) },
+    },
+}
     difficulty = {
         trivial     = { text = color.new(120, 220, 140, 255), icon = color.new(100, 200, 120, 255) },
         easy        = { text = color.new(100, 180, 255, 255), icon = color.new(80, 160, 240, 255) },
