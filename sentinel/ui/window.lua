@@ -3,7 +3,6 @@ local UnifiedDashboardTab = require("ui/tabs/unified_dashboard_tab")
 local BattlegroundTab = require("ui/tabs/battleground_tab")
 local ProfileEditorTab = require("ui/tabs/profile_editor_tab")
 local QuestWindow = require("ui/quest_ui/window")
-local QuestWindow = require("ui/quest_ui/window")
 
 local Window = {}
 
@@ -323,9 +322,11 @@ local function sync_to_runtime()
     local blackboard = _app:get_blackboard()
     local combat = _app:get_module("combat")
     local battleground = _app:get_module("battleground")
-    -- Mode sync: enable the active module, disable the other
+    local quest = _app:get_module("quest")
+    -- Mode sync: enable the active module, disable the others
     local mode = get_mode()
-    blackboard:set("module.sentinel.bot_mode", mode == 2 and "grind" or "battleground")
+    local bot_mode = mode == 1 and "battleground" or (mode == 2 and "grind" or "quest")
+    blackboard:set("module.sentinel.bot_mode", bot_mode)
 
     if combat and combat.set_enabled then
         combat:set_enabled(_menu.combat_enabled:get_state())
@@ -345,6 +346,14 @@ local function sync_to_runtime()
     local grind_active = mode == 2 and _menu.grind_enabled:get_state() == true
     blackboard:set("module.grind.enabled", grind_active)
     blackboard:set("module.grind.show_overlay", _menu.grind_show_overlay:get_state() == true)
+
+    -- Quest module: only enabled in quest mode
+    local quest_active = mode == 3 and _menu.quest_enabled:get_state() == true
+    if quest and quest.set_enabled then
+        quest:set_enabled(quest_active)
+    else
+        blackboard:set("module.quest.enabled", quest_active)
+    end
 
     -- BG settings
     blackboard:set("module.bg.auto_engage", _menu.bg_auto_engage:get_state() == true)
