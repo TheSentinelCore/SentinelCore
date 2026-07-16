@@ -1,6 +1,7 @@
 local AuraCatalog = require("modules/combat/aura_catalog")
 local Events = require("modules/combat/events")
 local PvPTargetSelector = require("modules/combat/pvp_target_selector")
+local StrategyFactory = require("modules/combat/strategies/factory")
 
 local TargetSelector = {}
 TargetSelector.__index = TargetSelector
@@ -117,7 +118,25 @@ function TargetSelector:new(event_bus, blackboard, izi_bridge)
     local ok_unit, unit_helper = pcall(require, "common/utility/unit_helper")
     o._unit_helper = ok_unit and unit_helper or nil
     o._pvp_selector = PvPTargetSelector.new(event_bus, blackboard)
+
+    -- Strategy pattern support
+    o._strategies = {
+        grind = StrategyFactory.create("grind", event_bus, blackboard, izi_bridge, o._unit_helper),
+        pvp = StrategyFactory.create("pvp", event_bus, blackboard, izi_bridge, o._unit_helper),
+    }
+    o._current_strategy = "grind"
+
     return o
+end
+
+function TargetSelector:set_strategy(name)
+    if self._strategies[name] then
+        self._current_strategy = name
+    end
+end
+
+function TargetSelector:get_strategy()
+    return self._strategies[self._current_strategy]
 end
 
 function TargetSelector:is_valid_enemy(unit, opts)
@@ -130,14 +149,57 @@ function TargetSelector:is_valid_enemy(unit, opts)
     if ok_dead and dead == true then
         return false
     end
-    if opts.require_player == true and not is_player_unit(unit) then
-        return false
+
+    -- Check if it's a player unit - only allow for require_player (PvP) mode
+    local ok_is_player, is_player = safe_call(unit, "is_player")
+    if ok_is_player and is_player == true then
+        return opts.require_player == true
     end
+
+    -- Check attack_neutral setting - if enabled, accept neutral (yellow) mobs
+    local attack_neutral = self._blackboard:get("module.grind.attack_neutral") == true
+    if attack_neutral then
+        -- For attack_neutral, we accept any unit that could be attacked.
+        -- Neutral yellow mobs become attackable when targeted by the player.
+        -- We already filtered out players above, so this is safe for PvE.
+        return true
+    end
+
     return is_hostile(player, unit)
 end
 
 function TargetSelector:_enemy_list(player_pos, opts)
     local scan_radius = 55.0
+    local attack_neutral = self._blackboard:get("module.grind.attack_neutral") == true
+
+    -- For attack_neutral, use get_all_objects to include neutral (yellow) mobs
+    -- unit_helper.get_enemy_list_around only returns hostile (red) mobs
+    if attack_neutral then
+        if core and core.object_manager and type(core.object_manager.get_all_objects) == "function" then
+            local ok, objects = pcall(core.object_manager.get_all_objects)
+            if ok and type(objects) == "table" then
+                local results = {}
+                for _, candidate in ipairs(objects) do
+                    if candidate and self:is_valid_enemy(candidate, opts) then
+                        local ok_dead, dead = safe_call(candidate, "is_dead")
+                        if not ok_dead or dead ~= true then
+                            local ok_unit, is_unit = safe_call(candidate, "is_unit")
+                            if ok_unit and is_unit then
+                                local ok_pos, pos = safe_call(candidate, "get_position")
+                                if ok_pos and type(pos) == "table" and distance(player_pos, pos) <= scan_radius then
+                                    results[#results + 1] = candidate
+                                end
+                            end
+                        end
+                    end
+                end
+                if #results > 0 then
+                    return results
+                end
+            end
+        end
+    end
+
     if not self._unit_helper or type(self._unit_helper.get_enemy_list_around) ~= "function" or type(player_pos) ~= "table" then
         return self:_visible_enemy_list(player_pos, scan_radius, opts)
     end
@@ -279,81 +341,17 @@ function TargetSelector:get_best_target(opts)
     end
 
     if self._blackboard:get("bg.active", false) == true then
-        if player then
-            local pvp_target, pvp_ranked = self._pvp_selector:select(player, opts)
-            if pvp_target then
-                if not current_target then
-                    self._event_bus:publish(Events.TARGET_ACQUIRED, {
-                        target = pvp_target,
-                        score = self._pvp_selector.last_score,
-                        source = "pvp_selector",
-                    })
-                elseif not same_guid(current_target, pvp_target) then
-                    self._event_bus:publish(Events.TARGET_CHANGED, {
-                        from_target = current_target,
-                        to_target = pvp_target,
-                        reason = "pvp_higher_score",
-                    })
-                end
-                if not current_target or not same_guid(current_target, pvp_target) then
-                    set_target(pvp_target)
-                end
-                return pvp_target, self._pvp_selector.last_score
-            end
-        end
+        self:set_strategy("pvp")
+    else
+        self:set_strategy("grind")
     end
 
-    local leash_center = self._blackboard:get("combat.leash_center")
-    local leash_radius = tonumber(self._blackboard:get("combat.leash_radius", 25)) or 25
-    local best_unit = nil
-    local best_score = -99999
-    local best_dist = 99999
-
-    for _, candidate in ipairs(self:_enemy_list(player_pos, opts)) do
-        local ok_dead, dead = safe_call(candidate, "is_dead")
-        if not ok_dead or dead ~= true then
-            local score, dist = self:_score(player, candidate, current_target, leash_center, leash_radius)
-            if score > best_score or (score == best_score and dist < best_dist) then
-                best_unit = candidate
-                best_score = score
-                best_dist = dist
-            end
-        end
+    local strategy = self:get_strategy()
+    if strategy and strategy.get_best_target then
+        return strategy:get_best_target(opts)
     end
 
-    if not best_unit and self:is_valid_enemy(player_target, opts) then
-        local ok_dead, dead = safe_call(player_target, "is_dead")
-        if not ok_dead or dead ~= true then
-            best_unit = player_target
-            best_score = 0
-        end
-    end
-
-    if best_unit then
-        if not current_target then
-            self._event_bus:publish(Events.TARGET_ACQUIRED, {
-                target = best_unit,
-                score = best_score,
-                source = self._blackboard:get("combat.source", "selector"),
-            })
-        elseif not same_guid(current_target, best_unit) then
-            self._event_bus:publish(Events.TARGET_CHANGED, {
-                from_target = current_target,
-                to_target = best_unit,
-                reason = "higher_score",
-            })
-        end
-        if not current_target or not same_guid(current_target, best_unit) then
-            set_target(best_unit)
-        end
-    elseif current_target then
-        self._event_bus:publish(Events.TARGET_LOST, {
-            target = current_target,
-            reason = "no_candidates",
-        })
-    end
-
-    return best_unit, best_score
+    return nil, 0
 end
 
 return TargetSelector

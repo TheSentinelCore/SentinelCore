@@ -5,7 +5,6 @@ local Act = require("modules/combat/profiles/paladin/retribution_actions")
 local MaintenanceTree = require("modules/combat/profiles/paladin/maintenance_tree")
 local PriorityBuilder = require("modules/combat/priority_builder")
 local SharedConditions = require("modules/combat/condition_library")
-local SharedActions = require("modules/combat/action_library")
 
 local Profile = {}
 Profile.__index = Profile
@@ -22,104 +21,7 @@ local function build_off_gcd_root()
     }), { key = "combat_ret_offgcd" })
 end
 
-local function build_gcd_root()
-    return BT.cooldown("ret_gcd_cooldown", 75, BT.selector("ret_paladin_gcd", {
-        BT.sequence("hammer_of_justice_interrupt", {
-            BT.condition("target_valid", Cond.target_valid),
-            BT.condition("in_judgement_range", Cond.in_judgement_range),
-            BT.condition("target_casting_interruptible", Cond.target_casting_interruptible),
-            BT.condition("hoj_ready", Cond.spell_ready("hammer_of_justice")),
-            BT.action("queue_hammer_of_justice", Act.queue_hammer_of_justice),
-        }),
-        BT.sequence("apply_seal_before_combat", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("target_valid", Cond.target_valid),
-            BT.condition("baseline_seal_missing", Cond.baseline_seal_missing),
-            BT.condition("seal_of_blood_ready", Cond.spell_ready("seal_of_blood", nil, "self")),
-            BT.action("queue_seal_of_blood_before_combat", Act.queue_seal_of_blood),
-        }),
-        BT.sequence("seal_twist_prime", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("target_valid", Cond.target_valid),
-            BT.condition("in_melee", Cond.in_melee),
-            BT.condition("twist_enabled", Cond.twist_enabled),
-            BT.condition("twist_window_open", Cond.twist_window_open),
-            BT.condition("soc_ready", Cond.spell_ready("seal_of_command", "lowest", "self")),
-            BT.action("queue_soc_r1", Act.queue_seal_of_command_rank1),
-        }),
-        BT.sequence("hammer_of_wrath_execute", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("target_valid", Cond.target_valid),
-            BT.condition("not_twisting", Cond.not_twisting),
-            BT.condition("target_execute", Cond.target_execute),
-            BT.condition("how_ready", Cond.spell_ready("hammer_of_wrath")),
-            BT.action("queue_hammer_of_wrath", Act.queue_hammer_of_wrath),
-        }),
-        BT.sequence("seal_of_blood_reseal_after_judgement", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("in_combat_context", Cond.in_combat_context),
-            BT.condition("desired_blood", Cond.desired_seal_is_blood),
-            BT.condition("after_judgement_reseal", Cond.after_judgement_reseal),
-            BT.condition("blood_not_active", Cond.blood_not_active),
-            BT.condition("seal_of_blood_ready", Cond.spell_ready("seal_of_blood", nil, "self")),
-            BT.action("queue_seal_of_blood_after_judgement", Act.queue_seal_of_blood),
-        }),
-        BT.sequence("seal_twist_recover", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("in_combat_context", Cond.in_combat_context),
-            BT.condition("desired_blood", Cond.desired_seal_is_blood),
-            BT.condition("twist_reseal_pending", Cond.twist_reseal_pending),
-            BT.condition("blood_not_active", Cond.blood_not_active),
-            BT.condition("seal_of_blood_ready", Cond.spell_ready("seal_of_blood", nil, "self")),
-            BT.action("queue_seal_of_blood_after_twist", Act.queue_seal_of_blood),
-        }),
-        BT.sequence("seal_of_blood_maintain", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("in_combat_context", Cond.in_combat_context),
-            BT.condition("target_valid", Cond.target_valid),
-            BT.condition("desired_blood", Cond.desired_seal_is_blood),
-            BT.condition("blood_not_active", Cond.blood_not_active),
-            BT.condition("not_twisting", Cond.not_twisting),
-            BT.condition("seal_of_blood_ready", Cond.spell_ready("seal_of_blood", nil, "self")),
-            BT.action("queue_seal_of_blood", Act.queue_seal_of_blood),
-        }),
-        BT.sequence("seal_of_command_aoe_maintain", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("in_combat_context", Cond.in_combat_context),
-            BT.condition("target_valid", Cond.target_valid),
-            BT.condition("aoe_mode", Cond.aoe_mode),
-            BT.condition("desired_command", Cond.desired_seal_is_command),
-            BT.condition("command_not_active", Cond.command_not_active),
-            BT.condition("seal_of_command_ready", Cond.spell_ready("seal_of_command", nil, "self")),
-            BT.action("queue_seal_of_command", Act.queue_seal_of_command),
-        }),
-        BT.sequence("judgement", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("target_valid", Cond.target_valid),
-            BT.condition("active_seal_present", Cond.active_seal_present),
-            BT.condition("in_judgement_range", Cond.in_judgement_range),
-            BT.condition("judgement_ready", Cond.spell_ready("judgement")),
-            BT.action("queue_judgement", Act.queue_judgement),
-        }),
-        BT.sequence("crusader_strike", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("target_valid", Cond.target_valid),
-            BT.condition("in_melee", Cond.in_melee),
-            BT.condition("cs_ready", Cond.spell_ready("crusader_strike")),
-            BT.action("queue_crusader_strike", Act.queue_crusader_strike),
-        }),
-        BT.sequence("consecration", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("enemy_count_two", Cond.enemy_count_at_least(2)),
-            BT.condition("mana_above_35", Cond.mana_above(0.35)),
-            BT.condition("consecration_ready", Cond.spell_ready("consecration", nil, "self")),
-            BT.action("queue_consecration", Act.queue_consecration),
-        }),
-        BT.action("fallback_noop", Act.noop),
-    }), { key = "combat_ret_gcd" })
-end
-
-local function build_gcd_root_dsl(blackboard)
+local function build_gcd_root(blackboard)
     local builder = PriorityBuilder.new("PALADIN", "RETRIBUTION")
     builder:add_priority("hammer_of_justice_interrupt", {
         SharedConditions.target_valid,
@@ -201,8 +103,20 @@ local function build_gcd_root_dsl(blackboard)
         Cond.mana_above(0.35),
         Cond.spell_ready("consecration", nil, "self"),
     }, Act.queue_consecration, nil, 100)
+    builder:add_priority("seal_of_righteousness_maintain", {
+        Cond.gcd_ready,
+        Cond.in_combat_context,
+        Cond.target_valid,
+        Cond.righteousness_not_active,
+        Cond.blood_not_active,
+        Cond.command_not_active,
+        Cond.spell_ready("seal_of_righteousness", nil, "self"),
+    }, Act.queue_seal_of_righteousness, nil, 95)
+    builder:add_priority("melee_fallback", {
+        Cond.target_valid,
+    }, Act.melee_fallback, nil, 990)
     builder:add_priority("fallback_noop", nil, Act.noop, nil, 1000)
-    return BT.cooldown("ret_gcd_cooldown_dsl", 75, builder:build(blackboard), { key = "combat_ret_gcd_dsl" })
+    return BT.cooldown("ret_gcd_cooldown", 75, builder:build(blackboard), { key = "combat_ret_gcd" })
 end
 
 function Profile.build(blackboard, event_bus)
@@ -210,10 +124,11 @@ function Profile.build(blackboard, event_bus)
     o.id = "paladin_retribution_tbc"
     o._maintenance = Runner:new(BT.cooldown("ret_maintenance_cooldown", 250, MaintenanceTree.build(), { key = "combat_ret_maintenance" }))
     o._off_gcd = Runner:new(build_off_gcd_root())
-    local engine = blackboard:get("module.combat.rotation_engine", "legacy")
-    local gcd_root = engine == "dsl" and build_gcd_root_dsl(blackboard) or build_gcd_root()
-    o._gcd = Runner:new(gcd_root)
+    o._gcd = Runner:new(build_gcd_root(blackboard))
     blackboard:set("rotation.profile_id", o.id)
+    -- Paladin combat range is melee (5 yd). Needed by pull phase (defaults to 28)
+    -- and chase controller (defaults to 4.5) to set correct approach distance.
+    blackboard:set("module.combat.combat_range", 5)
     event_bus:publish("rotation:profile_loaded", {
         rotation_id = o.id,
         class_id = 2,

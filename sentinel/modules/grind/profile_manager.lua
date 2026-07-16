@@ -647,6 +647,7 @@ function ProfileManager:_inject_hotspot()
         mob_whitelist = filters.npc_whitelist or {},
         mob_blacklist = filters.npc_blacklist or {},
         creature_types = filters.creature_types or {},
+        allow_neutral = hotspot.allow_neutral == true,  -- Skip can_attack check for passive mobs
         blackspots = self._profile.blackspots or {},
         aoe_enabled = false,
         hotspot_id = hotspot.id,

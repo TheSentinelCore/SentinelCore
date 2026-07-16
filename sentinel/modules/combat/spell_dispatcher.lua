@@ -3,6 +3,10 @@ local Events = require("modules/combat/events")
 local SpellDispatcher = {}
 SpellDispatcher.__index = SpellDispatcher
 
+-- ---------------------------------------------------------------------------
+-- Spell queue resolution and method dispatch
+-- ---------------------------------------------------------------------------
+
 local _spell_queue_ref = nil
 local _spell_queue_resolved = false
 
@@ -21,6 +25,25 @@ local function resolve_spell_queue()
     end
     return _spell_queue_ref
 end
+
+---Call a spell queue method using method-call convention (queue:method(...)).
+---The spell_queue module is external and its calling convention varies.
+---We always try method-call first (our canonical convention).
+---@param queue table The spell queue instance
+---@param method_name string The method name to call
+---@param ... any Arguments to pass after the method name
+---@return boolean ok Whether the call succeeded (no error thrown)
+---@return any result The return value from the method
+local function call_queue_method(queue, method_name, ...)
+    if not queue or type(queue[method_name]) ~= "function" then
+        return false, nil
+    end
+    return pcall(queue[method_name], queue, ...)
+end
+
+-- ---------------------------------------------------------------------------
+-- GUID and signature helpers
+-- ---------------------------------------------------------------------------
 
 local function same_guid(unit_a, unit_b)
     if not unit_a or not unit_b then
@@ -177,30 +200,21 @@ function SpellDispatcher:queue_target(action_id, spell_id, target, queue_priorit
         before_signature = snapshot_signature(before_snapshot, spell_id, queue_priority, target, "target")
     end
 
-    local ok, queued, queue_method = false, nil, ""
-    local queue_fn = nil
+    -- Dispatch to spell queue using canonical method-call convention.
+    -- Only method_with_self is supported (flat calls were dead code).
+    local ok, queued = false, nil
+    local queue_method = ""
     if opts.fast and type(queue.queue_spell_target_fast) == "function" then
-        queue_fn = queue.queue_spell_target_fast
-        -- Try method call first: queue:queue_spell_target_fast(...)
-        local ok_method, result = pcall(queue_fn, queue, spell_id, target, queue_priority, message, opts.allow_movement ~= false)
-        if ok_method then
-            ok, queued, queue_method = true, result, "method_with_self"
-        else
-            -- Method call errored - this is a genuine failure, not a convention issue
-            ok, queued, queue_method = false, result, "method_failed"
-        end
+        ok, queued = call_queue_method(queue, "queue_spell_target_fast",
+            spell_id, target, queue_priority, message, opts.allow_movement ~= false)
+        queue_method = "method_with_self"
     elseif type(queue.queue_spell_target) == "function" then
-        queue_fn = queue.queue_spell_target
-        -- Try method call first: queue:queue_spell_target(...)
-        local ok_method, result = pcall(queue_fn, queue, spell_id, target, queue_priority, message, opts.allow_movement ~= false)
-        if ok_method then
-            ok, queued, queue_method = true, result, "method_with_self"
-        else
-            -- Method call errored - record failure
-            ok, queued, queue_method = false, result, "method_failed"
-        end
+        ok, queued = call_queue_method(queue, "queue_spell_target",
+            spell_id, target, queue_priority, message, opts.allow_movement ~= false)
+        queue_method = "method_with_self"
     end
 
+    -- Verify by snapshot comparison (non-fast only)
     local observed = true
     if ok and not opts.fast and before_signature ~= nil then
         local after_snapshot = get_queue_snapshot(queue)
@@ -216,7 +230,7 @@ function SpellDispatcher:queue_target(action_id, spell_id, target, queue_priorit
         return true
     end
 
-    self:_block(action_id, spell_id, observed and (queued or "queue_target_failed") or "queue_not_observed_in_snapshot")
+    self:_block(action_id, spell_id, observed and (queued and tostring(queued) or "queue_target_failed") or "queue_not_observed_in_snapshot")
     return false
 end
 
@@ -240,15 +254,15 @@ function SpellDispatcher:queue_position(action_id, spell_id, position, queue_pri
         return false
     end
 
-    -- Try method call first (queue:queue_spell_position(...))
-    local ok, queued = pcall(queue.queue_spell_position, queue, spell_id, position, queue_priority, message, true)
+    local ok, queued = call_queue_method(queue, "queue_spell_position",
+        spell_id, position, queue_priority, message, true)
     self:_set_queue_diag("position", "method_with_self", ok, nil)
     if ok and queued ~= false then
         self:_commit(signature, action_id, spell_id, "position", queue_priority, now_ms)
         return true
     end
 
-    self:_block(action_id, spell_id, queued or "queue_position_failed")
+    self:_block(action_id, spell_id, queued and tostring(queued) or "queue_position_failed")
     return false
 end
 

@@ -11,6 +11,18 @@ function Sequence:new(name, children)
 end
 
 function Sequence:tick(blackboard)
+    -- If we were running a child beyond the first, re-evaluate the first child (guard condition)
+    -- to ensure it still passes. This fixes the common pattern where Sequence is used as
+    -- "condition + action" and the condition must be re-checked each tick.
+    if self._running_index > 1 then
+        local guard_status = self.children[1]:tick(blackboard)
+        if guard_status == Status.FAILURE then
+            self._running_index = 1
+            return Status.FAILURE
+        end
+        -- Guard passed, continue with the running child
+    end
+
     for index = self._running_index, #self.children do
         local status = self.children[index]:tick(blackboard)
         if status == Status.RUNNING then

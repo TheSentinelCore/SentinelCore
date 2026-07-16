@@ -76,7 +76,7 @@ function Patrol.build_acquire(event_bus, nav_adapter)
             bb:set("module.grind.patrol_center", center)
         end
 
-        -- Build a spot config for target filtering in patrol mode
+	-- Build a spot config for target filtering in patrol mode
         local spot = bb:get("module.grind.current_spot")
         if not spot then
             -- No profile loaded — create a minimal spot from patrol center
@@ -85,6 +85,23 @@ function Patrol.build_acquire(event_bus, nav_adapter)
                 radius = patrol_radius,
                 level_min = 1,
                 level_max = 99,
+                allow_neutral = true,
+            }
+        else
+            -- Flat copy to avoid mutating the shared profile spot
+            spot = {
+                center = spot.center,
+                radius = spot.radius,
+                level_min = spot.level_min,
+                level_max = spot.level_max,
+                mob_whitelist = spot.mob_whitelist,
+                mob_blacklist = spot.mob_blacklist,
+                creature_types = spot.creature_types,
+                blackspots = spot.blackspots,
+                aoe_enabled = spot.aoe_enabled,
+                hotspot_id = spot.hotspot_id,
+                hotspot_label = spot.hotspot_label,
+                allow_neutral = true,
             }
         end
 

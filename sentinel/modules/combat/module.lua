@@ -4,7 +4,7 @@ local AuraCatalog = require("modules/combat/aura_catalog")
 local SpellDispatcher = require("modules/combat/spell_dispatcher")
 local CooldownTracker = require("modules/combat/cooldown_tracker")
 local SwingTracker = require("modules/combat/swing_tracker")
-local TargetSelector = require("modules/combat/target_selector")
+local TargetSelector = require("modules/combat/target_selector_v2")
 local ChaseController = require("modules/combat/chase_controller")
 local ContextBuilder = require("modules/combat/context_builder")
 local ProfileRegistry = require("modules/combat/profiles/registry")
@@ -56,7 +56,7 @@ function SentinelCombat:initialize()
 
     -- Store izi_bridge in blackboard for profiles to access
     self._blackboard:set("module.combat.izi_bridge", self._izi_bridge)
-    self._blackboard:set("module.combat.rotation_engine", self._blackboard:get("module.combat.rotation_engine", "legacy"))
+    self._blackboard:set("module.combat.rotation_engine", "dsl")
 
     local player = core and core.object_manager and core.object_manager.get_local_player and core.object_manager.get_local_player()
     local raw_class = player and type(player.get_class) == "function" and player:get_class()
@@ -88,6 +88,7 @@ function SentinelCombat:initialize()
     self._blackboard:set("rotation.primary_seal", "blood")
     self._blackboard:set("rotation.desired_seal", nil)
     self._blackboard:set("rotation.desired_seal_reason", "ooc_no_seal")
+    self._cooldown_enter_ms = 0
     self._blackboard:set("combat.burst_context", false)
     self._blackboard:set("combat.gcd_until_ms", 0)
     self._blackboard:set("combat.leash_radius", 25)
@@ -376,7 +377,9 @@ function SentinelCombat:engage(target, opts)
         if self._source == "bg" or self._source == "auto" then
             target = nil
         else
-            return
+            -- For grind and other sources, don't return early - fall through
+            -- to get_best_target() to find a valid target
+            target = nil
         end
     end
 
@@ -625,6 +628,25 @@ function SentinelCombat:update(blackboard)
 
     self._profile:tick_off_gcd(blackboard)
 
+    -- COOLDOWN timeout: if the GCD tree found no legal actions and we've been
+    -- waiting long enough, disengage and return control to the grind tree.
+    -- This prevents the combat phase from locking the grind priority selector
+    -- when there's nothing to do (e.g. all spells on cooldown, target out of
+    -- range, no valid target). The timeout is reset whenever we transition out
+    -- of COOLDOWN (e.g. a spell confirms via the event handler).
+    local COOLDOWN_TIMEOUT_MS = 2500
+    if self._state_machine:get_state() == "COOLDOWN" then
+        if self._cooldown_enter_ms == 0 then
+            self._cooldown_enter_ms = now_ms
+        elseif now_ms - self._cooldown_enter_ms >= COOLDOWN_TIMEOUT_MS then
+            self._cooldown_enter_ms = 0
+            self:disengage("no_legal_action_timeout")
+            return
+        end
+    else
+        self._cooldown_enter_ms = 0
+    end
+
     if self._cooldowns:is_gcd_ready(now_ms) then
         self._state_machine:transition("ENGAGING", "gcd_ready")
         
@@ -638,6 +660,7 @@ function SentinelCombat:update(blackboard)
         local status = self._profile:tick_gcd(blackboard)
         if status == "FAILURE" then
             self._state_machine:transition("COOLDOWN", "no_legal_action")
+            self._cooldown_enter_ms = now_ms
             self:_combat_diag(blackboard, "gcd_tree_failure")
         end
     else

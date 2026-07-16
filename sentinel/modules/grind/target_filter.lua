@@ -39,18 +39,30 @@ end
 ---@param spot table Spot config with center, radius, level_min, level_max, mob_blacklist, mob_whitelist, creature_types, blackspots
 ---@param player_level number Current player level
 ---@param player table|nil Player game object (for can_attack check)
+---@param blackboard table|nil Blackboard instance (for global settings)
 ---@return boolean
-function TargetFilter.passes(unit, spot, player_level, player)
+function TargetFilter.passes(unit, spot, player_level, player, blackboard)
     -- 1. Must be alive
     local ok_alive, alive = pcall(unit.is_alive, unit)
     if not ok_alive or not alive then
         return false
     end
 
-    -- 2. Must be attackable by player
-    if player and type(player.can_attack) == "function" then
+    -- 2. Check global blackboard settings for neutral
+    local global_attack_neutral = false
+    local global_blacklist = {}
+    if blackboard then
+        global_attack_neutral = blackboard:get("module.grind.attack_neutral") == true
+        global_blacklist = blackboard:get("module.grind.mob_blacklist") or {}
+    end
+
+    -- 3. Must be attackable by player (unless spot or global settings allow neutral)
+    local allow_neutral = (spot and spot.allow_neutral == true) or global_attack_neutral
+    
+    if player and type(player.can_attack) == "function" and not allow_neutral then
         local ok, attackable = pcall(player.can_attack, player, unit)
         if ok and not attackable then
+            -- It's neutral but we don't attack neutral
             return false
         end
     end
@@ -110,9 +122,18 @@ function TargetFilter.passes(unit, spot, player_level, player)
         end
     end
 
-    -- 6. Must not be in mob_blacklist (by NpcRef or name)
+    -- 6. Must not be in spot's mob_blacklist (by NpcRef or name)
     if spot.mob_blacklist then
         for _, ref in ipairs(spot.mob_blacklist) do
+            if matches_npc_ref(unit, ref) then
+                return false
+            end
+        end
+    end
+
+    -- 6b. Must not be in global blacklist
+    if global_blacklist and #global_blacklist > 0 then
+        for _, ref in ipairs(global_blacklist) do
             if matches_npc_ref(unit, ref) then
                 return false
             end
@@ -223,13 +244,14 @@ end
 ---@param player_level number Current player level
 ---@param player_pos table { x, y, z } player position
 ---@param player table|nil Player game object
----@param opts table|nil Optional { threat_map, now_ms } for threat-aware scoring
+---@param opts table|nil Optional { threat_map, now_ms, blackboard } for threat-aware scoring and global settings
 ---@return table|nil unit The best scoring valid unit, or nil
 function TargetFilter.select_best(units, spot, player_level, player_pos, player, opts)
+    local blackboard = opts and opts.blackboard
     -- Pre-filter: collect all valid targets with pre-fetched positions (O(N))
     local valid = {}
     for _, unit in ipairs(units) do
-        local ok, result = pcall(TargetFilter.passes, unit, spot, player_level, player)
+        local ok, result = pcall(TargetFilter.passes, unit, spot, player_level, player, blackboard)
         if ok and result then
             local ok_pos, upos = pcall(unit.get_position, unit)
             if ok_pos and type(upos) == "table" then

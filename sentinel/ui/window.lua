@@ -1,9 +1,6 @@
 local SentinelUI = require("ui/lib/sentinel_ui")
-local DashboardTab = require("ui/tabs/dashboard_tab")
-local CombatTab = require("ui/tabs/combat_tab")
+local UnifiedDashboardTab = require("ui/tabs/unified_dashboard_tab")
 local BattlegroundTab = require("ui/tabs/battleground_tab")
-local GrindTab = require("ui/tabs/grind_tab")
-local DebugTab = require("ui/tabs/debug_tab")
 local ProfileEditorTab = require("ui/tabs/profile_editor_tab")
 
 local Window = {}
@@ -168,6 +165,7 @@ local function create_menu_elements()
         grind_vendor_sell_quality = menu_slider_int(0, 4, 2, "sentinel_ui_grind_vendor_sell_quality"),
         grind_repair_threshold = menu_slider_int(0, 200, 50, "sentinel_ui_grind_repair_threshold"),
         grind_pvp_avoidance = menu_checkbox(true, "sentinel_ui_grind_pvp_avoidance"),
+        grind_attack_neutral = menu_checkbox(false, "sentinel_ui_grind_attack_neutral"),
 
         -- Profile Editor
         profile_editor_hotspot_radius = menu_slider_int(10, 100, 40, "sentinel_ui_profile_editor_hotspot_radius"),
@@ -181,7 +179,7 @@ end
 
 local function register_tabs(ui, app, menu)
     ui:add_tab({ id = "dashboard", label = "Dashboard" }, function(t)
-        DashboardTab.render(t, app, menu)
+        UnifiedDashboardTab.render(t, app, menu)
     end)
     ui:add_tab({
         id = "battleground",
@@ -191,24 +189,11 @@ local function register_tabs(ui, app, menu)
         BattlegroundTab.render(t, app, menu)
     end)
     ui:add_tab({
-        id = "grind",
-        label = "Grind",
-        visible_when = is_grind_mode,
-    }, function(t)
-        GrindTab.render(t, app, menu)
-    end)
-    ui:add_tab({
         id = "profile_editor",
         label = "Profile Editor",
         visible_when = is_grind_mode,
     }, function(t)
         ProfileEditorTab.render(t, app, menu)
-    end)
-    ui:add_tab({ id = "combat", label = "Combat" }, function(t)
-        CombatTab.render(t, app, menu)
-    end)
-    ui:add_tab({ id = "debug", label = "Debug" }, function(t)
-        DebugTab.render(t, app, menu)
     end)
 end
 
@@ -331,6 +316,9 @@ local function sync_to_runtime()
     if new_mode == "patrol" and old_mode ~= "patrol" then
         blackboard:set("module.grind.patrol_center_reset", true)
     end
+
+    -- Target filter settings
+    blackboard:set("module.grind.attack_neutral", _menu.grind_attack_neutral:get_state() == true)
 end
 
 function Window.init(app)

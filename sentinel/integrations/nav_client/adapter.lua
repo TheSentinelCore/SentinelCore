@@ -1,18 +1,10 @@
+local Geometry = require("core/geometry")
+
 local NavAdapter = {}
 NavAdapter.__index = NavAdapter
 
 local function num(value)
     return tonumber(value) or 0
-end
-
-local function distance(a, b)
-    if type(a) ~= "table" or type(b) ~= "table" then
-        return 0
-    end
-    local dx = num(a.x) - num(b.x)
-    local dy = num(a.y) - num(b.y)
-    local dz = num(a.z) - num(b.z)
-    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
 end
 
 local function invoke(owner, method, ...)
@@ -192,7 +184,7 @@ function NavAdapter:poll()
             if ok_player and player and type(player.get_position) == "function" then
                 local ok_pos, player_pos = pcall(player.get_position, player)
                 if ok_pos and type(player_pos) == "table" then
-                    progress.distance_remaining = distance(player_pos, progress.destination)
+                    progress.distance_remaining = Geometry.distance(player_pos, progress.destination)
                 end
             end
         end

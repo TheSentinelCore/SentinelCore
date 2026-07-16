@@ -1,5 +1,6 @@
 local BT = require("core/bt/factory")
 local Status = require("core/bt/status")
+local ProfileInterface = require("modules/combat/profile_interface")
 
 local Pull = {}
 
@@ -173,23 +174,26 @@ function Pull.build(blackboard, event_bus, nav_adapter)
 
             -- Try profile tick_pull hook
             local profile = bb:get("module.combat.profile")
-            if profile and type(profile.tick_pull) == "function" then
-                local result = profile:tick_pull(bb, target)
-                if result == Status.SUCCESS then
-                    -- Hand off to combat module so it transitions from IDLE
-                    event_bus:publish("combat:engage_requested", {
-                        target = target,
-                        source = "grind",
-                        leash_center = player_pos,
-                        leash_radius = 40,
-                    })
-                    return Status.SUCCESS
-                end
-                -- Spell not ready yet (GCD, cooldown) — keep trying
-                return Status.RUNNING
+            local result = ProfileInterface.call_optional(profile, "tick_pull", bb, target)
+            if result == Status.SUCCESS then
+                -- Hand off to combat module so it transitions from IDLE
+                event_bus:publish("combat:engage_requested", {
+                    target = target,
+                    source = "grind",
+                    leash_center = player_pos,
+                    leash_radius = 40,
+                })
+                return Status.SUCCESS
             end
 
-            -- Default fallback: request combat engagement
+            -- Spell not ready yet (GCD, cooldown) -- keep trying
+            return Status.RUNNING
+        end),
+
+        -- Default fallback: request combat engagement
+        BT.action("request_combat_engage", function(bb)
+            local target = bb:get("module.grind.current_target")
+            local player_pos = bb:get("player.position")
             event_bus:publish("combat:engage_requested", {
                 target = target,
                 source = "grind",

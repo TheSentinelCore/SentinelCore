@@ -15,9 +15,15 @@ function Combat.build()
             return bb:get("combat.source") ~= nil
         end),
 
-        -- Yield: combat module handles fighting
+        -- Yield: combat module handles fighting.
+        -- Must return RUNNING so the priority selector keeps this child active
+        -- without falling through to lower-priority phases (pull/acquire).
+        -- Returning SUCCESS would also keep the selector here (priority_selector
+        -- treats SUCCESS as "this child satisfied, stop"), but SUCCESS is
+        -- semantically wrong — combat hasn't finished until disengage clears
+        -- combat.source.
         BT.action("yield", function(bb)
-            return Status.SUCCESS
+            return Status.RUNNING
         end),
     })
 end

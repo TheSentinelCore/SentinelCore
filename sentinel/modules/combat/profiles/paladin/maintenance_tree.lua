@@ -11,11 +11,14 @@ function MaintenanceTree.build()
             BT.condition("retribution_aura_ready", Cond.spell_ready("retribution_aura", nil, "self")),
             BT.action("queue_retribution_aura", Act.queue_retribution_aura),
         }),
-        BT.sequence("ensure_seal", {
+        BT.sequence("ensure_seal_blood", {
             BT.condition("baseline_seal_missing", Cond.baseline_seal_missing),
             BT.condition("seal_of_blood_ready", Cond.spell_ready("seal_of_blood", nil, "self")),
             BT.action("queue_seal_of_blood", Act.queue_seal_of_blood),
         }),
+        -- Note: seal application is handled by GCD tree priorities during combat.
+        -- Do NOT seal from maintenance tree — it fires during IDLE state (out of combat)
+        -- and wastes the GCD.
         BT.sequence("ensure_blessing_of_kings", {
             BT.condition("preferred_blessing_is_kings", Cond.preferred_blessing_is_kings),
             BT.condition("missing_kings", Cond.missing_kings),

@@ -3,6 +3,7 @@ local Status = require("core/bt/status")
 local ConsumeManager = require("modules/grind/consume_manager")
 local bag_scanner = require("modules/grind/bag_scanner")
 local ConsumableIds = require("modules/grind/consumable_ids")
+local ProfileInterface = require("modules/combat/profile_interface")
 
 local Rest = {}
 
@@ -99,8 +100,11 @@ function Rest.build(event_bus, nav_adapter)
         BT.action("prepare_rest", function(bb)
             local profile = bb:get("module.combat.profile")
             local profile_result = Status.SUCCESS
-            if profile and type(profile.prepare_rest) == "function" then
-                profile_result = profile:prepare_rest(bb)
+            if profile then
+                local ok, result = pcall(ProfileInterface.call_optional, profile, "prepare_rest", bb)
+                if ok then
+                    profile_result = result or Status.SUCCESS
+                end
             end
             if bb:get("player.is_casting", false) == true
             or bb:get("player.is_channeling", false) == true then

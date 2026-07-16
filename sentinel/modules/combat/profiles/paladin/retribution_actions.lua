@@ -19,7 +19,7 @@ local function dispatcher(blackboard)
 end
 
 local function player_and_target(blackboard)
-    return blackboard:get("player.object"), blackboard:get("combat.target") or blackboard:get("player.target")
+    return blackboard:get("player.object"), blackboard:get("combat.target") or blackboard:get("player.target") or blackboard:get("module.grind.current_target")
 end
 
 local function queue_target(blackboard, action_id, spell_key, target, priority, opts, mode)
@@ -115,6 +115,11 @@ function Act.queue_seal_of_command(blackboard)
     return queue_target(blackboard, "seal_of_command_aoe_maintain", "seal_of_command", player, QueuePriorities.DEFAULT)
 end
 
+function Act.queue_seal_of_righteousness(blackboard)
+    local player = blackboard:get("player.object")
+    return queue_target(blackboard, "seal_of_righteousness", "seal_of_righteousness", player, QueuePriorities.DEFAULT)
+end
+
 function Act.queue_crusader_strike(blackboard)
     local _, target = player_and_target(blackboard)
     return queue_target(blackboard, "crusader_strike", "crusader_strike", target, QueuePriorities.DEFAULT)
@@ -160,6 +165,58 @@ end
 function Act.queue_blessing_of_kings(blackboard)
     local player = blackboard:get("player.object")
     return queue_target(blackboard, "blessing_of_kings", "blessing_of_kings", player, QueuePriorities.DEFAULT)
+end
+
+---Fallback: no spell action available. Return SUCCESS so the GCD tree
+---doesn't signal "no legal action" when the target is valid but no
+---spells can be queued (e.g. low-level paladin without Seal of Blood).
+---The combat module's GCD check only transitions to COOLDOWN when
+---tick_gcd returns FAILURE; returning SUCCESS here keeps the module
+---engaged and lets auto-attack / chase-controller function normally.
+local function num(value)
+    return tonumber(value) or 0
+end
+
+local function distance(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return 99999
+    end
+    local dx = num(a.x) - num(b.x)
+    local dy = num(a.y) - num(b.y)
+    local dz = num(a.z) - num(b.z)
+    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+end
+
+---Melee fallback: signals that no spell action is available but a valid
+---target exists. Returns SUCCESS so the GCD tree doesn't signal "no legal
+---action" — the chase controller handles movement and WoW auto-attack
+---deals damage. Also starts auto-attack if not already attacking and in
+---melee range (spell ID 6603 = generic Attack ability).
+---Returns RUNNING if no target yet (wait for target), FAILURE if target dead.
+function Act.melee_fallback(blackboard)
+    local player_obj, target = player_and_target(blackboard)
+    if not target then
+        -- No target yet — keep tree running so it doesn't trigger COOLDOWN->disengage
+        return Status.RUNNING
+    end
+    local ok_dead, dead = pcall(target.is_dead, target)
+    if ok_dead and dead == true then
+        return Status.FAILURE
+    end
+    -- Start auto-attack if not already auto-attacking (spell 6603 = Attack)
+    if player_obj and type(player_obj.is_auto_attacking) == "function" then
+        local ok_aa, is_aa = pcall(player_obj.is_auto_attacking, player_obj)
+        if (not ok_aa or not is_aa) and core and core.input
+            and type(core.input.cast_target_spell) == "function" then
+            pcall(core.input.cast_target_spell, 6603, target)
+        end
+    end
+    -- Target is alive and valid — always SUCCESS, regardless of range.
+    -- The chase controller is responsible for closing the gap. Returning
+    -- FAILURE due to range would make the GCD tree return FAILURE,
+    -- transition to COOLDOWN, and disengage after 2.5s — which is wrong
+    -- when the chase is actively closing the gap.
+    return Status.SUCCESS
 end
 
 function Act.noop()

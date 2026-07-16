@@ -156,6 +156,10 @@ function Cond.command_not_active(blackboard)
     return blackboard:get("rotation.active_seal") ~= "command"
 end
 
+function Cond.righteousness_not_active(blackboard)
+    return blackboard:get("rotation.active_seal") ~= "righteousness"
+end
+
 function Cond.target_execute(blackboard)
     local _, target = player_and_target(blackboard)
     if not target then
@@ -266,11 +270,18 @@ function Cond.missing_kings(blackboard)
 end
 
 function Cond.baseline_seal_missing(blackboard)
+    local active = blackboard:get("rotation.active_seal")
+    if active == "command" then
+        return false
+    end
+    if active == "righteousness" then
+        return false
+    end
     local desired = blackboard:get("rotation.desired_seal", "blood")
     if desired == "command" then
-        return blackboard:get("rotation.active_seal") ~= "command"
+        return active ~= "command"
     end
-    return blackboard:get("rotation.active_seal") ~= "blood"
+    return active ~= "blood"
 end
 
 return Cond

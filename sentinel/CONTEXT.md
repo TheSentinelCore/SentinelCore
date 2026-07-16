@@ -6,11 +6,17 @@
 
 **Rest Phase** — behavior tree phase that consumes food/water until health/mana recovery thresholds are met, then signals completion.
 
-**Vendor Phase** — multi-step phase for navigating to vendor, repairing gear, selling unwanted items, and purchasing consumables.
+**Vendor Phase** — behavior tree phase that delegates to VendorStateMachine for navigating to vendor, repairing gear, selling unwanted items, and purchasing consumables.
+
+**VendorStateMachine** — encapsulates the multi-state vendor interaction lifecycle (traveling, interacting, repairing, selling, buying consumables). Owns its state internally; callers only see `tick()`, `reset()`, and `is_running()`.
+
+**ThreatType** — a descriptor for a category of threat (DEATH, PVP_PLAYER, DANGEROUS_MOB, STUCK) with a default weight and half-life. Replaces raw string + weight pairs in ThreatMap calls.
 
 **ThreatMap** — spatial heat map of dangerous locations, accumulating threat entries from deaths, PvP players, and stuck events.
 
 **Flee Point** — a position computed as "away from threat center" used during safety flee behavior.
+
+**Attack Neutral** — a grind module setting (`module.grind.attack_neutral`) that when enabled allows the bot to target and attack neutral (yellow) mobs in addition to hostile (red) mobs. Used by level 1 characters who can only auto-attack, since neutral mobs become attackable when targeted.
 
 ## Combat Module Concepts
 

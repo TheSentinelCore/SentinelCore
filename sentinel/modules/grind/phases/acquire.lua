@@ -46,32 +46,61 @@ function Acquire.build(blackboard, event_bus, nav_adapter)
         end
         bb:set("module.grind.last_acquire_ms", now)
 
-        -- Use unit_helper for localized scan instead of get_all_objects
+        -- Determine scan method based on attack_neutral setting
+        local attack_neutral = bb:get("module.grind.attack_neutral") == true
         local units = {}
-        if unit_helper and type(unit_helper.get_enemy_list_around) == "function" then
-            local ok, list = pcall(unit_helper.get_enemy_list_around, unit_helper, player_pos, 55, true, false)
-            if ok and type(list) == "table" then
-                units = list
+
+        if attack_neutral then
+            -- For attack_neutral, scan all objects (includes neutral/yellow mobs)
+            if core and core.object_manager and core.object_manager.get_all_objects then
+                local ok, objects = pcall(core.object_manager.get_all_objects)
+                if ok and type(objects) == "table" then
+                    for _, obj in ipairs(objects) do
+                        local ok2, iu = pcall(obj.is_unit, obj)
+                        if ok2 and iu then
+                            units[#units + 1] = obj
+                        end
+                    end
+                end
+            end
+        else
+            -- Normal mode: use unit_helper for localized hostile mob scan
+            if unit_helper and type(unit_helper.get_enemy_list_around) == "function" then
+                local ok, list = pcall(unit_helper.get_enemy_list_around, unit_helper, player_pos, 55, true, false)
+                if ok and type(list) == "table" then
+                    units = list
+                end
             end
         end
 
-        -- Fallback to get_all_objects if unit_helper unavailable
-        if #units == 0 and core and core.object_manager and core.object_manager.get_all_objects then
-            local ok, objects = pcall(core.object_manager.get_all_objects)
-            if ok and type(objects) == "table" then
-                for _, obj in ipairs(objects) do
-                    local ok2, iu = pcall(obj.is_unit, obj)
-                    if ok2 and iu then
-                        units[#units + 1] = obj
+        -- Fallback: if no units found from preferred method, try the other
+        if #units == 0 then
+            if not attack_neutral and core and core.object_manager and core.object_manager.get_all_objects then
+                local ok, objects = pcall(core.object_manager.get_all_objects)
+                if ok and type(objects) == "table" then
+                    for _, obj in ipairs(objects) do
+                        local ok2, iu = pcall(obj.is_unit, obj)
+                        if ok2 and iu then
+                            units[#units + 1] = obj
+                        end
+                    end
+                end
+            elseif attack_neutral then
+                -- Fallback when attack_neutral but get_all_objects failed
+                if unit_helper and type(unit_helper.get_enemy_list_around) == "function" then
+                    local ok, list = pcall(unit_helper.get_enemy_list_around, unit_helper, player_pos, 55, true, false)
+                    if ok and type(list) == "table" then
+                        units = list
                     end
                 end
             end
         end
 
         local threat_map = bb:get("module.grind.threat_map")
-        local filter_opts = nil
+        local filter_opts = { blackboard = bb }
         if threat_map then
-            filter_opts = { threat_map = threat_map, now_ms = now }
+            filter_opts.threat_map = threat_map
+            filter_opts.now_ms = now
         end
 
         local best = TargetFilter.select_best(units, spot, player_level, player_pos, player, filter_opts)

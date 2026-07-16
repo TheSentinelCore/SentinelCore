@@ -43,6 +43,8 @@ function ContextBuilder:refresh(event_bus)
             active_seal = "blood"
         elseif AuraCatalog.has_any(player, AuraCatalog.seal_of_command_ranks) then
             active_seal = "command"
+        elseif AuraCatalog.has_any(player, AuraCatalog.seal_of_righteousness_ranks) then
+            active_seal = "righteousness"
         end
     end
 

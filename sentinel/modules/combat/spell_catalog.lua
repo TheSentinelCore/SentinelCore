@@ -4,6 +4,7 @@ SpellCatalog.__index = SpellCatalog
 local SPELLS = {
     seal_of_blood = { key = "seal_of_blood", id = 31892, gcd = true, description = "Seal of Blood" },
     seal_of_command = { key = "seal_of_command", ranks = { 20375, 20915, 20918, 20919, 20920, 27170 }, gcd = true, description = "Seal of Command" },
+    seal_of_righteousness = { key = "seal_of_righteousness", ranks = { 20154, 20284, 20285, 20286, 20287, 20288, 20289, 20290, 20291, 27156 }, gcd = true, description = "Seal of Righteousness" },
     judgement = { key = "judgement", id = 20271, gcd = true, description = "Judgement" },
     judgement_of_blood = { key = "judgement_of_blood", id = 31898, gcd = false, description = "Judgement of Blood proc" },
     judgement_of_command = { key = "judgement_of_command", id = 27171, gcd = false, description = "Judgement of Command proc" },

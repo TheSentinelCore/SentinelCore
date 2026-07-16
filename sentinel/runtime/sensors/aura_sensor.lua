@@ -99,6 +99,8 @@ function AuraSensor:refresh(player, now_ms)
             active_seal = "blood"
         elseif AuraCatalog.has_any(player, AuraCatalog.seal_of_command_ranks) then
             active_seal = "command"
+        elseif AuraCatalog.has_any(player, AuraCatalog.seal_of_righteousness_ranks) then
+            active_seal = "righteousness"
         end
     end
     self._blackboard:set("rotation.active_seal", active_seal)

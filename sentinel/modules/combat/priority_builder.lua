@@ -272,3 +272,5 @@ function PriorityBuilder:_apply_shared_subtrees(root)
     end
     return BT.priority_selector(self.profile_name .. "_" .. self.spec_name .. "_with_shared", nodes)
 end
+
+return PriorityBuilder

@@ -59,3 +59,15 @@ SentinelNavClient → SentinelNavServer # path, raycast, random-points endpoints
 
 - `CONTEXT.md` — domain glossary used by all modules
 - `docs/adr/` — architecture decisions for deep modules
+
+## Agent skills
+
+This repository is configured for the Matt Pocock engineering skills suite. The following files define the per-repo configuration:
+
+- `docs/agents/issue-tracker.md` — Local Markdown files under `.scratch/<feature>/`
+- `docs/agents/triage-labels.md` — Canonical triage label vocabulary (bug/enhancement + 5 states)
+- `docs/agents/domain.md` — Single-context domain doc layout (`sentinel/CONTEXT.md` + `sentinel/docs/adr/`)
+
+Skills that depend on this setup: `to-prd`, `to-tickets`, `triage`, `grill-with-docs`, `diagnose`, `improve-codebase-architecture`.
+
+Run `setup-matt-pocock-skills` again if the configuration drifts.
