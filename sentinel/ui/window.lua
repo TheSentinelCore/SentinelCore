@@ -10,13 +10,13 @@ local _menu = nil
 local _menu_tree = nil
 local _open_button = nil
 
--- Mode: 3 = Quest (only mode we care about now)
+-- Mode: Quest only (mode 3)
 local function get_mode()
-    return _menu and _menu.bot_mode and _menu.bot_mode:get() or 3
+    return 3
 end
 
 local function is_quest_mode()
-    return get_mode() == 3
+    return true
 end
 
 -- Class detection: 2 = Paladin
@@ -104,8 +104,7 @@ end
 
 local function create_menu_elements()
     return {
-        -- Global
-        bot_mode = menu_slider_int(3, 3, 3, "sentinel_ui_bot_mode"),
+        -- Combat (global, always available)
         combat_enabled = menu_checkbox(true, "sentinel_ui_combat_enabled"),
         burst_enabled = menu_checkbox(true, "sentinel_ui_burst_enabled"),
         combat_low_health_threshold = menu_slider_int(15, 70, 35, "sentinel_ui_combat_low_health_threshold"),
