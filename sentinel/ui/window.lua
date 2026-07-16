@@ -161,6 +161,9 @@ local function create_menu_elements()
         -- Debug
         quest_debug_logging = menu_checkbox(false, "sentinel_ui_quest_debug_logging"),
         quest_verbose = menu_checkbox(false, "sentinel_ui_quest_verbose"),
+
+        -- Profile override
+        quest_profile_override = menu_combo(1, {"Auto (Zone/Level)", "Westfall", "Redridge", "Duskwood", "Loch Modan", "Silverpine", "The Barrens", "Darkshore", "Default"}, "sentinel_ui_quest_profile_override"),
     }
 end
 
@@ -180,6 +183,15 @@ local function register_tabs(ui, app, menu)
                 local new_y = QuestWindow.render_dashboard_tab(window, content_pad, y_offset, content_w, 500)
                 return new_y
             end
+        })
+        
+        -- Master Questing Toggle
+        t:checkbox_grid({
+            label = "Questing Control",
+            columns = 1,
+            elements = {
+                { element = menu.quest_enabled, label = "Enable Questing Bot" },
+            }
         })
         
         -- Dashboard Visual Settings
@@ -244,17 +256,31 @@ local function register_tabs(ui, app, menu)
             end
         })
         
+        -- Master Questing Toggle
+        t:checkbox_grid({
+            label = "Questing Control",
+            columns = 1,
+            elements = {
+                { element = menu.quest_enabled, label = "Enable Questing Bot" },
+            }
+        })
+        
         -- Profile Auto-Load Settings
         t:checkbox_grid({
             label = "Profile Auto-Load",
             columns = 1,
             elements = {
-                -- Note: auto_load setting would need to be added to menu if not present
+                { element = menu.quest_auto_replan, label = "Auto-Load Profile by Zone/Level" },
             }
         })
         
-        -- Profile Override (if user wants to force a specific profile)
-        -- This could be a combo box to select a profile manually
+        -- Manual Profile Override
+        t:combo_list({
+            label = "Manual Profile Override",
+            elements = {
+                { element = menu.quest_profile_override, label = "Force Profile", options = {"Auto (Zone/Level)", "Westfall", "Redridge", "Duskwood", "Loch Modan", "Silverpine", "The Barrens", "Darkshore", "Default"} },
+            }
+        })
     end)
     
     ui:add_tab({ id = "quest_settings", label = "Quest Settings", visible_when = is_quest_mode }, function(t)
