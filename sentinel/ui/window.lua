@@ -185,13 +185,28 @@ local function register_tabs(ui, app, menu)
             end
         })
         
-        -- Master Questing Toggle
-        t:checkbox_grid({
+        -- Master Questing Toggle - use element's render() for proper input handling
+        t:custom_render({
             label = "Questing Control",
-            columns = 1,
-            elements = {
-                { element = menu.quest_enabled, label = "Enable Questing Bot" },
-            }
+            render_fn = function(ui_instance, y_offset)
+                local window = ui_instance.window
+                local w = window:get_size()
+                local content_w = w.x - content_pad * 2
+                local x = content_pad
+                
+                -- Section label
+                local label_color = ui_instance.colors.text_secondary
+                window:render_text(enums.window_enums.font_id.FONT_SMALL, 
+                    vec2.new(x, y_offset), label_color, "QUESTING CONTROL")
+                y_offset = y_offset + 20
+                
+                -- Render the actual checkbox element (handles input properly)
+                if menu.quest_enabled and menu.quest_enabled.render then
+                    menu.quest_enabled:render("Enable Questing Bot", "Master toggle to start/stop the questing bot")
+                end
+                
+                return y_offset + 30
+            end
         })
         
         -- Dashboard Visual Settings
@@ -256,13 +271,28 @@ local function register_tabs(ui, app, menu)
             end
         })
         
-        -- Master Questing Toggle
-        t:checkbox_grid({
+        -- Master Questing Toggle - use element's render() for proper input handling
+        t:custom_render({
             label = "Questing Control",
-            columns = 1,
-            elements = {
-                { element = menu.quest_enabled, label = "Enable Questing Bot" },
-            }
+            render_fn = function(ui_instance, y_offset)
+                local window = ui_instance.window
+                local w = window:get_size()
+                local content_w = w.x - content_pad * 2
+                local x = content_pad
+                
+                -- Section label
+                local label_color = ui_instance.colors.text_secondary
+                window:render_text(enums.window_enums.font_id.FONT_SMALL, 
+                    vec2.new(x, y_offset), label_color, "QUESTING CONTROL")
+                y_offset = y_offset + 20
+                
+                -- Render the actual checkbox element (handles input properly)
+                if menu.quest_enabled and menu.quest_enabled.render then
+                    menu.quest_enabled:render("Enable Questing Bot", "Master toggle to start/stop the questing bot")
+                end
+                
+                return y_offset + 30
+            end
         })
         
         -- Profile Auto-Load Settings
