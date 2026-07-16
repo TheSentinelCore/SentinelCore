@@ -1,0 +1,982 @@
+--[[
+    Debug Tab - Live status, logging, waypoint testing, all pathfinding modes
+    Apple HIG card-based design using AstroUI row_list, listbox, and custom_render widgets.
+]]
+
+local color    = require("common/color")
+local vec2     = require("common/geometry/vector_2")
+local enums    = require("common/enums")
+local AstroUI  = require("lib/AstroUI")
+local Defaults = require("core/Defaults")
+
+local function lighten_color(base_color, amount)
+    local r, g, b, a = base_color:get()
+    return color.new(
+        math.min(255, r + amount),
+        math.min(255, g + amount),
+        math.min(255, b + amount),
+        a
+    )
+end
+
+local LAYOUT = AstroUI.LAYOUT
+
+local DebugTab = {}
+
+local TOOLTIPS = {
+    avoid_zone_add = "Adds a temporary avoidance zone at your current player position.",
+    avoid_zone_clear = "Clears all remembered avoidance zones.",
+    avoid_zone_remove = "Removes this avoidance zone.",
+    waypoint_add = "Appends your current player position to the waypoint list.",
+    waypoint_clear = "Stops navigation and clears all waypoints and preview state.",
+    waypoint_remove = "Removes this waypoint.",
+    preview_generate = "Builds a preview path for supported modes without starting movement.",
+    mode_start = "Starts the selected debug mode with current waypoint inputs.",
+    mode_stop = "Stops active debug navigation immediately.",
+    mode_selector = "Cycles the debug action mode used by Start/Query.",
+    reset_defaults = "Resets all NavClient settings in every tab back to defaults.",
+}
+
+-- Module-level state
+local _waypoints = {}
+local _nav_active = false
+local _nav_index = 0
+local _last_result = nil
+local _last_mode_idx = 1
+local _preview = {
+    active = false,
+    mode_idx = nil,
+    waypoints = nil,
+    destination = nil,
+    corridor_widths = nil,
+    signature = nil,
+    request_pending = false,
+    queued_signature = nil,
+    queued_mode_idx = nil,
+    last_request_time = 0,
+    request_serial = 0,
+}
+local AUTO_REGEN_COOLDOWN = 0.35
+
+-- Mode definitions (1-based, combobox value + 1)
+local MODES = {
+    { name = "Move To",       btn = "Start",           min_wps = 1, sequential = true,  query = false },
+    { name = "Move Direct",   btn = "Start (Direct)",  min_wps = 1, sequential = true,  query = false },
+    { name = "TSP Route",     btn = "Start (TSP)",     min_wps = 2, sequential = false, query = false },
+    { name = "Multi-stop",    btn = "Start (Multi)",   min_wps = 2, sequential = false, query = false },
+    { name = "Corridor Path", btn = "Start (Corridor)",min_wps = 1, sequential = false, query = false },
+    { name = "Path + Avoid",  btn = "Start (Avoid)",   min_wps = 1, sequential = false, query = false },
+    { name = "Flee",          btn = "Start (Flee)",    min_wps = 1, sequential = false, query = false },
+    { name = "Kite",          btn = "Start (Kite)",    min_wps = 1, sequential = false, query = false },
+    { name = "Random Point",  btn = "Start (Random)",  min_wps = 0, sequential = false, query = false },
+    { name = "Raycast",       btn = "Query",           min_wps = 1, sequential = false, query = true  },
+    { name = "Validate",      btn = "Query",           min_wps = 1, sequential = false, query = true  },
+    { name = "Get Height",    btn = "Query",           min_wps = 0, sequential = false, query = true  },
+    { name = "Health Check",  btn = "Query",           min_wps = 0, sequential = false, query = true  },
+}
+
+local PREVIEW_SUPPORTED = {
+    [1] = true, -- Move To
+    [3] = true, -- TSP Route
+    [4] = true, -- Multi-stop
+    [5] = true, -- Corridor Path
+    [6] = true, -- Path + Avoid
+    [7] = true, -- Flee
+    [8] = true, -- Kite
+}
+
+local function round3(v)
+    return math.floor((tonumber(v) or 0) * 1000 + 0.5) / 1000
+end
+
+local function copy_path(path)
+    if not path then return nil end
+    local out = {}
+    for i = 1, #path do
+        local p = path[i]
+        out[i] = { x = p.x, y = p.y, z = p.z }
+    end
+    return out
+end
+
+local function serialize_value(v)
+    local tv = type(v)
+    if tv == "nil" then return "nil" end
+    if tv == "number" then return string.format("%.3f", v) end
+    if tv == "boolean" then return v and "true" or "false" end
+    if tv == "string" then return v end
+    if tv ~= "table" then return tostring(v) end
+
+    local keys = {}
+    for k, _ in pairs(v) do
+        keys[#keys + 1] = k
+    end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+
+    local parts = {}
+    for i = 1, #keys do
+        local k = keys[i]
+        parts[#parts + 1] = tostring(k) .. "=" .. serialize_value(v[k])
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function clear_preview()
+    _preview.request_serial = (_preview.request_serial or 0) + 1
+    _preview.active = false
+    _preview.mode_idx = nil
+    _preview.waypoints = nil
+    _preview.destination = nil
+    _preview.corridor_widths = nil
+    _preview.signature = nil
+    _preview.request_pending = false
+    _preview.queued_signature = nil
+    _preview.queued_mode_idx = nil
+end
+
+local function build_preview_signature(mode_idx, client, waypoints)
+    if not PREVIEW_SUPPORTED[mode_idx] then return nil end
+    if not client then return nil end
+
+    local zones = client.obstacle and client.obstacle:get_avoidance_zones() or {}
+    local opts = client:get_path_opts({ avoid_zones = zones })
+    local sig = {
+        mode = mode_idx,
+        waypoint_count = #waypoints,
+        opts = opts,
+    }
+
+    if mode_idx == 5 then
+        sig.opts = client:get_corridor_opts({ avoid_zones = zones })
+    elseif mode_idx == 8 then
+        sig.opts = client:get_path_opts({ kite_radius = 8.0, avoid_zones = zones })
+    end
+
+    local wp = {}
+    for i = 1, #waypoints do
+        wp[i] = {
+            x = round3(waypoints[i].x),
+            y = round3(waypoints[i].y),
+            z = round3(waypoints[i].z),
+        }
+    end
+    sig.waypoints = wp
+
+    return serialize_value(sig)
+end
+
+local function generate_preview(mode_idx, client, waypoints, signature, auto)
+    if not client or not PREVIEW_SUPPORTED[mode_idx] then
+        return
+    end
+    if _preview.request_pending then
+        _preview.queued_signature = signature
+        _preview.queued_mode_idx = mode_idx
+        return
+    end
+
+    local player = core.object_manager.get_local_player()
+    if not player or not player:is_valid() then
+        _last_result = "Generate failed: no local player"
+        return
+    end
+
+    local nav_client = client.nav_client
+    local player_pos = player:get_position()
+    local zones = client.obstacle and client.obstacle:get_avoidance_zones() or {}
+    local path_opts = client:get_path_opts({ avoid_zones = zones })
+
+    _preview.request_pending = true
+    _preview.last_request_time = core.time()
+    _preview.request_serial = (_preview.request_serial or 0) + 1
+    local request_serial = _preview.request_serial
+
+    local function on_done(ok, payload, err)
+        if request_serial ~= _preview.request_serial then
+            return
+        end
+        _preview.request_pending = false
+
+        if ok and payload and payload.waypoints and #payload.waypoints > 0 then
+            _preview.active = true
+            _preview.mode_idx = mode_idx
+            _preview.waypoints = copy_path(payload.waypoints)
+            _preview.destination = payload.destination or payload.waypoints[#payload.waypoints]
+            _preview.corridor_widths = payload.corridor_widths
+            _preview.signature = signature
+
+            _last_result = string.format(
+                "%s preview: %d waypoints, %.0f yd%s",
+                MODES[mode_idx].name,
+                #payload.waypoints,
+                tonumber(payload.distance) or 0,
+                auto and " [auto]" or ""
+            )
+        else
+            _last_result = "Generate failed: " .. tostring(err or "unknown")
+        end
+
+        if _preview.queued_signature and _preview.queued_signature ~= _preview.signature then
+            local queued_sig = _preview.queued_signature
+            local queued_mode = _preview.queued_mode_idx
+            _preview.queued_signature = nil
+            _preview.queued_mode_idx = nil
+            generate_preview(queued_mode, client, waypoints, queued_sig, true)
+        end
+    end
+
+    local function on_path(ok, data, err)
+        if not ok or not data or not data.waypoints or #data.waypoints == 0 then
+            on_done(false, nil, err or "empty path")
+            return
+        end
+        on_done(true, {
+            waypoints = data.waypoints,
+            destination = data.waypoints[#data.waypoints],
+            corridor_widths = data.corridor_widths,
+            distance = data.distance or data.total_distance or 0,
+        })
+    end
+
+    if mode_idx == 1 then
+        nav_client:find_path(player_pos, waypoints[1], on_path, path_opts)
+    elseif mode_idx == 3 then
+        client:plan_route(waypoints, function(success, data)
+            if not success or not data or not data.waypoints or #data.waypoints == 0 then
+                on_done(false, nil, data and data.error or "route planning failed")
+                return
+            end
+            on_done(true, {
+                waypoints = data.waypoints,
+                destination = data.waypoints[#data.waypoints],
+                distance = data.total_distance or 0,
+            })
+        end, path_opts)
+    elseif mode_idx == 4 then
+        local stops = { player_pos }
+        for i = 1, #waypoints do
+            stops[#stops + 1] = waypoints[i]
+        end
+        nav_client:find_route_multi(stops, on_path, path_opts)
+    elseif mode_idx == 5 then
+        nav_client:find_path_corridor(player_pos, waypoints[1], on_path, client:get_corridor_opts({ avoid_zones = zones }))
+    elseif mode_idx == 6 then
+        nav_client:find_path_avoid(player_pos, waypoints[1], zones, on_path, path_opts)
+    elseif mode_idx == 7 then
+        nav_client:flee(player_pos, waypoints, on_path, path_opts)
+    elseif mode_idx == 8 then
+        nav_client:kite(player_pos, waypoints[1], on_path, client:get_path_opts({ kite_radius = 8.0, avoid_zones = zones }))
+    else
+        on_done(false, nil, "preview not supported for mode")
+    end
+end
+
+-- Helper: render a clickable button, returns (clicked, next_y)
+local function render_button(window, colors, x, y, w, h, label, enabled, ui_ctx, tooltip)
+    enabled = enabled ~= false
+    local btn_start = vec2.new(x, y)
+    local btn_end = vec2.new(x + w, y + h)
+    local hovered = window:is_mouse_hovering_rect(btn_start, btn_end)
+    window:is_mouse_hovering_rect_block_movement(btn_start, btn_end)
+    if ui_ctx and tooltip and hovered then
+        ui_ctx._tooltip = tooltip
+    end
+
+    local bg = enabled and (hovered and lighten_color(colors.primary_accent, 15) or colors.primary_accent) or colors.checkbox_inactive
+    window:render_rect_filled(btn_start, btn_end, bg, 6)
+
+    local text_size = window:get_text_size(label)
+    local text_x = x + (w - text_size.x) / 2
+    local text_y = y + (h - text_size.y) / 2
+    local text_col = enabled and colors.text_primary or colors.text_disabled
+    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+        vec2.new(text_x, text_y), text_col, label)
+
+    local clicked = enabled and hovered and window:is_rect_clicked(btn_start, btn_end)
+    return clicked, y + h + 4
+end
+
+-- Helper: render a label: value text line
+local function render_line(window, colors, x, y, label, value)
+    local text = label .. ": " .. tostring(value)
+    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+        vec2.new(x, y), colors.text_secondary, text)
+    return y + window:get_text_size(text).y + 2
+end
+
+-- Start/Query dispatch for all 13 modes
+--------------------------------------------------------------------------------
+
+local function dispatch_go(mode_idx, client, waypoints)
+    local mode = MODES[mode_idx]
+    if not mode or not client then return end
+
+    local player = core.object_manager.get_local_player()
+    if not player or not player:is_valid() then return end
+    local player_pos = player:get_position()
+
+    local nav_client = client.nav_client
+
+    -- Shared failure callback for navigation modes
+    local function nav_callback(success, reason)
+        if not success then
+            core.log("[SentinelNavClient Debug] " .. mode.name .. " failed: " .. tostring(reason))
+            _nav_active = false
+            return
+        end
+
+        if not mode.sequential then
+            _nav_active = false
+        end
+    end
+
+    -- Shared callback for raw-path modes (nav_client -> follow_path)
+    local function raw_path_callback(ok, data, err)
+        if not ok or not data then
+            _last_result = "ERROR: " .. tostring(err)
+            core.log("[SentinelNavClient Debug] " .. mode.name .. " failed: " .. tostring(err))
+            _nav_active = false
+            return
+        end
+        local wps = data.waypoints
+        if not wps or #wps == 0 then
+            _last_result = "Empty path returned"
+            _nav_active = false
+            return
+        end
+        local dist = data.distance or data.total_distance or 0
+        _last_result = string.format("%s: %d wps, %.0f yd", mode.name, #wps, dist)
+        client:follow_path(wps, nav_callback)
+    end
+
+    -- Reset state
+    client:stop()
+    _last_result = nil
+
+    -- Query modes don't set _nav_active
+    if mode.query then
+        _nav_active = false
+    else
+        _nav_active = true
+        _nav_index = 1
+    end
+
+    -- Gather avoidance zones for modes that call nav_client directly
+    local zones = client.obstacle and client.obstacle:get_avoidance_zones() or {}
+
+    -- Build opts once for modes that call nav_client directly
+    local path_opts = client:get_path_opts({ avoid_zones = zones })
+
+    -- ===== Navigation modes =====
+    if mode_idx == 1 then
+        -- Move To (sequential)
+        client:move_to(waypoints[1], nav_callback)
+
+    elseif mode_idx == 2 then
+        -- Move Direct (sequential, no pathfinding)
+        client:move_direct(waypoints[1], nav_callback)
+
+    elseif mode_idx == 3 then
+        -- TSP Route
+        client:plan_route(waypoints, function(success, data)
+            if not success then
+                core.log("[SentinelNavClient Debug] TSP route failed: " .. tostring(data and data.error or "unknown"))
+                _nav_active = false
+                return
+            end
+            if data and data.waypoints then
+                _last_result = string.format("TSP: %d wps, %.0f yd", #data.waypoints, data.total_distance or 0)
+                client:follow_path(data.waypoints, nav_callback)
+            else
+                core.log("[SentinelNavClient Debug] TSP returned no waypoints")
+                _nav_active = false
+            end
+        end, path_opts)
+
+    elseif mode_idx == 4 then
+        -- Multi-stop (ordered, prepend player as first stop)
+        local stops = { player_pos }
+        for _, wp in ipairs(waypoints) do
+            stops[#stops + 1] = wp
+        end
+        nav_client:find_route_multi(stops, raw_path_callback, path_opts)
+
+    elseif mode_idx == 5 then
+        -- Corridor Path
+        nav_client:find_path_corridor(player_pos, waypoints[1], raw_path_callback, client:get_corridor_opts({ avoid_zones = zones }))
+
+    elseif mode_idx == 6 then
+        -- Path + Avoid (uses current obstacle zones)
+        nav_client:find_path_avoid(player_pos, waypoints[1], zones, raw_path_callback, path_opts)
+
+    elseif mode_idx == 7 then
+        -- Flee (waypoints are threat positions)
+        nav_client:flee(player_pos, waypoints, raw_path_callback, path_opts)
+
+    elseif mode_idx == 8 then
+        -- Kite (arc around waypoint 1)
+        nav_client:kite(player_pos, waypoints[1], raw_path_callback, client:get_path_opts({ kite_radius = 8.0, avoid_zones = zones }))
+
+    elseif mode_idx == 9 then
+        -- Random Point -> navigate to it
+        nav_client:random_point(function(ok, data, err)
+            if not ok or not data or not data.point then
+                _last_result = "ERROR: " .. tostring(err)
+                _nav_active = false
+                return
+            end
+            _last_result = string.format("Random: %.0f, %.0f, %.0f",
+                data.point.x, data.point.y, data.point.z)
+            client:move_to(data.point, nav_callback)
+        end)
+
+    -- ===== Query modes =====
+    elseif mode_idx == 10 then
+        -- Raycast (LoS test)
+        nav_client:raycast(player_pos, waypoints[1], function(ok, data, err)
+            if not ok then
+                _last_result = "Raycast ERROR: " .. tostring(err)
+                return
+            end
+            if data.hit then
+                _last_result = string.format("HIT (t=%.3f — ray blocked %.0f%% through)", data.t, data.t * 100)
+            else
+                _last_result = "CLEAR (no obstruction)"
+            end
+        end)
+
+    elseif mode_idx == 11 then
+        -- Validate destination
+        client:validate_destination(waypoints[1], function(reachable, reason, distance)
+            if reachable then
+                _last_result = string.format("REACHABLE (%.1f yd)", distance or 0)
+            else
+                _last_result = "UNREACHABLE: " .. tostring(reason)
+            end
+        end)
+
+    elseif mode_idx == 12 then
+        -- Get Height
+        nav_client:get_height(player_pos, function(ok, data, err)
+            if not ok then
+                _last_result = "Height ERROR: " .. tostring(err)
+                return
+            end
+            _last_result = string.format("Navmesh: %.2f | Player Z: %.2f",
+                data.height, player_pos.z)
+        end)
+
+    elseif mode_idx == 13 then
+        -- Health Check
+        client:health_check(function(ok, data, err)
+            if not ok then
+                _last_result = "Health ERROR: " .. tostring(err)
+                return
+            end
+            local maps = data.loaded_maps and #data.loaded_maps or 0
+            _last_result = string.format("%s | v%s | Up: %ds | Maps: %d",
+                tostring(data.status), tostring(data.version),
+                data.uptime_secs or 0, maps)
+        end)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Tab registration
+--------------------------------------------------------------------------------
+
+---Register the debug tab with the UI
+---@param ui any RotationSettingsUI instance
+---@param menu table Menu elements table
+---@param client table|nil SentinelNavClient Client instance
+function DebugTab.register(ui, menu, client, reset_mappings)
+    local M = Defaults.movement
+
+    ui:add_tab({ id = "debug", label = "Debug" }, function(t)
+
+        ----------------------------------------------------------------
+        -- 1. Live Status (custom_render)
+        ----------------------------------------------------------------
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+
+                -- Section label
+                window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG,
+                    vec2.new(x, y_offset), colors.text_secondary, "Live Status")
+                y_offset = y_offset + window:get_text_size("Live Status").y + 10
+
+                if not client then
+                    y_offset = render_line(window, colors, x, y_offset, "State", "no client")
+                    return y_offset + 8
+                end
+
+                local state = client:get_state()
+                y_offset = render_line(window, colors, x, y_offset, "State", state)
+
+                local player = core.object_manager.get_local_player()
+                if player then
+                    local pos = player:get_position()
+                    y_offset = render_line(window, colors, x, y_offset, "Position",
+                        string.format("%.1f, %.1f, %.1f", pos.x, pos.y, pos.z))
+                end
+
+                local dest = client:get_destination()
+                if dest then
+                    y_offset = render_line(window, colors, x, y_offset, "Destination",
+                        string.format("%.1f, %.1f, %.1f", dest.x, dest.y, dest.z))
+                    if player then
+                        local dist = player:get_position():dist_to(dest)
+                        y_offset = render_line(window, colors, x, y_offset, "Distance",
+                            string.format("%.1f yd", dist))
+                    end
+                end
+
+                local path = client:get_current_path()
+                if path then
+                    local idx = client:get_path_index()
+                    y_offset = render_line(window, colors, x, y_offset, "Waypoint",
+                        string.format("%d / %d", idx, #path))
+                end
+
+                return y_offset + 8
+            end
+        })
+
+        ----------------------------------------------------------------
+        -- 2. Logging (row_list)
+        ----------------------------------------------------------------
+        t:row_list({
+            label = "Logging",
+            elements = {
+                {
+                    type = "toggle",
+                    label = "Verbose Logging",
+                    element = menu.debug_verbose,
+                    tooltip = "Enables detailed movement and pathfinding log output",
+                },
+                {
+                    type = "stepper",
+                    label = "Severity",
+                    element = menu.log_severity,
+                    min = M.log_severity.min,
+                    max = M.log_severity.max,
+                    step = 1,
+                    decimals = 0,
+                    tooltip = "Minimum severity: 0=Error, 1=Warn, 2=Info, 3=Debug",
+                },
+            },
+        })
+
+        ----------------------------------------------------------------
+        -- 3. Visualization (row_list with 6 toggles)
+        ----------------------------------------------------------------
+        t:row_list({
+            label = "Visualization",
+            elements = {
+                {
+                    type = "toggle",
+                    label = "Enable 3D Overlay",
+                    element = menu.viz_master,
+                    tooltip = "Master toggle for all in-world 3D visualization",
+                },
+                {
+                    type = "toggle",
+                    label = "Path + Waypoints",
+                    element = menu.viz_path,
+                    tooltip = "Show path lines and waypoint markers in-world",
+                },
+                {
+                    type = "toggle",
+                    label = "Destination",
+                    element = menu.viz_destination,
+                    tooltip = "Show circle and distance text at final destination",
+                },
+                {
+                    type = "toggle",
+                    label = "Obstacle Zones",
+                    element = menu.viz_obstacles,
+                    tooltip = "Show avoidance zone circles around detected obstacles",
+                },
+                {
+                    type = "toggle",
+                    label = "Corridor Bounds",
+                    element = menu.viz_corridor,
+                    tooltip = "Show corridor width boundaries when indoors",
+                },
+                {
+                    type = "toggle",
+                    label = "State Indicators",
+                    element = menu.viz_state,
+                    tooltip = "Show stuck/requesting/arrived/failed indicators",
+                },
+            },
+        })
+
+        ----------------------------------------------------------------
+        -- 4. Avoid Zones (listbox + custom_render buttons)
+        ----------------------------------------------------------------
+        t:listbox({
+            label = "Avoid Zones",
+            elements = {
+                {
+                    entries_fn = function()
+                        if not client then return {} end
+                        local obstacle = client.obstacle
+                        if not obstacle then return {} end
+                        local zones = obstacle:get_avoidance_zones()
+                        local entries = {}
+                        for i, zone in ipairs(zones) do
+                            entries[i] = {
+                                label = string.format("#%d: %.0f, %.0f, %.0f (r=%.1f)",
+                                    i, zone.x, zone.y, zone.z, zone.radius),
+                            }
+                        end
+                        if #entries == 0 then
+                            entries[1] = { label = "(no zones)", color = color.new(140, 140, 140, 200) }
+                        end
+                        return entries
+                    end,
+                    visible_rows = 4,
+                    on_select = function(idx, entry)
+                        -- selection tracking only
+                    end,
+                },
+            },
+        })
+
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                if not client then return y_offset end
+                local obstacle = client.obstacle
+                if not obstacle then return y_offset end
+
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local window_size = window:get_size()
+                local content_width = window_size.x - (2 * LAYOUT.padding_side)
+                local btn_w = (content_width - 8) / 3
+                local btn_h = 22
+
+                local zones = obstacle:get_avoidance_zones()
+
+                local clicked_add = render_button(window, colors, x, y_offset,
+                    btn_w, btn_h, "Add Here", true, self, TOOLTIPS.avoid_zone_add)
+                if clicked_add then
+                    local player = core.object_manager.get_local_player()
+                    if player then
+                        obstacle:add_zone(player:get_position())
+                        core.log("[SentinelNavClient Debug] Added avoid zone at player position")
+                    end
+                end
+
+                local selected_idx = self._listbox_selected and self._listbox_selected["debug_g4_lb_1"] or nil
+                local remove_enabled = selected_idx and selected_idx <= #zones
+                local clicked_remove = render_button(window, colors, x + btn_w + 4, y_offset,
+                    btn_w, btn_h, "Remove", remove_enabled, self, TOOLTIPS.avoid_zone_remove)
+                if clicked_remove and selected_idx and selected_idx <= #zones then
+                    obstacle:remove_zone(selected_idx)
+                end
+
+                local clicked_clear = render_button(window, colors, x + (btn_w * 2) + 8, y_offset,
+                    btn_w, btn_h, "Clear All", #zones > 0, self, TOOLTIPS.avoid_zone_clear)
+                if clicked_clear then
+                    obstacle:clear()
+                    core.log("[SentinelNavClient Debug] Cleared all avoid zones")
+                end
+
+                y_offset = y_offset + btn_h + 4
+                return y_offset + 4
+            end
+        })
+
+        ----------------------------------------------------------------
+        -- 5. Waypoints (custom_render: mode selector + list + buttons)
+        ----------------------------------------------------------------
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local window_size = window:get_size()
+                local content_width = window_size.x - (2 * LAYOUT.padding_side)
+                local btn_w = (content_width - 4) / 2
+                local btn_h = 20
+
+                -- Section label
+                window:render_text(enums.window_enums.font_id.FONT_SEMI_BIG,
+                    vec2.new(x, y_offset), colors.text_secondary, "Waypoints")
+                y_offset = y_offset + window:get_text_size("Waypoints").y + 10
+
+                -- Mode selector (click-to-cycle)
+                local mode_idx = menu.debug_mode:get() + 1
+                if mode_idx < 1 or mode_idx > #MODES then mode_idx = 1 end
+                local mode = MODES[mode_idx]
+
+                local box_x = x + 40
+                local box_w = content_width - 40
+                local box_h = LAYOUT.element_height
+                local box_start = vec2.new(box_x, y_offset)
+                local box_end = vec2.new(box_x + box_w, y_offset + box_h)
+                local box_hovered = window:is_mouse_hovering_rect(box_start, box_end)
+                window:is_mouse_hovering_rect_block_movement(box_start, box_end)
+
+                -- "Mode" label, vertically centered with box
+                local mode_label_size = window:get_text_size("Mode")
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(x, y_offset + (box_h - mode_label_size.y) / 2),
+                    colors.text_primary, "Mode")
+
+                local box_bg = box_hovered and lighten_color(colors.slider_bg, 15) or colors.slider_bg
+                local box_border = box_hovered and colors.primary_accent or colors.section_border
+                window:render_rect_filled(box_start, box_end, box_bg, 6)
+                window:render_rect(box_start, box_end, box_border, 6, 1.0)
+
+                local mode_text = mode.name
+                local mode_size = window:get_text_size(mode_text)
+                window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                    vec2.new(box_x + (box_w - mode_size.x) / 2,
+                             y_offset + (box_h - mode_size.y) / 2),
+                    colors.text_primary, mode_text)
+
+                if window:is_rect_clicked(box_start, box_end) then
+                    menu.debug_mode:set(mode_idx % #MODES)  -- cycles 0..12
+                    clear_preview()
+                end
+                if window:is_mouse_hovering_rect(box_start, box_end) then
+                    self._tooltip = TOOLTIPS.mode_selector
+                end
+
+                y_offset = y_offset + box_h + 6
+
+                -- Waypoint list
+                for i, wp in ipairs(_waypoints) do
+                    local wp_text = string.format("#%d: %.0f, %.0f, %.0f", i, wp.x, wp.y, wp.z)
+                    local is_current = _nav_active and i == _nav_index
+                    local wp_color = is_current and colors.secondary_accent or colors.text_secondary
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), wp_color, wp_text)
+
+                    -- Per-waypoint remove button
+                    local rm_w = 16
+                    local rm_x = x + content_width - rm_w
+                    local rm_start = vec2.new(rm_x, y_offset)
+                    local rm_end = vec2.new(rm_x + rm_w, y_offset + 14)
+                    window:is_mouse_hovering_rect_block_movement(rm_start, rm_end)
+                    if window:is_rect_clicked(rm_start, rm_end) then
+                        table.remove(_waypoints, i)
+                        clear_preview()
+                    end
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(rm_x + 3, y_offset), colors.text_secondary, "X")
+
+                    y_offset = y_offset + 16
+                end
+
+                if #_waypoints == 0 then
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.text_secondary, "(no waypoints)")
+                    y_offset = y_offset + 16
+                end
+
+                y_offset = y_offset + 4
+
+                -- Button row 1: Add Here / Clear All
+                local clicked_add = render_button(window, colors, x, y_offset,
+                    btn_w, btn_h, "Add Here", true, self, TOOLTIPS.waypoint_add)
+                if clicked_add then
+                    local player = core.object_manager.get_local_player()
+                    if player then
+                        table.insert(_waypoints, player:get_position())
+                        clear_preview()
+                        core.log("[SentinelNavClient Debug] Added waypoint #" .. #_waypoints)
+                    end
+                end
+
+                local clicked_clear = render_button(window, colors, x + btn_w + 4, y_offset,
+                    btn_w, btn_h, "Clear All", true, self, TOOLTIPS.waypoint_clear)
+                if clicked_clear then
+                    _waypoints = {}
+                    _nav_active = false
+                    _nav_index = 0
+                    _last_result = nil
+                    clear_preview()
+                    if client then client:stop() end
+                    core.log("[SentinelNavClient Debug] Cleared all waypoints")
+                end
+
+                y_offset = y_offset + btn_h + 4
+
+                -- Button row 2: Generate Path / Start / Stop
+                local has_enough = #_waypoints >= mode.min_wps
+                local supports_preview = PREVIEW_SUPPORTED[mode_idx] == true
+                local generate_enabled = (not _nav_active) and supports_preview and has_enough
+                local start_enabled = has_enough and (mode.query or not _nav_active)
+
+                local btn3_w = (content_width - 8) / 3
+                local clicked_generate = render_button(window, colors, x, y_offset,
+                    btn3_w, btn_h, "Generate Path", generate_enabled, self, TOOLTIPS.preview_generate)
+                if clicked_generate and client then
+                    local sig = build_preview_signature(mode_idx, client, _waypoints)
+                    if sig then
+                        generate_preview(mode_idx, client, _waypoints, sig, false)
+                    end
+                end
+
+                local start_label = mode.query and "Query" or "Start"
+                local clicked_start = render_button(window, colors, x + btn3_w + 4, y_offset,
+                    btn3_w, btn_h, start_label, start_enabled, self, TOOLTIPS.mode_start)
+                if clicked_start and client then
+                    if not mode.query and _preview.active and _preview.mode_idx == mode_idx and _preview.waypoints and #_preview.waypoints > 0 then
+                        _nav_active = true
+                        _nav_index = 1
+                        client:stop()
+                        client:follow_path(copy_path(_preview.waypoints), function(success, reason)
+                            if not success then
+                                _nav_active = false
+                                core.log("[SentinelNavClient Debug] Start failed: " .. tostring(reason))
+                            end
+                        end)
+                        _last_result = string.format("Started generated path (%d waypoints)", #_preview.waypoints)
+                    else
+                        dispatch_go(mode_idx, client, _waypoints)
+                    end
+                end
+
+                local clicked_stop = render_button(window, colors, x + (btn3_w * 2) + 8, y_offset,
+                    btn3_w, btn_h, "Stop", _nav_active, self, TOOLTIPS.mode_stop)
+                if clicked_stop and client then
+                    client:stop()
+                    _nav_active = false
+                    _nav_index = 0
+                end
+
+                y_offset = y_offset + btn_h + 4
+
+                -- Result display
+                if _last_result then
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.secondary_accent, "Result:")
+                    y_offset = y_offset + 14
+                    window:render_text(enums.window_enums.font_id.FONT_SMALL,
+                        vec2.new(x, y_offset), colors.text_secondary, _last_result)
+                    y_offset = y_offset + window:get_text_size(_last_result).y + 4
+                end
+
+                return y_offset
+            end
+        })
+
+        ----------------------------------------------------------------
+        -- 6. Reset All Defaults (custom_render)
+        ----------------------------------------------------------------
+        t:custom_render({
+            render_fn = function(self, y_offset)
+                if not reset_mappings then return y_offset end
+                local window = self.window
+                local colors = self.colors
+                local x = LAYOUT.padding_side
+                local window_size = window:get_size()
+                local content_width = window_size.x - (2 * LAYOUT.padding_side)
+
+                local clicked = render_button(window, colors, x, y_offset,
+                    content_width, 26, "Reset All Defaults", true, self, TOOLTIPS.reset_defaults)
+                if clicked then
+                    for _, mappings in pairs(reset_mappings) do
+                        Defaults.reset(mappings)
+                    end
+                    core.log("[SentinelNavClient] All settings reset to defaults")
+                end
+
+                y_offset = y_offset + 26 + 8
+                return y_offset
+            end
+        })
+
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- Sequential navigation update -- call from Window.on_render()
+--------------------------------------------------------------------------------
+
+function DebugTab.update(client, menu)
+    local mode_idx = menu.debug_mode:get() + 1
+    if mode_idx < 1 or mode_idx > #MODES then return end
+    local mode = MODES[mode_idx]
+
+    if mode_idx ~= _last_mode_idx then
+        _last_mode_idx = mode_idx
+        clear_preview()
+    end
+
+    if client and menu and not _nav_active and PREVIEW_SUPPORTED[mode_idx] and _preview.active and _preview.mode_idx == mode_idx then
+        if #_waypoints >= mode.min_wps then
+            local sig = build_preview_signature(mode_idx, client, _waypoints)
+            if sig and sig ~= _preview.signature then
+                local now = core.time()
+                if not _preview.request_pending and (now - (_preview.last_request_time or 0)) >= AUTO_REGEN_COOLDOWN then
+                    generate_preview(mode_idx, client, _waypoints, sig, true)
+                else
+                    _preview.queued_signature = sig
+                    _preview.queued_mode_idx = mode_idx
+                end
+            end
+        else
+            clear_preview()
+        end
+    end
+
+    if not _nav_active or not client or not menu then return end
+    if not mode.sequential then
+        local state = client:get_state()
+        if state == "arrived" then
+            _nav_active = false
+        elseif state == "failed" then
+            core.log("[SentinelNavClient Debug] Navigation failed")
+            _nav_active = false
+        elseif state == "idle" then
+            _nav_active = false
+        end
+        return
+    end
+
+    local state = client:get_state()
+    if state == "arrived" and _nav_index < #_waypoints then
+        _nav_index = _nav_index + 1
+        local cb = function(success)
+            if not success then
+                core.log("[SentinelNavClient Debug] Failed at waypoint #" .. _nav_index)
+                _nav_active = false
+            end
+        end
+        if mode_idx == 1 then
+            client:move_to(_waypoints[_nav_index], cb)
+        elseif mode_idx == 2 then
+            client:move_direct(_waypoints[_nav_index], cb)
+        end
+    elseif state == "arrived" and _nav_index >= #_waypoints then
+        core.log("[SentinelNavClient Debug] All waypoints reached!")
+        _nav_active = false
+    elseif state == "failed" then
+        core.log("[SentinelNavClient Debug] Navigation failed at waypoint #" .. _nav_index)
+        _nav_active = false
+    end
+end
+
+function DebugTab.get_preview_data()
+    if _nav_active then return nil end
+    if not _preview.active then return nil end
+    if not _preview.waypoints or #_preview.waypoints == 0 then return nil end
+    return {
+        path = _preview.waypoints,
+        destination = _preview.destination or _preview.waypoints[#_preview.waypoints],
+        path_index = 1,
+        corridor_widths = _preview.corridor_widths,
+    }
+end
+
+return DebugTab

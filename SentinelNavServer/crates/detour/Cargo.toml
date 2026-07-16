@@ -1,0 +1,11 @@
+[package]
+name = "detour"
+version.workspace = true
+edition.workspace = true
+description = "Safe Rust wrappers for Recast/Detour navigation library"
+
+[dependencies]
+detour-sys = { path = "../detour-sys" }
+thiserror.workspace = true
+parking_lot.workspace = true
+rand.workspace = true

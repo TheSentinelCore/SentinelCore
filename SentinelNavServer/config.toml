@@ -1,0 +1,48 @@
+# Sentinel Navigation Server Configuration
+# High-performance navigation server for WoW pathfinding
+
+[server]
+# Host to bind to (0.0.0.0 for all interfaces)
+host = "0.0.0.0"
+# Port to listen on
+port = 47110
+# Maximum concurrent pathfinding requests
+max_concurrent_requests = 100
+
+[navmesh]
+# Default game when no ?game= parameter is provided in requests "tbc" or "retail"
+default_game = "retail"
+
+# Per-game mmap sources. Each game has its own mmap directory and preload list.
+# API requests select the game via ?game=<name> query parameter.
+
+[navmesh.games.tbc]
+# CMaNGOS TBC mmaps (3-digit map IDs, no underscores)
+mmap_path = "./mmaps"
+# preload_maps = [0, 1, 530, 30, 489, 529, 566]
+
+[navmesh.games.retail]
+# TrinityCore retail mmaps (4-digit map IDs, underscores)
+mmap_path = "./mmaps_retail"
+preload_maps = []
+
+[pathfinding]
+# Default smoothing algorithm: "none", "chaikin", "catmull_rom", "bezier"
+default_smoothing = "none"
+# Maximum waypoints in a path
+max_path_length = 2048
+# Query pool size per map (number of concurrent queries per map)
+query_pool_size = 4
+# Tiered polygon search extents [tight, medium, wide] in yards
+# Tight first for correct floor selection, broader as fallback
+search_extents = [6.0, 10.0, 50.0]
+# Max segment length before inserting midpoints (yards)
+# Shorter = smoother curves on ramps, higher CPU cost
+max_segment_length = 3.0
+# Island recovery retry count (inner ring at 3yd + outer ring at 6yd)
+island_retry_count = 16
+# Default area costs [ground, water, lava]
+default_area_costs = [1.0, 1.5, 100.0]
+# Maximum A* search nodes per query (higher = deeper search in dense meshes)
+# Each node uses ~36 bytes of memory (~40 MB per query pool at 1048576).
+max_query_nodes = 1048576

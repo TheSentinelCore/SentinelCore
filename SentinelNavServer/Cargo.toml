@@ -1,0 +1,97 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/detour-sys",
+    "crates/detour",
+    "crates/mmap-loader",
+    "crates/polygon-sampling",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Sentinel Contributors"]
+license = "MIT"
+repository = "https://github.com/sentinel/sentinel-nav-server"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# HTTP framework
+axum = "0.7"
+tower-http = { version = "0.5", features = ["trace", "timeout"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Concurrency
+parking_lot = "0.12"
+dashmap = "6.0"
+
+# Config
+toml = "0.8"
+
+# Build dependencies (for detour-sys)
+cc = "1.0"
+bindgen = "0.69"
+
+# Binary format parsing
+byteorder = "1.5"
+
+# Random number generation
+rand = "0.8"
+
+# Metrics
+metrics = "0.22"
+
+# Async utilities
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[package]
+name = "sentinel-nav-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+detour = { path = "crates/detour" }
+mmap-loader = { path = "crates/mmap-loader" }
+
+polygon-sampling = { path = "crates/polygon-sampling" }
+tokio.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+toml.workspace = true
+tower-http.workspace = true
+rand.workspace = true
+metrics.workspace = true
+tokio-util.workspace = true
+moka = { version = "0.12", features = ["sync"] }
+
+[lib]
+name = "sentinel_nav_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sentinel-nav-server"
+path = "src/main.rs"
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"

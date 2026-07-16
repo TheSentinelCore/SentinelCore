@@ -41,5 +41,10 @@ SentinelNavClient → SentinelNavServer # path, raycast, random-points endpoints
 
 - Don't access `_pending_kill_targets` or `_telemetry._last_refresh_ms` directly — use public interface
 - Don't use `GetLootSlotLink`, `GetItemInfo`, or other WoW APIs — use Sylvannas `core.input.*` and `core.object_manager.*`
-- Don't skip nil checks before `distance_3d` — stale userdata causes runtime errors
+- Don't implement inline `distance_3d` — use `core/geometry.lua::Geometry.distance()` with nil-safe semantics
 - Don't add fallback logic to `queue_position` — spell_queue uses method call convention
+
+## Domain Documentation
+
+- `CONTEXT.md` — domain glossary used by all modules
+- `docs/adr/` — architecture decisions for deep modules
