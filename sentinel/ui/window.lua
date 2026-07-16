@@ -122,6 +122,13 @@ local function menu_slider_int(min_value, max_value, default_value, id)
     return fallback_slider_int(default_value)
 end
 
+local function menu_combo(default_value, options, id)
+    if core and core.menu and core.menu.combo then
+        return core.menu.combo(default_value, options, id)
+    end
+    return { get = function() return default_value end, set = function() end }
+end
+
 local function create_menu_elements()
     local bg_preferred_mount_id = {
         value = "184865",
