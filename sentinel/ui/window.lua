@@ -4,7 +4,7 @@
 -- (ui.quest_authoring.init). This is the single UI surface for the quest
 -- system; the old tabbed quest/dashboard UI has been removed.
 
-local IDE = require("ui.quest_authoring.init")
+local IDE = require("ui.quest_authoring")
 local color = require("common/color")
 local vec2 = require("common/geometry/vector_2")
 local enums = require("common/enums")
