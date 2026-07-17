@@ -1,4 +1,3 @@
-local SentinelUI = require("ui/lib/sentinel_ui")
 local Design = require("ui/quest_ui/design_system")
 local vec2 = require("common/geometry/vector_2")
 
@@ -8,8 +7,11 @@ function Dashboard.draw(window, x, y, width, height, app)
     -- Background
     window:render_rect(vec2.new(x, y), vec2.new(width, height), Design.Colors.neutral.background, 0)
 
+    local bb = app and app:get_blackboard()
+    local routing_policy = bb and bb:get("module.quest.routing.active_policy") or "N/A"
+
     -- Top Info Bar
-    window:render_text(0, vec2.new(x + 10, y + 10), Design.Colors.neutral.text_primary, "Active Routing Policy: N/A")
+    window:render_text(0, vec2.new(x + 10, y + 10), Design.Colors.neutral.text_primary, "Active Routing Policy: " .. tostring(routing_policy))
 
     -- Statechart Visualizer (Placeholder boxes for 3 regions)
     local box_y = y + 50
