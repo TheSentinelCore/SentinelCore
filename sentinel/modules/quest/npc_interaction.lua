@@ -19,6 +19,7 @@ function NPCInteraction.new(blackboard)
         _gossip_opened = false,
         _retry_count = 0,
         _max_retries = 3,
+        _waiting_for_gossip = nil,
     }, NPCInteraction)
 end
 
@@ -132,49 +133,99 @@ end
 ---Turn in quest and select reward
 ---@param quest_id integer
 ---@param reward_choice integer
----@return string
+---@return string "SUCCESS" | "FAILURE" | "RUNNING"
 function NPCInteraction:_turn_in(quest_id, reward_choice)
-    -- Ensure gossip frame is open
-    if not self:_ensure_gossip_open(quest_id) then
-        return "FAILURE"
+    local npc_id = self._queue[self._current] and self._queue[self._current].npc_id
+    
+    -- Check if already waiting for gossip from previous tick
+    if not self._waiting_for_gossip then
+        -- Check if gossip is already open
+        if call(core.quests.is_gossip_frame_shown) then
+            -- Gossip open, proceed with turn-in
+        else
+            -- Try to open gossip (may start waiting)
+            local gossip_result = self:_ensure_gossip_open(npc_id or quest_id)
+            if gossip_result == nil then
+                return "RUNNING"  -- Waiting for gossip
+            elseif gossip_result == false then
+                return "FAILURE"
+            end
+        end
+    else
+        -- Still waiting - check if gossip arrived
+        local gossip_wait = self:_check_gossip_wait()
+        if gossip_wait == nil then
+            return "RUNNING"  -- Still waiting
+        elseif gossip_wait == false then
+            return "FAILURE"  -- Timeout
+        end
     end
     
     -- Select active quest
     if not call(core.quests.select_gossip_active_quest, quest_id) then
+        self._waiting_for_gossip = nil
         return "FAILURE"
     end
     
     -- Complete quest
     if not call(core.quests.complete_quest) then
+        self._waiting_for_gossip = nil
         return "FAILURE"
     end
     
     -- Select reward
     if reward_choice and reward_choice > 0 then
         if not call(core.quests.get_quest_reward, reward_choice) then
+            self._waiting_for_gossip = nil
             return "FAILURE"
         end
     end
     
+    self._waiting_for_gossip = nil
     return "SUCCESS"
 end
 
 ---Accept available quest
 ---@param quest_id integer
----@return string
+---@return string "SUCCESS" | "FAILURE" | "RUNNING"
 function NPCInteraction:_accept_quest(quest_id)
-    if not self:_ensure_gossip_open(quest_id) then
-        return "FAILURE"
+    local npc_id = self._queue[self._current] and self._queue[self._current].npc_id
+    
+    -- Check if already waiting for gossip from previous tick
+    if not self._waiting_for_gossip then
+        -- Check if gossip is already open
+        if call(core.quests.is_gossip_frame_shown) then
+            -- Gossip open, proceed with accept
+        else
+            -- Try to open gossip (may start waiting)
+            local gossip_result = self:_ensure_gossip_open(npc_id or quest_id)
+            if gossip_result == nil then
+                return "RUNNING"  -- Waiting for gossip
+            elseif gossip_result == false then
+                return "FAILURE"
+            end
+        end
+    else
+        -- Still waiting - check if gossip arrived
+        local gossip_wait = self:_check_gossip_wait()
+        if gossip_wait == nil then
+            return "RUNNING"  -- Still waiting
+        elseif gossip_wait == false then
+            return "FAILURE"  -- Timeout
+        end
     end
     
     if not call(core.quests.select_gossip_available_quest, quest_id) then
+        self._waiting_for_gossip = nil
         return "FAILURE"
     end
     
     if not call(core.quests.accept_quest) then
+        self._waiting_for_gossip = nil
         return "FAILURE"
     end
     
+    self._waiting_for_gossip = nil
     return "SUCCESS"
 end
 
@@ -236,20 +287,38 @@ function NPCInteraction:_ensure_gossip_open(npc_id)
             if ok and id == npc_id then
                 local interact = call(npc.interact, npc)
                 if interact then
-                    -- Wait for gossip frame
-                    local start = self._blackboard:get("system.now_ms", 0)
-                    while not call(core.quests.is_gossip_frame_shown) do
-                        if self._blackboard:get("system.now_ms", 0) - start > 2000 then
-                            return false
-                        end
-                    end
-                    return true
+                    -- Start waiting for gossip frame (non-blocking)
+                    self._waiting_for_gossip = {
+                        npc_id = npc_id,
+                        start_time = self._blackboard:get("system.now_ms", 0),
+                        waited = false
+                    }
+                    return nil  -- nil = RUNNING (waiting)
                 end
             end
         end
     end
     
     return false
+end
+
+---Check if we're still waiting for gossip (call from execute)
+---@return boolean|nil true=success, false=timeout/failure, nil=still waiting
+function NPCInteraction:_check_gossip_wait()
+    if not self._waiting_for_gossip then return true end
+    
+    if call(core.quests.is_gossip_frame_shown) then
+        self._waiting_for_gossip = nil
+        return true
+    end
+    
+    local now = self._blackboard:get("system.now_ms", 0)
+    if now - self._waiting_for_gossip.start_time > 2000 then
+        self._waiting_for_gossip = nil
+        return false  -- timeout
+    end
+    
+    return nil  -- still waiting
 end
 
 ---Check if NPC is trainer

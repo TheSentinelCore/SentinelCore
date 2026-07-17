@@ -3539,7 +3539,7 @@ function RotationSettingsUI:on_render()
         self.window:set_render_layer(self._render_layer)
     end
 
-    self.window:begin(
+    local window_open = self.window:begin(
         enums.window_enums.window_resizing_flags.RESIZE_BOTH_AXIS,
         true,
         self.colors.background,
@@ -3548,6 +3548,11 @@ function RotationSettingsUI:on_render()
         enums.window_enums.window_behaviour_flags.NO_SCROLLBAR,
         render_window_content
     )
+
+    -- If window was closed via X button, sync menu state
+    if not window_open and self.menu and self.menu.enable then
+        self.menu.enable:set(false)
+    end
 
     self:_sync_window_state()
 end

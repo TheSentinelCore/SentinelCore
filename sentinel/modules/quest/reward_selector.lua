@@ -38,8 +38,8 @@ function RewardSelector.choose(rewards, blackboard, class)
     if not rewards or #rewards == 0 then return 0 end
     
     -- Get player class if not provided
-    if not class and core and core.character then
-        _, class = UnitClass("player")
+    if not class and blackboard then
+        class = blackboard:get("player.class_name")
     end
     class = class or "WARRIOR"
     

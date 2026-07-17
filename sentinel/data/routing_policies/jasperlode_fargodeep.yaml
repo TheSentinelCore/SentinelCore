@@ -1,0 +1,16 @@
+name: "jasperlode_fargodeep"
+strategy: "smart"
+preferredPath: "road"
+avoid:
+  - "elite"
+  - "water"
+dynamicReplan: true
+allowShortcuts: true
+opportunisticKills:
+  - "Kobold"
+opportunisticLoot:
+  - "Chest"
+  - "QuestObject"
+ignore:
+  - "Rare"
+  - "Elite"

@@ -1,0 +1,8 @@
+name: "goldshire_to_town"
+strategy: "smart"
+preferredPath: "road"
+avoid:
+  - "elite"
+  - "water"
+dynamicReplan: true
+allowShortcuts: true

@@ -154,6 +154,22 @@ function TargetFilter.passes(unit, spot, player_level, player, blackboard)
         end
     end
 
+    -- 8. Quest target filter: when a quest_target_id is active, only target that specific NPC
+    if blackboard then
+        local quest_target_id = blackboard:get("module.grind.quest_target_id")
+        if quest_target_id then
+            local ok_eid, entry_id = pcall(unit.get_npc_id, unit)
+            if not ok_eid or not entry_id or entry_id == 0 then
+                local ok_name, name = pcall(unit.get_name, unit)
+                if not ok_name or name ~= quest_target_id then
+                    return false
+                end
+            elseif tonumber(entry_id) ~= tonumber(quest_target_id) then
+                return false
+            end
+        end
+    end
+
     return true
 end
 

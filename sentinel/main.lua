@@ -95,6 +95,41 @@ _G.Sentinel = {
         end
         return nil
     end,
+    reload = function()
+        log_info("Forcing full reload...")
+        if app and type(app.shutdown) == "function" then
+            pcall(app.shutdown, app)
+        end
+        app = nil
+        initialized = false
+        last_init_error = nil
+        clear_module_cache()
+        local ok, result = pcall(function()
+            local SentinelApp = require("runtime/app")
+            local next_app = SentinelApp:new()
+            next_app:initialize()
+            return next_app
+        end)
+        if ok then
+            app = result
+            initialized = true
+            _G.Sentinel.app = app
+            log_info("Reloaded successfully")
+            return true
+        else
+            log_error("Reload failed: " .. tostring(result))
+            return false
+        end
+    end,
+    reload_ui = function()
+        if ensure_initialized() then
+            local ui = app:get_ui()
+            if ui and ui.reload_ui then
+                return ui.reload_ui()
+            end
+        end
+        return false
+    end,
 }
 
 core.register_on_pre_tick_callback(function()
@@ -112,6 +147,12 @@ end)
 core.register_on_render_callback(function()
     if ensure_initialized() then
         app:on_render()
+    end
+end)
+
+core.register_on_render_window_callback(function()
+    if ensure_initialized() then
+        app:on_render_window()
     end
 end)
 

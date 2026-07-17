@@ -40,7 +40,7 @@ function SentinelApp:initialize()
     self._battleground = BattlegroundModule:new(self._event_bus, self._blackboard, self._nav_adapter)
     self._grind = SentinelGrind:new(self._event_bus, self._blackboard, self._nav_adapter)
     self._mail = MailModule.new(self._event_bus, self._blackboard)
-    self._quest = QuestModule.new(self._event_bus, self._blackboard)
+    self._quest = QuestModule.new(self._event_bus, self._blackboard, self._nav_adapter)
     self._lfg = LfgModule.new(self._event_bus, self._blackboard)
     self._registry:register("combat", self._combat)
     self._registry:register("battleground", self._battleground)
@@ -113,6 +113,14 @@ function SentinelApp:on_render()
     if self._ui then
         self._error_boundary:wrap("ui", "render", function()
             self._ui.on_render()
+        end)
+    end
+end
+
+function SentinelApp:on_render_window()
+    if self._ui then
+        self._error_boundary:wrap("ui", "render_window", function()
+            self._ui.on_render_window()
         end)
     end
 end

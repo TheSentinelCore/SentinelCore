@@ -1,9 +1,12 @@
+-- sentinel/modules/quest/quest_graph.lua
+-- QuestGraph: Read-only data accessor for quest/NPC data (replaces planning logic with on-demand queries)
+
 local QueryClient = require("modules/quest/query_client")
 
 local QuestGraph = {}
 QuestGraph.__index = QuestGraph
 
-local CACHE_TTL_S = 3600 -- 1 hour for graph
+local CACHE_TTL_S = 3600 -- 1 hour for graph data
 
 ---@class QuestNode
 ---@field id integer
@@ -52,53 +55,8 @@ function QuestGraph.new(blackboard)
     }, QuestGraph)
 end
 
----Build graph from database for a zone/level range
----@param zone string|nil Zone name (e.g., "Westfall")
----@param level_range table|nil {min, max}
----@param faction string|nil "Alliance" | "Horde" | "Both"
----@return QuestGraph self
-function QuestGraph:build_from_db(zone, level_range, faction)
-    local min_level = level_range and level_range.min or 1
-    local max_level = level_range and level_range.max or 80
-    
-    -- Fetch all quests in level range (we'll filter by zone after)
-    -- QueryClient doesn't have a "list all quests" endpoint, so we need to query by known IDs
-    -- For now, we'll fetch quests from a pre-known list or query the DB directly
-    
-    -- Since we don't have a list endpoint, we'll use a different approach:
-    -- Query all quest templates from the DB via a new endpoint, or use Questie's data
-    -- For this implementation, we'll build from Questie's known quests + DB queries
-    
-    self.nodes = {}
-    self.edges = {}
-    self.available = {}
-    self.completed = {}
-    
-    -- Load completed quests from API
-    self:_load_completed_quests()
-    
-    -- Get all quest IDs from Questie for the zone/level
-    local quest_ids = self:_get_quest_ids_for_zone(zone, min_level, max_level, faction)
-    
-    -- Fetch each quest and build nodes
-    for _, quest_id in ipairs(quest_ids) do
-        local node = self:_build_node(quest_id)
-        if node then
-            self.nodes[quest_id] = node
-            self:_build_edges(node)
-        end
-    end
-    
-    -- Filter available
-    self:_filter_available(faction)
-    
-    return self
-end
-
 ---Load completed quests from Sylvannas API
 function QuestGraph:_load_completed_quests()
-    -- core.quests.is_quest_flagged_completed(quest_id) - but we don't know all IDs
-    -- Instead, we'll check on-demand when filtering
     self.completed = {}
 end
 
@@ -150,45 +108,28 @@ function QuestGraph:_get_quest_ids_for_zone(zone, min_level, max_level, faction)
         end
     end
     
-    -- Fallback: query a range of known quest IDs (expensive, but works)
-    -- In production, we'd want a /api/v1/quests?zone=X&level_min=Y&level_max=Z endpoint
+    -- Fallback: query a range of known quest IDs
     return {}
 end
 
 ---Convert zone name to map ID
----@param zone_name string
----@return integer
 function QuestGraph:_zone_name_to_id(zone_name)
     local zone_map = {
-        ["Westfall"] = 0,
-        ["Redridge Mountains"] = 0,
-        ["Duskwood"] = 0,
-        ["Loch Modan"] = 0,
-        ["Darkshore"] = 1,
-        ["Elwynn Forest"] = 0,
-        ["Tirisfal Glades"] = 0,
-        ["Silverpine Forest"] = 0,
-        ["The Barrens"] = 1,
-        ["Stonetalon Mountains"] = 1,
-        ["Ashenvale"] = 1,
-        -- Add more as needed
+        ["Westfall"] = 0, ["Redridge Mountains"] = 0, ["Duskwood"] = 0,
+        ["Loch Modan"] = 0, ["Silverpine Forest"] = 0, ["Darkshore"] = 1,
+        ["Elwynn Forest"] = 0, ["Tirisfal Glades"] = 0, ["Silverpine Forest"] = 0,
+        ["The Barrens"] = 1, ["Stonetalon Mountains"] = 1, ["Ashenvale"] = 1,
     }
     return zone_map[zone_name] or 0
 end
 
 ---Check if quest faction matches player
----@param required_races integer bitmask
----@param faction string
----@return boolean
 function QuestGraph:_faction_matches(required_races, faction)
     if not faction or faction == "Both" then return true end
     if required_races == 0 then return true end
     
-    -- Race bitmasks: Alliance=1101 (Human=1, Dwarf=4, NightElf=8, Gnome=16, Draenei=128)
-    -- Horde=690 (Orc=2, Undead=8, Tauren=32, Troll=128, BloodElf=512)
-    -- Simplified: check if any alliance/horde race bit is set
-    local alliance_mask = 1 + 4 + 8 + 16 + 128 -- 157
-    local horde_mask = 2 + 8 + 32 + 128 + 512 -- 682 (actually: 2+8+32+128+512=682)
+    local alliance_mask = 1 + 4 + 8 + 16 + 128 -- Human=1, Dwarf=4, NightElf=8, Gnome=16, Draenei=128
+    local horde_mask = 2 + 8 + 32 + 128 + 512 -- Orc=2, Undead=8, Tauren=32, Troll=128, BloodElf=512
     
     if faction == "Alliance" then
         return bit.band(required_races, alliance_mask) ~= 0
@@ -199,18 +140,42 @@ function QuestGraph:_faction_matches(required_races, faction)
 end
 
 ---Check if quest class matches player
----@param required_classes integer bitmask
----@return boolean
 function QuestGraph:_class_matches(required_classes)
     if required_classes == 0 then return true end
     -- Would need player class from blackboard
-    -- For now, accept all
     return true
 end
 
+---Build graph from database for a zone/level range
+---@param zone string|nil Zone name
+---@param level_range table|nil {min, max}
+---@param faction string|nil "Alliance"|"Horde"|"Both"
+---@return QuestGraph self
+function QuestGraph:build_from_db(zone, level_range, faction)
+    local min_level = level_range and level_range.min or 1
+    local max_level = level_range and level_range.max or 80
+    faction = faction or self._blackboard:get("player.faction", "Both")
+    
+    self.nodes = {}
+    self.edges = {}
+    self.available = {}
+    self.completed = {}
+    
+    local quest_ids = self:_get_quest_ids_for_zone(zone, min_level, max_level, faction)
+    
+    for _, quest_id in ipairs(quest_ids) do
+        local node = self:_build_node(quest_id)
+        if node then
+            self.nodes[quest_id] = node
+            self:_build_edges(node)
+        end
+    end
+    
+    self:_filter_available(faction)
+    return self
+end
+
 ---Build a QuestNode from raw quest data
----@param quest_id integer
----@return QuestNode|nil
 function QuestGraph:_build_node(quest_id)
     local qdata = self._client:fetch_quest(quest_id)
     if not qdata then return nil end
@@ -247,8 +212,6 @@ function QuestGraph:_build_node(quest_id)
 end
 
 ---Parse objectives from quest data
----@param qdata table
----@return table[]
 function QuestGraph:_parse_objectives(qdata)
     local objectives = {}
     for i = 1, 4 do
@@ -260,11 +223,7 @@ function QuestGraph:_parse_objectives(qdata)
         local text = qdata["objective_text" .. i]
         
         if item_id > 0 or creature_id > 0 or spell_id > 0 then
-            local obj = {
-                index = i,
-                text = text or "",
-            }
-            
+            local obj = {index = i, text = text or ""}
             if creature_id > 0 then
                 obj.type = "KILL"
                 obj.target_id = creature_id
@@ -278,7 +237,6 @@ function QuestGraph:_parse_objectives(qdata)
                 obj.spell_id = spell_id
                 obj.count = 1
             end
-            
             objectives[#objectives + 1] = obj
         end
     end
@@ -286,17 +244,11 @@ function QuestGraph:_parse_objectives(qdata)
 end
 
 ---Parse rewards from quest data
----@param qdata table
----@return table
 function QuestGraph:_parse_rewards(qdata)
-    local rewards = {
-        xp = tonumber(qdata.rew_xp) or 0,
-        money = tonumber(qdata.rew_money_max_level) or tonumber(qdata.rew_or_req_money) or 0,
-        choices = {},
-        fixed = {},
-    }
+    local rewards = {xp = 0, money = 0, choices = {}, fixed = {}}
+    rewards.xp = tonumber(qdata.rew_xp) or 0
+    rewards.money = tonumber(qdata.rew_money_max_level) or tonumber(qdata.rew_or_req_money) or 0
     
-    -- Choice rewards (RewChoiceItemId1-6)
     for i = 1, 6 do
         local item_id = tonumber(qdata["rew_choice_item_id" .. i]) or 0
         local item_count = tonumber(qdata["rew_choice_item_count" .. i]) or 0
@@ -309,7 +261,6 @@ function QuestGraph:_parse_rewards(qdata)
         end
     end
     
-    -- Fixed rewards (RewItemId1-4)
     for i = 1, 4 do
         local item_id = tonumber(qdata["rew_item_id" .. i]) or 0
         local item_count = tonumber(qdata["rew_item_count" .. i]) or 0
@@ -325,13 +276,10 @@ function QuestGraph:_parse_rewards(qdata)
 end
 
 ---Get NPC data for quest relation
----@param quest_id integer
----@param relation string "giver" | "turnin"
----@return table|nil
 function QuestGraph:_get_npc(quest_id, relation)
     local npcs = self._client:fetch_quest_npcs(quest_id, relation)
     if npcs and #npcs > 0 then
-        local npc = npcs[1] -- Take first match
+        local npc = npcs[1]
         return {
             id = npc.npc_id,
             name = npc.name,
@@ -345,7 +293,6 @@ function QuestGraph:_get_npc(quest_id, relation)
 end
 
 ---Build edges for a node
----@param node QuestNode
 function QuestGraph:_build_edges(node)
     local qid = node.id
     self.edges[qid] = {
@@ -356,29 +303,19 @@ function QuestGraph:_build_edges(node)
         excludes = {},
     }
     
-    -- Prerequisite chain
     if node.prev_quest_id > 0 then
         self.edges[qid].requires[#self.edges[qid].requires + 1] = node.prev_quest_id
     end
-    
-    -- Follow-up chain
     if node.next_quest_id > 0 then
         self.edges[qid].follows[#self.edges[qid].follows + 1] = node.next_quest_id
     end
-    
-    -- Chain continuation
     if node.next_in_chain > 0 then
         self.edges[qid].continues[#self.edges[qid].continues + 1] = node.next_in_chain
     end
-    
-    -- Breadcrumb
     if node.breadcrumb_for > 0 then
         self.edges[qid].breadcrumbs[#self.edges[qid].breadcrumbs + 1] = node.breadcrumb_for
     end
-    
-    -- Exclusive group
     if node.exclusive_group > 0 then
-        -- Find all quests with same exclusive group
         for other_id, other_node in pairs(self.nodes) do
             if other_node.exclusive_group == node.exclusive_group and other_id ~= qid then
                 self.edges[qid].excludes[#self.edges[qid].excludes + 1] = other_id
@@ -388,21 +325,21 @@ function QuestGraph:_build_edges(node)
 end
 
 ---Filter available quests based on completion, race, class, level
----@param faction string
+---Uses two-pass approach to avoid non-determinism from pairs() iteration order
 function QuestGraph:_filter_available(faction)
     local player_level = self._blackboard:get("player.level", 1)
-    local _, player_class = UnitClass("player")
-    local _, player_race = UnitRace("player")
+    local player_class = self._blackboard:get("player.class_name", "WARRIOR")
+    local player_race_id = self._blackboard:get("player.race_id", 0)
     
+    -- PASS 1: Evaluate level/race/class limits and completion
+    -- (No dependency on other quests' availability)
     for qid, node in pairs(self.nodes) do
         local available = true
         
-        -- Not completed
         if self:is_completed(qid) then
             available = false
         end
         
-        -- Level requirements
         if available and node.min_level > 0 and player_level < node.min_level then
             available = false
         end
@@ -410,74 +347,68 @@ function QuestGraph:_filter_available(faction)
             available = false
         end
         
-        -- Race requirement
         if available and node.required_races > 0 then
             available = self:_faction_matches(node.required_races, faction)
         end
         
-        -- Class requirement
         if available and node.required_classes > 0 then
             available = self:_class_matches(node.required_classes)
         end
         
-        -- Prerequisites met
-        if available then
-            for _, req_id in ipairs(self.edges[qid] and self.edges[qid].requires or {}) do
-                if not self:is_completed(req_id) and not self.available[req_id] then
-                    available = false
-                    break
+        -- Store preliminary availability (will be refined in pass 2)
+        self.available[qid] = available
+    end
+    
+    -- PASS 2: Resolve dependency chains iteratively
+    -- Repeat until no changes (handles any order dependencies)
+    local changed = true
+    while changed do
+        changed = false
+        for qid, node in pairs(self.nodes) do
+            if self.available[qid] then
+                for _, req_id in ipairs(self.edges[qid].requires) do
+                    -- Check both completed AND available (in case prerequisite was marked false)
+                    if self:is_completed(req_id) or self.available[req_id] then
+                        -- Prerequisite satisfied, keep available
+                    else
+                        self.available[qid] = false
+                        changed = true
+                        break
+                    end
                 end
             end
         end
-        
-        self.available[qid] = available
     end
 end
 
 ---Convert zone ID to name
----@param zone_id integer
----@return string
 function QuestGraph:_zone_id_to_name(zone_id)
     local zones = {
-        [0] = "Eastern Kingdoms",
-        [1] = "Kalimdor",
+        [0] = "Eastern Kingdoms", [1] = "Kalimdor",
     }
     return zones[zone_id] or "Unknown"
 end
 
 ---Check if zone is a dungeon
----@param zone_id integer
----@return boolean
 function QuestGraph:_is_dungeon_zone(zone_id)
     local dungeon_zones = {
-        [48] = true,  -- Ragefire Chasm
-        [90] = true,  -- The Deadmines
-        [129] = true, -- Razorfen Kraul
-        [189] = true, -- Shadowfang Keep
-        [209] = true, -- Wailing Caverns
-        [229] = true, -- Blackfathom Deeps
-        [269] = true, -- Razorfen Downs
-        [289] = true, -- Gnomeregan
-        [309] = true, -- Scarlet Monastery
-        [329] = true, -- Razorfen Downs
-        [349] = true, -- Maraudon
-        [369] = true, -- Dire Maul
-        [389] = true, -- Scholomance
-        [409] = true, -- Stratholme
-        [429] = true, -- Blackrock Depths
-        [449] = true, -- Blackrock Spire
-        [469] = true, -- Onyxia's Lair
-        [489] = true, -- Molten Core
-        [509] = true, -- Zul'Gurub
-        [529] = true, -- Ruins of Ahn'Qiraj
-        [531] = true, -- Temple of Ahn'Qiraj
-        [533] = true, -- Naxxramas
+        [48] = true, [90] = true, [129] = true, [189] = true, [209] = true,
+        [229] = true, [269] = true, [289] = true, [309] = true, [329] = true,
+        [349] = true, [369] = true, [389] = true, [409] = true, [429] = true,
+        [449] = true, [469] = true, [489] = true, [509] = true, [529] = true,
+        [531] = true, [533] = true,
     }
     return dungeon_zones[zone_id] or false
 end
 
+---Count total nodes in the graph
+function QuestGraph:count_nodes()
+    local n = 0
+    for _ in pairs(self.nodes) do n = n + 1 end
+    return n
+end
+
 ---Get all available quest nodes
----@return QuestNode[]
 function QuestGraph:get_available_quests()
     local result = {}
     for qid, node in pairs(self.nodes) do
@@ -489,13 +420,10 @@ function QuestGraph:get_available_quests()
 end
 
 ---Get full chain for a quest (backwards and forwards)
----@param quest_id integer
----@return {backwards: QuestNode[], forwards: QuestNode[]}
 function QuestGraph:get_chain(quest_id)
     local backwards = {}
     local forwards = {}
     
-    -- Walk backwards via prev_quest_id
     local current = quest_id
     while current > 0 do
         local node = self.nodes[current]
@@ -504,7 +432,6 @@ function QuestGraph:get_chain(quest_id)
         current = node.prev_quest_id
     end
     
-    -- Walk forwards via next_in_chain
     current = quest_id
     while current > 0 do
         local node = self.nodes[current]
@@ -517,8 +444,6 @@ function QuestGraph:get_chain(quest_id)
 end
 
 ---Get all quests that share objectives (spatial overlap)
----@param quest_id integer
----@return QuestNode[]
 function QuestGraph:get_overlapping_quests(quest_id)
     local node = self.nodes[quest_id]
     if not node then return {} end
@@ -526,13 +451,11 @@ function QuestGraph:get_overlapping_quests(quest_id)
     local overlapping = {}
     local target_ids = {}
     
-    -- Collect all target IDs from this quest's objectives
     for _, obj in ipairs(node.objectives) do
         if obj.target_id then target_ids[obj.target_id] = true end
         if obj.item_id then target_ids[obj.item_id] = true end
     end
     
-    -- Find other quests with same targets
     for other_id, other_node in pairs(self.nodes) do
         if other_id ~= quest_id and self.available[other_id] then
             for _, obj in ipairs(other_node.objectives) do
@@ -548,8 +471,6 @@ function QuestGraph:get_overlapping_quests(quest_id)
 end
 
 ---Check if quest is blocked by exclusive group
----@param quest_id integer
----@return boolean, integer|nil
 function QuestGraph:is_exclusive_blocked(quest_id)
     local node = self.nodes[quest_id]
     if not node or node.exclusive_group == 0 then return false, nil end

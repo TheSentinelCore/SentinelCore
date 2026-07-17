@@ -1,0 +1,11 @@
+name: Example Blueprint
+description: A blueprint that expands to a simple wait action.
+params:
+  - name: delay
+    type: number
+    default: 2
+    description: "Delay in seconds"
+expands_to:
+  - type: wait
+    args:
+      seconds: ${delay}

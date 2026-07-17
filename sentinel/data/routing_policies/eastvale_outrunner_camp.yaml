@@ -1,0 +1,17 @@
+name: "eastvale_outrunner_camp"
+strategy: "smart"
+preferredPath: "road"
+avoid:
+  - "elite"
+  - "water"
+dynamicReplan: true
+allowShortcuts: true
+opportunisticKills:
+  - "Wolf"
+  - "Boar"
+opportunisticLoot:
+  - "Chest"
+  - "QuestObject"
+ignore:
+  - "Rare"
+  - "Elite"

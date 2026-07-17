@@ -1,0 +1,19 @@
+name: "goldshire_level10_grind"
+strategy: "smart"
+preferredPath: "road"
+avoid:
+  - "elite"
+  - "water"
+  - "enemyTown"
+dynamicReplan: true
+allowShortcuts: true
+opportunisticKills:
+  - "Wolf"
+  - "Boar"
+  - "Murloc"
+opportunisticLoot:
+  - "Chest"
+  - "QuestObject"
+ignore:
+  - "Rare"
+  - "Elite"

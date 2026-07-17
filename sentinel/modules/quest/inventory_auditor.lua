@@ -51,7 +51,7 @@ function InventoryAuditor:audit(quest_plan)
     }
     
     -- Class reagents
-    local _, class = UnitClass("player")
+    local class = self._blackboard:get("player.class_name", "WARRIOR")
     local reqs = ClassService.get_quest_requirements(class)
     for name, ids in pairs(reqs.reagent_consumption or {}) do
         report.class_reagents[name] = BagScanner.count_by_ids(ids)

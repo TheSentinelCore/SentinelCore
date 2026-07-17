@@ -70,6 +70,13 @@ function SentinelCombat:initialize()
     self._blackboard:set("module.combat.profile", self._profile)
 
     self._blackboard:set("player.class_id", class_id)
+    -- Store class name string (e.g. "WARRIOR") for quest modules that need it
+    local CLASS_ID_TO_NAME = {
+        [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE",
+        [5] = "PRIEST", [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE",
+        [9] = "WARLOCK", [11] = "DRUID",
+    }
+    self._blackboard:set("player.class_name", CLASS_ID_TO_NAME[class_id] or "WARRIOR")
     self._blackboard:set("module.combat.catalog", self._spell_catalog)
     self._blackboard:set("module.combat.dispatcher", self._dispatcher)
     self._blackboard:set("module.combat.cooldowns", self._cooldowns)

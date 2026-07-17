@@ -1,0 +1,17 @@
+name: Example Operation
+description: A simple operation that talks to an NPC.
+zone_ref: 1
+level_range:
+  min: 1
+  max: 10
+variables:
+  wait_time:
+    type: number
+    default: 5
+    description: "Seconds to wait"
+actions:
+  - type: TalkToNPC
+    id: talk_to_npc
+    args:
+      npc_name: "Guard Maxwell"
+    condition: ${player_level} >= 1

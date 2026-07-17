@@ -9,6 +9,7 @@ local Combat = require("modules/grind/phases/combat")
 local Pull = require("modules/grind/phases/pull")
 local Acquire = require("modules/grind/phases/acquire")
 local Patrol = require("modules/grind/patrol")
+local QuestPhases = require("modules/quest/quest_phases")
 
 local GrindTree = {}
 
@@ -86,6 +87,7 @@ function GrindTree.build(blackboard, event_bus, nav_adapter)
             diag_phase("rest", Rest.build(event_bus, nav_adapter)),
             diag_phase("loot", Loot.build(event_bus, nav_adapter)),
             diag_phase("vendor", Vendor.build(blackboard, event_bus, nav_adapter)),
+            diag_phase("quest", QuestPhases.build_quest_tree()),
             diag_phase("combat", Combat.build()),
             diag_phase("pull", Pull.build(blackboard, event_bus, nav_adapter)),
             diag_phase("acquire", mode_acquire),
