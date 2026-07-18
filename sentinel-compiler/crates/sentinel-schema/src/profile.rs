@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::enums::{GameVersion, Faction, Race, Class};
 use crate::operation::Operation;
 use crate::reference::{NpcReference, QuestReference, VendorEntry};
-use crate::blueprint::BlueprintReference;
+use crate::blueprint::{Blueprint, BlueprintReference};
 use crate::variable::Variable;
 use crate::metadata::{Metadata, ProfileSettings, LevelRange};
 
@@ -37,6 +37,7 @@ pub struct Profile {
     pub npc_library: Vec<NpcReference>,
     pub quest_library: Vec<QuestReference>,
     pub vendor_library: Vec<VendorEntry>,
+    pub blueprint_library: Vec<Blueprint>,
     pub blueprints: Vec<BlueprintReference>,
     pub operations: Vec<Operation>,
 }
@@ -61,6 +62,7 @@ impl Profile {
             npc_library: Vec::new(),
             quest_library: Vec::new(),
             vendor_library: Vec::new(),
+            blueprint_library: Vec::new(),
             blueprints: Vec::new(),
             operations: Vec::new(),
         }
@@ -108,6 +110,11 @@ impl Profile {
     
     pub fn add_blueprint(mut self, bp: BlueprintReference) -> Self {
         self.blueprints.push(bp);
+        self
+    }
+    
+    pub fn add_blueprint_definition(mut self, bp: Blueprint) -> Self {
+        self.blueprint_library.push(bp);
         self
     }
 }
