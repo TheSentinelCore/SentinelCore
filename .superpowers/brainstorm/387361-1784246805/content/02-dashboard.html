@@ -1,0 +1,83 @@
+<h2>Statechart Dashboard Layout</h2>
+<p class="subtitle">We'll use the Split-Pane layout with a collapsible sidebar for a cleaner view. Here is a breakdown of what the dashboard could display.</p>
+
+<div class="mockup">
+  <div class="mockup-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <div>
+      <span style="cursor: pointer; padding: 4px; border: 1px solid #444; border-radius: 4px;">☰ Menu</span>
+      <span style="margin-left: 12px; font-weight: bold;">Profile: Elwynn_Forest_1_10</span>
+    </div>
+    <div style="color: #4ade80; font-weight: bold;">● RUNNING</div>
+  </div>
+  <div class="mockup-body" style="display: flex; height: 350px; padding: 0;">
+    
+    <!-- Collapsible Sidebar -->
+    <div style="width: 200px; border-right: 1px solid #333; padding: 12px; background: #1a1a1a; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
+      <h3 style="font-size: 14px; margin-bottom: 4px; color: #aaa;">Settings</h3>
+      
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <label style="font-size: 11px; color: #888;">Survival Flee Threshold</label>
+        <div style="height: 16px; background: #333; border-radius: 2px;"></div>
+      </div>
+      
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <label style="font-size: 11px; color: #888;">Max Travel Distance</label>
+        <div style="height: 16px; background: #333; border-radius: 2px;"></div>
+      </div>
+      
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" checked disabled>
+        <span style="font-size: 12px;">Skip Elites</span>
+      </div>
+    </div>
+    
+    <!-- Main Dashboard Area -->
+    <div style="flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 12px; background: #111;">
+      
+      <!-- Top Info Bar -->
+      <div style="display: flex; gap: 12px;">
+        <div style="flex: 1; border: 1px solid #333; border-radius: 4px; padding: 8px;">
+          <div style="font-size: 11px; color: #888; text-transform: uppercase;">Active Routing Policy</div>
+          <div style="font-weight: bold; color: #60a5fa;">Waypoint Follow (Avoid Threat)</div>
+        </div>
+        <div style="flex: 1; border: 1px solid #333; border-radius: 4px; padding: 8px;">
+          <div style="font-size: 11px; color: #888; text-transform: uppercase;">Current Goal</div>
+          <div style="font-weight: bold;">Kill 10 Defias Bandits</div>
+        </div>
+      </div>
+
+      <!-- Statechart Visualizer -->
+      <div style="flex: 2; border: 1px solid #333; border-radius: 4px; position: relative; padding: 8px; display: flex; gap: 8px;">
+        <div style="position: absolute; top: -8px; left: 12px; background: #111; padding: 0 4px; font-size: 10px; color: #888;">Active Regions (Statechart)</div>
+        
+        <div style="flex: 1; border: 1px dashed #444; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #1a1a1a;">
+          <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">Questing Region</div>
+          <div style="padding: 4px 8px; border: 1px solid #3b82f6; border-radius: 4px; background: rgba(59, 130, 246, 0.2); color: #93c5fd; font-size: 12px;">Acquiring Targets</div>
+        </div>
+        
+        <div style="flex: 1; border: 1px dashed #444; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #1a1a1a;">
+          <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">Survival Region</div>
+          <div style="padding: 4px 8px; border: 1px solid #22c55e; border-radius: 4px; background: rgba(34, 197, 94, 0.2); color: #86efac; font-size: 12px;">Idle (Safe)</div>
+        </div>
+      </div>
+
+      <!-- Transition Log -->
+      <div style="flex: 1; border: 1px solid #333; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 10px; color: #aaa; overflow-y: hidden;">
+        <div style="margin-bottom: 4px;">[12:04:01] EVENT: health_low fired</div>
+        <div style="margin-bottom: 4px; color: #fca5a5;">[12:04:01] TRANSITION: Questing -> Fleeing</div>
+        <div style="margin-bottom: 4px;">[12:04:05] EVENT: safe_distance reached</div>
+        <div style="margin-bottom: 4px; color: #86efac;">[12:04:05] TRANSITION: Fleeing -> Recovering</div>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 16px;">
+  <p>Does this breakdown cover what you'd expect to see at runtime? Specifically:</p>
+  <ul style="list-style-type: disc; padding-left: 20px; margin-top: 8px;">
+    <li>Seeing the 3 parallel regions (Questing, Survival, Logistics) visually</li>
+    <li>A live log of Statechart events and transitions</li>
+    <li>The currently active Routing Policy</li>
+  </ul>
+</div>

@@ -1,0 +1,102 @@
+# 013 — IDE: Validation and Analytics Panes
+
+**What to build:** Implement the Validation and Analytics panes that can be toggled in the bottom area (alternating with Timeline or as tabs):
+- **Validation Panel**:
+  - Real-time validation of authoring choices as user types
+  - Error/warning/info severity levels with icons
+  - Clicking an entry highlights the source in Explorer/Timeline/Map
+  - Categories: Database errors, Logic errors, Performance warnings, Best practices
+  - Export/import of validation reports
+  - Ability to suppress specific warning types
+  - Auto-fix suggestions for common issues (one-click apply)
+  - Integration with compiler to show Level 1/2 pass issues
+  - Shows source mapping: which file/line caused each issue
+  - Filter by severity, category, operation
+  - Clear all button and auto-clear on successful compile
+  - Timestamp for each entry
+  - Maximum 1000 entries to prevent memory issues
+  - Link to documentation for each error code
+  - Ability to copy error message to clipboard
+  - Integration with IDE status bar for quick summary
+  - Progress bar during validation shows completion percentage
+
+- **Analytics Panel**:
+  - Shows telemetry data from executed profiles (XP/hour, deaths, time breakdowns)
+  - Per-operation breakdown: time spent, XP gained, deaths, vendor visits
+  - Trend graphs over multiple runs (if data available)
+  - Heatmap of death locations on world map
+  - Identification of bottlenecks: slowest quests, most travel time
+  - Suggestions for optimization: merge operations, reorder actions, adjust parameters
+  - Export analytics as CSV/JSON for external analysis
+  - Comparison view: compare two runs or current vs. baseline
+  - Minimum/maximum/average values for each metric
+  - Sample size indicator (how many runs contributed to data)
+  - Outlier detection and highlighting
+  - Correlation analysis: what factors most affect XP/hour
+  - Reset statistics button
+  - Data persistence: stores last N runs locally
+  - Sampling rate configuration (collect every Nth run)
+  - Integration with Validation panel: shows performance warnings
+  - Time-of-day breakdown (if time tracking implemented)
+  - Equipment wear and repair cost analysis
+  - Quest completion rate and abandonment reasons
+  - Inventory usage patterns (what gets vendored vs kept)
+  - Movement efficiency: actual vs optimal path distance
+  - Combat statistics: hits/misses, crit rate, damage taken
+  - Only visible when telemetry data is available (after running profile)
+  - Configurable chart types: line, bar, pie, scatter
+  - Export to PDF for reporting purposes
+  - Drill-down capability: click on bar to see underlying details
+  - Annotation capability: add notes to specific data points
+
+**Blocked by:** 001 — Source Format Specification
+
+**Status:** ready-for-agent
+
+- [ ] Create Validation component with sortable/filterable table or list
+- [ ] Implement severity levels: error (red), warning (yellow), info (blue)
+- [ ] Add click-to-source functionality for all validation entries
+- [ ] Categorize validation: Database, Logic, Performance, Best Practices
+- [ ] Add export functionality (CSV, JSON, plain text)
+- [ ] Implement suppression rules for specific warning types
+- [ ] Add auto-fix suggestions with one-click apply buttons
+- [ ] Connect to compiler to receive Level 1/2 validation errors
+- [ ] Show source mapping: file, line, column for each error
+- [ ] Add filtering by severity, category, operation, status
+- [ ] Implement clear all and auto-clear on successful compile
+- [ ] Add timestamps to all validation entries
+- [ ] Limit stored entries to prevent memory growth
+- [ ] Link each error type to documentation URL
+- [ ] Add copy-to-clipboard button for error messages
+- [ ] Integrate with IDE status bar for quick error/warning counts
+- [ ] Add progress bar during batch validation operations
+- [ ] Create Analytics component with multiple chart types
+- [ ] Implement time series graphs for trends over multiple runs
+- [ ] Add breakdown by operation: time, XP, deaths, etc.
+- [ ] Generate heatmap of death locations on world map (requires map integration)
+- [ ] Identify and highlight performance bottlenecks
+- [ ] Generate optimization suggestions based on collected data
+- [ ] Add export functionality (CSV, JSON for external tools)
+- [ ] Implement comparison view: A/B testing of different versions
+- [ ] Calculate min/max/avg/stdev for each metric
+- [ ] Track sample size and confidence intervals
+- [ ] Add outlier detection using statistical methods (IQR, z-score)
+- [ ] Implement correlation analysis between variables and outcomes
+- [ ] Add reset button to clear all collected statistics
+- [ ] Implement local storage for persistence of last N runs
+- [ ] Add sampling rate configuration to reduce overhead
+- [ ] Connect Validation and Analytics panels for related insights
+- [ ] Add time-of-day breakdown if temporal data is collected
+- [ ] Include equipment analysis: wear rates, repair frequency, costs
+- [ ] Add quest analytics: completion rates, time per quest, abandonment
+- [ ] Show inventory patterns: what items are collected, kept, vendored
+- [ ] Calculate path efficiency: actual distance vs optimal route
+- [ ] Include combat metrics: accuracy, crit rate, damage dealt/taken
+- [ ] Ensure visibility only when relevant data exists (hide when no telemetry
+- [ ] Add chart type selection: line, bar, area, pie, scatter, heatmap
+- [ ] Implement export to PDF for reports and sharing
+- [ ] Add drill-down: click on chart element to see raw data
+- [ ] Allow users to annotate specific data points with notes
+- [ ] Provide keyboard navigation for all interactive elements
+- [ ] Ensure accessibility compliance for screen readers
+- [ ] Performance target: update charts in <100ms with 1000+ data points

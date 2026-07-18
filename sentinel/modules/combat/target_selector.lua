@@ -121,10 +121,10 @@ function TargetSelector:new(event_bus, blackboard, izi_bridge)
 
     -- Strategy pattern support
     o._strategies = {
-        grind = StrategyFactory.create("grind", event_bus, blackboard, izi_bridge, o._unit_helper),
+        default = StrategyFactory.create("default", event_bus, blackboard, izi_bridge, o._unit_helper),
         pvp = StrategyFactory.create("pvp", event_bus, blackboard, izi_bridge, o._unit_helper),
     }
-    o._current_strategy = "grind"
+    o._current_strategy = "default"
 
     return o
 end

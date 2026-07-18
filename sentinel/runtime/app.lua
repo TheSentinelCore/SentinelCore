@@ -6,13 +6,6 @@ local SensorHub = require("runtime/sensor_hub")
 local CallbackBridge = require("runtime/callback_bridge")
 local NavAdapter = require("integrations/nav_client/adapter")
 local IziBridge = require("integrations/izi_bridge")
-local SentinelCombat = require("modules/combat/module")
-local BattlegroundModule = require("modules/battleground/module")
-local SentinelGrind = require("modules/grind/module")
-local MailModule = require("modules/mail/module")
-local QuestModule = require("modules/quest/module")
-local LfgModule = require("modules/lfg/module")
-local UIWindow = require("ui/window")
 
 local SentinelApp = {}
 SentinelApp.__index = SentinelApp
@@ -36,26 +29,20 @@ function SentinelApp:new()
 end
 
 function SentinelApp:initialize()
-    self._combat = SentinelCombat:new(self._event_bus, self._blackboard, self._nav_adapter, self._izi_bridge)
-    self._battleground = BattlegroundModule:new(self._event_bus, self._blackboard, self._nav_adapter)
-    self._grind = SentinelGrind:new(self._event_bus, self._blackboard, self._nav_adapter)
-    self._mail = MailModule.new(self._event_bus, self._blackboard)
-    self._quest = QuestModule.new(self._event_bus, self._blackboard, self._nav_adapter)
-    self._lfg = LfgModule.new(self._event_bus, self._blackboard)
-    self._registry:register("combat", self._combat)
-    self._registry:register("battleground", self._battleground)
-    self._registry:register("grind", self._grind)
-    self._registry:register("mail", self._mail)
-    self._registry:register("quest", self._quest)
-    self._registry:register("lfg", self._lfg)
-    self._combat:initialize()
-    self._battleground:initialize()
-    self._grind:initialize()
-    self._mail:start()
-    self._quest:initialize()
-    self._lfg:initialize()
-    self._ui = UIWindow
-    self._ui.init(self)
+    -- Register modules declaratively via ModuleRegistry
+    self._registry:register_all(self._blackboard, self._event_bus)
+
+    -- Get module references for direct access
+    self._combat = self._registry:get("combat")
+    self._ui = self._registry:get("ui")
+
+    -- Initialize modules (passes app to UI, calls combat's initialize)
+    self._registry:initialize_all(self)
+
+    -- Combat module has its own initialize method
+    if self._combat and self._combat.initialize then
+        self._combat:initialize()
+    end
 end
 
 function SentinelApp:shutdown()
@@ -67,7 +54,7 @@ function SentinelApp:shutdown()
         end
     end
     if self._ui and type(self._ui.shutdown) == "function" then
-        self._ui.shutdown()
+        self._ui:shutdown()
     end
 end
 
@@ -80,32 +67,19 @@ function SentinelApp:on_update()
     self._error_boundary:wrap("sensor_hub", "refresh", function()
         self._sensor_hub:refresh()
     end)
+    -- Poll nav adapter so all modules see fresh nav state
+    self._nav_adapter:poll()
+
     if self._ui then
         self._error_boundary:wrap("ui", "update", function()
             self._ui.on_update()
         end)
     end
-    -- Poll nav adapter so all modules see fresh nav state (is_active, get_state)
-    self._nav_adapter:poll()
-
-    self._error_boundary:wrap("battleground", "update", function()
-        self._battleground:update(self._blackboard)
-    end)
-    self._error_boundary:wrap("grind", "update", function()
-        self._grind:update(self._blackboard)
-    end)
-    self._error_boundary:wrap("mail", "update", function()
-        self._mail:update(self._blackboard)
-    end)
-    self._error_boundary:wrap("quest", "update", function()
-        self._quest:update(self._blackboard)
-    end)
-    self._error_boundary:wrap("lfg", "update", function()
-        self._lfg:update(self._blackboard)
-    end)
-    self._error_boundary:wrap("combat", "update", function()
-        self._combat:update(self._blackboard)
-    end)
+    if self._combat then
+        self._error_boundary:wrap("combat", "update", function()
+            self._combat:update(self._blackboard)
+        end)
+    end
 end
 
 function SentinelApp:on_render()

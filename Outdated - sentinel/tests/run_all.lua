@@ -1,0 +1,112 @@
+package.path = table.concat({
+    "sentinel/?.lua",
+    "sentinel/?/?.lua",
+    "sentinel/?/?/?.lua",
+    "sentinel/?/?/?/?.lua",
+    "sentinel/?/?/?/?/?.lua",
+    package.path,
+}, ";")
+
+local TestUtil = require("tests/test_util")
+
+local test_modules = {
+    "tests/shared/test_compat",
+    "tests/shared/test_izi_bridge",
+    "tests/core/test_event_bus",
+    "tests/core/test_blackboard",
+    "tests/core/test_bt",
+    "tests/runtime/test_sensor_hub",
+    "tests/runtime/test_sensor_hub_battleground",
+    "tests/runtime/test_nav_adapter",
+    "tests/modules/combat/test_spell_catalog",
+    "tests/modules/combat/test_spell_dispatcher",
+    "tests/modules/combat/test_helper_call_shapes",
+    "tests/modules/combat/test_seal_policy",
+    "tests/modules/combat/test_swing_tracker",
+    "tests/modules/combat/test_target_selector",
+    "tests/modules/combat/test_module",
+    "tests/modules/battleground/test_bg_detector",
+    "tests/modules/battleground/test_module",
+    "tests/modules/battleground/test_queue_manager",
+    "tests/modules/battleground/test_leave_manager",
+    "tests/modules/battleground/test_mount_manager",
+    "tests/modules/battleground/test_ghost_manager",
+    "tests/modules/battleground/test_objective_approach",
+    "tests/modules/battleground/test_objective_tracker",
+    "tests/modules/battleground/test_strategy_engine",
+    "tests/modules/battleground/test_nav_controller",
+    "tests/modules/battleground/test_nav_failures",
+    "tests/modules/battleground/test_av",
+    "tests/modules/battleground/test_wsg",
+    "tests/modules/battleground/test_ab",
+    "tests/modules/battleground/test_eots",
+    "tests/modules/grind/test_grind_module",
+    "tests/modules/grind/test_target_filter",
+    "tests/modules/grind/test_stuck_detector",
+    "tests/modules/grind/test_grind_phases",
+    "tests/modules/grind/test_grind_tree",
+    "tests/modules/grind/test_profile_validator",
+    "tests/modules/grind/test_autoloader",
+    "tests/modules/grind/test_profile_manager",
+    "tests/modules/grind/test_capture_helper",
+    "tests/modules/grind/test_durability_tracker",
+    "tests/modules/grind/test_threat_map",
+    "tests/modules/grind/test_mount_controller",
+    "tests/modules/quest/test_tracker",
+    "tests/modules/quest/test_interactions",
+    "tests/modules/quest/test_questie_adapter",
+    "tests/modules/quest/test_query_client",
+    "tests/modules/quest/test_compiler_pass1",
+    "tests/modules/quest/test_compiler_pass2",
+    "tests/modules/quest/test_compiler_pass3",
+    "tests/modules/quest/test_compiler_pass4",
+    "tests/modules/quest/test_engine",
+    "tests/modules/lfg/test_module",
+    "tests/modules/mail/test_module",
+    "tests/modules/combat/profiles/mage/test_frost_conditions",
+    "tests/modules/combat/profiles/mage/test_frost_actions",
+    "tests/modules/combat/profiles/mage/test_maintenance_tree",
+    "tests/modules/combat/profiles/mage/test_aoe_tree",
+    "tests/modules/combat/profiles/mage/test_frost_tbc",
+    "tests/modules/combat/profiles/mage/test_pet_controller",
+}
+
+local failures = 0
+
+local function run_retribution_parity()
+    local mod = require("tests/modules/combat/test_retribution_tbc")
+    local result = TestUtil.run("tests/modules/combat/test_retribution_tbc.legacy", mod.test_legacy_path)
+    if result.ok then
+        print("PASS " .. result.name)
+    else
+        return "FAIL " .. result.name .. " :: " .. tostring(result.err)
+    end
+    local result2 = TestUtil.run("tests/modules/combat/test_retribution_tbc.dsl", mod.test_dsl_path)
+    if result2.ok then
+        print("PASS " .. result2.name)
+    else
+        return "FAIL " .. result2.name .. " :: " .. tostring(result2.err)
+    end
+    return nil
+end
+
+for _, module_name in ipairs(test_modules) do
+    local mod = require(module_name)
+    local result = TestUtil.run(module_name, mod.run)
+    if result.ok then
+        print("PASS " .. result.name)
+    else
+        failures = failures + 1
+        print("FAIL " .. result.name .. " :: " .. tostring(result.err))
+    end
+end
+
+local err = run_retribution_parity()
+if err then
+    failures = failures + 1
+    print(err)
+end
+
+if failures > 0 then
+    return "FAILED " .. failures .. " tests"
+end
