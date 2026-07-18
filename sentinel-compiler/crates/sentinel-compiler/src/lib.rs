@@ -25,8 +25,11 @@ pub fn compile(profile: Profile, query_client: &dyn QueryClient) -> Result<Runti
     let _warnings = stages::structural::validate(&profile)?;
 
     // Stage 2: Reference Resolution
-    let _resolved = stages::resolution::resolve(&profile, query_client)?;
+    let resolved = stages::resolution::resolve(&profile, query_client)?;
 
-    // Stages 3-7: Not yet implemented
-    todo!("Stages 3-7 not yet implemented")
+    // Stage 3: Blueprint Expansion
+    let _expanded = stages::expansion::expand_blueprints(&resolved, query_client)?;
+
+    // Stages 4-7: Not yet implemented
+    todo!("Stages 4-7 not yet implemented")
 }
