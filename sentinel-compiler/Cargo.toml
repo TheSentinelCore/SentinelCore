@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/sentinel-schema",
     "crates/sentinel-queryserver",
+    "crates/sentinel-compiler",
 ]
 
 [workspace.package]
