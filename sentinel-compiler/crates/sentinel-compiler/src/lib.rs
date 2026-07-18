@@ -22,9 +22,19 @@ use runtime_profile::RuntimeProfile;
 /// or `Err(Vec<Diagnostic>)` if any stage produces hard errors.
 pub fn compile(_profile: Profile, _query_client: &dyn QueryClient) -> Result<RuntimeProfile, Vec<Diagnostic>> {
     // Stage 1: Structural Validation
-    // stages::structural::validate(&_profile)?;
+    let _structural_warnings = stages::structural::validate(&_profile)?;
 
-    // Stages 2-7 will be implemented in later tickets.
-    // For now, only Stage 1 is wired up.
-    todo!("Stages 2-7 not yet implemented")
+    // Stage 2: Reference Resolution (not yet implemented — another ticket)
+    // stages::resolution::resolve(&_profile, query_client)?;
+
+    // Stage 3: Blueprint Expansion (not yet implemented — another ticket)
+
+    // Stage 4: Dependency Resolution
+    let _dep_order = stages::dependency::resolve_dependencies(&_profile)?;
+
+    // Stage 5: Goal Coverage
+    let _goal_diagnostics = stages::goal_coverage::validate_goals(&_profile)?;
+
+    // Stages 6-7: not yet implemented
+    todo!("Stages 2, 3, 6, 7 not yet implemented")
 }
