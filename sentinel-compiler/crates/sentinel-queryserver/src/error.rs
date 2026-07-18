@@ -38,16 +38,18 @@ pub enum QueryError {
 
 impl IntoResponse for QueryError {
     fn into_response(self) -> Response {
-        let (status, error_message) = match self {
-            QueryError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            QueryError::InvalidRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            QueryError::Validation(msg) => (StatusCode::BAD_REQUEST, msg),
-            QueryError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string()),
-            QueryError::Cache(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Cache error".to_string()),
-            QueryError::Graph(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Graph error".to_string()),
-            QueryError::Serialization(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error".to_string()),
-            QueryError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".to_string()),
+        let (status, error_message) = match &self {
+            QueryError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            QueryError::InvalidRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            QueryError::Validation(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            QueryError::Database(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)),
+            QueryError::Cache(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Cache error: {}", e)),
+            QueryError::Graph(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Graph error: {}", e)),
+            QueryError::Serialization(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Serialization error: {}", e)),
+            QueryError::Internal(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Internal error: {}", e)),
         };
+        
+        tracing::error!("Query error: {}", error_message);
         
         let body = Json(json!({
             "error": error_message,

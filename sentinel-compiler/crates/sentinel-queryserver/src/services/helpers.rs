@@ -3,7 +3,7 @@
 use rusqlite::Connection;
 
 /// Look up a zone/area name from `areatable` by map id.
-/// Returns `"Unknown"` on lookup failure.
+/// Falls back to `"Map:<id>"` if `areatable` is not available.
 pub fn zone_name(conn: &Connection, map_id: u32) -> rusqlite::Result<String> {
     Ok(conn
         .query_row(
@@ -11,5 +11,5 @@ pub fn zone_name(conn: &Connection, map_id: u32) -> rusqlite::Result<String> {
             [map_id],
             |r| r.get(0),
         )
-        .unwrap_or_else(|_| "Unknown".to_string()))
+        .unwrap_or_else(|_| format!("Map:{}", map_id)))
 }

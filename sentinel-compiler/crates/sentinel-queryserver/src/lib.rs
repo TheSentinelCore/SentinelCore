@@ -31,9 +31,9 @@ where
 
 /// Get a database connection from the global pool
 pub async fn get_db_connection() -> anyhow::Result<std::sync::Arc<tokio::sync::Mutex<Connection>>> {
-    // For now, we create a new connection each time
-    // In production, you'd want a proper connection pool
-    let conn = Connection::open("/home/levi/Projects/SentinelCore/Database/tbcmangos.sqlite")?;
+    let db_path = std::env::var("SENTINEL_DB_PATH")
+        .unwrap_or_else(|_| "./tbcmangos.sqlite".to_string());
+    let conn = Connection::open(&db_path)?;
     conn.execute_batch(r#"
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;

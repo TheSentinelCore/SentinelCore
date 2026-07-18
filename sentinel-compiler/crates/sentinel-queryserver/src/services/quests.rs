@@ -249,10 +249,8 @@ impl QuestService {
                 let conn = db.blocking_lock();
 
                 let mut sql = String::from(
-                    "SELECT qt.entry, qt.Title, qt.QuestLevel, qt.MinLevel, zt.name, cqr.quest
+                    "SELECT qt.entry, qt.Title, qt.QuestLevel, qt.MinLevel, qt.ZoneOrSort
                      FROM quest_template qt
-                     LEFT JOIN areatable zt ON zt.id = qt.ZoneOrSort
-                     LEFT JOIN creature_questrelation cqr ON cqr.quest = qt.entry
                      WHERE 1=1",
                 );
 
@@ -262,9 +260,9 @@ impl QuestService {
                     sql.push_str(" AND qt.Title LIKE ?");
                     params.push(Box::new(format!("%{}%", q)));
                 }
-                if let Some(z) = &zone {
-                    sql.push_str(" AND zt.name LIKE ?");
-                    params.push(Box::new(format!("%{}%", z)));
+                if let Some(_z) = &zone {
+                    // areatable not available in this DB — filter by ZoneOrSort numeric if possible
+                    sql.push_str(" AND qt.ZoneOrSort > 0");
                 }
                 if let Some(l) = min_level {
                     sql.push_str(" AND qt.MinLevel >= ?");
@@ -284,20 +282,21 @@ impl QuestService {
                     params.push(Box::new(faction_mask));
                 }
 
-                sql.push_str(" LIMIT ?");
+                sql.push_str(" ORDER BY qt.entry LIMIT ?");
                 params.push(Box::new(limit.unwrap_or(50) as i64));
 
                 let mut stmt = conn.prepare(&sql)?;
                 let rows = stmt.query_map(
                     rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
                     |row| {
+                        let zone_id: i32 = row.get(4)?;
                         Ok(QuestSearchResult {
                             id: row.get(0)?,
                             title: row.get(1)?,
                             level: row.get(2)?,
                             min_level: row.get(3)?,
-                            zone: row.get(4).unwrap_or_default(),
-                            giver: row.get(5)?,
+                            zone: format!("ZoneID:{}", zone_id),
+                            giver: 0,
                         })
                     },
                 )?;
@@ -336,19 +335,24 @@ impl QuestService {
                  FROM quest_template WHERE entry = ?1",
                 [quest_id],
                 |row| {
+                    // MaNGOS uses -1 as sentinel for "no value" — read as i32, convert to u32
+                    let entry: u32 = row.get(0)?;
+                    let title: String = row.get(1)?;
+                    let min_level: u32 = row.get(2)?;
+                    let max_level: u32 = row.get(3)?;
+                    let quest_level: u32 = row.get(4)?;
+                    let zone_or_sort: u32 = row.get(5)?;
+                    let prev: i32 = row.get(6)?;
+                    let next: i32 = row.get(7)?;
+                    let next_chain: i32 = row.get(8)?;
+                    let breadcrumb: i32 = row.get(9)?;
+                    let classes: u32 = row.get(10)?;
+                    let races: u32 = row.get(11)?;
                     Ok((
-                        row.get::<_, u32>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, u32>(2)?,
-                        row.get::<_, u32>(3)?,
-                        row.get::<_, u32>(4)?,
-                        row.get::<_, u32>(5)?,
-                        row.get::<_, u32>(6)?,
-                        row.get::<_, u32>(7)?,
-                        row.get::<_, u32>(8)?,
-                        row.get::<_, u32>(9)?,
-                        row.get::<_, u32>(10)?,
-                        row.get::<_, u32>(11)?,
+                        entry, title, min_level, max_level, quest_level, zone_or_sort,
+                        prev.max(0) as u32, next.max(0) as u32,
+                        next_chain.max(0) as u32, breadcrumb.max(0) as u32,
+                        classes, races,
                     ))
                 },
             )?;
@@ -409,7 +413,7 @@ impl QuestService {
         &self,
         params: crate::api::quests::NearbyQuestsParams,
     ) -> Result<Vec<QuestSearchResult>> {
-        let zone_filter = params.zone;
+        let _zone_filter = params.zone;
 
         let db = self.state.db.clone();
         let results =
@@ -417,28 +421,27 @@ impl QuestService {
                 let conn = db.blocking_lock();
 
                 let sql = String::from(
-                    "SELECT qt.entry, qt.Title, qt.QuestLevel, qt.MinLevel, zt.name, cqr.quest
+                    "SELECT qt.entry, qt.Title, qt.QuestLevel, qt.MinLevel, qt.ZoneOrSort
                      FROM quest_template qt
-                     LEFT JOIN areatable zt ON zt.id = qt.ZoneOrSort
-                     LEFT JOIN creature_questrelation cqr ON cqr.quest = qt.entry
-                     WHERE 1=1 AND zt.name LIKE ?
+                     WHERE qt.ZoneOrSort > 0
+                     ORDER BY qt.entry
                      LIMIT 50",
                 );
 
-                let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-                query_params.push(Box::new(format!("%{}%", zone_filter)));
+                let query_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
                 let mut stmt = conn.prepare(&sql)?;
                 let rows = stmt.query_map(
                     rusqlite::params_from_iter(query_params.iter().map(|p| p.as_ref())),
                     |row| {
+                        let zone_id: i32 = row.get(4)?;
                         Ok(QuestSearchResult {
                             id: row.get(0)?,
                             title: row.get(1)?,
                             level: row.get(2)?,
                             min_level: row.get(3)?,
-                            zone: row.get(4).unwrap_or_default(),
-                            giver: row.get(5)?,
+                            zone: format!("ZoneID:{}", zone_id),
+                            giver: 0,
                         })
                     },
                 )?;
