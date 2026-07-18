@@ -20,11 +20,13 @@ use runtime_profile::RuntimeProfile;
 ///
 /// Runs the 7-stage pipeline. Returns `Ok(RuntimeProfile)` on success,
 /// or `Err(Vec<Diagnostic>)` if any stage produces hard errors.
-pub fn compile(_profile: Profile, _query_client: &dyn QueryClient) -> Result<RuntimeProfile, Vec<Diagnostic>> {
+pub fn compile(profile: Profile, query_client: &dyn QueryClient) -> Result<RuntimeProfile, Vec<Diagnostic>> {
     // Stage 1: Structural Validation
-    // stages::structural::validate(&_profile)?;
+    let _warnings = stages::structural::validate(&profile)?;
 
-    // Stages 2-7 will be implemented in later tickets.
-    // For now, only Stage 1 is wired up.
-    todo!("Stages 2-7 not yet implemented")
+    // Stage 2: Reference Resolution
+    let _resolved = stages::resolution::resolve(&profile, query_client)?;
+
+    // Stages 3-7: Not yet implemented
+    todo!("Stages 3-7 not yet implemented")
 }
