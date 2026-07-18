@@ -18,6 +18,8 @@ local test_modules = {
     -- Runtime
     "tests/runtime/test_sensor_hub",
     "tests/runtime/test_nav_adapter",
+    "tests/runtime/test_query_client",
+    "tests/runtime/test_profile_manager",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
