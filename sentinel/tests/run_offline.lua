@@ -178,7 +178,7 @@ local test_modules = {
     "tests/ui/test_toolbar",
     "tests/ui/test_explorer_panel",
     "tests/ui/test_inspector_panel",
-    "tests/ui/test_timeline",
+    "tests/ui/test_timeline_panel",
 }
 
 local passed = 0
