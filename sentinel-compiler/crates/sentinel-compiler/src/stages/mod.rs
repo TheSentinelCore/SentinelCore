@@ -1,2 +1,4 @@
 pub mod structural;
 pub mod resolution;
+pub mod dependency;
+pub mod goal_coverage;
