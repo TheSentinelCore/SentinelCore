@@ -42,6 +42,9 @@ local test_modules = {
     "tests/shared/test_compat",
     "tests/shared/test_izi_bridge",
     "tests/shared/test_humanization",
+
+    -- Integration
+    "tests/integration/test_combat_dummy",
 }
 
 local failures = 0
