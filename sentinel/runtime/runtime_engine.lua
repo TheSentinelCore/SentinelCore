@@ -194,7 +194,9 @@ function RuntimeEngine:tick(delta_ms)
                 op_id = current_op.id,
                 error = exec_result.error,
             })
-            self._scheduler:fail_operation()
+            -- Apply the per-operation failure policy (ADR 002 §23).
+            local policy = current_op.failure_policy or { on_fail = "skip" }
+            self:_handle_failure(current_op.id, exec_result.error, policy)
         end
     elseif exec_result.status == "running" then
         -- Operation in progress (async or interleaved), continue next tick
@@ -232,6 +234,40 @@ function RuntimeEngine:get_state()
         action_status = exec_state.action_status,
         current_action_index = exec_state.current_action_index,
     }
+end
+
+---Apply the failure-recovery hierarchy (ADR 002 §23).
+--- Escalation ladder: Retry (handled in ActionExecutor) -> Skip ->
+--- Abort Operation -> Abort Profile. The ladder step is chosen by the
+--- operation's `failure_policy.on_fail`:
+---   "skip"            -> mark op skipped, engine continues (default)
+---   "abort_operation" -> mark op aborted, engine continues
+---   "abort_profile"   -> abort op AND move engine to error state
+---@param op_id string
+---@param error string
+---@param policy table { on_fail = "skip"|"abort_operation"|"abort_profile" }
+function RuntimeEngine:_handle_failure(op_id, error, policy)
+    policy = policy or { on_fail = "skip" }
+    local action = policy.on_fail or "skip"
+
+    -- Mark the operation per the policy.
+    if action == "abort_operation" or action == "abort_profile" then
+        self._scheduler:set_status(op_id, "aborted")
+    else
+        self._scheduler:set_status(op_id, "skipped")
+    end
+
+    self:_publish("operation_" .. (action == "skip" and "skipped" or "aborted"), {
+        op_id = op_id,
+        error = error,
+        policy = action,
+    })
+
+    if action == "abort_profile" then
+        self._status = ENGINE_STATUSES.ERROR
+        self._blackboard:set("module.runtime.engine_status", self._status)
+        self:_publish("profile_aborted", { op_id = op_id, error = error })
+    end
 end
 
 ---Publish an event

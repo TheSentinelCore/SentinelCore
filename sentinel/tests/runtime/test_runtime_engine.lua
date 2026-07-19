@@ -338,6 +338,66 @@ actions = {
     T.assert_equal(r9c.status, "completed", "engine should be completed after third tick")
     print("  PASS")
 
+    -- =====================================================================
+    -- Test 10: Failure recovery hierarchy (SENT-8.6, ADR 002 §23)
+    -- Retry(exhausted) -> Skip -> Abort Operation -> Abort Profile,
+    -- configurable per operation via failure_policy.
+    -- =====================================================================
+    print("Test 10: Failure recovery hierarchy")
+    local bb10 = Blackboard:new()
+    local eb10 = EventBus:new()
+    local profile10 = {
+        name = "Test", author = "Test", schema_version = "1.0",
+        operations = {
+            {
+                id = "op-fail",
+                name = "Failing Op",
+                priority = 100,
+                entry_conditions = {},
+                actions = {
+                    { id = "act-fail", action_type = "vendor", npc_guid = "never-resolves" },
+                },
+            },
+            {
+                id = "op-next",
+                name = "Next Op",
+                priority = 10,
+                entry_conditions = {},
+                actions = {
+                    { id = "act-next", action_type = "set_variable", name = "recovered", value = "yes" },
+                },
+            },
+        },
+    }
+    local pm10 = make_profile_manager(profile10, "profile-10")
+    package.loaded["runtime/runtime_engine"] = nil
+    local Engine10 = require("runtime/runtime_engine")
+    local eng10 = Engine10:new(bb10, eb10, pm10, mock_nav)
+
+    -- Direct escalation: default policy skips the op and continues.
+    eng10:_handle_failure("op-fail", "boom", { on_fail = "skip" })
+    T.assert_equal(eng10._scheduler:get_status("op-fail"), "skipped",
+        "default failure policy should skip the operation")
+    print("  PASS (skip)")
+
+    -- Abort operation policy
+    local eng10b = Engine10:new(bb10, eb10, pm10, mock_nav)
+    eng10b:_handle_failure("op-fail", "boom", { on_fail = "abort_operation" })
+    T.assert_equal(eng10b._scheduler:get_status("op-fail"), "aborted",
+        "abort_operation policy should abort the operation")
+    print("  PASS (abort_operation)")
+
+    -- Abort profile policy sets engine status to error/stopped
+    local eng10c = Engine10:new(bb10, eb10, pm10, mock_nav)
+    eng10c:_handle_failure("op-fail", "boom", { on_fail = "abort_profile" })
+    T.assert_equal(eng10c._scheduler:get_status("op-fail"), "aborted",
+        "abort_profile should abort the failing operation")
+    T.assert_equal(eng10c._status, "error",
+        "abort_profile should move engine to error state")
+    print("  PASS (abort_profile)")
+
+    print("  PASS")
+
     print("\n=== All RuntimeEngine Tests PASSED ===")
 end
 
