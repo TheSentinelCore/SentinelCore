@@ -25,10 +25,10 @@ pub fn compile(profile: Profile, query_client: &dyn QueryClient) -> Result<Runti
     let _warnings = stages::structural::validate(&profile)?;
 
     // Stage 2: Reference Resolution
-    // (commented out — branch issue/8 doesn't have resolution module yet)
-    // let _resolved = stages::resolution::resolve(&profile, query_client)?;
+    let _resolved = stages::resolution::resolve(&profile, query_client)?;
 
-    // Stage 3: Blueprint Expansion (not yet implemented)
+    // Stage 3: Blueprint Expansion
+    let _expanded = stages::expansion::expand_blueprints(&_resolved, query_client)?;
 
     // Stage 4: Dependency Resolution
     let _dep_order = stages::dependency::resolve_dependencies(&profile)?;
@@ -37,5 +37,5 @@ pub fn compile(profile: Profile, query_client: &dyn QueryClient) -> Result<Runti
     let _goal_diagnostics = stages::goal_coverage::validate_goals(&profile)?;
 
     // Stages 6-7: not yet implemented
-    todo!("Stages 2, 3, 6, 7 not yet implemented")
+    todo!("Stages 6, 7 not yet implemented")
 }
