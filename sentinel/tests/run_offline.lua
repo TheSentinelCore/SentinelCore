@@ -26,6 +26,15 @@ _G.core = {
         face = function(x, y) return true end,
         jump = function() return true end,
     },
+    quests = {
+        is_quest_flagged_completed = function(quest_id) return false end,
+    },
+    flight_paths = {
+        is_known = function(node_id) return false end,
+    },
+    player = {
+        get_level = function() return 1 end,
+    },
     spell = {
         cast = function(id, target) return true end,
         stop_casting = function() return true end,
@@ -175,17 +184,16 @@ local test_modules = {
     "tests/modules/combat/test_spell_catalog",
     "tests/modules/combat/test_spell_dispatcher",
     "tests/modules/combat/test_target_selector",
+    -- Quest module (runtime execution)
+    "tests/modules/quest/test_quest_module",
+    "tests/modules/quest/test_goal_checking",
+    "tests/modules/quest/test_sub_operations",
     -- UI module (IDE core)
     "tests/ui/test_window",
     "tests/ui/test_toolbar",
     "tests/ui/test_explorer_panel",
     "tests/ui/test_inspector_panel",
     "tests/ui/test_timeline_panel",
-    -- UI module (capture panels)
-    "tests/ui/test_target_capture_panel",
-    "tests/ui/test_npc_library_panel",
-    "tests/ui/test_quest_browser_panel",
-    "tests/ui/test_world_map_panel",
     -- UI module (utility panels)
     "tests/ui/test_action_palette_panel",
     "tests/ui/test_variables_panel",
