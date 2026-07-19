@@ -1,0 +1,43 @@
+{
+  "id": "human-1-10",
+  "name": "Human 1-10 Northshire",
+  "author": "SentinelCore",
+  "schema_version": "1.0.0",
+  "description": "Dogfood profile (SENT-11.5): a minimal but runnable Human 1-10 Northshire leveling flow. Exercises grind_area, quest pickup/turn-in, and vendor buy actions with covered goals and sequential dependencies.",
+  "operations": [
+    {
+      "id": "op-1-grind-boars",
+      "name": "Grind Northshire Boars",
+      "goals": [
+        { "type": "KillCount", "entry": 113, "count": 10, "required": true }
+      ],
+      "actions": [
+        { "id": "a1", "action_type": "grind_area", "creature_entry": 113, "count": 10, "radius": 60 }
+      ]
+    },
+    {
+      "id": "op-2-quest-defense",
+      "name": "Defense Contractor",
+      "dependencies": [ { "operation_id": "op-1-grind-boars" } ],
+      "goals": [
+        { "type": "CompleteQuest", "quest_id": 783, "required": true }
+      ],
+      "actions": [
+        { "id": "a1", "action_type": "pickup_quest", "quest_id": 783 },
+        { "id": "a2", "action_type": "turn_in_quest", "quest_id": 783 }
+      ]
+    },
+    {
+      "id": "op-3-buy-food",
+      "name": "Buy Food from Vendor",
+      "dependencies": [ { "operation_id": "op-2-quest-defense" } ],
+      "goals": [
+        { "type": "AcquireItem", "entry": 4536, "count": 5, "required": true }
+      ],
+      "actions": [
+        { "id": "a1", "action_type": "goto", "x": -9020, "y": 230, "z": 32 },
+        { "id": "a2", "action_type": "vendor", "action": "buy", "entry": 4536, "count": 5 }
+      ]
+    }
+  ]
+}

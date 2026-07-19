@@ -155,6 +155,10 @@ function RuntimeEngine:validate()
             profile_id = self._profile_id,
             errors = result.errors,
         })
+        self:_publish("log:runtime", {
+            level = "ERROR",
+            message = "Continuous validation failed: " .. #(result.errors or {}) .. " error(s)",
+        })
     else
         -- Clean revalidation: wipe any stale errors from the panel.
         self:_publish("validation:clear", {})
@@ -179,6 +183,11 @@ function RuntimeEngine:reload_profile(new_profile)
             self:_publish("reload_rejected", {
                 profile_id = new_profile.id,
                 errors = vr.errors,
+            })
+            self:_publish("log:runtime", {
+                level = "ERROR",
+                message = "Hot reload rejected (profile '" .. tostring(new_profile.id)
+                    .. "' failed validation: " .. #(vr.errors or {}) .. " error(s))",
             })
             return false
         end
@@ -212,6 +221,10 @@ function RuntimeEngine:reload_profile(new_profile)
 
     self._blackboard:set("module.runtime.profile_id", self._profile_id)
     self:_publish("profile_reloaded", { profile_id = self._profile_id })
+    self:_publish("log:runtime", {
+        level = "INFO",
+        message = "Hot reload applied (profile '" .. tostring(self._profile_id) .. "')",
+    })
     return true
 end
 

@@ -175,6 +175,7 @@ local test_modules = {
     "tests/runtime/test_compile_pipeline",
     "tests/runtime/test_validation_service",
     "tests/runtime/test_validation_panel_wiring",
+    "tests/runtime/test_dogfood_profile",
     "tests/runtime/test_variable_store",
     "tests/runtime/test_event_dispatcher",
     "tests/runtime/test_profile_state",
@@ -208,6 +209,7 @@ local test_modules = {
     "tests/ui/test_variables_panel",
     "tests/ui/test_validation_panel",
     "tests/ui/test_console_panel",
+    "tests/ui/test_console_diagnostics",
     -- Operation module (Phase 5)
     "tests/modules/operation/test_all",
     -- Integrations (Phase 7)
