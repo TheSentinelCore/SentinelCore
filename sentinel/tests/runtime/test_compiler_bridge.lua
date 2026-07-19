@@ -11,11 +11,13 @@ function M.run()
     -- Clear package cache
     package.loaded["runtime/compiler_bridge"] = nil
     package.loaded["runtime/migration_registry"] = nil
+    package.loaded["runtime/blueprint_registry"] = nil
 
     local Blackboard = require("core/blackboard")
     local EventBus = require("core/event_bus")
     local CompilerBridge = require("runtime/compiler_bridge")
     local ProfileManager = require("runtime/profile_manager")
+    local BlueprintRegistry = require("runtime/blueprint_registry")
 
     -- Helper: create a valid profile
     local function make_profile(overrides)
@@ -95,8 +97,8 @@ function M.run()
                     { type = "xp", value = 100 },
                 },
                 actions = {
-                    { id = "act-1", action_type = "move", params = { range = 30 } },
-                    { id = "act-2", action_type = "attack", params = { target = "nearest" } },
+                    { id = "act-1", action_type = "goto", params = { target = { x = 10, y = 20 } } },
+                    { id = "act-2", action_type = "wait", params = { duration_ms = 1000 } },
                 },
             },
         },
@@ -120,7 +122,7 @@ function M.run()
     T.assert_equal(#comp3_result.operations[1].actions, 2,
         "should have 2 actions")
     T.assert_equal(comp3_result.operations[1].actions[1].id, "act-1")
-    T.assert_equal(comp3_result.operations[1].actions[2].action_type, "attack")
+    T.assert_equal(comp3_result.operations[1].actions[2].action_type, "wait")
     print("  PASS")
 
     -- =====================================================================
@@ -290,6 +292,236 @@ function M.run()
     T.assert_not_nil(stored, "should store result in blackboard")
     T.assert_true(stored.success, "stored result should indicate success")
     T.assert_not_nil(stored.runtime_profile, "stored result should have profile")
+    print("  PASS")
+
+    -- =====================================================================
+    -- Blueprint Expansion Tests
+    -- =====================================================================
+
+    -- Test 11: BlueprintRegistry construction and blueprint registration
+    print("Test 11: BlueprintRegistry construction and blueprint registration")
+    local Br = BlueprintRegistry:new()
+    T.assert_not_nil(Br, "should construct BlueprintRegistry")
+    T.assert_true(Br:has("quest_hub"), "should have quest_hub blueprint")
+    T.assert_true(Br:has("vendor_stop"), "should have vendor_stop blueprint")
+    T.assert_true(Br:has("trainer_stop"), "should have trainer_stop blueprint")
+    T.assert_true(Br:has("goto"), "should have goto blueprint")
+    T.assert_false(Br:has("nonexistent"), "should not have nonexistent blueprint")
+    print("  PASS")
+
+    -- Test 12: is_blueprint detection
+    print("Test 12: is_blueprint detection")
+    local bp_action = { action_type = "blueprint", blueprint_id = "quest_hub" }
+    local regular_action = { action_type = "goto", params = { target = { x = 10 } } }
+    T.assert_true(Br:is_blueprint(bp_action), "should detect blueprint action")
+    T.assert_false(Br:is_blueprint(regular_action), "should not detect regular action as blueprint")
+    print("  PASS")
+
+    -- Test 13: Basic goto blueprint expansion
+    print("Test 13: Basic goto blueprint expansion")
+    local goto_blueprint_action = {
+        action_type = "blueprint",
+        blueprint_id = "goto",
+        id = "bp-goto-1",
+        params = { target = { x = 50, y = 60, z = 70 }, arrival_radius = 3 }
+    }
+    local expanded_goto = Br:expand(goto_blueprint_action)
+    T.assert_not_nil(expanded_goto, "should expand goto blueprint")
+    T.assert_equal(#expanded_goto, 1, "should produce 1 action")
+    T.assert_equal(expanded_goto[1].action_type, "goto", "should expand to goto action")
+    T.assert_equal(expanded_goto[1].params.target.x, 50, "should preserve target x")
+    T.assert_equal(expanded_goto[1].params.arrival_radius, 3, "should preserve arrival_radius")
+    print("  PASS")
+
+    -- Test 14: Vendor stop blueprint with conditional repair
+    print("Test 14: Vendor stop blueprint with conditional repair")
+    local vendor_blueprint_action = {
+        action_type = "blueprint",
+        blueprint_id = "vendor_stop",
+        id = "bp-vendor-1",
+        params = {
+            vendor = { guid = "npc-vendor-123" },
+            repair = true
+        }
+    }
+    local expanded_vendor = Br:expand(vendor_blueprint_action)
+    T.assert_not_nil(expanded_vendor, "should expand vendor_stop blueprint")
+    T.assert_equal(#expanded_vendor, 2, "should produce 2 actions (vendor + repair)")
+    T.assert_equal(expanded_vendor[1].action_type, "vendor", "first action should be vendor")
+    T.assert_equal(expanded_vendor[2].action_type, "repair", "second action should be repair")
+    print("  PASS")
+
+    -- Test 15: Vendor stop without repair (conditional expansion)
+    print("Test 15: Vendor stop without repair (conditional expansion)")
+    local vendor_no_repair_action = {
+        action_type = "blueprint",
+        blueprint_id = "vendor_stop",
+        id = "bp-vendor-2",
+        params = {
+            vendor = { guid = "npc-vendor-456" },
+            repair = false
+        }
+    }
+    local expanded_no_repair = Br:expand(vendor_no_repair_action)
+    T.assert_not_nil(expanded_no_repair, "should expand vendor_stop blueprint")
+    T.assert_equal(#expanded_no_repair, 1, "should produce only 1 action (no repair)")
+    T.assert_equal(expanded_no_repair[1].action_type, "vendor", "action should be vendor")
+    print("  PASS")
+
+    -- Test 16: Vendor stop without vendor parameter (conditional expansion)
+    print("Test 16: Vendor stop without vendor parameter (conditional expansion)")
+    local vendor_empty_action = {
+        action_type = "blueprint",
+        blueprint_id = "vendor_stop",
+        id = "bp-vendor-3",
+        params = {}
+    }
+    local expanded_empty = Br:expand(vendor_empty_action)
+    T.assert_not_nil(expanded_empty, "should expand vendor_stop blueprint")
+    T.assert_equal(#expanded_empty, 0, "should produce 0 actions when vendor not provided")
+    print("  PASS")
+
+    -- Test 17: Trainer stop blueprint expansion
+    print("Test 17: Trainer stop blueprint expansion")
+    local trainer_blueprint_action = {
+        action_type = "blueprint",
+        blueprint_id = "trainer_stop",
+        id = "bp-trainer-1",
+        params = { trainer = { guid = "npc-trainer-789" } }
+    }
+    local expanded_trainer = Br:expand(trainer_blueprint_action)
+    T.assert_not_nil(expanded_trainer, "should expand trainer_stop blueprint")
+    T.assert_equal(#expanded_trainer, 1, "should produce 1 action")
+    T.assert_equal(expanded_trainer[1].action_type, "train", "action should be train")
+    T.assert_equal(expanded_trainer[1].params.npc_guid, "npc-trainer-789", "should have trainer guid")
+    print("  PASS")
+
+    -- Test 18: CompilerBridge Blueprint expansion
+    print("Test 18: CompilerBridge Blueprint expansion")
+    local bb18 = Blackboard:new()
+    local eb18 = EventBus:new()
+    local pm18 = ProfileManager:new()
+
+    local blueprint_profile = {
+        name = "Blueprint Test Profile",
+        operations = {
+            {
+                id = "op-1",
+                name = "Vendor Hub",
+                actions = {
+                    {
+                        action_type = "blueprint",
+                        blueprint_id = "vendor_stop",
+                        id = "bp-act-1",
+                        params = { vendor = { guid = "npc-vendor-test" }, repair = true }
+                    }
+                }
+            }
+        }
+    }
+    pm18:set_active_profile(blueprint_profile)
+    local cb18 = CompilerBridge:new(bb18, eb18, pm18)
+
+    local blueprint_result = nil
+    cb18:compile(function(err, rp)
+        blueprint_result = rp
+    end)
+
+    T.assert_not_nil(blueprint_result, "should compile successfully")
+    T.assert_equal(#blueprint_result.operations, 1, "should have 1 operation")
+    T.assert_equal(#blueprint_result.operations[1].actions, 2, "should expand to 2 primitive actions")
+    T.assert_equal(blueprint_result.operations[1].actions[1].action_type, "vendor", "first expanded action should be vendor")
+    T.assert_equal(blueprint_result.operations[1].actions[2].action_type, "repair", "second expanded action should be repair")
+    T.assert_equal(blueprint_result.operations[1].actions[1].generated_from, "bp-act-1", "actions should have generated_from tag")
+    T.assert_equal(blueprint_result.operations[1].actions[2].generated_from, "bp-act-1", "actions should have generated_from tag")
+    print("  PASS")
+
+    -- Test 19: Nested Blueprint composition
+    print("Test 19: Nested Blueprint composition")
+    local bb19 = Blackboard:new()
+    local eb19 = EventBus:new()
+    local pm19 = ProfileManager:new()
+
+    local nested_blueprint = {
+        id = "nested_test",
+        expand = function(params)
+            return {
+                { action_type = "blueprint", blueprint_id = "trainer_stop", params = { trainer = params.trainer } }
+            }
+        end
+    }
+    Br:register(nested_blueprint)
+
+    local nested_profile = {
+        name = "Nested Blueprint Profile",
+        operations = {
+            {
+                id = "op-nested",
+                name = "Nested",
+                actions = {
+                    {
+                        action_type = "blueprint",
+                        blueprint_id = "nested_test",
+                        id = "bp-nested-1",
+                        params = { trainer = { guid = "npc-trainer-nested" } }
+                    }
+                }
+            }
+        }
+    }
+    pm19:set_active_profile(nested_profile)
+    local cb19 = CompilerBridge:new(bb19, eb19, pm19)
+
+    local nested_result = nil
+    cb19:compile(function(err, rp)
+        nested_result = rp
+    end)
+
+    T.assert_not_nil(nested_result, "should compile successfully")
+    T.assert_equal(#nested_result.operations[1].actions, 1, "should have 1 action after nested expansion")
+    T.assert_equal(nested_result.operations[1].actions[1].action_type, "train", "nested expansion should produce train action")
+    print("  PASS")
+
+    -- Test 20: CompilerBridge mixed actions (blueprint + primitive)
+    print("Test 20: CompilerBridge mixed actions (blueprint + primitive)")
+    local bb20 = Blackboard:new()
+    local eb20 = EventBus:new()
+    local pm20 = ProfileManager:new()
+
+    local mixed_profile = {
+        name = "Mixed Actions Profile",
+        operations = {
+            {
+                id = "op-mixed",
+                name = "Mixed",
+                actions = {
+                    { action_type = "goto", id = "act-goto-1", params = { target = { x = 10, y = 20 } } },
+                    {
+                        action_type = "blueprint",
+                        blueprint_id = "vendor_stop",
+                        id = "act-vendor-1",
+                        params = { vendor = { guid = "npc-123" }, repair = true }
+                    },
+                    { action_type = "wait", id = "act-wait-1", params = { duration_ms = 1000 } }
+                }
+            }
+        }
+    }
+    pm20:set_active_profile(mixed_profile)
+    local cb20 = CompilerBridge:new(bb20, eb20, pm20)
+
+    local mixed_result = nil
+    cb20:compile(function(err, rp)
+        mixed_result = rp
+    end)
+
+    T.assert_not_nil(mixed_result, "should compile successfully")
+    T.assert_equal(#mixed_result.operations[1].actions, 3, "should have 3 actions (goto + vendor + repair)")
+    T.assert_equal(mixed_result.operations[1].actions[1].action_type, "goto", "first action should be goto")
+    T.assert_equal(mixed_result.operations[1].actions[2].action_type, "vendor", "second action should be vendor")
+    T.assert_equal(mixed_result.operations[1].actions[3].action_type, "repair", "third action should be repair")
+    T.assert_equal(mixed_result.operations[1].actions[2].generated_from, "act-vendor-1", "vendor action should have generated_from tag")
+    T.assert_equal(mixed_result.operations[1].actions[3].generated_from, "act-vendor-1", "repair action should have generated_from tag")
     print("  PASS")
 
     print("\n=== All CompilerBridge Tests PASSED ===")

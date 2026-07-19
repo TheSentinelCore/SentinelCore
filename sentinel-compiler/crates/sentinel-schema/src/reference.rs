@@ -10,7 +10,7 @@ use crate::geometry::Waypoint;
 /// NPC Reference — Volume 5 §"NPC Reference"
 /// 
 /// Single source of truth for NPC data. Referenced by actions, not embedded.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct NpcReference {
     pub entry: u32,
     pub guid: Option<String>,
@@ -67,7 +67,7 @@ impl QuestReference {
 /// Vendor Entry — Volume 5 §"Vendor Entry"
 /// 
 /// Vendor with items and repair capability.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct VendorEntry {
     pub npc: NpcReference,
     pub sells: Vec<ItemReference>,
@@ -89,7 +89,7 @@ impl ItemReference {
 }
 
 /// Creature Reference — Volume 5 §"CreatureReference" (for GrindAreaAction targets)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CreatureReference {
     pub entry: u32,
     pub name: String,
@@ -115,7 +115,7 @@ impl GameObjectReference {
 }
 
 /// Flight Node — Volume 5 §"FlightAction"
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct FlightNode {
     pub id: u32,
     pub name: String,
@@ -128,7 +128,7 @@ impl FlightNode {
 }
 
 /// Hearth Location — Volume 5 §"HearthAction"
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct HearthLocation {
     pub zone: String,
     pub innkeeper: u32,

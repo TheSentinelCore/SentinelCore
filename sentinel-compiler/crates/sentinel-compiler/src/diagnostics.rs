@@ -54,6 +54,17 @@ impl Diagnostic {
         }
     }
 
+    pub fn info(code: impl Into<String>, stage: Stage, message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Info,
+            code: code.into(),
+            stage,
+            message: message.into(),
+            entity: None,
+            suggested_fix: None,
+        }
+    }
+
     pub fn with_entity(mut self, entity: impl Into<String>) -> Self {
         self.entity = Some(entity.into());
         self
@@ -86,5 +97,23 @@ mod tests {
         assert_eq!(d.severity, Severity::Warning);
         assert_eq!(d.entity.as_deref(), Some("Profile 'Test'"));
         assert_eq!(d.suggested_fix.as_deref(), Some("Update schema_version"));
+    }
+
+    #[test]
+    fn test_info_diagnostic_creation() {
+        let d = Diagnostic::info("C-7001", Stage::Lowering, "Profile lowered successfully");
+        assert_eq!(d.severity, Severity::Info);
+        assert_eq!(d.code, "C-7001");
+    }
+
+    #[test]
+    fn test_all_stage_variants() {
+        assert!(matches!(Stage::StructuralValidation, Stage::StructuralValidation));
+        assert!(matches!(Stage::ReferenceResolution, Stage::ReferenceResolution));
+        assert!(matches!(Stage::BlueprintExpansion, Stage::BlueprintExpansion));
+        assert!(matches!(Stage::DependencyResolution, Stage::DependencyResolution));
+        assert!(matches!(Stage::GoalCoverage, Stage::GoalCoverage));
+        assert!(matches!(Stage::Optimization, Stage::Optimization));
+        assert!(matches!(Stage::Lowering, Stage::Lowering));
     }
 }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Waypoint — Volume 5 §"Waypoint"
 /// 
 /// 3D position with map/zone context and arrival radius.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Waypoint {
     pub map: u32,
     pub zone: String,

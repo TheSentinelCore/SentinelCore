@@ -14,6 +14,9 @@ pub mod query_client;
 pub mod runtime_profile;
 pub mod stages;
 
+pub use dirty::{DirtyState, DirtyTracker, StageFlags};
+pub use incremental::{compile_incremental, update_tracker};
+
 use diagnostics::Diagnostic;
 use query_client::QueryClient;
 use runtime_profile::RuntimeProfile;
@@ -42,7 +45,7 @@ pub fn compile(profile: Profile, query_client: &dyn QueryClient) -> Result<Runti
     let optimized = stages::optimization::optimize(&profile, &dep_order)?;
 
     // Stage 7: Lowering
-    let (runtime_profile, _hash) = stages::lowering::lower(&optimized, profile.profile_id);
+    let result = stages::lowering::lower(&optimized, profile.profile_id);
 
-    Ok(runtime_profile)
+    Ok(result.runtime_profile)
 }

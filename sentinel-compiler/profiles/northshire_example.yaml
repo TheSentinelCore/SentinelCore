@@ -1,0 +1,184 @@
+# SentinelCore - Northshire Leveling Profile (YAML format)
+# Volume 11 §2 YAML Serialization test fixture
+
+schema_version: "1.0.0"
+profile_id: "550e8400-e29b-41d4-a716-446655440000"
+name: "Northshire Leveling"
+author: "SentinelCore Team"
+description: "Alliance leveling profile: Northshire Valley → Goldshire → Westbrook Garrison. Covers levels 1–6 through quest chains and grinding."
+game: "TbcClassic"
+faction: "Alliance"
+race: "Human"
+class: "Warrior"
+level_range:
+  min: 1
+  max: 60
+tags:
+  - leveling
+  - alliance
+  - northshire
+  - human
+
+metadata:
+  created_at: "2025-06-01T12:00:00Z"
+  updated_at: "2025-06-15T18:30:00Z"
+  editor_version: "0.1.0"
+  compiler_version: "0.1.0"
+  notes: "Example profile for testing YAML serialization round-trip."
+  source: "Manual"
+
+settings:
+  auto_vendor: true
+  auto_repair: true
+  auto_train: true
+  auto_loot: true
+  auto_accept: true
+  auto_turnin: true
+  use_flight_paths: true
+  allow_hearthstone: false
+  use_mailbox: true
+  death_skip: false
+  dry_run_enabled: false
+
+variables:
+  - name: QuestStarted
+    value:
+      type: Bool
+      value: false
+  - name: Gold
+    value:
+      type: Integer
+      value: 100
+
+npc_library:
+  - entry: 197
+    guid: guid-197
+    name: Marshal McBride
+    zone: Northshire Valley
+    position:
+      map: 0
+      zone: Northshire Valley
+      x: -8912.5
+      y: -132.3
+      z: 83.2
+      radius: 5.0
+    roles:
+      - QuestGiver
+      - Generic
+
+quest_library:
+  - id: 33
+    title: Wolves Across the Border
+    giver: 197
+    turn_in: 197
+
+blueprint_library: []
+
+blueprints:
+  - id: quest-hub-v1
+    version: "1.0.0"
+    parameters:
+      vendor_id: 1234
+      repair: true
+
+operations:
+  - id: "11111111-1111-1111-1111-111111111111"
+    name: "Northshire Valley"
+    description: "Starting zone quest chain"
+    enabled: true
+    level_range:
+      min: 1
+      max: 5
+    priority: 100
+    tags:
+      - starting-zone
+      - quest-chain
+    goals:
+      - id: "22222222-2222-2222-2222-222222222222"
+        description: "Complete all Northshire quests"
+        goal_type:
+          type: CompleteQuestChain
+          value:
+            - 33
+            - 34
+            - 35
+            - 36
+        required: true
+        weight: 1.0
+    entry_conditions:
+      - type: RaceIs
+        value: Human
+      - type: LevelBelow
+        value: 6
+    exit_conditions:
+      success:
+        - type: QuestRewarded
+          value: 33
+      failure: []
+      abort: []
+    dependencies: []
+    optimization_policy:
+      travel_weight: 0.5
+      xp_weight: 0.3
+      time_weight: 0.2
+      risk_weight: 0.1
+      cluster_objectives: true
+      allow_reordering: true
+      grind_fallback: false
+      max_deaths: 3
+    completion_metrics:
+      target_duration_ms: 600000
+      target_xp: 10000
+      min_success_rate: 0.95
+      max_acceptable_deaths: 3
+    sub_operations: []
+    analytics:
+      runs: 0
+      average_duration_ms: 0
+      average_xp: 0.0
+      average_gold: 0.0
+      average_deaths: 0.0
+      success_rate: 0.0
+      skip_rate: 0.0
+      last_run: null
+      bottleneck_actions: []
+    variables: []
+    actions:
+      - id: "aaaa1111-1111-1111-1111-111111111111"
+        enabled: true
+        name: "Pickup Wolves Across the Border"
+        notes: "First quest from Marshal McBride"
+        tags:
+          - quest
+          - pickup
+        retry_policy:
+          retries: 3
+          delay_ms: 1000
+        timeout_ms: 15000
+        conditions:
+          - type: LevelAtLeast
+            value: 1
+        payload:
+          type: PickupQuest
+          payload:
+            quest:
+              id: 33
+              title: Wolves Across the Border
+              giver: 197
+              turn_in: 197
+            npc:
+              entry: 197
+              guid: guid-197
+              name: Marshal McBride
+              zone: Northshire Valley
+              position:
+                map: 0
+                zone: Northshire Valley
+                x: -8912.5
+                y: -132.3
+                z: 83.2
+                radius: 5.0
+              roles:
+                - QuestGiver
+                - Generic
+            auto_complete_previous: false

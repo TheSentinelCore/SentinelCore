@@ -81,6 +81,7 @@ pub enum BlueprintCategory {
     Travel,
     Combat,
     Npc,
+    NpcServices,
     Inventory,
     Economy,
     Utility,

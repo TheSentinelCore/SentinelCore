@@ -25,7 +25,23 @@ function SentinelApp:new()
     o._callback_bridge = CallbackBridge:new(o._event_bus)
     o._nav_adapter = NavAdapter:new(o._event_bus)
     o._izi_bridge = IziBridge:new()
+    o._runtime_context = nil
     return o
+end
+
+---Create and initialize RuntimeContext with module registry - SENT-8.1
+---@return table RuntimeContext instance
+function SentinelApp:create_runtime_context()
+    local RuntimeContext = require("runtime/runtime_context")
+    self._runtime_context = RuntimeContext:new(self._blackboard, self._event_bus)
+    self._runtime_context:initialize(self)
+    return self._runtime_context
+end
+
+---Get the RuntimeContext (creates if needed) - SENT-8.1
+---@return table RuntimeContext instance
+function SentinelApp:get_runtime_context()
+    return self._runtime_context
 end
 
 function SentinelApp:initialize()
@@ -56,6 +72,8 @@ function SentinelApp:shutdown()
     if self._ui and type(self._ui.shutdown) == "function" then
         self._ui:shutdown()
     end
+    -- Shutdown modules via the registry
+    self._registry:shutdown_all()
 end
 
 function SentinelApp:on_pre_tick()

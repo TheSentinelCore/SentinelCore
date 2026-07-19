@@ -79,6 +79,7 @@ _G.core = {
         on = function(event, callback) return function() end end,
         off = function(event, handler) end,
         send = function(event, ...) end,
+        publish = function(event, ...) end,
     },
     -- Sylvannas utility
     GetTime = function() return os.clock() end,
@@ -167,7 +168,7 @@ local test_modules = {
     "tests/runtime/test_query_client",
     "tests/runtime/test_profile_manager",
     "tests/runtime/test_operation_scheduler",
-    "tests/runtime/test_action_executor",
+    "tests/runtime/test_runtime_action_executor",
     "tests/runtime/test_runtime_engine",
     "tests/runtime/test_migration_registry",
     "tests/runtime/test_compiler_bridge",
@@ -179,6 +180,11 @@ local test_modules = {
     "tests/runtime/test_telemetry",
     "tests/runtime/test_command_history",
     "tests/runtime/test_variable_store",
+    "tests/runtime/test_compiler_stages",
+    "tests/runtime/test_runtime_context",
+    "tests/runtime/test_module_registry",
+    "tests/runtime/test_stage_optimization",
+    "tests/runtime/test_route_analysis",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
@@ -199,6 +205,12 @@ local test_modules = {
     "tests/ui/test_variables_panel",
     "tests/ui/test_validation_panel",
     "tests/ui/test_console_panel",
+    -- Operation module (Phase 5)
+    "tests/modules/operation/test_all",
+    -- Integrations (Phase 7)
+    "tests/integrations/test_bridge_traits",
+    -- E2E Integration Tests (SENT-6.12)
+    "tests/integration/test_northshire_e2e",
 }
 
 local passed = 0

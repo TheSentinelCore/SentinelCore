@@ -44,16 +44,16 @@ function M.run()
 
     local set_calls = 0
 
-    spell_helper = {
-        is_spell_in_line_of_sight = function() return true end,
-    }
-    core = {
+    _G.core = {
         input = {
             set_target = function()
                 set_calls = set_calls + 1
                 return true
             end,
         },
+    }
+    _G.spell_helper = {
+        is_spell_in_line_of_sight = function() return true end,
     }
 
     bb:set("player.object", player)

@@ -1,9 +1,10 @@
 -- sentinel/runtime/runtime_engine.lua
--- Runtime Engine: Main tick loop that ties scheduler + executor + profile_manager together
+-- Runtime Engine: Main tick loop that ties scheduler + runtime_context + operation_manager together
 -- Called once per frame from the app loop
+-- Architecture: RuntimeEngine → RuntimeContext → OperationManager → RuntimeActionExecutor
 
 local OperationScheduler = require("runtime/operation_scheduler")
-local ActionExecutor = require("runtime/action_executor")
+local RuntimeContext = require("runtime/runtime_context")
 
 local RuntimeEngine = {}
 RuntimeEngine.__index = RuntimeEngine
@@ -28,14 +29,19 @@ function RuntimeEngine:new(blackboard, event_bus, profile_manager, nav_adapter)
     o._blackboard = blackboard
     o._event_bus = event_bus
     o._profile_manager = profile_manager
-    o._nav_adapter = nav_adapter
     o._scheduler = OperationScheduler:new(blackboard, event_bus)
-    o._executor = ActionExecutor:new(blackboard, event_bus, nav_adapter)
+    o._context = RuntimeContext:new(blackboard, event_bus)
     o._status = ENGINE_STATUSES.IDLE
     o._profile_id = nil
     o._total_elapsed = 0
     o._tick_count = 0
     return o
+end
+
+---Set the NavAdapter for operation execution
+---@param nav_adapter table NavAdapter instance
+function RuntimeEngine:set_nav_adapter(nav_adapter)
+    self._context:set_nav_adapter(nav_adapter)
 end
 
 ---Start the engine: initialize, load active profile, set status to running
@@ -50,6 +56,7 @@ function RuntimeEngine:start()
     if profile then
         self._profile_id = profile_id
         self._scheduler:set_profile(profile)
+        self._context:set_profile(profile)
     end
 
     -- Store engine status in blackboard
@@ -67,6 +74,7 @@ function RuntimeEngine:stop()
     self._status = ENGINE_STATUSES.STOPPED
     self._blackboard:set("module.runtime.engine_status", self._status)
     self:_publish("engine_stopped", { profile_id = self._profile_id })
+    self._context:clear()
 end
 
 ---Pause the engine: pause execution, keep current state
@@ -94,6 +102,7 @@ function RuntimeEngine:set_profile(profile)
         return
     end
     self._scheduler:set_profile(profile)
+    self._context:set_profile(profile)
     self._profile_manager:set_active_profile(profile)
     if profile.id then
         self._profile_id = profile.id
@@ -113,11 +122,12 @@ function RuntimeEngine:tick(delta_ms)
     self._total_elapsed = self._total_elapsed + (delta_ms or 0)
     self._tick_count = self._tick_count + 1
 
-    -- Step 1: Ensure profile is loaded
+    -- Step 1: Ensure profile is loaded in scheduler
     if not self._scheduler._profile then
         local profile = self._profile_manager:get_active_profile()
         if profile then
             self._scheduler:set_profile(profile)
+            self._context:set_profile(profile)
         else
             -- No profile loaded; nothing to do
             return self:get_state()
@@ -143,52 +153,51 @@ function RuntimeEngine:tick(delta_ms)
         return self:get_state()
     end
 
-    -- Step 4: Get current action
+    -- Step 4: Get current operation and action from scheduler
     local current_op = self._scheduler:get_current_operation()
-    local current_action = self._scheduler:get_current_action()
 
-    if not current_action then
-        -- No more actions in current operation, advance
-        self._scheduler:advance_operation()
+    if not current_op then
         return self:get_state()
     end
 
-    -- Step 5: Execute or poll the current action
-    local exec_state = self._executor:get_state()
-    local result
+    -- Step 5: Get OperationManager and check current operation status
+    local op_manager = self._context:get_operation_manager()
+    local op_state = op_manager:get_state()
 
-    if exec_state.status == "running" then
-        -- Poll running action
-        result = self._executor:poll(current_action)
+    -- Step 6: Execute or continue operation via OperationManager
+    local exec_result
+    local context = { allow_interleave = current_op.interleave ~= false }
+
+    -- Check if OperationManager is already executing this operation
+    if op_state.current_operation and op_state.current_operation.id == current_op.id then
+        -- OperationManager is already handling this operation; poll for async completion
+        if op_state.action_status == "running" then
+            exec_result = op_manager:poll()
+        else
+            -- Previous tick completed all actions synchronously; advance
+            exec_result = { status = "succeeded" }
+        end
     else
-        -- Execute new action
-        result = self._executor:execute(current_action)
+        -- Scheduler selected a new operation; execute it via OperationManager
+        -- OperationManager will set _current_operation and run actions
+        exec_result = op_manager:execute_operation(current_op, context)
     end
 
-    -- Step 6: Handle result
-    if result.status == "succeeded" then
-        -- Action succeeded, advance
-        local next_action = self._scheduler:advance_action()
-        if not next_action then
-            -- No more actions in this operation
-            self._scheduler:advance_operation()
-        end
-
-    elseif result.status == "failed" then
-        -- Action failed, apply retry or mark operation failed
-        if result.error == "retrying" then
-            -- Retry is scheduled, nothing to do this tick
-        else
-            self:_publish("action_failed", {
-                op_id = sched_state.current_op_id,
-                action_type = current_action.action_type,
-                error = result.error,
+    -- Step 7: Handle operation result
+    if exec_result.status == "succeeded" then
+        -- Operation completed, advance to next
+        self._scheduler:advance_operation()
+        op_manager:clear_retry_state()
+    elseif exec_result.status == "failed" then
+        if exec_result.error ~= "retrying" and exec_result.error ~= "interleaved" then
+            self:_publish("operation_failed", {
+                op_id = current_op.id,
+                error = exec_result.error,
             })
             self._scheduler:fail_operation()
         end
-
-    elseif result.status == "running" then
-        -- Action still in progress, will be polled next tick
+    elseif exec_result.status == "running" then
+        -- Operation in progress (async or interleaved), continue next tick
     end
 
     return self:get_state()
@@ -197,9 +206,21 @@ end
 ---Get the current engine state
 ---@return table { status = string, current_operation = table|nil, current_action = table|nil, profile_id = string|nil, total_elapsed = number, tick_count = number }
 function RuntimeEngine:get_state()
-    local current_op = self._scheduler:get_current_operation()
-    local current_action = self._scheduler:get_current_action()
-    local exec_state = self._executor:get_state()
+    local op_manager = self._context:get_operation_manager()
+    local exec_state = op_manager:get_state()
+    local current_op = exec_state.current_operation
+
+    -- Get current action from OperationManager's tracked operation
+    local current_action
+    if current_op and exec_state.current_action_index and exec_state.current_action_index > 0 then
+        current_action = current_op.actions and current_op.actions[exec_state.current_action_index]
+    end
+
+    -- Fall back to scheduler if OperationManager doesn't have active op
+    if not current_op then
+        current_op = self._scheduler:get_current_operation()
+        current_action = self._scheduler:get_current_action()
+    end
 
     return {
         status = self._status,
@@ -208,7 +229,8 @@ function RuntimeEngine:get_state()
         profile_id = self._profile_id,
         total_elapsed = self._total_elapsed,
         tick_count = self._tick_count,
-        action_status = exec_state.status,
+        action_status = exec_state.action_status,
+        current_action_index = exec_state.current_action_index,
     }
 end
 

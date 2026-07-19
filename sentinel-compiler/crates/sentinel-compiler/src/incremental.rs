@@ -118,7 +118,7 @@ pub fn compile_incremental(
     }) {
         // Skip lowering — produce a RuntimeProfile from the pass-through
         // OptimizedProfile directly.
-        RuntimeProfile {
+        let profile = RuntimeProfile {
             schema_version: optimized.profile.schema_version.clone(),
             compiled_at: chrono::Utc::now(),
             compiler_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -149,10 +149,14 @@ pub fn compile_incremental(
                         .collect(),
                 })
                 .collect(),
-        }
+            diagnostics: crate::runtime_profile::RuntimeDiagnostics {
+                errors: vec![],
+                warnings: vec![],
+            },
+    };
+        profile
     } else {
-        let (rp, _) = stages::lowering::lower(&optimized, profile.profile_id);
-        rp
+        stages::lowering::lower(&optimized, profile.profile_id).runtime_profile
     };
 
     // Clear tracker after successful compile

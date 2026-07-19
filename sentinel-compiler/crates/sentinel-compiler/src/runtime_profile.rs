@@ -2,8 +2,10 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use sentinel_schema::{Condition, ExitConditions, OperationGoal};
 use sentinel_schema::action::{ActionPayload, RetryPolicy};
+use crate::diagnostics::Diagnostic;
 
 /// Immutable, fully resolved execution profile — the compiler's output.
+#[derive(Debug, Clone)]
 pub struct RuntimeProfile {
     pub schema_version: String,
     pub compiled_at: DateTime<Utc>,
@@ -11,9 +13,18 @@ pub struct RuntimeProfile {
     pub source_profile_id: Uuid,
     pub source_profile_hash: String,
     pub operations: Vec<RuntimeOperation>,
+    pub diagnostics: RuntimeDiagnostics,
+}
+
+/// Diagnostics container for runtime profile
+#[derive(Debug, Clone)]
+pub struct RuntimeDiagnostics {
+    pub errors: Vec<Diagnostic>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 /// A compiled operation ready for the runtime engine.
+#[derive(Debug, Clone)]
 pub struct RuntimeOperation {
     pub id: Uuid,
     pub name: String,
@@ -24,6 +35,7 @@ pub struct RuntimeOperation {
 }
 
 /// A compiled action ready for the runtime engine.
+#[derive(Debug, Clone)]
 pub struct RuntimeAction {
     pub id: Uuid,
     pub payload: ResolvedActionPayload,
@@ -35,4 +47,5 @@ pub struct RuntimeAction {
 /// ResolvedActionPayload mirrors ActionPayload but with all references
 /// fully resolved. For Stage 1 scaffold, this is just a wrapper around
 /// ActionPayload — reference resolution happens in Stage 2.
+#[derive(Debug, Clone)]
 pub struct ResolvedActionPayload(pub ActionPayload);

@@ -9,14 +9,30 @@ use std::hash::{Hash, Hasher};
 use sentinel_schema::Profile;
 use uuid::Uuid;
 
-use crate::runtime_profile::{ResolvedActionPayload, RuntimeAction, RuntimeOperation, RuntimeProfile};
+use crate::diagnostics::{Diagnostic, Stage};
+use crate::runtime_profile::{ResolvedActionPayload, RuntimeAction, RuntimeDiagnostics, RuntimeOperation, RuntimeProfile};
 use crate::stages::optimization::OptimizedProfile;
 
+/// C-7xxx error codes for Stage 7
+pub mod error_codes {
+    pub const MISSING_PROFILE_ID: &str = "C-7001";
+    pub const MISSING_OPERATIONS: &str = "C-7002";
+    pub const INVALID_OPERATION: &str = "C-7003";
+    pub const INVALID_ACTION: &str = "C-7004";
+    pub const MISSING_ACTION_ID: &str = "C-7005";
+}
+
+/// Stage 7 result
+#[derive(Debug, Clone)]
+pub struct LoweringResult {
+    pub runtime_profile: RuntimeProfile,
+    pub source_profile_hash: String,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 /// Stage 7: Lower the optimized profile into a RuntimeProfile.
-pub fn lower(
-    optimized: &OptimizedProfile,
-    source_profile_id: Uuid,
-) -> (RuntimeProfile, String) {
+pub fn lower(optimized: &OptimizedProfile, source_profile_id: Uuid) -> LoweringResult {
+    let mut diagnostics = Vec::new();
     let source_profile_hash = compute_profile_hash(&optimized.profile);
 
     let operations: Vec<RuntimeOperation> = optimized
@@ -37,22 +53,40 @@ pub fn lower(
                     payload: ResolvedActionPayload(action.payload.clone()),
                     retry_policy: action.retry_policy.clone(),
                     timeout_ms: action.timeout_ms,
-                    generated_from: None, // Blueprint expansion would populate this
+                    generated_from: None, // Actions don't have generated_from, reserved for blueprint-generated actions
                 })
                 .collect(),
         })
         .collect();
 
-    let profile = RuntimeProfile {
+    let runtime_profile = RuntimeProfile {
         schema_version: optimized.profile.schema_version.clone(),
         compiled_at: chrono::Utc::now(),
         compiler_version: env!("CARGO_PKG_VERSION").to_string(),
         source_profile_id,
         source_profile_hash: source_profile_hash.clone(),
         operations,
+        diagnostics: RuntimeDiagnostics {
+            errors: vec![],
+            warnings: vec![],
+        },
     };
 
-    (profile, source_profile_hash)
+    // Emit info for successful lowering
+    diagnostics.push(Diagnostic::info(
+        "C-7001",
+        Stage::Lowering,
+        format!(
+            "Lowered {} operations to RuntimeProfile",
+            runtime_profile.operations.len()
+        ),
+    ));
+
+    LoweringResult {
+        runtime_profile,
+        source_profile_hash,
+        diagnostics,
+    }
 }
 
 /// Compute a deterministic hash of a Profile for cache invalidation.
@@ -96,10 +130,10 @@ mod tests {
             optimizations_applied: vec![],
         };
 
-        let (result, _hash) = lower(&optimized, profile.profile_id);
-        assert_eq!(result.operations.len(), 0);
-        assert_eq!(result.source_profile_id, profile.profile_id);
-        assert_eq!(result.schema_version, "1.0.0");
+        let result = lower(&optimized, profile.profile_id);
+        assert_eq!(result.runtime_profile.operations.len(), 0);
+        assert_eq!(result.runtime_profile.source_profile_id, profile.profile_id);
+        assert_eq!(result.runtime_profile.schema_version, "1.0.0");
     }
 
     #[test]
@@ -123,10 +157,10 @@ mod tests {
             optimizations_applied: vec![],
         };
 
-        let (result, _hash) = lower(&optimized, optimized.profile.profile_id);
-        assert_eq!(result.operations.len(), 2);
-        assert_eq!(result.operations[0].name, "Op1");
-        assert_eq!(result.operations[1].name, "Op2");
+        let result = lower(&optimized, optimized.profile.profile_id);
+        assert_eq!(result.runtime_profile.operations.len(), 2);
+        assert_eq!(result.runtime_profile.operations[0].name, "Op1");
+        assert_eq!(result.runtime_profile.operations[1].name, "Op2");
     }
 
     #[test]
@@ -153,8 +187,8 @@ mod tests {
             optimizations_applied: vec![],
         };
 
-        let (result, _hash) = lower(&optimized, optimized.profile.profile_id);
-        let action = &result.operations[0].actions[0];
+        let result = lower(&optimized, optimized.profile.profile_id);
+        let action = &result.runtime_profile.operations[0].actions[0];
         assert_eq!(action.timeout_ms, 30000); // default timeout
         assert_eq!(action.retry_policy.retries, 3); // default retry
     }
@@ -167,11 +201,11 @@ mod tests {
             optimizations_applied: vec![],
         };
 
-        let (result, _hash) = lower(&optimized, optimized.profile.profile_id);
-        assert!(!result.compiler_version.is_empty());
+        let result = lower(&optimized, optimized.profile.profile_id);
+        assert!(!result.runtime_profile.compiler_version.is_empty());
         assert!(!result.source_profile_hash.is_empty());
         // compiled_at should be within the last few seconds
-        let age = chrono::Utc::now() - result.compiled_at;
+        let age = chrono::Utc::now() - result.runtime_profile.compiled_at;
         assert!(
             age.num_seconds() < 10,
             "compiled_at should be very recent"
@@ -194,10 +228,10 @@ mod tests {
             optimizations_applied: vec![],
         };
 
-        let (result, _hash) = lower(&optimized, optimized.profile.profile_id);
-        assert_eq!(result.operations[0].goals.len(), 1);
-        assert_eq!(result.operations[0].goals[0].description, "Kill 10 wolves");
-        assert!(result.operations[0].goals[0].required);
+        let result = lower(&optimized, optimized.profile.profile_id);
+        assert_eq!(result.runtime_profile.operations[0].goals.len(), 1);
+        assert_eq!(result.runtime_profile.operations[0].goals[0].description, "Kill 10 wolves");
+        assert!(result.runtime_profile.operations[0].goals[0].required);
     }
 
     #[test]
@@ -214,8 +248,8 @@ mod tests {
             optimizations_applied: vec![],
         };
 
-        let (result, _hash) = lower(&optimized, optimized.profile.profile_id);
-        assert!(result.operations[0]
+        let result = lower(&optimized, optimized.profile.profile_id);
+        assert!(result.runtime_profile.operations[0]
             .entry_conditions
             .contains(&Condition::LevelAtLeast(10)));
     }
@@ -235,5 +269,33 @@ mod tests {
         let h1 = compute_profile_hash(&p1);
         let h2 = compute_profile_hash(&p2);
         assert_ne!(h1, h2, "Different profiles should have different hashes");
+    }
+
+    #[test]
+    fn test_c7xxx_error_codes() {
+        assert_eq!(error_codes::MISSING_PROFILE_ID, "C-7001");
+        assert_eq!(error_codes::MISSING_OPERATIONS, "C-7002");
+        assert_eq!(error_codes::INVALID_OPERATION, "C-7003");
+        assert_eq!(error_codes::INVALID_ACTION, "C-7004");
+        assert_eq!(error_codes::MISSING_ACTION_ID, "C-7005");
+    }
+
+    #[test]
+    fn test_diagnostics_have_stage_attribution() {
+        let profile = Profile::new("Test", "Agent");
+        let optimized = crate::stages::optimization::OptimizedProfile {
+            profile,
+            optimizations_applied: vec![],
+        };
+
+        let result = lower(&optimized, optimized.profile.profile_id);
+
+        // Should have at least one diagnostic
+        assert!(!result.diagnostics.is_empty());
+
+        // All diagnostics should have Lowering stage
+        for diag in &result.diagnostics {
+            assert_eq!(diag.stage, Stage::Lowering);
+        }
     }
 }

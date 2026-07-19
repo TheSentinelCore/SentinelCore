@@ -39,4 +39,21 @@ function TestUtil.assert_nil(value, message)
     end
 end
 
+function TestUtil.table_contains(t, value)
+    for _, v in ipairs(t) do
+        if v == value then
+            return true
+        end
+    end
+    return false
+end
+
+function TestUtil.assert_near(actual, expected, tolerance, message)
+    tolerance = tolerance or 0.001
+    local diff = math.abs(actual - expected)
+    if diff > tolerance then
+        error((message or "assert_near failed") .. ": expected ~" .. tostring(expected) .. ", got " .. tostring(actual) .. " (diff=" .. tostring(diff) .. ")")
+    end
+end
+
 return TestUtil

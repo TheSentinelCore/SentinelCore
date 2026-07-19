@@ -1378,3 +1378,61 @@ fn test_northshire_example_roundtrip() {
         }
     }
 }
+
+// ── YAML Serialization Tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_profile_yaml_roundtrip() {
+    // Create a minimal profile
+    let mut profile = Profile::new("YAML Test", "Agent");
+    profile.schema_version = "1.0.0".to_string();
+    profile.race = Some(Race::Human);
+    profile.class = Some(Class::Warrior);
+
+    // Serialize to YAML
+    let yaml = sentinel_schema::yaml_adapter::to_yaml_string(&profile)
+        .expect("Failed to serialize to YAML");
+
+    // Deserialize back
+    let parsed: Profile = sentinel_schema::yaml_adapter::from_yaml_string(&yaml)
+        .expect("Failed to deserialize from YAML");
+
+    assert_eq!(profile.name, parsed.name);
+    assert_eq!(profile.author, parsed.author);
+    assert_eq!(profile.race, parsed.race);
+    assert_eq!(profile.class, parsed.class);
+}
+
+#[test]
+fn test_operation_yaml_roundtrip() {
+    let op = Operation::new("YAML Op Test")
+        .with_description("Testing YAML serialization")
+        .with_goals(vec![OperationGoal::required("Goal", GoalType::ReachLevel(5), 1.0)]);
+
+    let yaml = sentinel_schema::yaml_adapter::to_yaml_string(&op)
+        .expect("Failed to serialize Operation to YAML");
+
+    let parsed: Operation = sentinel_schema::yaml_adapter::from_yaml_string(&yaml)
+        .expect("Failed to deserialize Operation from YAML");
+
+    assert_eq!(op.name, parsed.name);
+    assert_eq!(op.description, parsed.description);
+    assert_eq!(op.goals.len(), parsed.goals.len());
+}
+
+#[test]
+fn test_conditional_yaml_roundtrip() {
+    let conditions = vec![
+        Condition::QuestAccepted(33),
+        Condition::RaceIs(Race::Human),
+        Condition::LevelAtLeast(5),
+    ];
+
+    let yaml = sentinel_schema::yaml_adapter::to_yaml_string(&conditions)
+        .expect("Failed to serialize conditions to YAML");
+
+    let parsed: Vec<Condition> = sentinel_schema::yaml_adapter::from_yaml_string(&yaml)
+        .expect("Failed to deserialize conditions from YAML");
+
+    assert_eq!(conditions, parsed);
+}

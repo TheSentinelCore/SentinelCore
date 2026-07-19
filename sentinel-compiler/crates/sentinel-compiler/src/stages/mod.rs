@@ -37,6 +37,7 @@ pub fn expanded_profile_from_resolved(
     ExpandedProfile {
         profile: resolved.profile.clone(),
         expansion_map: std::collections::HashMap::new(),
+        generated_operations: std::collections::HashMap::new(),
     }
 }
 

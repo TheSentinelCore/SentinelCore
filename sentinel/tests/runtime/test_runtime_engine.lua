@@ -148,7 +148,7 @@ function M.run()
                 priority = 10,
                 entry_conditions = {},
                 actions = {
-                    { id = "act-1", action_type = "set_variable", name = "my_var", value = "hello" },
+                    { id = "act-1", action_type = "set_variable", payload = { type = "set_variable", name = "my_var", value = "hello" } },
                 }
             },
         }
@@ -184,7 +184,7 @@ function M.run()
                 priority = 10,
                 entry_conditions = {},
                 actions = {
-                    { id = "act-1", action_type = "set_variable", name = "done", value = true },
+                    { id = "act-1", action_type = "set_variable", payload = { type = "set_variable", name = "done", value = true } },
                 }
             },
         }
@@ -230,9 +230,9 @@ function M.run()
                 name = "Pause Test",
                 priority = 10,
                 entry_conditions = {},
-                actions = {
-                    { id = "act-7", action_type = "set_variable", name = "should_not_be_set", value = true },
-                }
+actions = {
+                     { id = "act-7", action_type = "set_variable", payload = { type = "set_variable", name = "should_not_be_set", value = true } },
+                 }
             },
         }
     }
@@ -296,19 +296,19 @@ function M.run()
                 name = "Low Priority",
                 priority = 10,
                 entry_conditions = {},
-                actions = {
-                    { id = "act-low", action_type = "set_variable", name = "order", value = "low" },
-                }
-            },
-            {
-                id = "op-high",
-                name = "High Priority",
-                priority = 100,
-                entry_conditions = {},
-                actions = {
-                    { id = "act-high", action_type = "set_variable", name = "order", value = "high" },
-                }
-            },
+actions = {
+                     { id = "act-low", action_type = "set_variable", payload = { type = "set_variable", name = "order", value = "low" } },
+                 }
+             },
+             {
+                 id = "op-high",
+                 name = "High Priority",
+                 priority = 100,
+                 entry_conditions = {},
+                 actions = {
+                     { id = "act-high", action_type = "set_variable", payload = { type = "set_variable", name = "order", value = "high" } },
+                 }
+             },
         }
     }
     local pm9 = make_profile_manager(profile9, "profile-9")

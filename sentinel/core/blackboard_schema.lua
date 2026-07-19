@@ -8,6 +8,7 @@ Schema.allowed_roots = {
     bg = true,
     nav = true,
     module = true,
+    operation = true,
 }
 
 local function split_first(key)

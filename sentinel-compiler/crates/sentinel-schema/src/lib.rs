@@ -18,7 +18,9 @@ pub mod operation;
 pub mod profile;
 pub mod reference;
 pub mod retry;
+pub mod standard_blueprints;
 pub mod variable;
+pub mod yaml_adapter;
 
 // Re-export commonly used types
 pub use action::{Action, ActionPayload};

@@ -1,0 +1,9 @@
+# SentinelCore Workspace Configuration
+# Volume 11 §3
+
+version: "1.0.0"
+profile:
+  file: "northshire_example.json"
+settings:
+  editor:
+    layout: "{}"

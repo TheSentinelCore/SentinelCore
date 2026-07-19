@@ -44,6 +44,12 @@
 
 **CallbackBridge** — bridges Sylvannas event callbacks into the EventBus.
 
+**SentinelBridge** — seam layer between Sentinel and Sylvanas APIs. Provides:
+- **QuestBridge** — wraps `core.quests.*` for quest dialogs, gossip, trainer interaction
+- **AddonsBridge** — wraps `core.*` and `core.graphics.*` for unit queries, position, rendering
+- **EventBridge** — translates Sylvanas game events to Sentinel semantic events (QuestAccepted, QuestCompleted, etc.)
+- **RenderBridge** — immediate-mode overlay rendering via `register_on_render_callback`
+
 ## Navigation Integration
 
 **NavigationAdapter** — wraps `_G.SentinelNavClient.client` for pathfinding, raycasting, and random point generation via SentinelNavServer.
