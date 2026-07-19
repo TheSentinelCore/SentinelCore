@@ -70,6 +70,13 @@ function SentinelCombat:initialize()
     self._blackboard:set("module.combat.profile", self._profile)
 
     self._blackboard:set("player.class_id", class_id)
+    -- Store class name string (e.g. "WARRIOR") for quest modules that need it
+    local CLASS_ID_TO_NAME = {
+        [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE",
+        [5] = "PRIEST", [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE",
+        [9] = "WARLOCK", [11] = "DRUID",
+    }
+    self._blackboard:set("player.class_name", CLASS_ID_TO_NAME[class_id] or "WARRIOR")
     self._blackboard:set("module.combat.catalog", self._spell_catalog)
     self._blackboard:set("module.combat.dispatcher", self._dispatcher)
     self._blackboard:set("module.combat.cooldowns", self._cooldowns)
@@ -92,6 +99,20 @@ function SentinelCombat:initialize()
     self._blackboard:set("combat.burst_context", false)
     self._blackboard:set("combat.gcd_until_ms", 0)
     self._blackboard:set("combat.leash_radius", 25)
+
+    -- Grind module removed (ADR-001) - set defaults so combat module doesn't error
+    self._blackboard:set("module.grind.enabled", false)
+    self._blackboard:set("module.grind.attack_neutral", false)
+    self._blackboard:set("module.grind.is_looting", false)
+    self._blackboard:set("module.grind.is_resting", false)
+    self._blackboard:set("module.grind.current_target", nil)
+    self._blackboard:set("module.grind.health_eat_pct", 0.50)
+    self._blackboard:set("module.grind.mana_drink_pct", 0.40)
+    self._blackboard:set("module.grind.needs_food", false)
+    self._blackboard:set("module.grind.needs_water", false)
+    self._blackboard:set("module.grind.bag_free_slots", 0)
+    self._blackboard:set("module.grind.water_count", 0)
+    self._blackboard:set("module.grind.food_count", 0)
 
     self:_subscribe(Events.ENGAGE_REQUESTED, function(payload)
         self:_handle_engage_requested(payload)

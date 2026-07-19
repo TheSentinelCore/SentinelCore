@@ -1,0 +1,48 @@
+<h2>Quest UI Overhaul: Primary Layout</h2>
+<p class="subtitle">Since we are combining settings, profiles, and a runtime statechart dashboard, how should we organize the screen real estate?</p>
+
+<div class="cards">
+  <div class="card" data-choice="split" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display: flex; height: 150px; background: #1e1e1e; padding: 4px; gap: 4px; border-radius: 4px;">
+        <div style="flex: 1; background: #2d2d2d; border-radius: 2px; padding: 4px; display: flex; flex-direction: column; gap: 4px;">
+          <div style="height: 10px; background: #3d3d3d; border-radius: 2px;"></div>
+          <div style="height: 10px; background: #3d3d3d; border-radius: 2px;"></div>
+          <div style="height: 10px; background: #3d3d3d; border-radius: 2px;"></div>
+        </div>
+        <div style="flex: 2; background: #181818; border-radius: 2px; border: 1px dashed #3d3d3d; display: flex; align-items: center; justify-content: center; color: #555;">
+          Statechart Dashboard
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Option A: Split-Pane (Recommended)</h3>
+      <p>Left sidebar for Settings/Profiles, large main area for the live Statechart Dashboard and Routing logs.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Monitor statechart while tweaking settings</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="tabs" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display: flex; flex-direction: column; height: 150px; background: #1e1e1e; padding: 4px; gap: 4px; border-radius: 4px;">
+        <div style="display: flex; gap: 4px; border-bottom: 1px solid #333; padding-bottom: 4px;">
+          <div style="width: 40px; height: 10px; background: #4a90e2; border-radius: 2px;"></div>
+          <div style="width: 40px; height: 10px; background: #3d3d3d; border-radius: 2px;"></div>
+          <div style="width: 40px; height: 10px; background: #3d3d3d; border-radius: 2px;"></div>
+        </div>
+        <div style="flex: 1; background: #181818; border-radius: 2px; border: 1px dashed #3d3d3d; display: flex; align-items: center; justify-content: center; color: #555;">
+          Active Tab (e.g., Dashboard)
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Option B: Focused Tabs</h3>
+      <p>Separate tabs for Dashboard, Settings, and Profiles, similar to the existing Sentinel UI.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Maximizes space for complex statechart graphs</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

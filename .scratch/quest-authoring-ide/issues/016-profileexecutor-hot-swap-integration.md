@@ -1,0 +1,83 @@
+# 016 — ProfileExecutor Hot-Swap Integration
+
+**What to build:** Integrate the hot-reload system with the existing ProfileExecutor to enable seamless updates:
+- Add hotSwap() method to ProfileExecutor that accepts new compiled JSON
+- Preserve essential state during swap: variables, position, active quests, combat state
+- Implement graceful degradation: if swap fails, log error and keep current version
+- Add version compatibility checking between old and new compiled profiles
+- Provide detailed error reporting when hot-swap fails
+- Optimize for minimal interruption: target <100ms swap time
+- Handle edge cases: mid-combat, mid-dialogue, during flight/zeppelin rides
+- Ensure no memory leaks: properly clean up old timers, event listeners, coroutines
+- Add statistics tracking: successful swaps, failed swaps, average swap time
+- Implement fallback mechanism: on repeated failures, suggest full reload
+- Thread safety: ensure hot-swap can be called from main game thread
+- Integration with Sylvannas event system: publish HotSwapStart/HotSwapEnd events
+- Configuration: enable/disable hot-swap, set maximum retry attempts
+- Logging: detailed trace of what state was preserved and what was reset
+- Support for selective updating: if only certain operations changed, optimize
+- Clear documentation of what state is preserved vs reset during hot-swap
+- Integration with IDE hot-reload system: acknowledge receipt of update
+- Versioning: include schema version in compiled profiles for compatibility checking
+- Stress testing: rapid successive swaps to uncover race conditions
+- Rollback mechanism: if critical error post-swap, attempt to revert to previous
+- Health check: verify basic functionality after swap before declaring success
+- Notification system: inform other systems (UI, timers, etc.) of hot-swap event
+- Performance benchmarking: compare memory/CPU usage before/after swap
+- Edge case handling: swapping during loading screens, cutscenes, transitions
+- Security: validate incoming JSON to prevent injection attacks
+- Observability: expose metrics via standard monitoring interfaces if available
+- Integration with existing ProfileExecutor methods: start(), stop(), update()
+- Clear API documentation: what developers need to know to use hotSwap()
+- Test suite: automated tests for various swap scenarios and edge conditions
+- Documentation: how to enable/disable, troubleshoot common issues
+- Performance target: <50ms for simple swaps, <150ms for complex swaps
+- Memory leak detection: use standard tools to check for accumulation
+- Compatibility matrix: which versions can swap with which others
+- Fallback strategy: if hot-swap fails three times in a row, disable automatically
+- User feedback: subtle visual/audio cue when hot-swap occurs successfully
+- Developer tools: enable verbose logging for troubleshooting swap issues
+- Consideration for future extensions: plugin architecture, modular updates
+
+**Blocked by:** 001 — Source Format Specification
+
+**Status:** ready-for-agent
+
+- [ ] Add hotSwap(newCompiledJSON) method to ProfileExecutor class
+- [ ] Implement state preservation: extract variables, position, active quests
+- [ ] Add version compatibility check: compare schema versions
+- [ ] Implement error handling: try/catch around swap, log failures
+- [ ] Create detailed error reporting: what failed and why
+- [ ] Optimize swap process: minimize blocking time, use async where possible
+- [ ] Handle special states: combat, dialogue, flight, zeppelin, loading screens
+- [ ] Ensure proper cleanup: cancel timers, remove event listeners, close coroutines
+- [ ] Add statistics: success count, failure count, average duration
+- [ ] Implement exponential backoff retry: 1s, 2s, 4s, 8s, then give up
+- [ ] Add circuit breaker: disable after N consecutive failures
+- [ ] Ensure thread safety: safe to call from main game thread
+- [ ] Integrate with Sylvannas events: publish HOT_SWAP_START/HOT_SWAP_END
+- [ ] Add configuration: enable/disable, max attempts, timeout duration
+- [ ] Implement detailed logging: trace of preservation/reset operations
+- [ ] Add optimization: if only certain operations changed, minimize reset
+- [ ] Document exact preservation rules: what stays, what gets reset
+- [ ] Integrate with IDE system: acknowledge receipt, report success/failure
+- [ ] Add schema version field to compiled profiles for compatibility
+- [ ] Implement stress test: 100 rapid swaps to check for leaks/issues
+- [ ] Add rollback: on critical failure post-swap, attempt to restore previous
+- [ ] Implement health check: basic functionality test before declaring success
+- [ ] Add notification system: broadcast to subsystems that swap occurred
+- [ ] Benchmark performance: measure memory/CPU delta before/after
+- [ ] Handle edge cases: swap during fade screens, teleport loading, etc.
+- [ ] Implement input validation: reject malformed or dangerous JSON
+- [ ] Add observability hooks: expose metrics for monitoring systems
+- [ ] Ensure compatibility with existing ProfileExecutor methods
+- [ ] Document public API: parameters, return values, exceptions, side effects
+- [ ] Create comprehensive test suite: unit, integration, and stress tests
+- [ ] Write user/administrator documentation: enable, configure, troubleshoot
+- [ ] Performance target: <50ms simple swap, <150ms complex swap, 95th percentile
+- [ ] Memory leak prevention: use valgrind or similar to verify no accumulation
+- [ ] Compatibility documentation: which versions can successfully hot-swap
+- [ ] Automatic disable: after 3 consecutive failures, turn off feature
+- [ ] Feedback mechanism: subtle screen flash or sound on successful swap
+- [ ] Developer mode: verbose logging option for troubleshooting swap issues
+- [ ] Design for extensibility: clean separation for future plugin architecture

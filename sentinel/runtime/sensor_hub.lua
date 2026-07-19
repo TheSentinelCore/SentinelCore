@@ -6,7 +6,6 @@ local DeathSensor = require("runtime/sensors/death_sensor")
 local ProximitySensor = require("runtime/sensors/proximity_sensor")
 local TransitionDetector = require("runtime/sensors/transition_detector")
 local AuraSensor = require("runtime/sensors/aura_sensor")
-local BattlegroundSensor = require("runtime/sensors/battleground_sensor")
 
 local SensorHub = {}
 SensorHub.__index = SensorHub
@@ -27,7 +26,6 @@ function SensorHub:new(blackboard, event_bus)
     o._death_sensor = DeathSensor:new(blackboard)
     o._proximity_sensor = ProximitySensor:new(blackboard)
     o._aura_sensor = AuraSensor:new(blackboard, event_bus, o._izi)
-    o._bg_sensor = BattlegroundSensor:new(blackboard, o._izi)
 
     return o
 end
@@ -56,13 +54,6 @@ function SensorHub:refresh()
 
     -- 7. Aura/rotation seal detection + IZI callbacks
     self._aura_sensor:refresh(player, now_ms)
-
-    -- 8. Battleground sensor (zone-gated)
-    local map_id = self._blackboard:get("system.map_id", 0)
-    local map_name = self._blackboard:get("system.map_name", "")
-    local instance_id = self._blackboard:get("system.instance_id", 0)
-    local instance_name = self._blackboard:get("system.instance_name", "")
-    self._bg_sensor:refresh(map_id, map_name, instance_name, now_ms, self._izi)
 
     -- Publish consolidated player snapshot for consumers
     local target = self._blackboard:get("player.target")

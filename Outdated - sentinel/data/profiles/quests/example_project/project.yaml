@@ -1,0 +1,10 @@
+name: Example Project
+version: 1.0.0
+target: TBC
+zone_id: 1
+filiation: Alliance
+variables:
+  player_level:
+    type: number
+    default: 1
+    description: "The player's level"

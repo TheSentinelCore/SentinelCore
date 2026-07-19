@@ -1,0 +1,16 @@
+name: "goldshire_murloc_coast"
+strategy: "smart"
+preferredPath: "road"
+avoid:
+  - "elite"
+  - "enemyTown"
+dynamicReplan: true
+allowShortcuts: true
+opportunisticKills:
+  - "Murloc"
+opportunisticLoot:
+  - "Chest"
+  - "QuestObject"
+ignore:
+  - "Rare"
+  - "Elite"

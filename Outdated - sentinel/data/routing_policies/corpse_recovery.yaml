@@ -1,0 +1,9 @@
+name: "corpse_recovery"
+strategy: "direct"
+preferredPath: "any"
+avoid:
+  - "elite"
+  - "water"
+  - "enemyTown"
+dynamicReplan: true
+allowShortcuts: true
