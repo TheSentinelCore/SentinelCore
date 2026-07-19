@@ -1,0 +1,315 @@
+-- sentinel/ui/toolbar.lua
+-- Horizontal toolbar at top of window for IDE controls
+-- Built on SentinelUI primitives
+
+local SentinelUI = require("shared/ui/sentinel_ui")
+
+local Toolbar = {}
+Toolbar.__index = Toolbar
+
+-- Action type to color mapping for timeline
+Toolbar.ACTION_COLORS = {
+    movement = { r = 86, g = 140, b = 210 },     -- Primary accent (blue)
+    spell = { r = 210, g = 160, b = 80 },     -- Secondary accent (orange)
+    interaction = { r = 72, g = 200, b = 110 }, -- Green
+    wait = { r = 235, g = 150, b = 40 },      -- Orange
+    condition = { r = 170, g = 100, b = 230 },  -- Purple
+    unknown = { r = 200, g = 200, b = 200 },   -- Gray
+}
+
+function Toolbar:new(window, event_bus, profile_manager)
+    local o = setmetatable({}, Toolbar)
+    o._window = window
+    o._event_bus = event_bus
+    o._profile_manager = profile_manager
+    o._ui = nil
+    o._is_dry_run = false
+    o._button_width = 90
+    o._button_height = 28
+    o._button_spacing = 4
+    o._padding = 8
+    o._y_offset = 0 -- For vertical positioning
+    return o
+end
+
+function Toolbar:init()
+    self._ui = SentinelUI.new({
+        id = "ide_toolbar",
+        title = "Toolbar",
+        default_x = 100,
+        default_y = 10,
+        default_w = 800,
+        default_h = 40,
+        theme = "sentinel",
+    })
+    return true
+end
+
+function Toolbar:_get_button_color(is_active, is_hovered)
+    if self._ui.colors then
+        if is_active then
+            return self._ui.colors.primary_accent
+        end
+        if is_hovered then
+            return self._ui.colors.bg_hover or self._ui.colors.section_bg
+        end
+        return self._ui.colors.section_bg
+    end
+    return { r = 50, g = 50, b = 50, a = 255 }
+end
+
+function Toolbar:render_button(x, y, label, tooltip, onclick, is_active)
+    local start_pos = { x = x, y = y }
+    local end_pos = { x = x + self._button_width, y = y + self._button_height }
+
+    -- Determine colors based on state
+    local bg_color = self:_get_button_color(is_active, false)
+    if is_active then
+        bg_color = self._ui.colors.primary_accent
+    end
+
+    -- Render button background
+    self._ui.window:render_rect_filled(
+        { x = start_pos.x, y = start_pos.y },
+        { x = end_pos.x, y = end_pos.y },
+        bg_color,
+        4.0
+    )
+
+    -- Render border
+    self._ui.window:render_rect(
+        { x = start_pos.x, y = start_pos.y },
+        { x = end_pos.x, y = end_pos.y },
+        self._ui.colors.section_border,
+        4.0, 1.0
+    )
+
+    -- Render label (centered)
+    local text_size = self._ui.window:get_text_size(label)
+    local text_x = start_pos.x + (self._button_width - text_size.x) / 2
+    local text_y = start_pos.y + (self._button_height - text_size.y) / 2
+    local text_color = self._ui.colors.text_primary
+
+    if is_active then
+        text_color = { r = 255, g = 255, b = 255, a = 255 }
+    end
+
+    self._ui.window:render_text(
+        0,
+        { x = text_x, y = text_y },
+        text_color,
+        label
+    )
+
+    -- Block dragging when hovering
+    self._ui.window:is_mouse_hovering_rect_block_movement(
+        { x = start_pos.x, y = start_pos.y },
+        { x = end_pos.x, y = end_pos.y }
+    )
+
+    -- Handle click
+    if self._ui.window:is_rect_clicked(
+        { x = start_pos.x, y = start_pos.y },
+        { x = end_pos.x, y = end_pos.y }
+    ) and onclick then
+        onclick()
+    end
+
+    return end_pos.x + self._button_spacing
+end
+
+function Toolbar:render_toggle(x, y, label, is_toggled, onclick)
+    local width = self._button_width
+    local height = self._button_height
+    local start_pos = { x = x, y = y }
+    local end_pos = { x = x + width, y = y + height }
+
+    -- Background based on toggle state
+    local bg_color = is_toggled and self._ui.colors.primary_accent or self._ui.colors.checkbox_inactive
+    self._ui.window:render_rect_filled(
+        { x = start_pos.x, y = start_pos.y },
+        { x = end_pos.x, y = end_pos.y },
+        bg_color,
+        4.0
+    )
+
+    -- Render label
+    local text_size = self._ui.window:get_text_size(label)
+    local text_x = start_pos.x + (width - text_size.x) / 2
+    local text_y = start_pos.y + (height - text_size.y) / 2
+    self._ui.window:render_text(
+        0,
+        { x = text_x, y = text_y },
+        self._ui.colors.text_primary,
+        label
+    )
+
+    -- Block dragging
+    self._ui.window:is_mouse_hovering_rect_block_movement(
+        { x = start_pos.x, y = start_pos.y },
+        { x = end_pos.x, y = end_pos.y }
+    )
+
+    -- Handle click
+    if self._ui.window:is_rect_clicked(
+        { x = start_pos.x, y = start_pos.y },
+        { x = end_pos.x, y = end_pos.y }
+    ) and onclick then
+        onclick()
+    end
+
+    return end_pos.x + self._button_spacing
+end
+
+function Toolbar:_publish_toolbar_event(event_name)
+    if self._event_bus and type(self._event_bus.publish) == "function" then
+        self._event_bus:publish("toolbar:" .. event_name, {
+            source = "toolbar",
+            timestamp = core.game_time and core.game_time() or 0
+        })
+    end
+end
+
+function Toolbar:render(window_x, window_y, window_width)
+    self._y_offset = window_y + self._padding
+
+    local x = self._padding
+    local y = self._y_offset
+
+    -- Save button
+    x = self:render_button(x, y, "Save", "Ctrl+S - Save active profile",
+        function()
+            if self._profile_manager and self._profile_manager.save then
+                local profile = self._profile_manager:get_active_profile()
+                if profile then
+                    self._profile_manager:mark_dirty()
+                    -- In real use, this would prompt for path
+                end
+            end
+            self:_publish_toolbar_event("save")
+        end
+    )
+
+    -- Compile button
+    x = self:render_button(x, y, "Compile", "Ctrl+Shift+C - Compile profile",
+        function()
+            self:_publish_toolbar_event("compile")
+        end
+    )
+
+    -- Validate button
+    x = self:render_button(x, y, "Validate", "Validate profile schema",
+        function()
+            self:_publish_toolbar_event("validate")
+        end
+    )
+
+    x = x + 8 -- Extra spacing
+
+    -- Undo button
+    x = self:render_button(x, y, "Undo", "Ctrl+Z - Undo last change",
+        function()
+            self:_publish_toolbar_event("undo")
+        end
+    )
+
+    -- Redo button
+    x = self:render_button(x, y, "Redo", "Ctrl+Y - Redo change",
+        function()
+            self:_publish_toolbar_event("redo")
+        end
+    )
+
+    x = x + 8
+
+    -- Dry Run toggle
+    x = self:render_toggle(x, y, "Dry Run", self._is_dry_run,
+        function()
+            self._is_dry_run = not self._is_dry_run
+            self:_publish_toolbar_event("dry_run_toggle")
+        end
+    )
+
+    -- Start button
+    x = self:render_button(x, y, "Start", "Ctrl+Shift+R - Start runtime",
+        function()
+            self:_publish_toolbar_event("runtime_start")
+        end
+    )
+
+    -- Stop button
+    x = self:render_button(x, y, "Stop", "Ctrl+Shift+X - Stop runtime",
+        function()
+            self:_publish_toolbar_event("runtime_stop")
+        end
+    )
+
+    -- Capture separator
+    local sep_x = x
+    local sep_width = 4
+    local sep_height = self._button_height
+    self._ui.window:render_text(
+        0,
+        { x = sep_x + sep_width, y = y + (height - 10) / 2 },
+        self._ui.colors.separator,
+        "|"
+    )
+    x = x + 20
+
+    -- Capture NPC button
+    x = self:render_button(x, y, "NPC", "Ctrl+N - Record NPC",
+        function()
+            self:_publish_toolbar_event("record_npc")
+        end
+    )
+
+    -- Record Path button
+    x = self:render_button(x, y, "Path", "Ctrl+Shift+P - Record Path",
+        function()
+            self:_publish_toolbar_event("record_path")
+        end
+    )
+
+    -- Record Area button
+    x = self:render_button(x, y, "Area", "Ctrl+Shift+A - Record Area",
+        function()
+            self:_publish_toolbar_event("record_area")
+        end
+    )
+
+    -- View dropdown area (span remaining width)
+    return y + self._button_height + self._padding * 2
+end
+
+function Toolbar:render_panel_dropdown()
+    -- This is called from Window:render() to show panel visibility checkboxes
+    -- in the View dropdown. Implemented as part of toolbar integration.
+    if not self._window or not self._window._panel_registry then return end
+
+    local panel_names = self._window:get_panel_names()
+    if not panel_names or #panel_names == 0 then return end
+
+    -- For now, we just need to ensure the toolbar can access the window's panels
+    -- The actual dropdown rendering would integrate with the main window UI
+end
+
+function Toolbar:tick(delta)
+    if self._ui and self._ui.tick then
+        self._ui:tick(delta)
+    end
+end
+
+function Toolbar:update()
+    if self._ui and self._ui.update then
+        self._ui:update()
+    end
+end
+
+function Toolbar:shutdown()
+    self._ui = nil
+    self._window = nil
+    self._event_bus = nil
+    self._profile_manager = nil
+end
+
+return Toolbar
