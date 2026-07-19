@@ -94,6 +94,59 @@ function RuntimeEngine:validate()
     return result
 end
 
+---Hot reload (SENT-8.8): swap in a new profile without tearing down an
+---in-flight operation. Re-validates; rejects the swap (keeping the old
+---profile) if validation fails. The currently-executing operation is preserved
+---if its id still exists in the new profile.
+---@param new_profile table Prepared (flat) profile
+---@return boolean accepted
+function RuntimeEngine:reload_profile(new_profile)
+    if not new_profile then
+        return false
+    end
+
+    if self._validation_service then
+        local vr = self._validation_service:validate_profile(new_profile)
+        if not vr.is_valid then
+            self:_publish("reload_rejected", {
+                profile_id = new_profile.id,
+                errors = vr.errors,
+            })
+            return false
+        end
+    end
+
+    -- Preserve in-flight execution if the current op survives the swap.
+    local prev_op_id = self._scheduler._current_op_id
+    local prev_idx = self._scheduler._current_action_index
+    local keeps_current = false
+    for _, op in ipairs(new_profile.operations or {}) do
+        if op.id == prev_op_id then
+            keeps_current = true
+            break
+        end
+    end
+
+    self._profile_manager:set_active_profile(new_profile)
+    self._profile_id = new_profile.id
+    self._scheduler:set_profile(new_profile)
+    self._context:set_profile(new_profile)
+
+    if keeps_current then
+        self._scheduler._current_op_id = prev_op_id
+        self._scheduler._current_action_index = prev_idx or 1
+    end
+
+    -- Re-validate all operations on next tick.
+    for _, op in ipairs(new_profile.operations or {}) do
+        self._dirty_op_ids[op.id] = true
+    end
+
+    self._blackboard:set("module.runtime.profile_id", self._profile_id)
+    self:_publish("profile_reloaded", { profile_id = self._profile_id })
+    return true
+end
+
 ---Set the NavAdapter for operation execution
 ---@param nav_adapter table NavAdapter instance
 function RuntimeEngine:set_nav_adapter(nav_adapter)

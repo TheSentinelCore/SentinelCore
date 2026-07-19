@@ -441,6 +441,70 @@ actions = {
     end
     print("  PASS")
 
+    -- Test 12: Hot reload (SENT-8.8) — swap profile keeps in-flight op, rejects
+    -- an invalid incoming profile.
+    print("Test 12: hot reload swaps profile, preserves current op, rejects invalid")
+    do
+        local bb12 = Blackboard:new()
+        local eb12 = EventBus:new()
+        local op_a = {
+            id = "op-a",
+            goals = { { type = "KillCount", entry = 305, count = 5, required = true } },
+            actions = { { action_type = "grind_area", creature_entry = 305 } },
+        }
+        local profile12 = { id = "prof-12", name = "Hot Reload", operations = { op_a } }
+        local pm12 = {
+            get_active_profile = function() return profile12 end,
+            get_active_profile_id = function() return "prof-12" end,
+            set_active_profile = function(_, p) profile12 = p end,
+        }
+        local mock_nav12 = { _state = "idle" }
+        local Engine12 = require("runtime/runtime_engine")
+        local eng12 = Engine12:new(bb12, eb12, pm12, mock_nav12)
+        eng12:set_validation_service(ValidationService:new())
+        eng12._status = "running"
+
+        -- Simulate an in-flight operation.
+        eng12._scheduler._current_op_id = "op-a"
+        eng12._scheduler._current_action_index = 3
+
+        -- New profile keeps op-a but changes its name; op id preserved.
+        local new_profile = {
+            id = "prof-12",
+            name = "Hot Reload v2",
+            operations = { {
+                id = "op-a",
+                goals = { { type = "KillCount", entry = 305, count = 5, required = true } },
+                actions = { { action_type = "grind_area", creature_entry = 305 } },
+            } },
+        }
+        local reloaded = nil
+        eb12:subscribe("profile_reloaded", function(e) reloaded = e end)
+        local accepted = eng12:reload_profile(new_profile)
+        T.assert_true(accepted, "valid hot reload accepted")
+        T.assert_not_nil(reloaded, "profile_reloaded event published")
+        T.assert_equal(eng12._scheduler._current_op_id, "op-a", "current op preserved across reload")
+        T.assert_equal(eng12._scheduler._current_action_index, 3, "action index preserved across reload")
+
+        -- Invalid incoming profile (uncovered goal) must be rejected.
+        local bad_profile = {
+            id = "prof-12",
+            name = "Broken",
+            operations = { {
+                id = "op-a",
+                goals = { { type = "KillCount", entry = 305, count = 5, required = true } },
+                actions = {},
+            } },
+        }
+        local rejected = nil
+        eb12:subscribe("reload_rejected", function(e) rejected = e end)
+        local accepted_bad = eng12:reload_profile(bad_profile)
+        T.assert_false(accepted_bad, "invalid hot reload rejected")
+        T.assert_not_nil(rejected, "reload_rejected event published")
+        T.assert_equal(eng12._profile_id, "prof-12", "old profile retained after rejected reload")
+    end
+    print("  PASS")
+
     print("\n=== All RuntimeEngine Tests PASSED ===")
 end
 
