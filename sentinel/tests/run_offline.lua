@@ -160,6 +160,9 @@ local test_modules = {
     "tests/runtime/test_operation_scheduler",
     "tests/runtime/test_action_executor",
     "tests/runtime/test_runtime_engine",
+    "tests/runtime/test_migration_registry",
+    "tests/runtime/test_compiler_bridge",
+    "tests/runtime/test_compile_pipeline",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
