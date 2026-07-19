@@ -76,6 +76,7 @@ function M.test_active_to_completed_transition()
     local lifecycle = OperationLifecycle:new(bb)
 
     lifecycle:create("op-1")
+    lifecycle:transition_to_ready("op-1", true)
     lifecycle:set_status("op-1", "Active")
     lifecycle:transition_to_completed("op-1")
 
@@ -92,6 +93,7 @@ function M.test_active_to_failed_transition()
     local lifecycle = OperationLifecycle:new(bb)
 
     lifecycle:create("op-1")
+    lifecycle:transition_to_ready("op-1", true)
     lifecycle:set_status("op-1", "Active")
     lifecycle:transition_to_failed("op-1")
 
@@ -108,6 +110,7 @@ function M.test_active_to_aborted_transition()
     local lifecycle = OperationLifecycle:new(bb)
 
     lifecycle:create("op-1")
+    lifecycle:transition_to_ready("op-1", true)
     lifecycle:set_status("op-1", "Active")
     lifecycle:transition_to_aborted("op-1")
 
@@ -124,6 +127,7 @@ function M.test_is_terminal()
     local lifecycle = OperationLifecycle:new(bb)
 
     lifecycle:create("op-active")
+    lifecycle:transition_to_ready("op-active", true)
     lifecycle:set_status("op-active", "Active")
     T.assert_false(lifecycle:is_terminal("op-active"), "Active is not terminal")
 
@@ -131,10 +135,14 @@ function M.test_is_terminal()
     T.assert_true(lifecycle:is_terminal("op-active"), "Completed is terminal")
 
     lifecycle:create("op-failed")
+    lifecycle:transition_to_ready("op-failed", true)
+    lifecycle:set_status("op-failed", "Active")
     lifecycle:set_status("op-failed", "Failed")
     T.assert_true(lifecycle:is_terminal("op-failed"), "Failed is terminal")
 
     lifecycle:create("op-aborted")
+    lifecycle:transition_to_ready("op-aborted", true)
+    lifecycle:set_status("op-aborted", "Active")
     lifecycle:set_status("op-aborted", "Aborted")
     T.assert_true(lifecycle:is_terminal("op-aborted"), "Aborted is terminal")
 

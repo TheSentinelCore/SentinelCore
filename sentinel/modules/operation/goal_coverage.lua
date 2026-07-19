@@ -29,18 +29,22 @@ function GoalCoverage.check_action_coverage_for_goal(action, goal)
         return false
     end
 
-    local action_type = action.action_type or action.type
+    -- Normalize action type to lowercase snake_case so coverage matches
+    -- whatever the emitter produces (GrindArea == grind_area, etc.). Inserts
+    -- an underscore before each uppercase letter, then lowercases.
+    local function to_snake_case(t)
+        local s = t or ""
+        s = s:gsub("(%l)(%u)", "%1_%2")
+        s = s:gsub("(%u)(%u%l)", "%1_%2")
+        return s:lower()
+    end
+    local action_type = to_snake_case(action.action_type or action.type)
 
-    -- The runtime canonically emits snake_case action types (pickup_quest,
-    -- turn_in_quest, quest_hub), while the ADR-008 spec names the canonical
-    -- payloads PickupQuestAction/TurnInQuestAction. Accept both spellings so
-    -- coverage matches whatever the emitter actually produces.
-    local is_turnin = action_type == "turn_in_quest" or action_type == "TurnInQuest" or action_type == "CompleteQuest"
-    local is_pickup = action_type == "pickup_quest" or action_type == "PickupQuest"
-    local is_questhub = action_type == "quest_hub" or action_type == "QuestHub"
+    -- Quest actions carry quest_id top-level or nested under params.
+    local is_turnin = action_type == "turn_in_quest" or action_type == "complete_quest"
+    local is_pickup = action_type == "pickup_quest"
+    local is_questhub = action_type == "quest_hub"
 
-    -- quest_id is either top-level (executor/ADR convention) or nested under
-    -- params (blueprint_registry emission). Resolve the union.
     local function action_quest_id(a)
         return a.quest_id or (a.params and a.params.quest_id)
     end
@@ -78,20 +82,20 @@ function GoalCoverage.check_action_coverage_for_goal(action, goal)
     end
 
     if goal.type == GoalType.ReachZone then
-        return action_type == "TravelToZone" or action_type == "MoveTo"
-            or action_type == "GoToAction"
+        return action_type == "travel_to_zone" or action_type == "move_to"
+            or action_type == "go_to_action"
     end
 
     if goal.type == GoalType.ReachWaypoint then
-        return action_type == "MoveTo" or action_type == "Travel"
+        return action_type == "move_to" or action_type == "travel"
     end
 
     if goal.type == GoalType.AcquireItem then
         local entry = goal.entry
-        if action_type == "Loot" or action_type == "PickupItem" then
+        if action_type == "loot" or action_type == "pickup_item" then
             return action.entry == entry or action.item_id == entry
         end
-        if action_type == "Vendor" and action.action == "buy" then
+        if action_type == "vendor" and action.action == "buy" then
             return action.entry == entry
         end
         return false
@@ -99,11 +103,10 @@ function GoalCoverage.check_action_coverage_for_goal(action, goal)
 
     if goal.type == GoalType.KillCount then
         local entry = goal.entry
-        local count = goal.count or 1
-        if action_type == "Kill" or action_type == "KillByName" then
+        if action_type == "kill" or action_type == "kill_by_name" then
             return action.entry == entry or (goal.name and action.name == goal.name)
         end
-        if action_type == "GrindArea" or action_type == "KillAndLoot" then
+        if action_type == "grind_area" or action_type == "kill_and_loot" then
             return action.creature_entry == entry or action.creature_id == entry
         end
         return false
@@ -115,24 +118,24 @@ function GoalCoverage.check_action_coverage_for_goal(action, goal)
         local function flight_node_id(a)
             return a.node_id or (a.to and a.to.id) or (a.from and a.from.id)
         end
-        if action_type == "flight_path" or action_type == "FlightPath"
-            or action_type == "FlightMaster" or action_type == "UnlockFlightPath" then
+        if action_type == "flight_path" or action_type == "flight_master"
+            or action_type == "unlock_flight_path" then
             return flight_node_id(action) == goal.node_id
         end
-        if action_type == "talk_to_npc" or action_type == "TalkToNpc" then
+        if action_type == "talk_to_npc" then
             return action.gossip_action == "fly" or action.gossip_id == "flight"
         end
         return false
     end
 
     if goal.type == GoalType.LearnSpell then
-        return action_type == "learn_spell" or action_type == "LearnSpell"
-            or action_type == "train" or action_type == "TrainSpell"
-            or ((action_type == "talk_to_npc" or action_type == "TalkToNpc") and action.gossip_action == "train")
+        return action_type == "learn_spell"
+            or action_type == "train"
+            or (action_type == "talk_to_npc" and action.gossip_action == "train")
     end
 
     if goal.type == GoalType.Custom then
-        return action_type == "Custom" or action.custom_id == goal.id
+        return action_type == "custom" or action.custom_id == goal.id
     end
 
     return true

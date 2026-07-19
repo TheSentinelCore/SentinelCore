@@ -35,7 +35,63 @@ function RuntimeEngine:new(blackboard, event_bus, profile_manager, nav_adapter)
     o._profile_id = nil
     o._total_elapsed = 0
     o._tick_count = 0
+    o._validation_service = nil
+    o._dirty_op_ids = {}
+    o._validation_failures = {}
     return o
+end
+
+---Wire the continuous-validation service (SENT-8.7).
+---@param validation_service table ValidationService instance
+function RuntimeEngine:set_validation_service(validation_service)
+    self._validation_service = validation_service
+end
+
+---Mark an operation dirty so it is revalidated on the next tick.
+---@param op_id string
+function RuntimeEngine:mark_operation_dirty(op_id)
+    if op_id then
+        self._dirty_op_ids[op_id] = true
+    end
+end
+
+---Continuous validation: revalidate only dirty operations. Returns nil if no
+---validation service is configured or nothing is dirty. Otherwise returns the
+---ValidationService result. If a dirty operation now fails validation, the
+---engine halts and publishes `validation_failed`.
+function RuntimeEngine:validate()
+    if not self._validation_service then
+        return nil
+    end
+    local dirty = {}
+    for op_id, _ in pairs(self._dirty_op_ids) do
+        table.insert(dirty, op_id)
+    end
+    if #dirty == 0 then
+        return nil
+    end
+
+    local profile = self._profile_manager:get_active_profile()
+    local result = self._validation_service:validate_profile(profile, dirty)
+
+    -- Clear the dirty set; re-mark any ops that still fail so they are retried.
+    self._dirty_op_ids = {}
+    self._validation_failures = {}
+    if not result.is_valid then
+        for _, err in ipairs(result.errors or {}) do
+            if err.op_id then
+                self._dirty_op_ids[err.op_id] = true
+                self._validation_failures[err.op_id] = err
+            end
+        end
+        self._status = ENGINE_STATUSES.STOPPED
+        self._blackboard:set("module.runtime.engine_status", self._status)
+        self:_publish("validation_failed", {
+            profile_id = self._profile_id,
+            errors = result.errors,
+        })
+    end
+    return result
 end
 
 ---Set the NavAdapter for operation execution
@@ -132,6 +188,13 @@ function RuntimeEngine:tick(delta_ms)
             -- No profile loaded; nothing to do
             return self:get_state()
         end
+    end
+
+    -- Step 1b: Continuous validation of dirty operations (SENT-8.7). If a
+    -- dirty op now fails, the engine halts and returns here.
+    local validation_result = self:validate()
+    if validation_result and not validation_result.is_valid then
+        return self:get_state()
     end
 
     -- Step 2: Tick the scheduler (evaluates conditions, selects next operation)

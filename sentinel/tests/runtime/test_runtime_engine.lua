@@ -4,6 +4,7 @@
 local Blackboard = require("core/blackboard")
 local EventBus = require("core/event_bus")
 local T = require("tests/test_util")
+local ValidationService = require("runtime/validation_service")
 
 local M = {}
 
@@ -396,6 +397,48 @@ actions = {
         "abort_profile should move engine to error state")
     print("  PASS (abort_profile)")
 
+    print("  PASS")
+
+    -- Test 11: Continuous validation (SENT-8.7) — dirty ops revalidate, failing
+    -- dirty op halts the engine.
+    print("Test 11: continuous validation halts engine on dirty-op failure")
+    do
+        local bb11 = Blackboard:new()
+        local eb11 = EventBus:new()
+        local covered_op = {
+            id = "op-11",
+            goals = { { type = "KillCount", entry = 305, count = 5, required = true } },
+            actions = { { action_type = "grind_area", creature_entry = 305 } },
+        }
+        local profile11 = { id = "prof-11", name = "Validation Profile", operations = { covered_op } }
+        local pm11 = {
+            get_active_profile = function() return profile11 end,
+            get_active_profile_id = function() return "prof-11" end,
+        }
+        local mock_nav11 = { _state = "idle" }
+        local Engine11 = require("runtime/runtime_engine")
+
+        local eng11 = Engine11:new(bb11, eb11, pm11, mock_nav11)
+        eng11:set_validation_service(ValidationService:new())
+
+        -- Covered op marked dirty should validate clean and clear the dirty set.
+        eng11:mark_operation_dirty("op-11")
+        local vr = eng11:validate()
+        T.assert_true(vr.is_valid, "covered dirty op should validate clean")
+        T.assert_equal(next(eng11._dirty_op_ids), nil, "dirty set cleared after clean validation")
+
+        -- Now mutate the op so its goal is uncovered, re-mark dirty, and a tick
+        -- should halt the engine with a validation_failed event.
+        profile11.operations[1].actions = {}
+        eng11:mark_operation_dirty("op-11")
+        local failed_event = nil
+        eb11:subscribe("validation_failed", function(e) failed_event = e end)
+        eng11._status = "running"
+        eng11:tick(16)
+        T.assert_equal(eng11._status, "stopped", "engine halts on dirty-op validation failure")
+        T.assert_not_nil(failed_event, "validation_failed event published")
+        T.assert_equal(failed_event.errors[1].op_id, "op-11", "failure attributed to op-11")
+    end
     print("  PASS")
 
     print("\n=== All RuntimeEngine Tests PASSED ===")

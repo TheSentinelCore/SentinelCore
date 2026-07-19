@@ -173,6 +173,7 @@ local test_modules = {
     "tests/runtime/test_migration_registry",
     "tests/runtime/test_compiler_bridge",
     "tests/runtime/test_compile_pipeline",
+    "tests/runtime/test_validation_service",
     "tests/runtime/test_variable_store",
     "tests/runtime/test_event_dispatcher",
     "tests/runtime/test_profile_state",
