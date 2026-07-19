@@ -123,10 +123,23 @@ function RuntimeEngine:validate()
         end
         self._status = ENGINE_STATUSES.STOPPED
         self._blackboard:set("module.runtime.engine_status", self._status)
+        -- Surface each error to the ValidationPanel via its existing contract.
+        self:_publish("validation:clear", {})
+        for _, err in ipairs(result.errors or {}) do
+            self:_publish("validation:add", {
+                severity = "error",
+                code = err.code,
+                message = err.message,
+                entity_ref = err.op_id,
+            })
+        end
         self:_publish("validation_failed", {
             profile_id = self._profile_id,
             errors = result.errors,
         })
+    else
+        -- Clean revalidation: wipe any stale errors from the panel.
+        self:_publish("validation:clear", {})
     end
     return result
 end

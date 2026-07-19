@@ -67,7 +67,7 @@ function ValidationPanel:init()
     -- Subscribe to validation updates
     if self._event_bus and self._event_bus.subscribe then
         self._event_bus:subscribe("validation:add", function(payload)
-            self:add_error(payload.severity, payload.code, payload.message, payload.entity_ref)
+            self:add_error(payload.code, payload.message, payload.entity_ref)
         end)
         self._event_bus:subscribe("validation:clear", function()
             self:clear()
@@ -145,6 +145,10 @@ function ValidationPanel:_on_entry_selected(entry)
     if entry.entity_ref and self._event_bus then
         self._event_bus:publish("entity:navigate", entry.entity_ref)
     end
+end
+
+function ValidationPanel:add_error(code, message, entity_ref)
+    self:add("error", code, message, entity_ref)
 end
 
 function ValidationPanel:add_warning(code, message, entity_ref)

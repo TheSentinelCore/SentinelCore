@@ -83,3 +83,32 @@ author/save time (editor calls QueryServer), not at a compile step.
 **TestHarness** — out-of-game Lua test runner (target: busted or custom) that mocks Sylvannas APIs for unit/integration tests.
 
 **InGameTestRunner** — existing `_G.SentinelCore.run_tests()` for in-game validation.
+
+## Runtime ↔ Editor Event Contract (SENT-8.7/8.8/8.9)
+
+Cross-cutting event vocabulary emitted by `RuntimeEngine` (via EventBus) and
+consumed by UI panels. Resolved during the Phase 10/11 grill; shared so the
+engine and panels never drift.
+
+- **`validation_failed`** `{ profile_id, errors }` — emitted by
+  `RuntimeEngine:validate()` when a dirty operation fails continuous
+  validation (SENT-8.7). Engine halts. Side-effect: also publishes
+  `validation:clear` then one `validation:add` per error (shape
+  `{ severity = "error", code, message, entity_ref = op_id }`) so the existing
+  `ValidationPanel` lights up with no panel-side changes.
+- **`reload_rejected`** `{ profile_id, errors }` — emitted by
+  `RuntimeEngine:reload_profile()` when an incoming hot-reload profile fails
+  validation; the old profile is retained (SENT-8.8).
+- **`profile_reloaded`** `{ profile_id }` — emitted after a successful hot
+  reload (SENT-8.8).
+- **`command_history:changed`** `{ can_undo, can_redo }` — emitted by
+  `CommandHistory` on execute/undo/redo (SENT-8.9). Toolbar/Inspector Undo/Redo
+  buttons subscribe to enable/disable themselves.
+- **`validation:add` / `validation:clear` / `validation:updated`** — existing
+  `ValidationPanel` contract; the engine republishes `validation_failed`
+  errors into this shape to reuse the panel.
+
+**Dogfood Profile** — a real, loadable authoring profile (JSON under
+`profiles/authoring/`) covering an end-to-end questing flow (e.g. Human 1–10)
+that passes `ProfileManager:prepare` with zero validation errors. Used as the
+Phase 11 smoke/sanity profile.
