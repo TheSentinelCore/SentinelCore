@@ -8,6 +8,8 @@
 use sentinel_schema::Profile;
 
 pub mod diagnostics;
+pub mod dirty;
+pub mod incremental;
 pub mod query_client;
 pub mod runtime_profile;
 pub mod stages;
