@@ -29,6 +29,8 @@ function Toolbar:new(window, event_bus, profile_manager)
     o._button_spacing = 4
     o._padding = 8
     o._y_offset = 0 -- For vertical positioning
+    o._can_undo = false
+    o._can_redo = false
     return o
 end
 
@@ -42,6 +44,13 @@ function Toolbar:init()
         default_h = 40,
         theme = "sentinel",
     })
+    -- Reflect undo/redo availability published by the engine's CommandHistory.
+    if self._event_bus and self._event_bus.subscribe then
+        self._event_bus:subscribe("command_history:changed", function(payload)
+            self._can_undo = payload and payload.can_undo or false
+            self._can_redo = payload and payload.can_redo or false
+        end)
+    end
     return true
 end
 
@@ -58,7 +67,8 @@ function Toolbar:_get_button_color(is_active, is_hovered)
     return { r = 50, g = 50, b = 50, a = 255 }
 end
 
-function Toolbar:render_button(x, y, label, tooltip, onclick, is_active)
+function Toolbar:render_button(x, y, label, tooltip, onclick, is_active, enabled)
+    enabled = enabled ~= false -- default true
     local start_pos = { x = x, y = y }
     local end_pos = { x = x + self._button_width, y = y + self._button_height }
 
@@ -66,6 +76,9 @@ function Toolbar:render_button(x, y, label, tooltip, onclick, is_active)
     local bg_color = self:_get_button_color(is_active, false)
     if is_active then
         bg_color = self._ui.colors.primary_accent
+    end
+    if not enabled then
+        bg_color = self._ui.colors.section_bg
     end
 
     -- Render button background
@@ -93,6 +106,9 @@ function Toolbar:render_button(x, y, label, tooltip, onclick, is_active)
     if is_active then
         text_color = { r = 255, g = 255, b = 255, a = 255 }
     end
+    if not enabled then
+        text_color = self._ui.colors.text_disabled or { r = 120, g = 120, b = 120, a = 255 }
+    end
 
     self._ui.window:render_text(
         0,
@@ -107,8 +123,8 @@ function Toolbar:render_button(x, y, label, tooltip, onclick, is_active)
         { x = end_pos.x, y = end_pos.y }
     )
 
-    -- Handle click
-    if self._ui.window:is_rect_clicked(
+    -- Handle click (only when enabled)
+    if enabled and self._ui.window:is_rect_clicked(
         { x = start_pos.x, y = start_pos.y },
         { x = end_pos.x, y = end_pos.y }
     ) and onclick then
@@ -206,18 +222,18 @@ function Toolbar:render(window_x, window_y, window_width)
 
     x = x + 8 -- Extra spacing
 
-    -- Undo button
+    -- Undo button (enabled only when there is something to undo)
     x = self:render_button(x, y, "Undo", "Ctrl+Z - Undo last change",
         function()
             self:_publish_toolbar_event("undo")
-        end
+        end, false, self._can_undo
     )
 
-    -- Redo button
+    -- Redo button (enabled only when there is something to redo)
     x = self:render_button(x, y, "Redo", "Ctrl+Y - Redo change",
         function()
             self:_publish_toolbar_event("redo")
-        end
+        end, false, self._can_redo
     )
 
     x = x + 8

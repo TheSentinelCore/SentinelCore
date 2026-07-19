@@ -39,13 +39,31 @@ function RuntimeEngine:new(blackboard, event_bus, profile_manager, nav_adapter)
     o._dirty_op_ids = {}
     o._validation_failures = {}
     o._command_history = nil
+    o._command_target = nil
     return o
+end
+
+---Set the document/target that commands mutate (SENT-8.9). The editor passes
+---the profile (or an adapter exposing add_action/remove_action_by_id, etc.).
+---@param target any
+function RuntimeEngine:set_command_target(target)
+    self._command_target = target
 end
 
 ---Wire the undo/redo command history (SENT-8.9).
 ---@param command_history table CommandHistory instance
 function RuntimeEngine:set_command_history(command_history)
     self._command_history = command_history
+    -- Toolbar Undo/Redo buttons publish toolbar:undo / toolbar:redo; route them
+    -- to the wired command history (Phase 10 / SENT-10.17).
+    if self._event_bus and self._event_bus.subscribe then
+        self._event_bus:subscribe("toolbar:undo", function()
+            self:undo(nil)
+        end)
+        self._event_bus:subscribe("toolbar:redo", function()
+            self:redo(nil)
+        end)
+    end
 end
 
 ---Execute a command through the wired command history (no-op if none).
@@ -60,7 +78,7 @@ end
 ---Undo the last command (SENT-8.9). Returns the command history's result.
 function RuntimeEngine:undo(target)
     if self._command_history then
-        return self._command_history:undo(target)
+        return self._command_history:undo(target or self._command_target)
     end
     return false
 end
@@ -68,7 +86,7 @@ end
 ---Redo the last undone command (SENT-8.9).
 function RuntimeEngine:redo(target)
     if self._command_history then
-        return self._command_history:redo(target)
+        return self._command_history:redo(target or self._command_target)
     end
     return false
 end

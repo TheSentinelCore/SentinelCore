@@ -199,6 +199,7 @@ local test_modules = {
     -- UI module (IDE core)
     "tests/ui/test_window",
     "tests/ui/test_toolbar",
+    "tests/ui/test_toolbar_undo_wiring",
     "tests/ui/test_explorer_panel",
     "tests/ui/test_inspector_panel",
     "tests/ui/test_timeline_panel",
