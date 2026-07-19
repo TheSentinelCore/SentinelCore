@@ -173,7 +173,18 @@ local test_modules = {
     "tests/modules/combat/test_seal_policy",
     "tests/modules/combat/test_swing_tracker",
     "tests/modules/combat/test_target_selector",
-    -- UI module
+    -- UI module (IDE core)
+    "tests/ui/test_window",
+    "tests/ui/test_toolbar",
+    "tests/ui/test_explorer_panel",
+    "tests/ui/test_inspector_panel",
+    "tests/ui/test_timeline_panel",
+    -- UI module (capture panels)
+    "tests/ui/test_target_capture_panel",
+    "tests/ui/test_npc_library_panel",
+    "tests/ui/test_quest_browser_panel",
+    "tests/ui/test_world_map_panel",
+    -- UI module (utility panels)
     "tests/ui/test_action_palette_panel",
     "tests/ui/test_variables_panel",
     "tests/ui/test_validation_panel",
