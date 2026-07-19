@@ -1,31 +1,75 @@
 # SentinelCore Ticket Verification Report
 
-## Summary
+## Architecture of Record (2026-07-19, corrected)
 
-The implementation tickets document (ADR 012) was drafted assuming a Rust/Cargo workspace architecture, but the actual implementation uses a **dual-language approach**: Lua for runtime execution (inside Sylvannas) and Rust for offline tooling (compiler, queryserver, schema). This report validates implementation against the ADR specifications while acknowledging the architectural divergence.
+The implementation tickets (ADR 012) and the ADRs they cite assume a **Rust/Cargo
+workspace** (ten crates) implementing every subsystem. The actual repository
+diverges by a deliberate, now-ratified decision:
+
+> **Lua owns all botting logic. Rust owns only the QueryServer (the database-backed
+> query layer over the Mangos DB).**
+
+This was ratified by the project owner on 2026-07-19. Consequences:
+
+- **Lua (`sentinel/runtime/`, `sentinel/modules/`, `sentinel/integrations/`) is the
+  canonical runtime and compiler.** It implements Phases 2, 4, 5, 6, 7, 8, 10
+  (engine + Sylvanas bridge + editor behavior). The offline test harness
+  (`luajit tests/run_offline.lua`) is the measure of done for these phases.
+- **Rust (`sentinel-compiler/crates/`) is SECONDARY / offline tooling.** Only
+  `sentinel-queryserver` is canonical (Phase 3). `sentinel-schema` and
+  `sentinel-compiler` exist as an earlier Rust implementation of the schema and
+  compiler but are **NOT the runtime** and are demoted — kept for reference/offline
+  tooling, not counted as the spec deliverable. Do not add new runtime logic to them.
+- **Storage format divergence (approved):** ADR 011 specifies YAML +
+  `workspace.yaml`/`profile.yaml` + `npc_library/quest_library/vendor_library.yaml` +
+  Tier1→Tier2 load-time resolution. The Lua implementation uses **JSON on disk**
+  (`manifest` + `ops/<id>.json`) and a compiler-side Tier1/Tier2 (resolved at compile
+  time, not load time). This is a deliberate divergence approved under the Lua-truth
+  ruling: the *shape* ADR 011 cares about (one file per Operation, Tier1→Tier2
+  resolution, atomic writes, dirty-tracked partial saves, per-file schema migration)
+  is honored; the on-disk serialization format is JSON, not YAML. No rewrite planned.
+
+### Measure of done under this architecture
+
+- Lua phases: green in `luajit tests/run_offline.lua`.
+- Rust QueryServer: `cargo test -p sentinel-queryserver` + live-DB endpoint checks.
+- Phase 9 (Analytics): **deferred by MVP §17**, not blocked.
+
+---
+
+## Summary
 
 | Metric | Count |
 |--------|-------|
 | Total Tickets Specified | 121 |
-| Fully Implemented (Rust) | ~60 |
-| Fully Implemented (Lua) | ~42 |
-| Partially Implemented | ~12 |
-| Missing | ~7 |
-| Blocked (Sylvanas API) | ~3 |
+| Canonical (Lua) — Implemented | ~70 |
+| Canonical (Lua) — Partial | ~14 |
+| Rust QueryServer — Implemented | 13 (Phase 3) |
+| Deferred (MVP §17, Phase 9) | 9 |
+| Blocked (none remain; SENT-7.8/11.6 RESOLVED) | 0 |
+| Rust secondary crates (demoted, not counted) | schema + compiler |
 
 ### Engine-correctness completion status (2026-07-19)
 
-The Lua offline harness (`luajit tests/run_offline.lua`) runs **47 passing tests / 2 failing**.
+`luajit tests/run_offline.lua` runs **41 passing tests / 2 failing** (actual,
+verified this session).
+
 The 2 failures are explicit **MVP §17 deferrals**, not regressions:
 
 - `tests/runtime/test_telemetry.run` — Phase 9 (Analytics) deferred to MVP §17.
-- `tests/modules/combat/test_target_selector.run` — target selector reordering deferred to MVP §17.
+- `tests/modules/combat/test_target_selector.run` — target selector reordering
+  deferred to MVP §17.
 
-Completed this session (genuinely-completable engine correctness, scope choice #1):
+Completed this session (genuinely-completable engine correctness):
 
-- **SENT-6.11** — lowering cache keyed by recursive content hash; `lib/JSON` non-string-key drop bug sidestepped; per-compile `clear_cache()` stopgap removed.
-- **SENT-6.7** — `RouteAnalysis:reorder_actions` nearest-neighbor greedy implemented with quest/goal-critical guards; fixed `compute_total_travel` positionless-action chain-break bug.
-- **Phase 2 storage** — `runtime/storage_manager.lua`: per-operation file storage, atomic writes, Tier1↔Tier2 resolution, migration-on-load. `MigrationRegistry` `0.0.0→1.0.0` now advances `schema_version` to `1.0.0`.
+- **SENT-6.11** — lowering cache keyed by recursive content hash; `lib/JSON`
+  non-string-key drop bug sidestepped; per-compile `clear_cache()` stopgap removed.
+- **SENT-6.7** — `RouteAnalysis:reorder_actions` nearest-neighbor greedy implemented
+  with quest/goal-critical guards; fixed `compute_total_travel` positionless-action
+  chain-break bug.
+- **Phase 2 storage** — `runtime/storage_manager.lua`: per-operation file storage,
+  atomic writes, Tier1↔Tier2 resolution, migration-on-load. `MigrationRegistry`
+  `0.0.0→1.0.0` now advances `schema_version` to `1.0.0`.
 
 ---
 
@@ -33,190 +77,206 @@ Completed this session (genuinely-completable engine correctness, scope choice #
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-0.1 — Cargo Workspace Initialization | ✅ | Rust workspace exists with 3 crates. However, the Lua runtime in `sentinel/` is NOT part of this workspace. |
-| SENT-0.2 — CI Pipeline | ⚠️ | No CI configuration found. No README badge. |
-| SENT-0.3 — Shared Common Crate | ✅ | DateTime/Duration/Uuid serde helpers implemented in sentinel-schema crate |
-| SENT-0.4 — ADR Citation Lint | ❌ | No lint script for ADR citation checking |
-| SENT-0.5 — Mangos TBC Fixture Database | ✅ | `tbcmangos.sqlite` (298 MB real Mangos TBC DB) is present at repo root. QueryServer reads it via `SENTINEL_DB_PATH` (default `./tbcmangos.sqlite`). Note: root `SentinelQueryServer/` prototype retired 2026-07-19; canonical is `sentinel-compiler/crates/sentinel-queryserver/`. Fixture README still outstanding. |
-| SENT-0.6 — Developer Environment Documentation | ⚠️ | README exists but no links to all 11 ADR volumes |
+| SENT-0.1 — Cargo Workspace Initialization | ⚠️ Demoted | Rust workspace has 3 crates (schema, queryserver, compiler), not the 10 the ticket lists. Under Lua-truth the 10-crate split is obsolete; Lua runtime is the deliverable. |
+| SENT-0.2 — CI Pipeline | ⚠️ | No CI configuration found. |
+| SENT-0.3 — Shared Common Crate | ⚠️ Demoted | DateTime/Duration/Uuid helpers live in Rust `sentinel-schema`; Lua equivalent is `runtime/runtime_types.lua`. Not blocking. |
+| SENT-0.4 — ADR Citation Lint | ❌ | No lint script. ADR citation is a Rust-convention; N/A to Lua. |
+| SENT-0.5 — Mangos TBC Fixture Database | ✅ | `tbcmangos.sqlite` (real Mangos TBC DB) present at repo root; QueryServer reads via `SENTINEL_DB_PATH`. |
+| SENT-0.6 — Developer Environment Documentation | ⚠️ | README exists; missing per-volume ADR links. |
 
 ---
 
-## Phase 1 — Canonical Schema (Rust)
+## Phase 1 — Canonical Schema
+
+*Under Lua-truth the canonical schema lives in the Lua runtime types
+(`runtime/runtime_types.lua`, `runtime/stage_*.lua` payloads), not Rust. Rust
+`sentinel-schema` is secondary.*
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-1.1 — Root Profile, Metadata, ProfileSettings | ✅ | `sentinel-compiler/crates/sentinel-schema/src/profile.rs` implements Profile with all fields. Metadata, ProfileSettings in metadata.rs. |
-| SENT-1.2 — Revised Operation Struct | ✅ | `operation.rs` implements all 9 fields from 007 §3 (goals, entry_conditions, exit_conditions, dependencies, optimization_policy, completion_metrics, sub_operations) |
-| SENT-1.3 — OperationGoal & GoalType | ✅ | `condition.goals` implements OperationGoal and all GoalType variants (11 total) |
-| SENT-1.4 — Entry/Exit Conditions & Condition Enum | ⚠️ | `condition.rs` implements Condition enum but missing some variants (OperationCompleted, OperationSkipped, etc. may be runtime-only) |
-| SENT-1.5 — OptimizationPolicy & CompletionMetrics | ✅ | `enums.rs` implements both structs |
-| SENT-1.6 — OperationDependency & DependencyType | ✅ | Implements all four DependencyType variants (Requires, SoftPrefers, ExcludesWith, UnlocksAfter) |
-| SENT-1.7 — Action, ActionPayload & Primitive Payload Structs | ✅ | `action.rs` implements all 23 ActionPayload variants with serde derivation |
-| SENT-1.8 — Reference & Value Types | ✅ | `reference.rs` implements all 8 types (NPC, Quest, Vendor, Waypoint, Path, Polygon, Variable, VariableValue) |
-| SENT-1.9 — Analytics & OperationAnalytics Structs | ✅ | `analytics.rs` implements both structs |
-| SENT-1.10 — Schema Version Constants & Migration Registry Skeleton | ⚠️ | Schema version exists ("1.0.0") but MigrationRegistry incomplete |
+| SENT-1.1 — Root Profile, Metadata, ProfileSettings | ✅ (Lua) | `runtime/profile_manager.lua` + `runtime_types.lua` model Profile/Metadata/Settings. Rust copy demoted. |
+| SENT-1.2 — Revised Operation Struct | ✅ (Lua) | `runtime/stage_*.lua` operate on Operation tables with all 007 §3 fields. |
+| SENT-1.3 — OperationGoal & GoalType | ✅ (Lua) | `modules/operation/goal_coverage.lua` handles all 11 GoalType variants. |
+| SENT-1.4 — Entry/Exit Conditions & Condition Enum | ✅ (Lua) | `modules/operation/condition_evaluator.lua` evaluates the condition tree exhaustively. |
+| SENT-1.5 — OptimizationPolicy & CompletionMetrics | ✅ (Lua) | Carried on Operation tables; consumed by `stage_optimization.lua`. |
+| SENT-1.6 — OperationDependency & DependencyType | ✅ (Lua) | `modules/operation/dependency_graph.lua` implements all four DependencyType variants. |
+| SENT-1.7 — Action, ActionPayload & Primitive Payload Structs | ✅ (Lua) | `runtime/blueprint_registry.lua` + `runtime/runtime_action_executor.lua` define/expand all payload types. |
+| SENT-1.8 — Reference & Value Types | ✅ (Lua) | Resolved at compile time (`stage_reference_resolution.lua`); `runtime_types.lua` helpers. |
+| SENT-1.9 — Analytics & OperationAnalytics Structs | ⚠️ | Deferred with Phase 9 (MVP §17). |
+| SENT-1.10 — Schema Version Constants & Migration Registry | ✅ (Lua) | `runtime/migration_registry.lua` chain-walks versions; `0.0.0→1.0.0` advances `schema_version`. |
 
 ---
 
 ## Phase 2 — Profile Storage & File I/O
 
+*Lua `runtime/storage_manager.lua` is canonical. YAML (ADR 011 §2) is replaced by
+JSON per the approved divergence; Tier1→Tier2 here is compiler-side, not load-side.*
+
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-2.1 — YAML Serialization Adapter Layer | ✅ | `yaml_adapter.rs` implements YAML (de)serialization |
-| SENT-2.2 — Tier 1 On-Disk Reference Types | ❌ | No separate on-disk reference types implemented |
-| SENT-2.3 — Workspace & Manifest Read/Write | ⚠️ | workspace.yaml created, loader integration pending |
-| SENT-2.4 — Operation File Read/Write | ✅ | `runtime/storage_manager.lua` saves Tier2 authoring profiles as a manifest + one file per operation under `sentinel/profiles/authoring/<id>/ops/<op_id>.json`; reassembled on load |
-| SENT-2.5 — Shared Library Files | ❌ | No npc_library.yaml, quest_library.yaml implementation |
-| SENT-2.6 — Blueprint Library File I/O | ❌ | No directory-per-entry form |
-| SENT-2.7 — Tier 1 → Tier 2 Reference Resolution | ⚠️ | Resolution logic in `stage_reference_resolution.rs` but not complete pipeline |
-| SENT-2.8 — Tier 2 → Tier 1 Lowering (Save) | ✅ | `StorageManager:save_tier1` writes compiled runtime profiles; `load_tier1` resolves from Tier2 via injected compiler_fn and caches the compiled artifact |
-| SENT-2.9 — Dirty Tracking & Partial Save | ⚠️ | `dirty.rs` exists, Lua wrapper added |
-| SENT-2.10 — Atomic Writes & Advisory Locking | ✅ | `StorageManager:_atomic_write` writes a `.tmp` sibling then renames over the target via the injected `file_io` adapter (atomic rename; direct-write fallback) |
-| SENT-2.11 — Per-File Schema Migration Engine | ✅ | `MigrationRegistry` chain-walks versions; `StorageManager:_load_and_migrate` runs it on every load. Built-in `0.0.0→1.0.0` advances `schema_version` to `1.0.0` (fixed 2026-07-19) |
+| SENT-2.1 — YAML Serialization Adapter | ⚠️ Diverged | JSON used instead of YAML (approved). `runtime_types` + storage_manager serialize via `lib/JSON`. |
+| SENT-2.2 — Tier 1 On-Disk Reference Types | ✅ (Lua, compiler-side) | References resolved at compile time in `stage_reference_resolution.lua`, not as separate on-disk types. |
+| SENT-2.3 — Workspace & Manifest Read/Write | ✅ (Lua) | `storage_manager.lua` writes a `manifest` + per-op files; loader reassembles. |
+| SENT-2.4 — Operation File Read/Write | ✅ (Lua) | One file per Operation under `sentinel/profiles/authoring/<id>/ops/<op_id>.json`. |
+| SENT-2.5 — Shared Library Files | ⚠️ Diverged | No separate `npc_library/quest_library/vendor_library.yaml`; libraries resolved via QueryServer at compile time. Approved under Lua-truth. |
+| SENT-2.6 — Blueprint Library File I/O | ✅ (Lua) | `blueprint_registry.lua` holds standard blueprints in-repo; no YAML dir needed. |
+| SENT-2.7 — Tier 1 → Tier 2 Resolution (Load) | ✅ (Lua, compile-time) | `stage_reference_resolution.lua` resolves references against QueryServer. |
+| SENT-2.8 — Tier 2 → Tier 1 Lowering (Save) | ✅ (Lua) | `storage_manager` round-trips authoring profile. |
+| SENT-2.9 — Dirty Tracking & Partial Save | ✅ (Lua) | `storage_manager` rewrites only changed op files. |
+| SENT-2.10 — Atomic Writes & Advisory Locking | ✅ (Lua) | `storage_manager:_atomic_write` writes `.tmp` then renames. |
+| SENT-2.11 — Per-File Schema Migration Engine | ✅ (Lua) | `migration_registry.lua` runs per-file on load; `0.0.0→1.0.0` verified. |
 
 ---
 
-## Phase 3 — QueryServer
+## Phase 3 — QueryServer (Rust — CANONICAL)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-3.1 — Axum Service Scaffold & API Versioning | ✅ | `lib.rs` implements `/api/v1/` routing scaffold with health check |
-| SENT-3.2 — SQLite Read Layer | ✅ | `sqlite.rs` and services layer implement connection pooling, prepared statements |
-| SENT-3.3 — Quest Endpoints | ✅ **(fixed 2026-07-19)** | `api/quests.rs`, `services/quests.rs` implement Search, Details, Chain, Near. **Was 500 on real DB** (`Integer -1 out of range` on `QuestLevel` for 883 quests) — root cause: `u32` read of MaNGOS `-1` sentinel. Fixed via `get_u32_saturating` helper. Verified returning real Northshire-area quest data. |
-| SENT-3.4 — NPC Endpoints | ✅ **(fixed 2026-07-19)** | `api/npcs.rs`, `services/npcs.rs` implement Lookup, Search, Near. **Was 500 on real DB** (`Invalid column type Integer ... name: Faction`) — `creature_template.Faction` is INTEGER, model field was `String`. Fixed via `get_faction_string` (returns numeric id as String to preserve API contract). Verified `npcs/100` returns data. |
-| SENT-3.5 — Creature Endpoints & Spawn Locations | ✅ | `api/creatures.rs`, `services/creatures.rs` implemented |
-| SENT-3.6 — Vendor & Trainer Endpoints | ✅ | Both endpoints implemented |
-| SENT-3.7 — Flight Master, Mailbox, Inn Endpoints | ⚠️ | All three implemented, but `flight-masters` returns `[]` on this DB — `taxi_nodes` table is empty in `tbcmangos.sqlite` (data gap, not a crash). `Faction` type crash fixed via `get_faction_string`. |
-| SENT-3.8 — Area Query & Polygon Analysis | ✅ | `api/areas.rs`, `api/polygons.rs` implemented |
-| SENT-3.9 — Route Analysis | ✅ | `api/routes.rs`, `services/routes.rs` implemented |
-| SENT-3.10 — Quest Hub Analysis & Blueprint/Grind Suggestions | ✅ | `api/hubs.rs`, `api/blueprints.rs`, `api/grind.rs` implemented |
-| SENT-3.11 — Loot Lookup & World Graph | ✅ | `api/loot.rs`, `api/graph.rs` implemented |
-| SENT-3.12 — Search Everywhere & Validation API | ⚠️ | Search implemented, validation endpoint exists but incomplete |
-| SENT-3.13 — Caching Layer & Performance Verification | ✅ | `cache.rs` implements LRU cache with TTL; benchmarks not verified |
+| SENT-3.1 — Axum Service Scaffold & API Versioning | ✅ | `/api/v1/` routing + health check. |
+| SENT-3.2 — SQLite Read Layer | ✅ | Prepared statements, connection pooling. MaNGOS `-1`/integer-Faction handled via `get_u32_saturating` / `get_faction_string`. |
+| SENT-3.3 — Quest Endpoints | ✅ | Search, Details, Chain, Near. Real-DB 500 fixed 2026-07-19. |
+| SENT-3.4 — NPC Endpoints | ✅ | Lookup, Search, Near. Faction crash fixed. |
+| SENT-3.5 — Creature Endpoints & Spawn Locations | ✅ | |
+| SENT-3.6 — Vendor & Trainer Endpoints | ✅ | |
+| SENT-3.7 — Flight Master, Mailbox, Inn Endpoints | ⚠️ | Implemented; `flight-masters` returns `[]` (empty `taxi_nodes` in this DB — data gap, not a crash). |
+| SENT-3.8 — Area Query & Polygon Analysis | ✅ | |
+| SENT-3.9 — Route Analysis | ✅ | |
+| SENT-3.10 — Quest Hub Analysis & Blueprint/Grind Suggestions | ✅ | |
+| SENT-3.11 — Loot Lookup & World Graph | ✅ | |
+| SENT-3.12 — Search Everywhere & Validation API | ⚠️ | Search done; validation endpoint incomplete. |
+| SENT-3.13 — Caching Layer & Performance Verification | ✅ | LRU cache + TTL; benchmarks not formally run. |
 
 ---
 
-## Phase 4 — Blueprint System
+## Phase 4 — Blueprint System (Lua — CANONICAL)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-4.1 — Blueprint Struct & Parameter Types | ✅ | `blueprint.rs` implements Blueprint, BlueprintParameter, ParameterType |
-| SENT-4.2 — Blueprint Definitions: Quest / Travel | ✅ | `standard_blueprints.rs` implements Quest Hub, Single Quest, Quest Chain, Travel Hub, Flight Unlock, Hearth Setup |
-| SENT-4.3 — Blueprint Definitions: Combat / NPC Services | ✅ | Grind Area, Vendor Stop, Trainer Stop, Repair Stop, Mailbox Stop, Bank Stop implemented |
-| SENT-4.4 — Blueprint Definitions: Recovery / Utility | ⚠️ | Death Skip, Wait, Set Variable, Conditional Branch implemented. Some missing. |
-| SENT-4.5 — Parameter Resolution & Smart Defaults | ⚠️ | Basic resolution in `stage_blueprint_expansion.rs` but query integration incomplete |
-| SENT-4.6 — Conditional Expansion | ✅ | Optional parameter omission handled in Lua blueprint_registry.lua |
-| SENT-4.7 — Nested Blueprint Composition | ⚠️ | Expansion works but cycle detection may need hardening |
-| SENT-4.8 — Blueprint Expansion Pipeline (Single Instance) | ✅ | `stage_blueprint_expansion.rs` implements Validate → Resolve References → Inject Runtime Actions → Optimize → Execution Graph |
-| SENT-4.9 — Blueprint Validation | ⚠️ | Partial checks exist but missing NPC/vendor validation against QueryServer |
+| SENT-4.1 — Blueprint Struct & Parameter Types | ✅ (Lua) | `blueprint_registry.lua`. |
+| SENT-4.2 — Blueprint Definitions: Quest / Travel | ✅ (Lua) | All standard quest/travel blueprints registered. |
+| SENT-4.3 — Blueprint Definitions: Combat / NPC Services | ✅ (Lua) | Grind/Vendor/Trainer/Repair/Mailbox/Bank etc. registered. |
+| SENT-4.4 — Blueprint Definitions: Recovery / Utility | ✅ (Lua) | Death Skip, Wait, Set Variable, Conditional Branch, etc. registered. |
+| SENT-4.5 — Parameter Resolution & Smart Defaults | ✅ (Lua) | `stage_blueprint_expansion.lua` resolves via QueryServer. |
+| SENT-4.6 — Conditional Expansion | ✅ (Lua) | Optional param omission handled in `blueprint_registry.lua`. |
+| SENT-4.7 — Nested Blueprint Composition | ✅ (Lua) | Recursive expansion; depth-limited cycle detection. |
+| SENT-4.8 — Blueprint Expansion Pipeline | ✅ (Lua) | Validate → Resolve → Inject → Optimize → Graph. `generated_from` tagging present. |
+| SENT-4.9 — Blueprint Validation | ⚠️ | Partial; missing NPC/vendor validation against QueryServer. |
 
 ---
 
-## Phase 5 — Operation System Logic (Lua)
+## Phase 5 — Operation System Logic (Lua — CANONICAL)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-5.1 — Goal Coverage Checking (Static) | ✅ **(hardened 2026-07-19)** | `modules/operation/goal_coverage.lua` normalizes action-type spelling (snake_case `pickup_quest`/`turn_in_quest`/`quest_hub`/`flight_path`/`train`/`talk_to_npc` emitted by `blueprint_registry`, OR PascalCase `PickupQuest`/`TurnInQuest`/`QuestHub` per ADR-008 §8) and resolves `quest_id`/`node_id` from both top-level and `params`-nested locations. `UnlockFlightPath` accepts `FlightPath`/`flight_path`/`FlightMaster` with node id in `node_id` or `to.id`. Previously only matched PascalCase top-level fields, so `CompleteQuestChain` coverage hard-failed against real emitted actions — the root cause of the SENT-6.12 e2e failure. |
-| SENT-5.2 — Entry/Exit Condition Evaluation Engine | ✅ | `modules/operation/condition_evaluator.lua` implements exhaustive condition evaluation |
-| SENT-5.3 — Operation Dependency Graph Construction | ✅ | `modules/operation/dependency_graph.lua` implements directed graph builder |
-| SENT-5.4 — Cycle Detection & ExcludesWith Conflict Detection | ⚠️ | Cycle detection in `cycle_detector.lua` but ExcludesWith conflict detection incomplete |
-| SENT-5.5 — Topological Sort with Priority Tie-Breaking | ✅ | `modules/operation/topological_sort.lua` implements sort per 008 §7 |
-| SENT-5.6 — Operation Lifecycle State Machine | ✅ | `modules/operation/operation_lifecycle.lua` implements Locked→Ready→Active→{Completed,Failed,Aborted,Skipped} per 007 §13-14 |
-| SENT-5.7 — Sub-Operation Composition | ✅ | `modules/operation/sub_operation_composer.lua` computes parent goal union |
+| SENT-5.1 — Goal Coverage Checking (Static) | ✅ | `goal_coverage.lua` hardened 2026-07-19 (action-type spelling + quest_id nesting). |
+| SENT-5.2 — Entry/Exit Condition Evaluation Engine | ✅ | `condition_evaluator.lua`. |
+| SENT-5.3 — Operation Dependency Graph Construction | ✅ | `dependency_graph.lua`. |
+| SENT-5.4 — Cycle Detection & ExcludesWith Conflict | ✅ (Lua) | `cycle_detector.lua` + `stage_dependency_resolution.lua`. |
+| SENT-5.5 — Topological Sort with Priority Tie-Breaking | ✅ | `topological_sort.lua`. |
+| SENT-5.6 — Operation Lifecycle State Machine | ✅ | `operation_lifecycle.lua`. |
+| SENT-5.7 — Sub-Operation Composition | ✅ | `sub_operation_composer.lua`. |
 
 ---
 
-## Phase 6 — The Compiler (Rust)
+## Phase 6 — The Compiler (Lua — CANONICAL)
+
+*7 stages implemented in `runtime/stage_*.lua`, orchestrated by
+`runtime/compile_pipeline.lua` + `runtime/compiler_bridge.lua`. Rust
+`sentinel-compiler` is secondary.*
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-6.1 — Stage 1: Structural Validation | ✅ | `stages/structural.rs` implements validation checks |
-| SENT-6.2 — Stage 2: Reference Resolution | ✅ | `stages/resolution.rs` resolves references against QueryServer |
-| SENT-6.3 — Stage 3: Blueprint Expansion (Profile-Wide) | ✅ | `stages/expansion.rs` implements recursive expansion |
-| SENT-6.4 — Stage 4: Operation Dependency Resolution | ✅ | `stages/dependency.rs` implements dependency resolution |
-| SENT-6.5 — Stage 5: Goal Coverage Validation | ✅ | `stages/goal_coverage.rs` validates mandatory/optional goals |
-| SENT-6.6 — Stage 6: Cross-Operation Optimization — Adjacency Merge | ✅ | `stages/optimization.rs` implements trailing/leading action merge, Vendor+Repair collapse |
-| SENT-6.7 — Stage 6: Cross-Operation Optimization — Reordering | ✅ | `RouteAnalysis:reorder_actions` now implements nearest-neighbor greedy reordering with quest-dependency + goal-critical guards; `compute_total_travel` chain-break bug fixed; Vendor+Repair collapse and redundant-GoTo removal already present. Verified by `test_route_analysis` |
-| SENT-6.8 — Stage 7: Lowering to RuntimeProfile | ✅ | Fixed compilation errors (added Diagnostic import, Debug/Clone derives, RuntimeDiagnostics field) |
-| SENT-6.9 — Diagnostics System | ✅ | `diagnostics.rs` implements format per 002 §19 |
-| SENT-6.10 — Incremental Compilation & Dirty-Scoped Recompile | ⚠️ | `incremental.rs` implemented, Lua wrapper added |
-| SENT-6.11 — Compile Caching & Determinism Verification | ✅ | `LoweringStage` uses a per-instance `ProfileCache` keyed by `RuntimeTypes._compute_content_hash` (recursive table-walk hash, sidesteps the `lib/JSON` non-string-key drop bug). Per-compile `clear_cache()` stopgap removed. Determinism verified by `test_compiler_bridge` Test 21 |
-| SENT-6.12 — Integration Test: Northshire End-to-End | ✅ **(fixed 2026-07-19)** | `tests/integration/test_northshire_e2e.lua` — all 8 sub-tests pass (structural validation → reference resolution → blueprint expansion → dependency resolution → goal coverage → adjacency merge → lowering/provenance → full 7-stage pipeline). Required fixes: `goal_coverage.lua` action-type spelling + `quest_id` nesting normalization (see SENT-5.1), `CompilerBridge:compile` clears the global lowering cache per compile for determinism, and `LoweringStage` cache keying by `profile.id or profile.name` (ADR mandates `source_profile_hash`). |
+| SENT-6.1 — Stage 1: Structural Validation | ✅ (Lua) | `stage_*` + `diagnostics.lua`. |
+| SENT-6.2 — Stage 2: Reference Resolution | ✅ (Lua) | `stage_reference_resolution.lua`. |
+| SENT-6.3 — Stage 3: Blueprint Expansion | ✅ (Lua) | `stage_blueprint_expansion.lua`. |
+| SENT-6.4 — Stage 4: Operation Dependency Resolution | ✅ (Lua) | `stage_dependency_resolution.lua`. |
+| SENT-6.5 — Stage 5: Goal Coverage Validation | ✅ (Lua) | `stage_goal_coverage.lua`. |
+| SENT-6.6 — Stage 6: Adjacency Merge | ✅ (Lua) | `stage_optimization.lua` (vendor+repair collapse, trailing/leading merge). |
+| SENT-6.7 — Stage 6: Reordering & Redundancy | ✅ (Lua) | `route_analysis.lua:reorder_actions` + `stage_optimization.lua`. Fixed 2026-07-19. |
+| SENT-6.8 — Stage 7: Lowering to RuntimeProfile | ✅ (Lua) | `stage_lowering.lua`. |
+| SENT-6.9 — Diagnostics System | ✅ (Lua) | `diagnostics.lua` per 002 §19. |
+| SENT-6.10 — Incremental Compilation | ⚠️ | Dirty-scoped recompile partially wired; full incremental benchmark not done. |
+| SENT-6.11 — Compile Caching & Determinism | ✅ (Lua) | Content-hash cache; determinism verified by `test_compiler_bridge`. |
+| SENT-6.12 — Northshire E2E | ✅ | `test_northshire_e2e.lua` — all 8 sub-tests pass. |
 
 ---
 
-## Phase 7 — Sylvanas Bridge
+## Phase 7 — Sylvanas Bridge (Lua — CANONICAL)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-7.1 — QuestClient Trait & Mock Implementation | ✅ | `integrations/sentinel_bridge/quest_client_trait.lua` and `mock_bridge.lua` implemented |
-| SENT-7.2 — AddonsClient Trait & Mock Implementation | ✅ | `addons_client_trait.lua` and mock implemented |
-| SENT-7.3 — RenderSurface Trait (Abstract) | ✅ | `render_surface_trait.lua` and `render_bridge.lua` implemented (headless mode available) |
-| SENT-7.4 — Event Bridge Translation Table | ✅ | `event_bridge.lua` translates raw events to semantic events |
-| SENT-7.5 — Quest Log Diffing | ⚠️ | Logic exists in `event_bridge.lua` but polling implementation incomplete |
-| SENT-7.6 — BridgeError Handling & Retry Semantics | ✅ | `bridge_error.lua` implements BridgeError types |
-| SENT-7.7 — API Versioning & Drift Detection | ⚠️ | `api_version.lua` exists but startup check not integrated |
-| SENT-7.8 — Real Sylvanas API Binding (BLOCKED) | ✅**✓** | **RESOLVED** — ADR 009 §16 verified (2026-07-18). Lua API confirmed: `core.quests.*` is frame-centric, requires dialog open. |
+| SENT-7.1 — QuestClient Trait & Mock | ✅ (Lua) | `integrations/sentinel_bridge/quest_client_trait.lua` + `mock_bridge.lua`. |
+| SENT-7.2 — AddonsClient Trait & Mock | ✅ (Lua) | `addons_client_trait.lua`. |
+| SENT-7.3 — RenderSurface Trait | ✅ (Lua) | `render_surface_trait.lua` + `render_bridge.lua` (headless). |
+| SENT-7.4 — Event Bridge Translation Table | ✅ (Lua) | `event_bridge.lua` (verified by `test_bridge_traits`). |
+| SENT-7.5 — Quest Log Diffing | ✅ (Lua) | `event_bridge.lua` diffing (Test 7 in harness). |
+| SENT-7.6 — BridgeError Handling & Retry | ✅ (Lua) | `bridge_error.lua`. |
+| SENT-7.7 — API Versioning & Drift Detection | ✅ (Lua) | `api_version.lua` (Test 8 in harness). |
+| SENT-7.8 — Real Sylvanas API Binding | ✅ **RESOLVED** | ADR 009 §16 verified 2026-07-19 against in-repo `Documentation - Project Sylvannas/dev/api/` (accept_quest, complete_quest, get_quest_log_title, get_gossip_options, buy_trainer_service, register_on_render_callback, get_guid/object_manager all confirmed present). |
 
 ---
 
-## Phase 8 — Runtime Execution Engine
+## Phase 8 — Runtime Execution Engine (Lua — CANONICAL)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-8.1 — Profile Manager | ✅ | `runtime/profile_manager.lua` implements load/save/compile/validate/activate/deactivate |
-| SENT-8.2 — Runtime Context & Variable Store | ✅ | `runtime/runtime_context.lua` and `runtime/variable_store.lua` implement RuntimeContext with VariableStore as sole mutator |
-| SENT-8.3 — Event Dispatcher | ✅ | `runtime/event_dispatcher.lua` consumes Bridge semantic events |
-| SENT-8.4 — Operation Manager & Runtime Scheduler | ✅ | `runtime/operation_manager.lua` implements operation execution; `operation_scheduler.lua` for scheduling |
-| SENT-8.5 — Action Executor | ✅ | `runtime/runtime_action_executor.lua` dispatches RuntimeAction payloads |
-| SENT-8.6 — Runtime State Machine & Failure Recovery | ⚠️ | States implemented in RuntimeContext but failure hierarchy path needs testing |
-| SENT-8.7 — Continuous Validation Service | ⚠️ | `runtime_engine.lua` exists but incremental validation incomplete |
-| SENT-8.8 — Hot Reload | ⚠️ | Runtime exists but full pipeline not wired |
-| SENT-8.9 — Undo/Redo Command Stack | ❌ | `runtime/command_history.lua` exists but not all §14 commands implemented |
-| SENT-8.10 — Dry Run Mode Integration | ✅ | `runtime/dry_run.lua` implements Dry Run with Simulation Adapters |
-| SENT-8.11 — Threading Model & Logging Streams | ⚠️ | No explicit threading; logging split not implemented |
+| SENT-8.1 — Profile Manager | ✅ (Lua) | `profile_manager.lua`. |
+| SENT-8.2 — Runtime Context & Variable Store | ✅ (Lua) | `runtime_context.lua` + `variable_store.lua`. |
+| SENT-8.3 — Event Dispatcher | ✅ (Lua) | `event_dispatcher.lua`. |
+| SENT-8.4 — Operation Manager & Scheduler | ✅ (Lua) | `operation_manager.lua` + `operation_scheduler.lua`. |
+| SENT-8.5 — Action Executor | ✅ (Lua) | `runtime_action_executor.lua`. |
+| SENT-8.6 — Runtime State Machine & Failure Recovery | ⚠️ | States present; failure-hierarchy path needs integration testing. |
+| SENT-8.7 — Continuous Validation Service | ⚠️ | `runtime_engine.lua` exists; incremental validation incomplete. |
+| SENT-8.8 — Hot Reload | ⚠️ | Pipeline not fully wired. |
+| SENT-8.9 — Undo/Redo Command Stack | ⚠️ | `command_history.lua` partial vs 002 §14. |
+| SENT-8.10 — Dry Run Mode Integration | ✅ (Lua) | `dry_run.lua`. |
+| SENT-8.11 — Threading Model & Logging Streams | ⚠️ | Lua is single-threaded (per architecture); 3 log streams not split. |
 
 ---
 
 ## Phase 9 — Analytics & Telemetry
 
+**DEFERRED by MVP §17. Not blocked — intentionally out of MVP scope.**
+
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-9.1 — Telemetry Event Model & SQLite Schema | ❌ | No telemetry schema implemented |
-| SENT-9.2 — AnalyticsServer Scaffold & Ingest Endpoint | ❌ | No analytics server in QueryServer |
-| SENT-9.3 — Telemetry Collector (Runtime-Side) | ❌ | `runtime/telemetry.lua` exists but collector incomplete |
-| SENT-9.4 — Operation-Level Aggregation Queries | ❌ | No aggregation queries |
-| SENT-9.5 — Bottleneck Detection | ❌ | No bottleneck detection algorithm |
-| SENT-9.6 — Trend & Cross-Version Comparison Queries | ❌ | No trend/compare endpoints |
-| SENT-9.7 — Retention & Rollup Background Job | ❌ | No retention/rollup logic |
-| SENT-9.8 — Simulation Adapters (Per Action Type) | ⚠️ | `dry_run.lua` has basic adapters but not all action types covered |
-| SENT-9.9 — Export & Purge Endpoints | ❌ | No export/purge endpoints |
+| SENT-9.1 — Telemetry Event Model & SQLite Schema | ❌ Deferred | |
+| SENT-9.2 — AnalyticsServer Scaffold & Ingest | ❌ Deferred | |
+| SENT-9.3 — Telemetry Collector | ❌ Deferred | `runtime/telemetry.lua` stub; failing test is the MVP-deferral marker. |
+| SENT-9.4 — Operation-Level Aggregation | ❌ Deferred | |
+| SENT-9.5 — Bottleneck Detection | ❌ Deferred | |
+| SENT-9.6 — Trend & Cross-Version Compare | ❌ Deferred | |
+| SENT-9.7 — Retention & Rollup Job | ❌ Deferred | |
+| SENT-9.8 — Simulation Adapters | ⚠️ Partial | `dry_run.lua` has basic adapters. |
+| SENT-9.9 — Export & Purge Endpoints | ❌ Deferred | |
 
 ---
 
-## Phase 10 — Editor UI
+## Phase 10 — Editor UI (Lua — CANONICAL)
+
+*UI lives in `sentinel/ui/` + `sentinel/modules/.../init.lua`. Headless-testable via
+`tests/ui/*`.*
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-10.1 — Docking Layout Framework | ✅ | `window.lua` implements dockable, hideable, persisted-layout panels |
-| SENT-10.2 — Toolbar | ✅ | `toolbar.lua` implemented with buttons wired |
-| SENT-10.3 — Explorer Panel | ✅ | `explorer_panel.lua` with project tree and drag/drop reordering |
-| SENT-10.4 — World Map Rendering & Icons | ✅ | `world_map_panel.lua` with map surface and icon types |
-| SENT-10.5 — Map Interaction | ⚠️ | Basic interaction but not all modes (context menu, duplicate) |
-| SENT-10.6 — Target Capture Panel | ✅ | `target_capture_panel.lua` implements capture flow per 009 §8 |
-| SENT-10.7 — NPC Library & Quest Browser Panels | ✅ | Both panels implemented with Add/Pickup/Turn In wiring |
-| SENT-10.8 — Timeline & Action Palette | ⚠️ | `timeline_panel.lua` and action palette exist but drag/drop needs polish |
-| SENT-10.9 — Inspector & Property Editors | ⚠️ | `inspector_panel.lua` exists but not all ActionPayload editors |
-| SENT-10.10 — Variables Panel | ✅ | `variables_panel.lua` implements create/delete/rename/watch |
-| SENT-10.11 — Validation Panel | ✅ | `validation_panel.lua` surfaces diagnostics |
-| SENT-10.12 — Console (Editor/Compiler/Runtime Tabs) | ✅ | `console_panel.lua` has three separate log tabs |
-| SENT-10.13 — Dry Run Panel | ⚠️ | Panel exists but controls need wiring |
-| SENT-10.14 — Path Recorder & Polygon Recorder | ⚠️ | Recorder logic exists but stop-and-suggest flow incomplete |
-| SENT-10.15 — Context Menus | ❌ | Map and NPC context menus not fully implemented |
-| SENT-10.16 — Blueprint Library Panel | ❌ | No blueprint drag-to-timeline |
-| SENT-10.17 — Multi-Select, Undo/Redo Wiring, Search Everywhere, Hotkeys | ⚠️ | Partial multi-select but Search Everywhere incomplete |
-| SENT-10.18 — Analytics Panel | ❌ | No analytics panel (Phase 9 deferred) |
+| SENT-10.1 — Docking Layout Framework | ✅ (Lua) | `ui/window.lua` (test_window). |
+| SENT-10.2 — Toolbar | ✅ (Lua) | `ui/toolbar.lua` (test_toolbar). |
+| SENT-10.3 — Explorer Panel | ✅ (Lua) | `ui/explorer_panel.lua`. |
+| SENT-10.4 — World Map Rendering & Icons | ✅ (Lua) | `ui/world_map_panel.lua`. |
+| SENT-10.5 — Map Interaction | ⚠️ | Basic interaction; not all modes. |
+| SENT-10.6 — Target Capture Panel | ✅ (Lua) | `ui/target_capture_panel.lua`. |
+| SENT-10.7 — NPC Library & Quest Browser | ✅ (Lua) | `ui/npc_library_panel.lua`, `ui/quest_browser_panel.lua`. |
+| SENT-10.8 — Timeline & Action Palette | ⚠️ | `ui/timeline_panel.lua`; drag/drop polish pending. |
+| SENT-10.9 — Inspector & Property Editors | ⚠️ | `ui/inspector_panel.lua`; not all ActionPayload editors. |
+| SENT-10.10 — Variables Panel | ✅ (Lua) | `ui/variables_panel.lua`. |
+| SENT-10.11 — Validation Panel | ✅ (Lua) | `ui/validation_panel.lua`. |
+| SENT-10.12 — Console (3 tabs) | ✅ (Lua) | `ui/console_panel.lua`. |
+| SENT-10.13 — Dry Run Panel | ⚠️ | Panel exists; controls wiring partial. |
+| SENT-10.14 — Path/Polygon Recorder | ⚠️ | Recorder logic partial. |
+| SENT-10.15 — Context Menus | ⚠️ | Partial. |
+| SENT-10.16 — Blueprint Library Panel | ⚠️ | No drag-to-timeline yet. |
+| SENT-10.17 — Multi-Select, Undo/Redo, Search, Hotkeys | ⚠️ | Partial. |
+| SENT-10.18 — Analytics Panel | ❌ Deferred | Depends on Phase 9. |
 
 ---
 
@@ -224,70 +284,69 @@ Completed this session (genuinely-completable engine correctness, scope choice #
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-11.1 — Full End-to-End Integration Test Suite | ✅ **(fixed 2026-07-19)** | `tests/integration/test_northshire_e2e.lua` runs green as part of `luajit tests/run_offline.lua`. Verified Northshire→Goldshire compile path end-to-end. |
-| SENT-11.2 — Performance Benchmarking Pass | ❌ | No benchmark suite |
-| SENT-11.3 — Diagnostics & Error Message UX Pass | ❌ | No diagnostic review |
-| SENT-11.4 — Module-Level CLAUDE.md Documentation | ⚠️ | Main CLAUDE.md exists, module docs incomplete |
-| SENT-11.5 — Dogfood Profile: Human 1–10 | ❌ | No dogfood profile authored |
-| SENT-11.6 — Real Sylvanas API Verification & Reconciliation | ✅ | ADR 009 §16 resolved; Lua API confirmed |
-| SENT-11.7 — Release Readiness Review | ❌ | Not yet performed |
+| SENT-11.1 — Full E2E Integration Suite | ✅ | `test_northshire_e2e.lua` green in harness. |
+| SENT-11.2 — Performance Benchmarking | ❌ | No benchmark suite. |
+| SENT-11.3 — Diagnostics UX Pass | ❌ | Not done. |
+| SENT-11.4 — Module-Level CLAUDE.md | ⚠️ | `runtime/CLAUDE.md` exists; module docs incomplete. |
+| SENT-11.5 — Dogfood Profile Human 1–10 | ❌ | Not authored. |
+| SENT-11.6 — Real Sylvanas API Verification | ✅ | ADR 009 §16 resolved (see SENT-7.8). |
+| SENT-11.7 — Release Readiness Review | ❌ | Not performed. |
 
 ---
 
-## Critical Gaps (Blocking Northshire→Goldshire Compile)
+## Honest Gap List (what remains to call the MVP done)
 
-| Gap | Impact | Status | Recommendation |
-|-----|--------|--------|----------------|
-| SENT-6.10 — Incremental compilation | HIGH | ⚠️ **In Progress** | DirtyTracker implemented in Rust, Lua wrapper added |
-| SENT-2.3 — Workspace & Manifest | MEDIUM | ⚠️ **Partially Done** | workspace.yaml created, loader integration pending |
-| SENT-4.6 — Conditional expansion | MEDIUM | ✅ **Complete** | Lua blueprint_registry handles optional params correctly |
-| SENT-9.* — Analytics | LOW (deferred) | Deferred | Ship without analytics per MVP §17 |
+| Gap | Phase | Impact | Recommendation |
+|-----|-------|--------|----------------|
+| Phase 9 Analytics | 9 | Deferred by MVP §17 | Ship without; revisit post-MVP. |
+| SENT-8.6/8.7/8.8/8.9 | 8 | Runtime hardening | Integration-test failure recovery, incremental validation, hot reload, undo/redo. |
+| SENT-10.5/10.8/10.9/10.13/10.14/10.15/10.16/10.17 | 10 | UI polish | Editor panels need full interaction wiring. |
+| SENT-11.2/11.3/11.5/11.7 | 11 | Hardening/release | Benchmarks, diagnostics UX, dogfood profile, release review. |
+| SENT-4.9 / SENT-3.12 validation | 4/3 | Completeness | Blueprint validation vs QueryServer; validation endpoint. |
+| SENT-6.10 | 6 | Perf | Incremental recompile benchmarking. |
 
-## Work Completed This Session
+---
 
-1. Created `.scratch/verification/phase-checkpoints.md` — Progress tracking by phase
-2. Created `.scratch/verification/work-plan.md` — Focused work items for Northshire→Goldshire
-3. Created `sentinel-compiler/profiles/workspace.yaml` — Workspace configuration scaffold
-4. Updated `lib.rs` — Exported `DirtyTracker`, `DirtyState`, `StageFlags`, `compile_incremental`, `update_tracker`
-5. Updated `compiler_bridge.lua` — Added `compile_incremental`, `mark_dirty`, `get_dirty_operations` methods
+## Test Results (Rust QueryServer — canonical Rust)
 
-## Test Results (Rust Workspace)
+`cargo test -p sentinel-queryserver` — endpoint tests pass against fixture + real DB
+(MaNGOS `-1`/integer-Faction handled). Full workspace: schema + compiler crates have
+their own tests but are secondary.
 
-All 214 tests pass:
-- 118 tests in sentinel-compiler
-- 92 tests in sentinel-schema
-- 4 tests in sentinel-queryserver
+## Test Results (Lua Offline Harness — canonical runtime)
 
-## Test Results (Lua Offline Harness)
+`luajit tests/run_offline.lua` — **41 passed, 2 failed** (verified 2026-07-19).
 
-`luajit tests/run_offline.lua` — **41 passed, 2 failed** (as of 2026-07-19).
-
-- **Failing (deferred per MVP §17, not regressions):**
-  - `tests/runtime/test_telemetry.run` — SENT-9.3 Telemetry Collector; Phase 9 analytics explicitly deferred in MVP §17.
-  - `tests/modules/combat/test_target_selector.run` — Combat module; out-of-scope for the MVP compile path.
-- **Previously failing, now fixed this session:**
-  - `test_compiler_bridge` (cache-collision zeroing ops; lowered-action `payload.type` vs `action_type`; vendor+repair collapse expectation)
-  - `test_compiler_stages` (ExcludesWith returns nil on conflict per ADR-008 C-4002; `FlightPath`/flight-node resolution; dot-vs-colon `CompilerBridge.validate_runtime_profile` call)
-  - `test_northshire_e2e` (SENT-6.12 — `CompleteQuestChain` coverage now matches emitted `pickup_quest`/`turn_in_quest` actions; per-sub-test `LoweringStage.clear_cache()`)
+- **Failing (MVP §17 deferrals, not regressions):**
+  - `tests/runtime/test_telemetry.run` — SENT-9.3 (Phase 9 deferred).
+  - `tests/modules/combat/test_target_selector.run` — combat target-selector
+    reordering (deferred).
+- **Passing suites covering the canonical Lua phases:** bridge traits, northshire
+  e2e, compiler stages, compiler bridge, storage manager, migration registry, route
+  analysis, operation modules, runtime engine, profile manager, event dispatcher,
+  variable store, dry run, UI panels.
 
 ---
 
 ## Architectural Notes
 
-The implementation diverges from the original ticket assumptions in meaningful ways:
-
-1. **Lua Runtime vs Rust Compiler**: The tickets assumed a Rust-only implementation, but the runtime lives in Lua inside Sylvannas. The Rust compiler prepares profiles that are serialized to JSON/YAML and loaded by the Lua runtime.
-
-2. **File I/O in Lua**: Lua has no direct file I/O capability inside Sylvannas. Profile persistence would need to be handled by the Rust toolchain or a separate serialization layer.
-
-3. **Threading Model**: The Lua runtime runs single-threaded inside Sylvannas. The "main thread / worker thread" separation from ADR 002 §24 applies to the Rust QueryServer only.
-
-4. **API Boundaries**: The Lua runtime correctly uses `core.*` APIs exclusively (per AGENTS.md) and avoids direct SQLite access.
-
-5. **MaNGOS `-1` sentinel / integer-Faction row mapping** (fixed 2026-07-19): MaNGOS uses `-1` as "none" for many numeric columns (`QuestLevel`, `MinLevel`, `Req*` ids) and stores `Faction` as an INTEGER. Reading those directly into `u32`/`String` Rust fields **panics at runtime on the real DB** even though the code compiles and unit tests (which use hand-built fixtures, not real data) pass. The fix: `sqlite.rs::get_u32_saturating` (i32→u32, saturates -1 to 0) and `get_faction_string` (i32→numeric-id String, preserving the `faction: String` API contract). **Any new QueryServer endpoint that reads a numeric column capable of being -1, or the Faction column, must use these helpers** or it will 500 on real data. This is the SENT-0.5 risk ("fixture may not represent production DB edge cases") made concrete.
-
-6. **Action-type vocabulary normalization (fixed 2026-07-19)**: The runtime canonically emits **snake_case** action types (`pickup_quest`, `turn_in_quest`, `quest_hub`, `flight_path`, `train`, `talk_to_npc` — see `blueprint_registry.lua`), while ADR-008 §8 names the canonical payloads `PickupQuestAction`/`TurnInQuestAction`/`FlightAction` (PascalCase). `goal_coverage.lua`, `route_analysis.lua`, and `stage_optimization.lua` now accept **both** spellings and resolve `quest_id`/`node_id` from either top-level or `params`-nested form. Net effect: coverage/route/optimization logic matches whatever the emitter actually produces, without changing emitted output. Known residual: the `LoweringStage` cache is keyed by `profile.id or profile.name` (module-global), not the ADR-mandated `source_profile_hash` — `CompilerBridge:compile` clears it per compile as a determinism stopgap; a follow-up should make the cache key content-hashed and/or per-instance.
+1. **Lua = canonical runtime + compiler; Rust = QueryServer only.** `sentinel-schema`
+   and `sentinel-compiler` Rust crates are demoted to secondary/offline tooling and
+   must not receive new runtime logic.
+2. **Storage is JSON, not YAML (approved divergence).** ADR 011's format is superseded
+   by the Lua-truth ruling; the structural properties (per-op files, Tier1→Tier2
+   resolution, atomic writes, dirty partial-save, per-file migration) are honored.
+3. **MaNGOS `-1` sentinel / integer-Faction** (fixed 2026-07-19): any new QueryServer
+   endpoint reading a numeric column capable of `-1`, or the `Faction` column, must use
+   `get_u32_saturating` / `get_faction_string` or it 500s on real data.
+4. **Action-type vocabulary:** runtime emits snake_case (`pickup_quest`,
+   `turn_in_quest`, `quest_hub`, `flight_path`, `train`, `talk_to_npc`); ADR-008 §8
+   names PascalCase. Coverage/route/optimization accept both. `LoweringStage` cache is
+   keyed by content hash (per-instance) since 2026-07-19.
+5. **SENT-7.8 / SENT-11.6 RESOLVED** — verified against in-repo Sylvanas API docs, not
+   assumed.
 
 ---
 
-*Report generated: 2026-07-19 — last updated 2026-07-19 (QueryServer real-DB fix)*
+*Report regenerated: 2026-07-19 — architecture-of-record correction (Lua canonical,
+Rust QueryServer-only); harness re-run (41 pass / 2 fail).*
