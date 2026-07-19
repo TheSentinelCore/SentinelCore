@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use super::ServiceState;
 use crate::models::*;
+use crate::sqlite::get_faction_string;
 
 #[derive(Clone)]
 pub struct FlightService {
@@ -42,7 +43,7 @@ impl FlightService {
                     Ok(FlightMaster {
                         node: row.get(0)?,
                         name: row.get(1)?,
-                        faction: row.get(2)?,
+                        faction: get_faction_string(row, 2)?,
                         connected_routes: vec![],
                     })
                 })?;

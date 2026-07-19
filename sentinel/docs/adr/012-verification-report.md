@@ -23,7 +23,7 @@ The implementation tickets document (ADR 012) was drafted assuming a Rust/Cargo 
 | SENT-0.2 — CI Pipeline | ⚠️ | No CI configuration found. No README badge. |
 | SENT-0.3 — Shared Common Crate | ✅ | DateTime/Duration/Uuid serde helpers implemented in sentinel-schema crate |
 | SENT-0.4 — ADR Citation Lint | ❌ | No lint script for ADR citation checking |
-| SENT-0.5 — Mangos TBC Fixture Database | ⚠️ | `tbcmangos.sqlite` not found. No fixture README documented. |
+| SENT-0.5 — Mangos TBC Fixture Database | ✅ | `tbcmangos.sqlite` (298 MB real Mangos TBC DB) is present at repo root. QueryServer reads it via `SENTINEL_DB_PATH` (default `./tbcmangos.sqlite`). Note: root `SentinelQueryServer/` prototype retired 2026-07-19; canonical is `sentinel-compiler/crates/sentinel-queryserver/`. Fixture README still outstanding. |
 | SENT-0.6 — Developer Environment Documentation | ⚠️ | README exists but no links to all 11 ADR volumes |
 
 ---
@@ -69,11 +69,11 @@ The implementation tickets document (ADR 012) was drafted assuming a Rust/Cargo 
 |--------|--------|-------|
 | SENT-3.1 — Axum Service Scaffold & API Versioning | ✅ | `lib.rs` implements `/api/v1/` routing scaffold with health check |
 | SENT-3.2 — SQLite Read Layer | ✅ | `sqlite.rs` and services layer implement connection pooling, prepared statements |
-| SENT-3.3 — Quest Endpoints | ✅ | `api/quests.rs`, `services/quests.rs` implement Search, Details, Chain, Near |
-| SENT-3.4 — NPC Endpoints | ✅ | `api/npcs.rs`, `services/npcs.rs` implement Lookup, Search, Near |
+| SENT-3.3 — Quest Endpoints | ✅ **(fixed 2026-07-19)** | `api/quests.rs`, `services/quests.rs` implement Search, Details, Chain, Near. **Was 500 on real DB** (`Integer -1 out of range` on `QuestLevel` for 883 quests) — root cause: `u32` read of MaNGOS `-1` sentinel. Fixed via `get_u32_saturating` helper. Verified returning real Northshire-area quest data. |
+| SENT-3.4 — NPC Endpoints | ✅ **(fixed 2026-07-19)** | `api/npcs.rs`, `services/npcs.rs` implement Lookup, Search, Near. **Was 500 on real DB** (`Invalid column type Integer ... name: Faction`) — `creature_template.Faction` is INTEGER, model field was `String`. Fixed via `get_faction_string` (returns numeric id as String to preserve API contract). Verified `npcs/100` returns data. |
 | SENT-3.5 — Creature Endpoints & Spawn Locations | ✅ | `api/creatures.rs`, `services/creatures.rs` implemented |
 | SENT-3.6 — Vendor & Trainer Endpoints | ✅ | Both endpoints implemented |
-| SENT-3.7 — Flight Master, Mailbox, Inn Endpoints | ✅ | All three implemented |
+| SENT-3.7 — Flight Master, Mailbox, Inn Endpoints | ⚠️ | All three implemented, but `flight-masters` returns `[]` on this DB — `taxi_nodes` table is empty in `tbcmangos.sqlite` (data gap, not a crash). `Faction` type crash fixed via `get_faction_string`. |
 | SENT-3.8 — Area Query & Polygon Analysis | ✅ | `api/areas.rs`, `api/polygons.rs` implemented |
 | SENT-3.9 — Route Analysis | ✅ | `api/routes.rs`, `services/routes.rs` implemented |
 | SENT-3.10 — Quest Hub Analysis & Blueprint/Grind Suggestions | ✅ | `api/hubs.rs`, `api/blueprints.rs`, `api/grind.rs` implemented |
@@ -258,6 +258,8 @@ The implementation diverges from the original ticket assumptions in meaningful w
 
 4. **API Boundaries**: The Lua runtime correctly uses `core.*` APIs exclusively (per AGENTS.md) and avoids direct SQLite access.
 
+5. **MaNGOS `-1` sentinel / integer-Faction row mapping** (fixed 2026-07-19): MaNGOS uses `-1` as "none" for many numeric columns (`QuestLevel`, `MinLevel`, `Req*` ids) and stores `Faction` as an INTEGER. Reading those directly into `u32`/`String` Rust fields **panics at runtime on the real DB** even though the code compiles and unit tests (which use hand-built fixtures, not real data) pass. The fix: `sqlite.rs::get_u32_saturating` (i32→u32, saturates -1 to 0) and `get_faction_string` (i32→numeric-id String, preserving the `faction: String` API contract). **Any new QueryServer endpoint that reads a numeric column capable of being -1, or the Faction column, must use these helpers** or it will 500 on real data. This is the SENT-0.5 risk ("fixture may not represent production DB edge cases") made concrete.
+
 ---
 
-*Report generated: 2026-07-19*
+*Report generated: 2026-07-19 — last updated 2026-07-19 (QueryServer real-DB fix)*

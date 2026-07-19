@@ -8,6 +8,7 @@ use super::helpers::zone_name;
 use super::ServiceState;
 use crate::error::QueryError;
 use crate::models::*;
+use crate::sqlite::get_u32_saturating;
 
 // ---------------------------------------------------------------------------
 // Quest-specific DB helpers (private to this module)
@@ -293,8 +294,8 @@ impl QuestService {
                         Ok(QuestSearchResult {
                             id: row.get(0)?,
                             title: row.get(1)?,
-                            level: row.get(2)?,
-                            min_level: row.get(3)?,
+                            level: get_u32_saturating(row, 2)?,
+                            min_level: get_u32_saturating(row, 3)?,
                             zone: format!("ZoneID:{}", zone_id),
                             giver: 0,
                         })
@@ -338,9 +339,9 @@ impl QuestService {
                     // MaNGOS uses -1 as sentinel for "no value" — read as i32, convert to u32
                     let entry: u32 = row.get(0)?;
                     let title: String = row.get(1)?;
-                    let min_level: u32 = row.get(2)?;
-                    let max_level: u32 = row.get(3)?;
-                    let quest_level: u32 = row.get(4)?;
+                    let min_level: u32 = get_u32_saturating(row, 2)?;
+                    let max_level: u32 = get_u32_saturating(row, 3)?;
+                    let quest_level: u32 = get_u32_saturating(row, 4)?;
                     let zone_or_sort: u32 = row.get(5)?;
                     let prev: i32 = row.get(6)?;
                     let next: i32 = row.get(7)?;
@@ -438,8 +439,8 @@ impl QuestService {
                         Ok(QuestSearchResult {
                             id: row.get(0)?,
                             title: row.get(1)?,
-                            level: row.get(2)?,
-                            min_level: row.get(3)?,
+                            level: get_u32_saturating(row, 2)?,
+                            min_level: get_u32_saturating(row, 3)?,
                             zone: format!("ZoneID:{}", zone_id),
                             giver: 0,
                         })

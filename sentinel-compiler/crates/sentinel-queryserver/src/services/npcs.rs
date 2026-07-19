@@ -7,6 +7,7 @@ use sentinel_schema::{NpcRole, Waypoint};
 use super::helpers::zone_name;
 use super::ServiceState;
 use crate::models::*;
+use crate::sqlite::get_faction_string;
 
 // ---------------------------------------------------------------------------
 // NPC-specific DB helpers
@@ -131,7 +132,7 @@ impl NpcService {
                             row.get(6)?,
                             5.0,
                         ),
-                        faction: row.get(2)?,
+                        faction: get_faction_string(row, 2)?,
                         quest_ids: npc_quests(&conn, entry)?,
                     })
                 },

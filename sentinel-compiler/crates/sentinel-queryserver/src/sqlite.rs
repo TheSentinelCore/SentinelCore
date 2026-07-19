@@ -2,8 +2,35 @@ use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
 use rusqlite::Connection;
 use anyhow::{Result, Context};
+use rusqlite::Row;
 use std::path::Path;
 use tracing::{info, warn};
+
+// ---------------------------------------------------------------------------
+// Row helpers — MaNGOS uses -1 as a sentinel for "no value" across many
+// numeric columns (QuestLevel, MinLevel, Req* ids, etc.). Reading those
+// directly into a `u32` panics with "Integer -1 out of range". These
+// helpers read as `i32` and saturate the sentinel to 0.
+// ---------------------------------------------------------------------------
+
+/// Read a possibly-negative DB integer column as `u32`, saturating the
+/// MaNGOS `-1` "none" sentinel to `0`.
+pub fn get_u32_saturating(row: &Row, idx: usize) -> rusqlite::Result<u32> {
+    let v: i32 = row.get(idx)?;
+    Ok(v.max(0) as u32)
+}
+
+/// Read the `Faction` integer column and return it as a `String`.
+///
+/// `creature_template.Faction` / `taxi_nodes.faction` are INTEGER ids in the
+/// DB, but our API models expose `faction` as a `String` (the editor/Lua side
+/// compares faction labels). We have no faction-name lookup table in this DB,
+/// so we return the numeric id as a string. This keeps the `String` contract
+/// intact and avoids the rusqlite `Integer -> String` type error.
+pub fn get_faction_string(row: &Row, idx: usize) -> rusqlite::Result<String> {
+    let v: i32 = row.get(idx)?;
+    Ok(v.to_string())
+}
 
 static DB_INSTANCE: Lazy<Arc<Mutex<Option<Connection>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 
