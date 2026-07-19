@@ -160,9 +160,9 @@ local test_modules = {
     "tests/runtime/test_operation_scheduler",
     "tests/runtime/test_action_executor",
     "tests/runtime/test_runtime_engine",
-    "tests/runtime/test_variable_store",
-    "tests/runtime/test_event_dispatcher",
     "tests/runtime/test_profile_state",
+    "tests/runtime/test_dry_run",
+    "tests/runtime/test_telemetry",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
@@ -171,6 +171,12 @@ local test_modules = {
     "tests/modules/combat/test_seal_policy",
     "tests/modules/combat/test_swing_tracker",
     "tests/modules/combat/test_target_selector",
+    -- UI module
+    "tests/ui/test_window",
+    "tests/ui/test_toolbar",
+    "tests/ui/test_explorer_panel",
+    "tests/ui/test_inspector_panel",
+    "tests/ui/test_timeline",
 }
 
 local passed = 0
