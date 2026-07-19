@@ -1,7 +1,7 @@
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use sentinel_schema::{Condition, ExitConditions, OperationGoal, RetryPolicy};
-use sentinel_schema::action::ActionPayload;
+use sentinel_schema::{Condition, ExitConditions, OperationGoal};
+use sentinel_schema::action::{ActionPayload, RetryPolicy};
 
 /// Immutable, fully resolved execution profile — the compiler's output.
 pub struct RuntimeProfile {

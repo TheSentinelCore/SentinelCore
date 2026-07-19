@@ -31,11 +31,16 @@ pub fn compile(profile: Profile, query_client: &dyn QueryClient) -> Result<Runti
     let _expanded = stages::expansion::expand_blueprints(&_resolved, query_client)?;
 
     // Stage 4: Dependency Resolution
-    let _dep_order = stages::dependency::resolve_dependencies(&profile)?;
+    let dep_order = stages::dependency::resolve_dependencies(&profile)?;
 
     // Stage 5: Goal Coverage
     let _goal_diagnostics = stages::goal_coverage::validate_goals(&profile)?;
 
-    // Stages 6-7: not yet implemented
-    todo!("Stages 6, 7 not yet implemented")
+    // Stage 6: Cross-Operation Optimization
+    let optimized = stages::optimization::optimize(&profile, &dep_order)?;
+
+    // Stage 7: Lowering
+    let (runtime_profile, _hash) = stages::lowering::lower(&optimized, profile.profile_id);
+
+    Ok(runtime_profile)
 }

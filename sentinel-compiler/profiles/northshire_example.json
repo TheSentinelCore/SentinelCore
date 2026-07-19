@@ -140,6 +140,7 @@
       "repairs": true
     }
   ],
+  "blueprint_library": [],
   "blueprints": [
     {
       "id": "quest-hub-v1",
