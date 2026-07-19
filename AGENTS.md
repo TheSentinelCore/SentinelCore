@@ -9,15 +9,10 @@
 ## Project Structure
 
 ```
-sentinel/                     # Main grind/combat bot (Lua)
+sentinel/                     # Main quest execution engine (Lua)
 ├── modules/
-│   ├── grind/              # Grind phases: rest, loot, vendor, pull, acquire
-│   │   └── phases/         # BT phase implementations
 │   ├── combat/             # Rotation framework, spell dispatcher, target selector
-│   ├── battleground/       # PvP battleground strategies
-│   ├── quest/              # Quest automation
-│   ├── lfg/              # Looking-for-group helpers
-│   └── mail/               # Mail automation
+│   └── quest/              # Quest automation (runtime execution of compiled profiles)
 ├── core/                   # Shared engine (BT, blackboard, event_bus, geometry)
 ├── integrations/           # Adapters for external systems (nav_client)
 ├── shared/                 # Cross-cutting libraries
