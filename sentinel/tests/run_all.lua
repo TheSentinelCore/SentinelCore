@@ -20,6 +20,9 @@ local test_modules = {
     "tests/runtime/test_nav_adapter",
     "tests/runtime/test_query_client",
     "tests/runtime/test_profile_manager",
+    "tests/runtime/test_operation_scheduler",
+    "tests/runtime/test_action_executor",
+    "tests/runtime/test_runtime_engine",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
