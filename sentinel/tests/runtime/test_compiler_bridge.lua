@@ -529,6 +529,56 @@ function M.run()
     T.assert_not_nil(mixed_result.operations[1].actions[2].generated_from, "vendor action should have generated_from tag")
     print("  PASS")
 
+    -- Test 21: Compile determinism + source_profile_hash caching (SENT-6.11)
+    print("Test 21: Compile determinism and content-hash cache")
+    local bb21 = Blackboard:new()
+    local eb21 = EventBus:new()
+    local pm21 = ProfileManager:new()
+
+    local mk_profile = function()
+        return {
+            name = "Determinism Profile",
+            operations = {
+                {
+                    id = "op-1",
+                    name = "Grind",
+                    actions = {
+                        { id = "a1", action_type = "goto", params = { target = { x = 10, y = 20 } } },
+                        { id = "a2", action_type = "wait", params = { duration_ms = 1000 } },
+                    },
+                },
+            },
+        }
+    end
+    pm21:set_active_profile(mk_profile())
+    local cb21 = CompilerBridge:new(bb21, eb21, pm21)
+
+    local r1, r2
+    cb21:compile(function(err, rp) r1 = rp end)
+    cb21:compile(function(err, rp) r2 = rp end)
+
+    T.assert_not_nil(r1, "first compile should succeed")
+    T.assert_not_nil(r2, "second compile should succeed")
+    -- Identical input + state => byte-identical RuntimeProfile output (ADR-008 §15)
+    T.assert_equal(#r1.operations, #r2.operations, "operation count stable")
+    T.assert_equal(#r1.operations[1].actions, #r2.operations[1].actions, "action count stable")
+    T.assert_equal(r1.metadata.source_hash, r2.metadata.source_hash, "source_hash stable across identical compiles")
+    T.assert_true(r2.metadata.source_hash ~= nil and r2.metadata.source_hash ~= "", "source_hash is computed")
+
+    -- Editing content (even with the same name) must produce a new source_hash
+    pm21:set_active_profile(mk_profile())  -- fresh table, same content
+    local r3
+    cb21:compile(function(err, rp) r3 = rp end)
+    T.assert_equal(r3.metadata.source_hash, r1.metadata.source_hash, "same content reuses same hash")
+
+    local edited = mk_profile()
+    edited.operations[1].actions[2].params.duration_ms = 2000  -- change content
+    pm21:set_active_profile(edited)
+    local r4
+    cb21:compile(function(err, rp) r4 = rp end)
+    T.assert_true(r4.metadata.source_hash ~= r1.metadata.source_hash, "edited content yields a new hash")
+    print("  PASS")
+
     print("\n=== All CompilerBridge Tests PASSED ===")
 end
 

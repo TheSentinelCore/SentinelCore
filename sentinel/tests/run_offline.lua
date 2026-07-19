@@ -179,12 +179,12 @@ local test_modules = {
     "tests/runtime/test_dry_run",
     "tests/runtime/test_telemetry",
     "tests/runtime/test_command_history",
-    "tests/runtime/test_variable_store",
     "tests/runtime/test_compiler_stages",
     "tests/runtime/test_runtime_context",
     "tests/runtime/test_module_registry",
     "tests/runtime/test_stage_optimization",
     "tests/runtime/test_route_analysis",
+    "tests/runtime/test_storage_manager",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",

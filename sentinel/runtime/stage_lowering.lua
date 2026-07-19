@@ -19,6 +19,8 @@ LoweringStage.ErrorCodes = {
     InvalidOperation = "C-7003",
     InvalidAction = "C-7004",
     MissingActionId = "C-7005",
+    CacheHit = "C-7006",
+    Lowered = "C-7007",
 }
 
 -- ============================================================================
@@ -80,12 +82,19 @@ function ProfileCache:clear() self._entries = {} self._order = {} end
 
 function ProfileCache:stats() return { size = #self._order, max_size = self._max_size } end
 
+-- Class-level cache retained only for the backward-compatible static
+-- helpers (get_cached_profile / has_cached_profile / clear_cache /
+-- get_cache_stats). The per-compile cache is instance-scoped (see
+-- LoweringStage:new) so independent CompilerBridge sessions in a shared
+-- VM do not leak lowered profiles into one another (ADR-008 §15 intent).
 LoweringStage._profile_cache = ProfileCache:new()
 
 ---Create a new LoweringStage
 ---@return table
 function LoweringStage:new()
-    return setmetatable({}, LoweringStage)
+    local o = setmetatable({}, LoweringStage)
+    o._cache = ProfileCache:new()
+    return o
 end
 
 ---Run Stage 7: Lower optimized profile to RuntimeProfile
@@ -123,15 +132,34 @@ function LoweringStage:run(optimized_profile, source_profile_id)
         return { runtime_profile = nil, diagnostics = { errors = errors, warnings = warnings } }
     end
 
-    local cached = self._profile_cache:get(source_profile_id)
+    -- Key the cache on the optimized-profile CONTENT hash (ADR-008 §15),
+    -- not the profile name/id, so identical content reuses the cache
+    -- regardless of VM-shared state or name collisions, and an edited
+    -- profile (same name) correctly bypasses it.
+        local cache_key = RuntimeTypes._compute_content_hash(optimized_profile)
+
+    local cached = self._cache:get(cache_key)
     if cached then
         table.insert(warnings, Diagnostics.info(
-            LoweringStage.ErrorCodes.MissingProfileId,
+            LoweringStage.ErrorCodes.CacheHit,
             Diagnostics.Stage.Lowering,
             "Cache hit for profile: " .. tostring(source_profile_id),
             source_profile_id
         ))
-        return { runtime_profile = cached, diagnostics = { errors = errors, warnings = warnings }, cached = true }
+        -- Content is identical, but re-stamp identity on a shallow copy so
+        -- the returned RuntimeProfile carries the right profile_id even when
+        -- two differently-named profiles share identical content. The cached
+        -- entry itself is left untouched for other callers.
+        local hit = {}
+        for k, v in pairs(cached) do hit[k] = v end
+        hit.profile_id = source_profile_id
+        hit.source_profile_id = source_profile_id
+        if hit.metadata then
+            hit.metadata = {}
+            for k, v in pairs(cached.metadata or {}) do hit.metadata[k] = v end
+            hit.metadata.source_hash = cache_key
+        end
+        return { runtime_profile = hit, diagnostics = { errors = errors, warnings = warnings }, cached = true }
     end
 
     local runtime_profile = RuntimeTypes.new_runtime_profile(optimized_profile, source_profile_id)
@@ -140,9 +168,9 @@ function LoweringStage:run(optimized_profile, source_profile_id)
     for _, warn in ipairs(validation.warnings) do table.insert(warnings, warn) end
 
     if #errors == 0 then
-        self._profile_cache:put(source_profile_id, runtime_profile)
+        self._cache:put(cache_key, runtime_profile)
         table.insert(warnings, Diagnostics.info(
-            LoweringStage.ErrorCodes.MissingProfileId,
+            LoweringStage.ErrorCodes.Lowered,
             Diagnostics.Stage.Lowering,
             "Lowered " .. tostring(#runtime_profile.operations) .. " operations to RuntimeProfile",
             runtime_profile.profile_id

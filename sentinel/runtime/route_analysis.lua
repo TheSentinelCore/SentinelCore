@@ -104,83 +104,122 @@ function RouteAnalysis:compute_total_travel(actions, player_start)
     
     local total = 0
     local prev_pos = player_start
-    
+
     for _, action in ipairs(actions) do
         local end_pos = self:_get_action_end_position(action)
-        if end_pos and prev_pos then
-            total = total + self:_get_travel_distance(prev_pos, end_pos)
+        if end_pos then
+            if prev_pos then
+                total = total + self:_get_travel_distance(prev_pos, end_pos)
+            end
+            prev_pos = end_pos
         end
-        prev_pos = end_pos
     end
-    
+
     return total
 end
 
----Estimate travel cost improvement from reordering actions
+---Nearest-neighbor greedy reordering of a single action list.
+---Positionless actions (waits, casts) are left in their original relative slots;
+---only positioned actions are permuted among their own slots. Swaps that would
+---violate quest dependencies or goal-critical ordering are skipped.
+---@param actions table Full action list
+---@param player_start table|nil Optional starting position (defaults to first positioned action)
+---@return table reordered_actions, boolean improved
+function RouteAnalysis:_nearest_neighbor_reorder(actions, player_start)
+    if not actions or #actions <= 1 then
+        return actions, false
+    end
+
+    -- Split into positioned / positionless, keeping positionless insertion order
+    local positioned = {}   -- { action, position }
+    local slots = {}        -- parallel to actions: true if this index is positioned
+    for i, action in ipairs(actions) do
+        local pos = self:_get_action_end_position(action)
+        if pos then
+            table.insert(positioned, { action = action, position = pos })
+            slots[i] = true
+        end
+    end
+
+    if #positioned <= 1 then
+        return actions, false
+    end
+
+    -- Greedy: anchor at player_start or the first positioned action's position
+    local current_pos = player_start or positioned[1].position
+    local remaining = {}
+    for _, p in ipairs(positioned) do table.insert(remaining, p) end
+    local ordered_positions = {}
+
+    -- Track placed quest pickups so a TurnIn never jumps ahead of its Pickup.
+    local placed_quests = {}
+    local function quest_id_of(a)
+        return a.quest_id or (a.params and a.params.quest_id)
+    end
+    local function is_pickup(a)
+        local t = a.action_type
+        return t == "PickupQuest" or t == "pickup_quest"
+    end
+    local function is_turnin(a)
+        local t = a.action_type
+        return t == "TurnInQuest" or t == "turn_in_quest"
+    end
+
+    while #remaining > 0 do
+        local nearest_idx, nearest_dist = nil, math.huge
+        for i, item in ipairs(remaining) do
+            -- A TurnIn is only eligible once its quest's Pickup has been placed.
+            if is_turnin(item.action) then
+                local q = quest_id_of(item.action)
+                if q and not placed_quests[q] then
+                    goto continue
+                end
+            end
+            local dist = self:_get_travel_distance(current_pos, item.position)
+            if dist < nearest_dist then
+                nearest_dist, nearest_idx = dist, i
+            end
+            ::continue::
+        end
+        -- If every remaining action was skipped (shouldn't happen), break to avoid infinite loop
+        if not nearest_idx then
+            nearest_idx = 1
+        end
+        local chosen = table.remove(remaining, nearest_idx)
+        if is_pickup(chosen.action) then
+            local q = quest_id_of(chosen.action)
+            if q then placed_quests[q] = true end
+        end
+        table.insert(ordered_positions, chosen)
+        current_pos = chosen.position
+    end
+
+    -- Splice reordered positioned actions back into the original positionless slots
+    local result = {}
+    local pos_cursor = 1
+    for i, action in ipairs(actions) do
+        if slots[i] then
+            table.insert(result, ordered_positions[pos_cursor].action)
+            pos_cursor = pos_cursor + 1
+        else
+            table.insert(result, action)
+        end
+    end
+
+    -- Only report improvement if total travel is actually reduced
+    local original_cost = self:compute_total_travel(actions, player_start)
+    local reordered_cost = self:compute_total_travel(result, player_start)
+    local improved = reordered_cost < original_cost - 1e-6
+    return result, improved
+end
+
+---Estimate travel cost after reordering actions
 ---@param actions table
 ---@param player_start table|nil Starting position
 ---@return number total_distance after reordering
 function RouteAnalysis:estimate_reordered_travel(actions, player_start)
-    -- Simple greedy reordering: sort by nearest-neighbor proximity
-    -- Only considers actions that have positionable endpoints
-    
-    if not actions or #actions <= 1 then
-        return self:compute_total_travel(actions, player_start)
-    end
-    
-    -- Build list of actions with positions
-    local positioned_actions = {}
-    for i, action in ipairs(actions) do
-        local pos = self:_get_action_end_position(action)
-        if pos then
-            table.insert(positioned_actions, {
-                original_index = i,
-                action = action,
-                position = pos,
-            })
-        end
-    end
-    
-    -- If no positioned actions, use original order
-    if #positioned_actions <= 1 then
-        return self:compute_total_travel(actions, player_start)
-    end
-    
-    -- Greedy reordering: start from player position, pick nearest next action
-    local reordered = {}
-    local remaining = positioned_actions
-    local current_pos = player_start or remaining[1].position
-    
-    while #remaining > 0 do
-        local nearest_idx = nil
-        local nearest_dist = math.huge
-        
-        for i, item in ipairs(remaining) do
-            local dist = self:_get_travel_distance(current_pos, item.position)
-            if dist < nearest_dist then
-                nearest_dist = dist
-                nearest_idx = i
-            end
-        end
-        
-        if nearest_idx then
-            table.insert(reordered, remaining[nearest_idx].action)
-            current_pos = remaining[nearest_idx].position
-            table.remove(remaining, nearest_idx)
-        else
-            break
-        end
-    end
-    
-    -- Reconstruct full action list with reordered positioned actions
-    local result_actions = {}
-    local reorder_map = {}
-    for _, action in ipairs(reordered) do
-        reorder_map[action.id or action] = true
-    end
-    
-    -- This is a simplified approach - in production would need proper action merging
-    return self:compute_total_travel(actions, player_start)
+    local reordered = self:_nearest_neighbor_reorder(actions, player_start)
+    return self:compute_total_travel(reordered, player_start)
 end
 
 ---Check if reordering two actions preserves goal coverage
@@ -252,26 +291,42 @@ end
 ---@param goal_coverage_validation function Optional validation function (from stage_goal_coverage)
 ---@return table reordered_actions|nil, table diagnostics
 function RouteAnalysis:reorder_actions(actions, allow_reordering, goal_coverage_validation)
+    local diagnostics = {}
+
     if not allow_reordering or not actions or #actions <= 1 then
-        return nil
+        return nil, diagnostics
     end
-    
-    -- Check for goal coverage preservation after reordering
+
+    -- Skip any candidate reordering that would violate quest dependencies or
+    -- goal-critical sequencing.
+    local candidate, improved = self:_nearest_neighbor_reorder(actions)
+
+    if not improved then
+        table.insert(diagnostics, {
+            level = "info",
+            message = "No travel-distance improvement from reordering",
+        })
+        return nil, diagnostics
+    end
+
+    -- Validate the candidate against goal coverage (Stage 5 rules) before accepting.
     if goal_coverage_validation then
-        local original_pos = {}
-        for i, action in ipairs(actions) do
-            original_pos[action.id or i] = i
+        local ok, err = pcall(goal_coverage_validation, candidate)
+        if not ok or (err ~= nil and err ~= true) then
+            -- Goal coverage would be broken — reject the reorder.
+            table.insert(diagnostics, {
+                level = "warning",
+                message = "Rejected candidate reordering: would break goal coverage",
+            })
+            return nil, diagnostics
         end
     end
-    
-    -- For now, return nil to indicate no reordering performed
-    -- Full implementation would:
-    -- 1. Identify all positionable actions
-    -- 2. Build distance matrix via QueryServer
-    -- 3. Solve for minimal travel using nearest-neighbor or TSP heuristic
-    -- 4. Validate goal coverage is preserved
-    -- 5. Return reordered list only if it improves travel
-    return nil
+
+    table.insert(diagnostics, {
+        level = "info",
+        message = "Reordered actions for reduced travel distance",
+    })
+    return candidate, diagnostics
 end
 
 return RouteAnalysis

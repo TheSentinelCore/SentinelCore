@@ -67,7 +67,6 @@ end
 -- @param profile_id string Source profile ID
 -- @return table RuntimeProfile
 function RuntimeTypes.new_runtime_profile(profile, profile_id)
-    local JSON = require("lib/JSON")
     local operations = {}
     for _, op in ipairs(profile.operations or {}) do
         table.insert(operations, RuntimeTypes.new_runtime_operation(op))
@@ -75,8 +74,7 @@ function RuntimeTypes.new_runtime_profile(profile, profile_id)
 
     local profile_hash = ""
     if profile then
-        local str = JSON:encode(profile) or tostring(profile)
-        profile_hash = RuntimeTypes._compute_simple_hash(str)
+        profile_hash = RuntimeTypes._compute_content_hash(profile)
     end
 
     return {
@@ -97,7 +95,7 @@ function RuntimeTypes.new_runtime_profile(profile, profile_id)
     }
 end
 
--- Compute simple hash for profile content
+-- Compute simple hash for a string
 -- @param str string String to hash
 -- @return string hex hash
 function RuntimeTypes._compute_simple_hash(str)
@@ -105,6 +103,52 @@ function RuntimeTypes._compute_simple_hash(str)
     for i = 1, #str do
         local byte = string.byte(str, i)
         hash = ((hash * 33) + byte) % 2^32
+    end
+    return string.format("%08x", hash)
+end
+
+-- Deterministic content hash over an arbitrary Lua table. Walks keys and
+-- values directly (not via JSON) so it captures every field — including
+-- action `params` and numeric keys — that the JSON encoder silently drops.
+-- Used for the ADR-008 §15 source_profile_hash cache key.
+-- @param value any Table/value to hash
+-- @param seen table|nil Cycle guard (internal)
+-- @return string hex hash
+function RuntimeTypes._compute_content_hash(value, seen)
+    seen = seen or {}
+    local hash = 5381
+    local function mix(n)
+        hash = ((hash * 33) + (n % 256)) % 2^32
+    end
+    local t = type(value)
+    if t == "nil" then mix(0)
+    elseif t == "boolean" then mix(value and 1 or 2)
+    elseif t == "number" then
+        -- Normalize so 1.0 and 1 hash identically.
+        mix(math.floor(value) % 256)
+        mix(math.floor((value - math.floor(value)) * 1000000) % 256)
+    elseif t == "string" then
+        for i = 1, #value do mix(string.byte(value, i)) end
+    elseif t == "table" then
+        if seen[value] then mix(255); return string.format("%08x", hash) end
+        seen[value] = true
+        -- Mix a stable signature per table, then each key/value pair.
+        mix(99)
+        local keys = {}
+        for k in pairs(value) do table.insert(keys, k) end
+        table.sort(keys, function(a, b)
+            return tostring(a) < tostring(b)
+        end)
+        for _, k in ipairs(keys) do
+            local ks = tostring(k)
+            for i = 1, #ks do mix(string.byte(ks, i)) end
+            local h = RuntimeTypes._compute_content_hash(value[k], seen)
+            -- fold the nested hash's integer value in
+            local int_val = tonumber(h, 16) or 0
+            mix(int_val % 256); mix(math.floor(int_val / 256) % 256)
+        end
+    else
+        mix(7) -- unsupported type (function/userdata): hash as opaque
     end
     return string.format("%08x", hash)
 end

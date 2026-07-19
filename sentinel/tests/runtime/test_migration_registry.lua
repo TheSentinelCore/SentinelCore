@@ -71,8 +71,8 @@ function M.run()
     }
     local result4 = mr4:migrate(profile_v0_4)
     T.assert_equal(#result4.errors, 0, "should have no errors")
-    T.assert_equal(result4.profile.schema_version, "1.0",
-        "schema_version should be set to 1.0")
+    T.assert_equal(result4.profile.schema_version, "1.0.0",
+        "schema_version should be set to 1.0.0")
     print("  PASS")
 
     -- =====================================================================

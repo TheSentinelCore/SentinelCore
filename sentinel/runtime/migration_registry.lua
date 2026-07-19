@@ -183,11 +183,14 @@ function MigrationRegistry:_migrate_v0_to_v1(profile)
     local errors = {}
     local warnings = {}
 
-    -- Ensure schema_version
+    -- Advance schema_version to the migration target. If it was missing we note it,
+    -- but even an explicitly-old version (e.g. "0.0.0") must be bumped to "1.0.0".
     if not profile.schema_version then
-        profile.schema_version = "1.0"
         table.insert(warnings, "added missing schema_version")
+    elseif profile.schema_version ~= "1.0.0" then
+        table.insert(warnings, "migrated schema_version from " .. tostring(profile.schema_version) .. " to 1.0.0")
     end
+    profile.schema_version = "1.0.0"
 
     -- Ensure metadata.compiler_version
     profile.metadata = profile.metadata or {}
