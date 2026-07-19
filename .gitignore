@@ -1,3 +1,4 @@
+tbcmangos.sqlite
 target
 SentinelNavServer/reference
 mmaps*
@@ -29,3 +30,6 @@ _scripts
 _dev
 Database/
 Database/
+
+# Local scratch / verification working dir (exclude from commits)
+.scratch/

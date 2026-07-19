@@ -61,6 +61,10 @@ function CompilerBridge:compile(callback)
     end
 
     self._is_compiling = true
+    -- Full compile recomputes from scratch. The lowering cache is global
+    -- (keyed by profile name), so clear it to avoid returning a stale
+    -- result from an unrelated earlier compile in the same VM.
+    LoweringStage.clear_cache()
     local start_time = os.clock()
 
     self:_publish("compile:started", {})

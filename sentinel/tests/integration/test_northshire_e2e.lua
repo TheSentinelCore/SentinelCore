@@ -42,6 +42,9 @@ function M.test_northshire_structural_validation()
     }
 
     local CompilerBridge = require("runtime/compiler_bridge")
+    local LoweringStage = require("runtime/stage_lowering")
+    LoweringStage.clear_cache()
+
     local MockBB = { set = function() end, get = function() return nil end }
     local MockEB = { publish = function() end }
     local MockPM = { get_active_profile = function() return profile end }

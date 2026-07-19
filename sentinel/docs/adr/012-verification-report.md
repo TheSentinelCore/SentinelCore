@@ -103,7 +103,7 @@ The implementation tickets document (ADR 012) was drafted assuming a Rust/Cargo 
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-5.1 — Goal Coverage Checking (Static) | ✅ | `modules/operation/goal_coverage.lua` implements all checkable goal types per 007 §15 |
+| SENT-5.1 — Goal Coverage Checking (Static) | ✅ **(hardened 2026-07-19)** | `modules/operation/goal_coverage.lua` normalizes action-type spelling (snake_case `pickup_quest`/`turn_in_quest`/`quest_hub`/`flight_path`/`train`/`talk_to_npc` emitted by `blueprint_registry`, OR PascalCase `PickupQuest`/`TurnInQuest`/`QuestHub` per ADR-008 §8) and resolves `quest_id`/`node_id` from both top-level and `params`-nested locations. `UnlockFlightPath` accepts `FlightPath`/`flight_path`/`FlightMaster` with node id in `node_id` or `to.id`. Previously only matched PascalCase top-level fields, so `CompleteQuestChain` coverage hard-failed against real emitted actions — the root cause of the SENT-6.12 e2e failure. |
 | SENT-5.2 — Entry/Exit Condition Evaluation Engine | ✅ | `modules/operation/condition_evaluator.lua` implements exhaustive condition evaluation |
 | SENT-5.3 — Operation Dependency Graph Construction | ✅ | `modules/operation/dependency_graph.lua` implements directed graph builder |
 | SENT-5.4 — Cycle Detection & ExcludesWith Conflict Detection | ⚠️ | Cycle detection in `cycle_detector.lua` but ExcludesWith conflict detection incomplete |
@@ -128,7 +128,7 @@ The implementation tickets document (ADR 012) was drafted assuming a Rust/Cargo 
 | SENT-6.9 — Diagnostics System | ✅ | `diagnostics.rs` implements format per 002 §19 |
 | SENT-6.10 — Incremental Compilation & Dirty-Scoped Recompile | ⚠️ | `incremental.rs` implemented, Lua wrapper added |
 | SENT-6.11 — Compile Caching & Determinism Verification | ❌ | No cache or determinism property testing |
-| SENT-6.12 — Integration Test: Northshire End-to-End | ⚠️ | Northshire profile exists but full trace not implemented |
+| SENT-6.12 — Integration Test: Northshire End-to-End | ✅ **(fixed 2026-07-19)** | `tests/integration/test_northshire_e2e.lua` — all 8 sub-tests pass (structural validation → reference resolution → blueprint expansion → dependency resolution → goal coverage → adjacency merge → lowering/provenance → full 7-stage pipeline). Required fixes: `goal_coverage.lua` action-type spelling + `quest_id` nesting normalization (see SENT-5.1), `CompilerBridge:compile` clears the global lowering cache per compile for determinism, and `LoweringStage` cache keying by `profile.id or profile.name` (ADR mandates `source_profile_hash`). |
 
 ---
 
@@ -210,7 +210,7 @@ The implementation tickets document (ADR 012) was drafted assuming a Rust/Cargo 
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| SENT-11.1 — Full End-to-End Integration Test Suite | ⚠️ | `tests/integration/test_northshire_e2e.lua` exists but incomplete |
+| SENT-11.1 — Full End-to-End Integration Test Suite | ✅ **(fixed 2026-07-19)** | `tests/integration/test_northshire_e2e.lua` runs green as part of `luajit tests/run_offline.lua`. Verified Northshire→Goldshire compile path end-to-end. |
 | SENT-11.2 — Performance Benchmarking Pass | ❌ | No benchmark suite |
 | SENT-11.3 — Diagnostics & Error Message UX Pass | ❌ | No diagnostic review |
 | SENT-11.4 — Module-Level CLAUDE.md Documentation | ⚠️ | Main CLAUDE.md exists, module docs incomplete |
@@ -239,10 +239,22 @@ The implementation tickets document (ADR 012) was drafted assuming a Rust/Cargo 
 
 ## Test Results (Rust Workspace)
 
-All 210 tests pass:
+All 214 tests pass:
 - 118 tests in sentinel-compiler
 - 92 tests in sentinel-schema
-- 12 incremental compilation tests verified
+- 4 tests in sentinel-queryserver
+
+## Test Results (Lua Offline Harness)
+
+`luajit tests/run_offline.lua` — **41 passed, 2 failed** (as of 2026-07-19).
+
+- **Failing (deferred per MVP §17, not regressions):**
+  - `tests/runtime/test_telemetry.run` — SENT-9.3 Telemetry Collector; Phase 9 analytics explicitly deferred in MVP §17.
+  - `tests/modules/combat/test_target_selector.run` — Combat module; out-of-scope for the MVP compile path.
+- **Previously failing, now fixed this session:**
+  - `test_compiler_bridge` (cache-collision zeroing ops; lowered-action `payload.type` vs `action_type`; vendor+repair collapse expectation)
+  - `test_compiler_stages` (ExcludesWith returns nil on conflict per ADR-008 C-4002; `FlightPath`/flight-node resolution; dot-vs-colon `CompilerBridge.validate_runtime_profile` call)
+  - `test_northshire_e2e` (SENT-6.12 — `CompleteQuestChain` coverage now matches emitted `pickup_quest`/`turn_in_quest` actions; per-sub-test `LoweringStage.clear_cache()`)
 
 ---
 
@@ -259,6 +271,8 @@ The implementation diverges from the original ticket assumptions in meaningful w
 4. **API Boundaries**: The Lua runtime correctly uses `core.*` APIs exclusively (per AGENTS.md) and avoids direct SQLite access.
 
 5. **MaNGOS `-1` sentinel / integer-Faction row mapping** (fixed 2026-07-19): MaNGOS uses `-1` as "none" for many numeric columns (`QuestLevel`, `MinLevel`, `Req*` ids) and stores `Faction` as an INTEGER. Reading those directly into `u32`/`String` Rust fields **panics at runtime on the real DB** even though the code compiles and unit tests (which use hand-built fixtures, not real data) pass. The fix: `sqlite.rs::get_u32_saturating` (i32→u32, saturates -1 to 0) and `get_faction_string` (i32→numeric-id String, preserving the `faction: String` API contract). **Any new QueryServer endpoint that reads a numeric column capable of being -1, or the Faction column, must use these helpers** or it will 500 on real data. This is the SENT-0.5 risk ("fixture may not represent production DB edge cases") made concrete.
+
+6. **Action-type vocabulary normalization (fixed 2026-07-19)**: The runtime canonically emits **snake_case** action types (`pickup_quest`, `turn_in_quest`, `quest_hub`, `flight_path`, `train`, `talk_to_npc` — see `blueprint_registry.lua`), while ADR-008 §8 names the canonical payloads `PickupQuestAction`/`TurnInQuestAction`/`FlightAction` (PascalCase). `goal_coverage.lua`, `route_analysis.lua`, and `stage_optimization.lua` now accept **both** spellings and resolve `quest_id`/`node_id` from either top-level or `params`-nested form. Net effect: coverage/route/optimization logic matches whatever the emitter actually produces, without changing emitted output. Known residual: the `LoweringStage` cache is keyed by `profile.id or profile.name` (module-global), not the ADR-mandated `source_profile_hash` — `CompilerBridge:compile` clears it per compile as a determinism stopgap; a follow-up should make the cache key content-hashed and/or per-instance.
 
 ---
 

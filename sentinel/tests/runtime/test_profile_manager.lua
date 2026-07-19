@@ -64,7 +64,7 @@ function M.run()
     -- Test 2: Custom profiles directory
     -- =====================================================================
     print("Test 2: Custom profiles directory")
-    local pm2 = ProfileManager.new({ profiles_dir = "custom/path" })
+    local pm2 = ProfileManager:new({ profiles_dir = "custom/path" })
     T.assert_equal(pm2:get_profiles_dir(), "custom/path")
     print("  PASS")
 

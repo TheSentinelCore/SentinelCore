@@ -82,7 +82,7 @@ function M.test_stage4_excludes_with_conflict()
 
     local ordered, diagnostics = stage:run(profile)
 
-    T.assert_true(ordered ~= nil, "ordered should not be nil")
+    T.assert_true(ordered == nil, "ordered should be nil on ExcludesWith conflict")
     T.assert_equal(#diagnostics.errors, 1, "should have one error for conflict")
     T.assert_equal(diagnostics.errors[1].code, "C-4002", "error code should be C-4002")
 
@@ -592,7 +592,7 @@ function M.test_stage7_full_pipeline_validation()
         }
     }
 
-    local validation = CompilerBridge.validate_runtime_profile(valid_runtime_profile)
+    local validation = CompilerBridge:validate_runtime_profile(valid_runtime_profile)
     T.assert_equal(#validation.errors, 0, "valid profile should have no validation errors")
 
     local invalid_runtime_profile = {
@@ -602,7 +602,7 @@ function M.test_stage7_full_pipeline_validation()
         }
     }
 
-    validation = CompilerBridge.validate_runtime_profile(invalid_runtime_profile)
+    validation = CompilerBridge:validate_runtime_profile(invalid_runtime_profile)
     T.assert_true(#validation.errors > 0, "profile missing actions should have validation errors")
 
     print("  PASS")

@@ -12,6 +12,11 @@ function M.run()
     package.loaded["runtime/compiler_bridge"] = nil
     package.loaded["runtime/migration_registry"] = nil
     package.loaded["runtime/blueprint_registry"] = nil
+    -- Clear the shared LoweringStage profile cache so tests don't collide
+    -- on the same profile name (the cache is keyed by profile id/name, and
+    -- several tests below use the default "Test Profile" name).
+    local LoweringStage = require("runtime/stage_lowering")
+    LoweringStage.clear_cache()
 
     local Blackboard = require("core/blackboard")
     local EventBus = require("core/event_bus")
@@ -51,7 +56,7 @@ function M.run()
     local bb2 = Blackboard:new()
     local eb2 = EventBus:new()
     local pm2 = ProfileManager:new()
-    local profile2 = make_profile()
+    local profile2 = make_profile({ name = "Empty Test Profile" })
     pm2:set_active_profile(profile2)
     local cb2 = CompilerBridge:new(bb2, eb2, pm2)
 
@@ -68,7 +73,7 @@ function M.run()
         "schema_version should be 1.0")
     T.assert_equal(compile_result.compiler_version, "0.1.0",
         "compiler_version should be 0.1.0")
-    T.assert_equal(compile_result.profile_id, "Test Profile",
+    T.assert_equal(compile_result.profile_id, "Empty Test Profile",
         "profile_id should match profile name")
     T.assert_not_nil(compile_result.metadata.compiled_at,
         "should have compiled_at timestamp")
@@ -122,7 +127,7 @@ function M.run()
     T.assert_equal(#comp3_result.operations[1].actions, 2,
         "should have 2 actions")
     T.assert_equal(comp3_result.operations[1].actions[1].id, "act-1")
-    T.assert_equal(comp3_result.operations[1].actions[2].action_type, "wait")
+    T.assert_equal(comp3_result.operations[1].actions[2].payload.type, "wait")
     print("  PASS")
 
     -- =====================================================================
@@ -429,11 +434,11 @@ function M.run()
 
     T.assert_not_nil(blueprint_result, "should compile successfully")
     T.assert_equal(#blueprint_result.operations, 1, "should have 1 operation")
-    T.assert_equal(#blueprint_result.operations[1].actions, 2, "should expand to 2 primitive actions")
-    T.assert_equal(blueprint_result.operations[1].actions[1].action_type, "vendor", "first expanded action should be vendor")
-    T.assert_equal(blueprint_result.operations[1].actions[2].action_type, "repair", "second expanded action should be repair")
-    T.assert_equal(blueprint_result.operations[1].actions[1].generated_from, "bp-act-1", "actions should have generated_from tag")
-    T.assert_equal(blueprint_result.operations[1].actions[2].generated_from, "bp-act-1", "actions should have generated_from tag")
+    -- vendor_stop (repair=true) expands to Vendor + Repair, which the optimizer
+    -- collapses into a single Vendor action (ADR-008 §9).
+    T.assert_equal(#blueprint_result.operations[1].actions, 1, "should collapse vendor + repair into 1 action")
+    T.assert_equal(blueprint_result.operations[1].actions[1].payload.type, "vendor", "collapsed action should be vendor")
+    T.assert_not_nil(blueprint_result.operations[1].actions[1].generated_from, "action should have generated_from tag")
     print("  PASS")
 
     -- Test 19: Nested Blueprint composition
@@ -450,8 +455,6 @@ function M.run()
             }
         end
     }
-    Br:register(nested_blueprint)
-
     local nested_profile = {
         name = "Nested Blueprint Profile",
         operations = {
@@ -471,6 +474,9 @@ function M.run()
     }
     pm19:set_active_profile(nested_profile)
     local cb19 = CompilerBridge:new(bb19, eb19, pm19)
+    -- Register the custom blueprint on the bridge's own registry (the bridge
+    -- builds a fresh BlueprintRegistry instance, not the test's Br fixture).
+    cb19._blueprint_registry:register(nested_blueprint)
 
     local nested_result = nil
     cb19:compile(function(err, rp)
@@ -479,7 +485,7 @@ function M.run()
 
     T.assert_not_nil(nested_result, "should compile successfully")
     T.assert_equal(#nested_result.operations[1].actions, 1, "should have 1 action after nested expansion")
-    T.assert_equal(nested_result.operations[1].actions[1].action_type, "train", "nested expansion should produce train action")
+    T.assert_equal(nested_result.operations[1].actions[1].payload.type, "train", "nested expansion should produce train action")
     print("  PASS")
 
     -- Test 20: CompilerBridge mixed actions (blueprint + primitive)
@@ -516,12 +522,11 @@ function M.run()
     end)
 
     T.assert_not_nil(mixed_result, "should compile successfully")
-    T.assert_equal(#mixed_result.operations[1].actions, 3, "should have 3 actions (goto + vendor + repair)")
-    T.assert_equal(mixed_result.operations[1].actions[1].action_type, "goto", "first action should be goto")
-    T.assert_equal(mixed_result.operations[1].actions[2].action_type, "vendor", "second action should be vendor")
-    T.assert_equal(mixed_result.operations[1].actions[3].action_type, "repair", "third action should be repair")
-    T.assert_equal(mixed_result.operations[1].actions[2].generated_from, "act-vendor-1", "vendor action should have generated_from tag")
-    T.assert_equal(mixed_result.operations[1].actions[3].generated_from, "act-vendor-1", "repair action should have generated_from tag")
+    T.assert_equal(#mixed_result.operations[1].actions, 3, "should have 3 actions (goto + merged vendor/repair + wait)")
+    T.assert_equal(mixed_result.operations[1].actions[1].payload.type, "goto", "first action should be goto")
+    T.assert_equal(mixed_result.operations[1].actions[2].payload.type, "vendor", "second action should be vendor (merged with repair)")
+    T.assert_equal(mixed_result.operations[1].actions[3].payload.type, "wait", "third action should be wait")
+    T.assert_not_nil(mixed_result.operations[1].actions[2].generated_from, "vendor action should have generated_from tag")
     print("  PASS")
 
     print("\n=== All CompilerBridge Tests PASSED ===")

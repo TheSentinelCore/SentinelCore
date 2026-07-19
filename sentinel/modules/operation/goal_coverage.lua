@@ -31,30 +31,37 @@ function GoalCoverage.check_action_coverage_for_goal(action, goal)
 
     local action_type = action.action_type or action.type
 
+    -- The runtime canonically emits snake_case action types (pickup_quest,
+    -- turn_in_quest, quest_hub), while the ADR-008 spec names the canonical
+    -- payloads PickupQuestAction/TurnInQuestAction. Accept both spellings so
+    -- coverage matches whatever the emitter actually produces.
+    local is_turnin = action_type == "turn_in_quest" or action_type == "TurnInQuest" or action_type == "CompleteQuest"
+    local is_pickup = action_type == "pickup_quest" or action_type == "PickupQuest"
+    local is_questhub = action_type == "quest_hub" or action_type == "QuestHub"
+
+    -- quest_id is either top-level (executor/ADR convention) or nested under
+    -- params (blueprint_registry emission). Resolve the union.
+    local function action_quest_id(a)
+        return a.quest_id or (a.params and a.params.quest_id)
+    end
+
     if goal.type == GoalType.CompleteQuest then
-        return action_type == "TurnInQuest" or action_type == "CompleteQuest"
-            or (action_type == "PickupQuest" and action.quest_id == goal.quest_id)
+        if is_turnin then return true end
+        if is_pickup and action_quest_id(action) == goal.quest_id then return true end
+        return false
     end
 
     if goal.type == GoalType.CompleteQuestChain then
-        if action_type == "TurnInQuest" or action_type == "CompleteQuest" then
-            local quest_ids = goal.quest_ids or {}
+        local quest_ids = goal.quest_ids or {}
+        if is_turnin or is_pickup then
+            local aid = action_quest_id(action)
             for _, qid in ipairs(quest_ids) do
-                if action.quest_id == qid then
+                if aid == qid then
                     return true
                 end
             end
         end
-        if action_type == "PickupQuest" then
-            local quest_ids = goal.quest_ids or {}
-            for _, qid in ipairs(quest_ids) do
-                if action.quest_id == qid then
-                    return true
-                end
-            end
-        end
-        if action_type == "QuestHub" and action.quest_ids then
-            local quest_ids = goal.quest_ids or {}
+        if is_questhub and action.quest_ids then
             for _, gqid in ipairs(quest_ids) do
                 for _, aqid in ipairs(action.quest_ids) do
                     if gqid == aqid then
@@ -103,18 +110,25 @@ function GoalCoverage.check_action_coverage_for_goal(action, goal)
     end
 
     if goal.type == GoalType.UnlockFlightPath then
-        if action_type == "FlightMaster" or action_type == "UnlockFlightPath" then
-            return action.node_id == goal.node_id
+        -- The flight node id may be top-level (node_id) or nested under a
+        -- route (to.id / from.id), depending on which action shape emitted it.
+        local function flight_node_id(a)
+            return a.node_id or (a.to and a.to.id) or (a.from and a.from.id)
         end
-        if action_type == "TalkToNpc" then
+        if action_type == "flight_path" or action_type == "FlightPath"
+            or action_type == "FlightMaster" or action_type == "UnlockFlightPath" then
+            return flight_node_id(action) == goal.node_id
+        end
+        if action_type == "talk_to_npc" or action_type == "TalkToNpc" then
             return action.gossip_action == "fly" or action.gossip_id == "flight"
         end
         return false
     end
 
     if goal.type == GoalType.LearnSpell then
-        return action_type == "LearnSpell" or action_type == "TrainSpell"
-            or (action_type == "TalkToNpc" and action.gossip_action == "train")
+        return action_type == "learn_spell" or action_type == "LearnSpell"
+            or action_type == "train" or action_type == "TrainSpell"
+            or ((action_type == "talk_to_npc" or action_type == "TalkToNpc") and action.gossip_action == "train")
     end
 
     if goal.type == GoalType.Custom then

@@ -229,16 +229,19 @@ end
 ---@param act2 table
 ---@return boolean has_critical_dependency
 function RouteAnalysis:_has_quest_dependency(act1, act2)
-    -- Pickup must come before its corresponding TurnIn
-    if act1.action_type == "TurnInQuest" and act2.action_type == "PickupQuest" then
-        if act1.quest_id == act2.quest_id then
-            return true
-        end
+    -- Pickup must come before its corresponding TurnIn.
+    -- quest_id may be top-level (executor/ADR convention) or nested under
+    -- params (blueprint_registry emission).
+    local function qid(a)
+        return a.quest_id or (a.params and a.params.quest_id)
     end
-    if act2.action_type == "TurnInQuest" and act1.action_type == "PickupQuest" then
-        if act2.quest_id == act1.quest_id then
-            return true
-        end
+    local is_turnin = function(t) return t == "TurnInQuest" or t == "turn_in_quest" end
+    local is_pickup = function(t) return t == "PickupQuest" or t == "pickup_quest" end
+    if is_turnin(act1.action_type) and is_pickup(act2.action_type) then
+        if qid(act1) == qid(act2) then return true end
+    end
+    if is_turnin(act2.action_type) and is_pickup(act1.action_type) then
+        if qid(act2) == qid(act1) then return true end
     end
     return false
 end

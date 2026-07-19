@@ -85,9 +85,11 @@ function OptimizationStage:run(profile, ordered_op_ids)
             local action = actions[i]
 
             -- Check for Vendor followed by Repair
+            local a_type = action.action_type or action.type
+            local next_type = actions[i + 1] and (actions[i + 1].action_type or actions[i + 1].type)
             if i < #actions and
-               action.action_type == "Vendor" and
-               actions[i + 1].action_type == "Repair" then
+               (a_type == "Vendor" or a_type == "vendor") and
+               (next_type == "Repair" or next_type == "repair") then
                 -- Validate goal coverage before merge
                 if not self:_would_break_goals(op, action, actions[i + 1]) then
                     -- Merge: add Vendor with repair flag, skip Repair
@@ -136,7 +138,8 @@ function OptimizationStage:run(profile, ordered_op_ids)
             local goto_action = curr_op.actions[1]
 
             -- Check if first action of curr is GoToAction
-            if last_action and goto_action.action_type == "GoToAction" then
+            local goto_type = goto_action.action_type or goto_action.type
+            if last_action and goto_type == "GoToAction" then
                 local prev_end_pos = self:_get_operation_end_position(prev_op)
                 local goto_dest = self:_extract_goto_destination(goto_action)
 
