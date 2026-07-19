@@ -26,13 +26,37 @@ function RuntimeActionExecutor:new(blackboard, event_bus, nav_adapter)
     return o
 end
 
+---Normalize an action to a single internal shape (ADR 014 one-tier).
+---Accepts BOTH the legacy nested form `{ payload = { type=, ... } }` and the
+---canonical flat form `{ action_type = "...", ...params }`. Returns
+---`{ type = string, params = table }` where params is the field bag the
+---handlers read from.
+---@param action table
+---@return table|nil { type = string, params = table } or nil if shape invalid
+function RuntimeActionExecutor._normalize(action)
+    if not action then return nil end
+    local at = action.action_type or action.type
+    local params
+    if action.payload then
+        at = at or action.payload.type
+        params = action.payload
+    else
+        params = action
+    end
+    if not at then return nil end
+    return { type = at, params = params }
+end
+
 ---Execute a RuntimeAction immediately
 ---@param action table RuntimeAction with payload, retry_policy, timeout, generated_from
 ---@return table Result: { status = "running"|"succeeded"|"failed", error = string|nil, cached = boolean|nil }
 function RuntimeActionExecutor:execute(action)
-    if not action or not action.payload then
-        return { status = "failed", error = "invalid action: missing payload" }
+    local norm = RuntimeActionExecutor._normalize(action)
+    if not norm then
+        return { status = "failed", error = "invalid action: missing action_type" }
     end
+    -- Expose normalized view for poll() to reuse the same action object.
+    action._norm = norm
 
     local action_id = action.id or action.action_id
 
@@ -58,7 +82,7 @@ function RuntimeActionExecutor:execute(action)
     end
 
     local ok, result = pcall(function()
-        return self:_execute_payload(action.payload, action)
+        return self:_execute_payload(norm.params, action, norm.type)
     end)
 
     if not ok then
@@ -133,7 +157,8 @@ function RuntimeActionExecutor:poll(action)
     end
 
     -- Delegate to action-specific poll handler
-    local action_type = action.payload and action.payload.type
+    local norm = action._norm or RuntimeActionExecutor._normalize(action)
+    local action_type = norm and norm.type
     local poll_handler = self._poll_handlers and self._poll_handlers[action_type]
 
     if not poll_handler then
@@ -238,11 +263,14 @@ function RuntimeActionExecutor:_cache_result(action_id, result)
 end
 
 ---Execute payload by type
----@param payload table ResolvedActionPayload
+---@param params table Field bag (nested payload OR flat top-level fields)
 ---@param action table Full action with policy/timeout
+---@param action_type string Normalized action type
 ---@return table Result
-function RuntimeActionExecutor:_execute_payload(payload, action)
-    local action_type = payload.type
+function RuntimeActionExecutor:_execute_payload(params, action, action_type)
+    -- Alias so the existing handler bodies (which read `payload.*`) keep working
+    -- whether the action arrived nested ({payload=...}) or flat (top-level).
+    local payload = params
 
     if action_type == "pickup_quest" then
         return self:_handle_pickup_quest(payload)

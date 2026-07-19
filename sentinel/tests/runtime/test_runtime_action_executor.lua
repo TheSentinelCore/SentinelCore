@@ -74,14 +74,15 @@ function M.run()
     print("  PASS")
 
     -- =====================================================================
-    -- Test 3: Execute action with missing payload returns failed
+    -- Test 3: Execute action with missing action_type returns failed
+    -- (ADR 014 one-tier: a flat action needs action_type; payload is optional)
     -- =====================================================================
-    print("Test 3: Execute action missing payload")
+    print("Test 3: Execute action missing action_type")
     local bb3 = Blackboard:new()
     local ex3 = Executor:new(bb3, EventBus:new(), mock_nav)
     local r3 = ex3:execute({ id = "test-action-1" })
-    T.assert_equal(r3.status, "failed", "action without payload should fail")
-    T.assert_equal(r3.error, "invalid action: missing payload", "should indicate missing payload")
+    T.assert_equal(r3.status, "failed", "action without action_type should fail")
+    T.assert_equal(r3.error, "invalid action: missing action_type", "should indicate missing action_type")
     print("  PASS")
 
     -- =====================================================================
@@ -324,6 +325,37 @@ function M.run()
     moving = false
     local r17b = ex17:poll()
     T.assert_equal(r17b.status, "succeeded", "flight_path should complete when not moving")
+    print("  PASS")
+
+    -- =====================================================================
+    -- Test 18: Flat (one-tier) action shape — action_type + top-level params
+    -- (ADR 014: authored form == executed form, no nested payload)
+    -- =====================================================================
+    print("Test 18: Flat action shape (one-tier)")
+    local bb18 = Blackboard:new()
+    local ex18 = Executor:new(bb18, EventBus:new(), mock_nav)
+    local r18 = ex18:execute({
+        id = "action-vendor-flat",
+        action_type = "vendor",
+        npc_guid = "vendor-flat-1",
+    })
+    T.assert_equal(r18.status, "succeeded", "flat vendor action should succeed")
+    print("  PASS")
+
+    -- =====================================================================
+    -- Test 19: Flat goto action polls to completion (one-tier)
+    -- =====================================================================
+    print("Test 19: Flat goto action (one-tier)")
+    local bb19 = Blackboard:new()
+    local ex19 = Executor:new(bb19, EventBus:new(), mock_nav)
+    local r19a = ex19:execute({
+        id = "action-goto-flat",
+        action_type = "goto",
+        position = { x = 1, y = 2, z = 3 },
+    })
+    T.assert_equal(r19a.status, "running", "flat goto should start running")
+    local r19b = ex19:poll()
+    T.assert_equal(r19b.status, "succeeded", "flat goto should complete when nav idle")
     print("  PASS")
 
     print("\n=== All RuntimeActionExecutor Tests PASSED ===")
