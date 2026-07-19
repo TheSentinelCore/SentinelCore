@@ -256,38 +256,8 @@ function ProfileManager.validate(profile)
 end
 
 -- ============================================================================
--- Compile (ADR 002 §4 - wires Phase 2 storage to Phase 6 compiler)
+-- Compile / Prepare (ADR 014 one-tier)
 -- ============================================================================
-
----Compile a profile for runtime execution
----@param profile table The authoring profile to compile
----@return table|nil runtime_profile The compiled runtime profile
----@return string|nil error Error message if compilation failed
-function ProfileManager:compile(profile)
-    if not profile then
-        return nil, "no profile to compile"
-    end
-
-    profile = profile or self._active_profile
-
-    -- If compiler bridge is available, use full compilation pipeline
-    if self._compiler_bridge then
-        local runtime_profile, err = self:_run_compile_pipeline(profile)
-        if err then
-            return nil, err
-        end
-        return runtime_profile, nil
-    end
-
-    -- Fallback: basic structure validation without compiler bridge
-    local errors = self.validate(profile)
-    if #errors > 0 then
-        return nil, "validation failed: " .. table.concat(errors, "; ")
-    end
-
-    -- Return as-is for now (backward compatibility)
-    return profile, nil
-end
 
 ---Run full compile pipeline via CompilerBridge (ADR 002 §4)
 ---@param profile table The authoring profile
@@ -312,6 +282,47 @@ function ProfileManager:_run_compile_pipeline(profile)
     end
 
     return result.profile, result.err
+end
+
+---Prepare a profile for runtime execution (ADR 014 one-tier).
+---The single canonical entry point: validate + cross-Operation merge.
+---The authored profile IS the runtime profile — there is no separate
+---lowering step. `compile` is retained as an alias for back-compat.
+---@param profile table The authoring profile to prepare
+---@return table|nil runtime_profile The same profile, validated/merged
+---@return string|nil error Error message if preparation failed
+function ProfileManager:prepare(profile)
+    return self:compile(profile)
+end
+
+---Compile (deprecated alias for `prepare`, ADR 014).
+---@param profile table The authoring profile to compile
+---@return table|nil runtime_profile
+---@return string|nil error
+function ProfileManager:compile(profile)
+    if not profile then
+        return nil, "no profile to compile"
+    end
+
+    profile = profile or self._active_profile
+
+    -- If compiler bridge is available, use full compilation pipeline
+    if self._compiler_bridge then
+        local runtime_profile, err = self:_run_compile_pipeline(profile)
+        if err then
+            return nil, err
+        end
+        return runtime_profile, nil
+    end
+
+    -- Fallback: basic structure validation without compiler bridge
+    local errors = self.validate(profile)
+    if #errors > 0 then
+        return nil, "validation failed: " .. table.concat(errors, "; ")
+    end
+
+    -- Return as-is for now (backward compatibility)
+    return profile, nil
 end
 
 ---Compile synchronously and return result immediately

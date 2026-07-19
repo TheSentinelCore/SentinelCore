@@ -15,30 +15,28 @@ local DEFAULT_RETRY_POLICY = {
 -- Default timeout for actions (milliseconds, ADR 008 §78)
 local DEFAULT_TIMEOUT_MS = 10000
 
--- RuntimeAction - A compiled action ready for the runtime engine
--- ADR 008 §77-78: { id, payload, retry_policy, timeout, generated_from }
--- @param action table Source action
--- @return table RuntimeAction
+-- RuntimeAction - the executable action form.
+-- ADR 014 (one-tier): the authored action IS the runtime action. No
+-- separate lowering step wraps it in a `payload` object — action_type and
+-- params stay at the top level so the runtime executor consumes exactly
+-- what the editor authored. This is a pass-through that preserves
+-- identity/retry/timeout fields and carries generated_from for provenance.
+-- @param action table Source action (flat, with action_type)
+-- @return table RuntimeAction (same flat shape)
 function RuntimeTypes.new_runtime_action(action)
     local generated_from = action.generated_from
-
-    -- Preserve generated_from if it's a single value
-    if action.generated_from then
-        if type(action.generated_from) == "table" then
-            generated_from = action.generated_from[1] or action.generated_from.action_id
-        end
+    if action.generated_from and type(action.generated_from) == "table" then
+        generated_from = action.generated_from[1] or action.generated_from.action_id
     end
 
-    -- Normalize action_type to payload.type for ADR 008 compliance
-    local payload = action.payload or { type = action.action_type or action.type or "unknown" }
-
-    return {
-        id = action.id or action.action_id,
-        payload = payload,
-        retry_policy = action.retry_policy or DEFAULT_RETRY_POLICY,
-        timeout = action.timeout or action.timeout_ms or DEFAULT_TIMEOUT_MS,
-        generated_from = generated_from,
-    }
+    local out = {}
+    for k, v in pairs(action) do out[k] = v end
+    out.id = action.id or action.action_id
+    out.action_type = action.action_type or action.type
+    out.retry_policy = action.retry_policy or DEFAULT_RETRY_POLICY
+    out.timeout = action.timeout or action.timeout_ms or DEFAULT_TIMEOUT_MS
+    out.generated_from = generated_from
+    return out
 end
 
 -- RuntimeOperation - A compiled operation ready for the runtime engine

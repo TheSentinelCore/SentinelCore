@@ -127,7 +127,7 @@ function M.run()
     T.assert_equal(#comp3_result.operations[1].actions, 2,
         "should have 2 actions")
     T.assert_equal(comp3_result.operations[1].actions[1].id, "act-1")
-    T.assert_equal(comp3_result.operations[1].actions[2].payload.type, "wait")
+    T.assert_equal(comp3_result.operations[1].actions[2].action_type, "wait")
     print("  PASS")
 
     -- =====================================================================
@@ -437,7 +437,7 @@ function M.run()
     -- vendor_stop (repair=true) expands to Vendor + Repair, which the optimizer
     -- collapses into a single Vendor action (ADR-008 §9).
     T.assert_equal(#blueprint_result.operations[1].actions, 1, "should collapse vendor + repair into 1 action")
-    T.assert_equal(blueprint_result.operations[1].actions[1].payload.type, "vendor", "collapsed action should be vendor")
+    T.assert_equal(blueprint_result.operations[1].actions[1].action_type, "vendor", "collapsed action should be vendor")
     T.assert_not_nil(blueprint_result.operations[1].actions[1].generated_from, "action should have generated_from tag")
     print("  PASS")
 
@@ -485,7 +485,7 @@ function M.run()
 
     T.assert_not_nil(nested_result, "should compile successfully")
     T.assert_equal(#nested_result.operations[1].actions, 1, "should have 1 action after nested expansion")
-    T.assert_equal(nested_result.operations[1].actions[1].payload.type, "train", "nested expansion should produce train action")
+    T.assert_equal(nested_result.operations[1].actions[1].action_type, "train", "nested expansion should produce train action")
     print("  PASS")
 
     -- Test 20: CompilerBridge mixed actions (blueprint + primitive)
@@ -523,9 +523,9 @@ function M.run()
 
     T.assert_not_nil(mixed_result, "should compile successfully")
     T.assert_equal(#mixed_result.operations[1].actions, 3, "should have 3 actions (goto + merged vendor/repair + wait)")
-    T.assert_equal(mixed_result.operations[1].actions[1].payload.type, "goto", "first action should be goto")
-    T.assert_equal(mixed_result.operations[1].actions[2].payload.type, "vendor", "second action should be vendor (merged with repair)")
-    T.assert_equal(mixed_result.operations[1].actions[3].payload.type, "wait", "third action should be wait")
+    T.assert_equal(mixed_result.operations[1].actions[1].action_type, "goto", "first action should be goto")
+    T.assert_equal(mixed_result.operations[1].actions[2].action_type, "vendor", "second action should be vendor (merged with repair)")
+    T.assert_equal(mixed_result.operations[1].actions[3].action_type, "wait", "third action should be wait")
     T.assert_not_nil(mixed_result.operations[1].actions[2].generated_from, "vendor action should have generated_from tag")
     print("  PASS")
 
