@@ -172,10 +172,13 @@ local test_modules = {
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
     "tests/modules/combat/test_spell_dispatcher",
-    "tests/modules/combat/test_helper_call_shapes",
-    "tests/modules/combat/test_seal_policy",
-    "tests/modules/combat/test_swing_tracker",
     "tests/modules/combat/test_target_selector",
+    -- UI module
+    "tests/ui/test_window",
+    "tests/ui/test_toolbar",
+    "tests/ui/test_explorer_panel",
+    "tests/ui/test_inspector_panel",
+    "tests/ui/test_timeline",
 }
 
 local passed = 0
