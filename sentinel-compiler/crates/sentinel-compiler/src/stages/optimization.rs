@@ -417,7 +417,7 @@ mod tests {
         ];
 
         let mut profile = Profile::new("Test", "Agent");
-        let a_id = op.actions[1].id; // Before push, capture ID
+        let _a_id = op.actions[1].id; // Before push, capture ID
         profile.operations.push(op);
 
         let op_id = profile.operations[0].id;
