@@ -168,6 +168,8 @@ local test_modules = {
     "tests/runtime/test_profile_state",
     "tests/runtime/test_dry_run",
     "tests/runtime/test_telemetry",
+    "tests/runtime/test_command_history",
+    "tests/runtime/test_variable_store",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
@@ -184,6 +186,11 @@ local test_modules = {
     "tests/ui/test_npc_library_panel",
     "tests/ui/test_quest_browser_panel",
     "tests/ui/test_world_map_panel",
+    -- UI module (utility panels)
+    "tests/ui/test_action_palette_panel",
+    "tests/ui/test_variables_panel",
+    "tests/ui/test_validation_panel",
+    "tests/ui/test_console_panel",
 }
 
 local passed = 0
