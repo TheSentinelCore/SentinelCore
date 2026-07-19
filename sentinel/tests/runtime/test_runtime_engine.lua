@@ -505,6 +505,58 @@ actions = {
     end
     print("  PASS")
 
+    -- Test 13: Undo/redo (SENT-8.9) — command history wired through engine
+    -- mutates and reverts a target profile.
+    print("Test 13: undo/redo through engine command history")
+    do
+        local bb13 = Blackboard:new()
+        local eb13 = EventBus:new()
+        local profile13 = {
+            id = "prof-13",
+            operations = { { id = "op-13", actions = {} } },
+        }
+        local pm13 = {
+            get_active_profile = function() return profile13 end,
+            get_active_profile_id = function() return "prof-13" end,
+        }
+        local mock_nav13 = { _state = "idle" }
+        local Engine13 = require("runtime/runtime_engine")
+        local CommandHistory = require("runtime/command_history")
+        local eng13 = Engine13:new(bb13, eb13, pm13, mock_nav13)
+        eng13:set_command_history(CommandHistory:new(bb13))
+
+        local function make_target(profile)
+            return {
+                add_action = function(op_id, action)
+                    for _, op in ipairs(profile.operations) do
+                        if op.id == op_id then table.insert(op.actions, action) end
+                    end
+                end,
+                remove_action_by_id = function(op_id, action_id)
+                    for _, op in ipairs(profile.operations) do
+                        if op.id == op_id then
+                            for i, a in ipairs(op.actions) do
+                                if a.id == action_id then table.remove(op.actions, i) end
+                            end
+                        end
+                    end
+                end,
+            }
+        end
+        local target = make_target(profile13)
+        local add_cmd = eng13:get_command_history():create_add_action_command(
+            "op-13", { id = "a1", action_type = "loot" })
+
+        eng13:execute_command(add_cmd, target)
+        T.assert_equal(#profile13.operations[1].actions, 1, "action added via command")
+        T.assert_true(eng13:undo(target), "undo succeeds")
+        T.assert_equal(#profile13.operations[1].actions, 0, "action removed via undo")
+        T.assert_true(eng13:redo(target), "redo succeeds")
+        T.assert_equal(#profile13.operations[1].actions, 1, "action restored via redo")
+        T.assert_true(eng13:undo(target), "undo returns boolean")
+    end
+    print("  PASS")
+
     print("\n=== All RuntimeEngine Tests PASSED ===")
 end
 

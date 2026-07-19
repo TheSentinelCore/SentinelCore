@@ -38,7 +38,44 @@ function RuntimeEngine:new(blackboard, event_bus, profile_manager, nav_adapter)
     o._validation_service = nil
     o._dirty_op_ids = {}
     o._validation_failures = {}
+    o._command_history = nil
     return o
+end
+
+---Wire the undo/redo command history (SENT-8.9).
+---@param command_history table CommandHistory instance
+function RuntimeEngine:set_command_history(command_history)
+    self._command_history = command_history
+end
+
+---Execute a command through the wired command history (no-op if none).
+---@param command table
+---@param target any
+function RuntimeEngine:execute_command(command, target)
+    if self._command_history then
+        self._command_history:execute(command, target)
+    end
+end
+
+---Undo the last command (SENT-8.9). Returns the command history's result.
+function RuntimeEngine:undo(target)
+    if self._command_history then
+        return self._command_history:undo(target)
+    end
+    return false
+end
+
+---Redo the last undone command (SENT-8.9).
+function RuntimeEngine:redo(target)
+    if self._command_history then
+        return self._command_history:redo(target)
+    end
+    return false
+end
+
+---@return table|nil CommandHistory instance
+function RuntimeEngine:get_command_history()
+    return self._command_history
 end
 
 ---Wire the continuous-validation service (SENT-8.7).
