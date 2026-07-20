@@ -210,6 +210,8 @@ local test_modules = {
     "tests/ui/test_validation_panel",
     "tests/ui/test_console_panel",
     "tests/ui/test_console_diagnostics",
+    "tests/ui/test_sentinel_ui_render_aliases",
+    "tests/ui/test_window_render_window",
     -- Operation module (Phase 5)
     "tests/modules/operation/test_all",
     -- Integrations (Phase 7)

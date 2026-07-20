@@ -30,6 +30,7 @@ function PanelRegistry:register(name, render_fn, options)
         name = name,
         visible = options.default_visible ~= false,
         render_fn = render_fn,
+        render_window_fn = options.render_window_fn,
         options = {
             default_visible = options.default_visible ~= false,
             dock = options.dock or "center",
@@ -76,6 +77,23 @@ function Window:new(blackboard, event_bus)
     o._combat_module = nil
     o._panel_registry = PanelRegistry:new()
     o._toolbar = nil
+    -- Editor panels (quest authoring UI). Each is an independent window that
+    -- renders via its SentinelUI instance. Registered in init().
+    o._editor_panel_defs = {
+        { name = "explorer",       mod = "ui/panels/explorer_panel",        title = "Explorer",       dock = "left" },
+        { name = "inspector",      mod = "ui/panels/inspector_panel",       title = "Inspector",      dock = "right" },
+        { name = "timeline",       mod = "ui/panels/timeline_panel",        title = "Timeline",       dock = "bottom" },
+        { name = "action_palette", mod = "ui/panels/action_palette_panel",  title = "Actions",        dock = "left" },
+        { name = "validation",     mod = "ui/panels/validation_panel",      title = "Validation",     dock = "bottom" },
+        { name = "console",        mod = "ui/panels/console_panel",         title = "Console",        dock = "bottom" },
+        { name = "variables",      mod = "ui/panels/variables_panel",       title = "Variables",      dock = "right" },
+        { name = "npc_library",    mod = "ui/panels/npc_library_panel",     title = "NPC Library",    dock = "left" },
+        { name = "quest_browser",  mod = "ui/panels/quest_browser_panel",   title = "Quest Browser",  dock = "left" },
+        { name = "target_capture", mod = "ui/panels/target_capture_panel",  title = "Target Capture", dock = "right" },
+        { name = "world_map",      mod = "ui/panels/world_map_panel",       title = "World Map",     dock = "center" },
+        { name = "search",         mod = "ui/panels/search_panel",          title = "Search",         dock = "center" },
+    }
+    o._editor_panels = {}
     return o
 end
 
@@ -88,6 +106,27 @@ function Window:init(app)
     -- Initialize panels
     self._combat_panel:init(self._combat)
     self._settings_panel:init()
+
+    -- Construct, init and register editor panels as independent windows.
+    for _, def in ipairs(self._editor_panel_defs) do
+        local PanelClass = require(def.mod)
+        local instance = PanelClass:new(self._blackboard, self._event_bus)
+        if instance.init then instance:init() end
+        -- Editor panels render regardless of the rotation enable toggle.
+        if instance.set_visible then instance:set_visible(true) end
+        self._editor_panels[def.name] = instance
+        self:register_panel(def.name, function()
+            -- Editor panels draw via on_render_window (the Sylvannas custom
+            -- window callback), not the world-overlay render path.
+        end, {
+            default_visible = true,
+            dock = def.dock,
+            title = def.title,
+            render_window_fn = function()
+                if instance.render_window then instance:render_window() end
+            end,
+        })
+    end
 
     -- Register existing panels with panel system
     self:_register_builtin_panels()
@@ -254,12 +293,18 @@ function Window:tick(delta)
     if not self._initialized then return end
     self._combat_panel:tick(delta)
     self._settings_panel:tick(delta)
+    for _, panel in pairs(self._editor_panels) do
+        if panel.tick then panel:tick(delta) end
+    end
 end
 
 function Window:update()
     if not self._initialized then return end
     self._combat_panel:update()
     self._settings_panel:update()
+    for _, panel in pairs(self._editor_panels) do
+        if panel.update then panel:update() end
+    end
 end
 
 function Window:render()
@@ -279,8 +324,13 @@ end
 
 function Window:on_render_window()
     if not self._initialized then return end
-    self._combat_panel:render_window()
-    self._settings_panel:render_window()
+    -- Render every visible panel's window so it appears as a clickable/poppable
+    -- Sylvannas custom window.
+    for name, panel in pairs(self._panel_registry:all()) do
+        if panel.visible and type(panel.render_window_fn) == "function" then
+            panel.render_window_fn()
+        end
+    end
 end
 
 function Window:on_render_menu()
@@ -306,6 +356,10 @@ function Window:shutdown()
     self._initialized = false
     self._combat_panel:shutdown()
     self._settings_panel:shutdown()
+    for _, panel in pairs(self._editor_panels) do
+        if panel.shutdown then panel:shutdown() end
+    end
+    self._editor_panels = {}
     self._combat_module = nil
     self._combat = nil
     self._panel_registry = nil

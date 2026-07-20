@@ -597,6 +597,11 @@ function RotationSettingsUI.new(config)
     self._render_layer = config.render_layer
     self._window_epoch = 0
 
+    -- Editor/standalone panels (e.g. quest authoring UI) should render without
+    -- being gated behind the rotation `enable` toggle. _force_visible opts a
+    -- window into always-visible regardless of the menu enable state.
+    self._force_visible = false
+
     -- Tab state
     self.active_tab_index = 1
 
@@ -940,10 +945,20 @@ function RotationSettingsUI:_sync_window_state()
 end
 
 function RotationSettingsUI:_is_enabled()
+    if self._force_visible then
+        return true
+    end
     if self.menu and self.menu.enable then
         return self.menu.enable:get_state()
     end
     return false
+end
+
+---Force the window visible independent of the rotation `enable` toggle.
+---Used by editor/standalone panels that must always render.
+---@param visible boolean
+function RotationSettingsUI:set_visible(visible)
+    self._force_visible = visible ~= false
 end
 
 -- ============================================================================
@@ -3555,6 +3570,22 @@ function RotationSettingsUI:on_render()
     end
 
     self:_sync_window_state()
+end
+
+-- Panel-facing render aliases. The panels (combat_panel, settings_panel, and
+-- the editor panels) call self._ui:render() / render_window() / render_menu().
+-- RotationSettingsUI draws via on_render() / on_menu_render(); alias them so the
+-- windows actually render through the panel API.
+function RotationSettingsUI:render()
+    self:on_render()
+end
+
+function RotationSettingsUI:render_window()
+    self:on_render()
+end
+
+function RotationSettingsUI:render_menu()
+    self:on_menu_render()
 end
 
 -- ============================================================================
