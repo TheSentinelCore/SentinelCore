@@ -15,6 +15,9 @@ function NPCLibraryPanel:new(blackboard, event_bus)
     o._role_filter = "all" -- all, vendor, questgiver, trainer, innkeeper, flightmaster, repair, mailbox, bank
     o._selected_entry = nil
     o._npcs = {} -- cached copy from blackboard
+    o._npc_row_areas = {} -- { [index] = { x, y, w, h, entry } } for click detection
+    o._list_start_y = nil -- y position where the NPC list starts rendering
+    o._filtered_npcs = {} -- cached filtered list for click tracking
     return o
 end
 
@@ -34,12 +37,30 @@ function NPCLibraryPanel:init()
 end
 
 function NPCLibraryPanel:_build_ui()
+    self._ui:clear()
     self._ui:add_tab({ id = "main", label = "NPC Library" }, function(t)
-        -- Search box
+        -- Search input (uses SentinelUI's built-in text input)
+        t:text_input_list({
+            label = "Search",
+            id = "npc_search",
+            elements = {
+                {
+                    label = "Filter:",
+                    id = "npc_search_input",
+                    value_fn = function() return self._search_query end,
+                    on_change = function(value)
+                        self._search_query = value or ""
+                    end,
+                    placeholder = "Type to filter by name...",
+                }
+            }
+        })
+
+        -- Role filter buttons
         t:custom_render({
-            label = "Search and Filter",
+            label = "Role Filters",
             render_fn = function(ui, y)
-                return self:_render_search_filter(ui, y)
+                return self:_render_role_filters(ui, y)
             end
         })
 
@@ -50,82 +71,58 @@ function NPCLibraryPanel:_build_ui()
                 return self:_render_npc_list(ui, y)
             end
         })
-
-        -- Role filter buttons
-        t:custom_render({
-            label = "Role Filters",
-            render_fn = function(ui, y)
-                return self:_render_role_filters(ui, y)
-            end
-        })
     end)
 end
 
-function NPCLibraryPanel:_render_search_filter(ui, y)
-    local window = ui.window
-    local colors = ui.colors
-
-    -- Search label
-    local search_label = "Search: "
-    local search_label_size = window:get_text_size(search_label)
-    window:render_text(0, { x = 16, y = y }, colors.text_primary, search_label)
-    y = y + search_label_size.y + 4
-
-    -- Search input (we'll use a label as placeholder, but SentinelUI might have input)
-    -- For simplicity, we'll use a label that we update when the user types? Actually we need an input.
-    -- Looking at SentinelUI, there might be an input method. Let's check the shared/ui/sentinel_ui.lua later.
-    -- For now, we'll simulate with a label and assume we have a way to update via keypresses.
-    -- We'll store the search query in self._search_query and display it.
-    local search_text = self._search_query or ""
-    local search_label2 = window:create_label(search_text, { x = 16 + search_label_size.x, y = y - search_label_size.y - 2 })
-    -- We need to store this label to update it later. Let's store it in self._search_label.
-    self._search_label = search_label2
-
-    y = y + search_label_size.y + 8
-
-    -- Instructions
-    local info = "Press Enter to search"
-    local info_size = window:get_text_size(info)
-    window:render_text(0, { x = 16, y = y }, colors.text_secondary, info)
-    y = y + info_size.y + 4
-
-    return y
-end
+local ROLE_DEFS = {
+    { id = "all", label = "All" },
+    { id = "vendor", label = "Vendor" },
+    { id = "questgiver", label = "QuestGiver" },
+    { id = "trainer", label = "Trainer" },
+    { id = "innkeeper", label = "InnKeeper" },
+    { id = "flightmaster", label = "FlightMaster" },
+    { id = "repair", label = "Repair" },
+    { id = "mailbox", label = "Mailbox" },
+    { id = "bank", label = "Bank" },
+}
 
 function NPCLibraryPanel:_render_role_filters(ui, y)
     local window = ui.window
-    local colors = ui.colors
+    local c = ui.colors
     local x_start = 16
-    local button_width = 80
-    local button_height = 20
-    local spacing = 8
+    local bw = 76
+    local bh = 20
+    local spacing = 4
 
-    local roles = {
-        { id = "all", label = "All" },
-        { id = "vendor", label = "Vendor" },
-        { id = "questgiver", label = "QuestGiver" },
-        { id = "trainer", label = "Trainer" },
-        { id = "innkeeper", label = "InnKeeper" },
-        { id = "flightmaster", label = "FlightMaster" },
-        { id = "repair", label = "Repair" },
-        { id = "mailbox", label = "Mailbox" },
-        { id = "bank", label = "Bank" }
-    }
+    -- Build fresh areas each frame
+    self._role_button_areas = {}
+    local x = x_start
 
-    for i, role in ipairs(roles) do
+    for _, role in ipairs(ROLE_DEFS) do
         local is_active = (self._role_filter == role.id)
-        local color = is_active and colors.secondary_accent or colors.text_secondary
-        local label = window:create_label(role.label, { x = x_start, y = y }, color)
-        -- We need to make it clickable. We'll store the label and handle clicks in update.
-        -- For simplicity, we'll just render and handle clicks by checking if mouse is over.
-        -- We'll store the button areas.
-        if not self._role_button_areas then self._role_button_areas = {} end
-        self._role_button_areas[role.id] = { x = x_start, y = y, width = button_width, height = button_height, label = label }
-        x_start = x_start + button_width + spacing
+        local start_pos = { x = x, y = y }
+        local end_pos = { x = x + bw, y = y + bh }
+
+        -- Background
+        local bg = is_active and c.primary_accent or c.checkbox_inactive
+        window:render_rect_filled(start_pos, end_pos, bg, 3.0)
+        window:render_rect(start_pos, end_pos, c.section_border, 3.0, 1.0)
+
+        -- Label
+        local text_c = is_active and { r = 255, g = 255, b = 255, a = 255 } or c.text_secondary
+        local ts = window:get_text_size(role.label)
+        local tx = x + (bw - ts.x) / 2
+        local ty = y + (bh - ts.y) / 2
+        window:render_text(0, { x = tx, y = ty }, text_c, role.label)
+
+        window:is_mouse_hovering_rect_block_movement(start_pos, end_pos)
+
+        -- Store area for click detection in update()
+        self._role_button_areas[role.id] = { x = x, y = y, w = bw, h = bh }
+        x = x + bw + spacing
     end
 
-    y = y + button_height + 8
-    return y
+    return y + bh + 8
 end
 
 function NPCLibraryPanel:_render_npc_list(ui, y)
@@ -136,14 +133,17 @@ function NPCLibraryPanel:_render_npc_list(ui, y)
     self._npcs = self._blackboard:get("module.ui.npc_library") or {}
 
     -- Filter npcs
-    local filtered = {}
+    self._filtered_npcs = {}
+    self._npc_row_areas = {}
     for _, npc in ipairs(self._npcs) do
         if self:_npc_matches_filter(npc) then
-            table.insert(filtered, npc)
+            table.insert(self._filtered_npcs, npc)
         end
     end
 
-    if #filtered == 0 then
+    self._list_start_y = y
+
+    if #self._filtered_npcs == 0 then
         local empty_text = "No NPCs captured yet. Target an NPC in-game and use Capture (Ctrl+N)."
         local empty_size = window:get_text_size(empty_text)
         window:render_text(0, { x = 16, y = y }, colors.text_secondary, empty_text)
@@ -158,13 +158,16 @@ function NPCLibraryPanel:_render_npc_list(ui, y)
     window:render_text(0, { x = 320, y = header_y }, colors.text_primary, "Roles")
     y = header_y + 20
 
+    local row_height = 20
+    local row_w = window:get_width() and window:get_width() - 24 or 200
+
     -- Draw each NPC as a row
-    for i, npc in ipairs(filtered) do
+    for i, npc in ipairs(self._filtered_npcs) do
         local is_selected = (self._selected_entry and self._selected_entry == npc.entry)
-        local bg_color = is_selected and colors.background_selected or colors.background
+        local bg_color = is_selected and (colors.listbox_selected or colors.background_selected) or colors.background
         -- Draw background for selected row
         if is_selected then
-            window:render_rect({ x = 12, y = y - 2, width = window:get_width() - 24, height = 18 }, bg_color)
+            window:render_rect({ x = 12, y = y - 2, width = row_w, height = row_height }, bg_color)
         end
 
         local name = npc.name or "Unknown"
@@ -177,7 +180,14 @@ function NPCLibraryPanel:_render_npc_list(ui, y)
         window:render_text(0, { x = 160, y = y }, colors.text_primary, tostring(entry))
         window:render_text(0, { x = 240, y = y }, colors.text_primary, zone)
         window:render_text(0, { x = 320, y = y }, colors.text_primary, role_text)
-        y = y + 20
+
+        -- Store row area for click detection
+        self._npc_row_areas[i] = {
+            x = 12, y = y - 2, w = row_w, h = row_height,
+            entry = npc.entry,
+        }
+
+        y = y + row_height
     end
 
     return y + 10
@@ -216,35 +226,49 @@ function NPCLibraryPanel:update()
         self._ui:update()
     end
 
-    -- Handle search input (we need to capture keypresses)
-    -- This is a simplification; we assume the UI handles input and we can get the text from a stored label.
-    -- Actually, we need to implement a proper input field. Let's look at SentinelUI for input.
-    -- For now, we'll skip and assume we have a way to update self._search_query from keypresses.
-    -- We'll need to subscribe to events or use the UI's input system.
-
-    -- Handle clicks on NPC list and role filters
-    if self._ui and self._ui.menu then
-        local mouse_x = self._blackboard:get("system.mouse_x", 0)
-        local mouse_y = self._blackboard:get("system.mouse_y", 0)
-        local mouse_clicked = self._blackboard:get("system.mouse_clicked_left", false)
+    -- Handle mouse clicks for role filters and NPC row selection.
+    -- We read input state from the UI's own mouse query since these are ImGui-style
+    -- windows that handle their own input; blackboard-based input is unreliable here.
+    if self._ui and self._ui.window then
+        local w = self._ui.window
+        local mouse_clicked = false
+        -- Check if the window itself was clicked (left mouse button clicked anywhere)
+        if w.is_mouse_button_clicked then
+            mouse_clicked = w:is_mouse_button_clicked(0)
+        end
 
         if mouse_clicked then
-            -- Check role filter buttons
-            if self._role_button_areas then
-                for role_id, area in pairs(self._role_button_areas) do
-                    if mouse_x >= area.x and mouse_x <= area.x + area.width and
-                       mouse_y >= area.y and mouse_y <= area.y + area.height then
-                        self._role_filter = role_id
-                        self:_build_ui() -- rebuild to update button colors
-                        break
-                    end
+            local mx, my = nil, nil
+            if w.get_mouse_pos then
+                local ok, pos = pcall(function() return w:get_mouse_pos() end)
+                if ok and pos then
+                    mx = pos.x
+                    my = pos.y
                 end
             end
 
-            -- Check NPC list rows (simplified: each row is 20px high starting at some y)
-            -- We need to know the starting y of the list. This is getting complex.
-            -- For now, we'll skip click handling and rely on a select button or double-click.
-            -- We'll implement a simple selection: double-click on a row to select.
+            if mx and my then
+                -- Check role filter buttons
+                if self._role_button_areas then
+                    for role_id, area in pairs(self._role_button_areas) do
+                        if mx >= area.x and mx <= area.x + area.w and
+                           my >= area.y and my <= area.y + area.h then
+                            self._role_filter = role_id
+                            self:_build_ui()
+                            return
+                        end
+                    end
+                end
+
+                -- Check NPC list row selection
+                for _, row in ipairs(self._npc_row_areas or {}) do
+                    if mx >= row.x and mx <= row.x + row.w and
+                       my >= row.y and my <= row.y + row.h then
+                        self._selected_entry = row.entry
+                        return
+                    end
+                end
+            end
         end
     end
 end
@@ -269,8 +293,9 @@ end
 
 function NPCLibraryPanel:shutdown()
     self._ui = nil
-    self._search_label = nil
     self._role_button_areas = nil
+    self._npc_row_areas = nil
+    self._filtered_npcs = nil
 end
 
 return NPCLibraryPanel

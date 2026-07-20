@@ -17,6 +17,8 @@ function QuestBrowserPanel:new(blackboard, event_bus, query_client)
     o._search_results = {} -- list of quests
     o._selected_quest = nil -- currently expanded quest
     o._is_searching = false
+    o._result_row_areas = {} -- [index] = { x, y, w, h, quest_id } for click detection
+    o._results_start_y = nil
     return o
 end
 
@@ -38,12 +40,22 @@ end
 function QuestBrowserPanel:_build_ui()
     self._ui:clear()
     self._ui:add_tab({ id = "main", label = "Quest Search" }, function(t)
-        -- Search box
-        t:custom_render({
-            label = "Search Quests",
-            render_fn = function(ui, y)
-                return self:_render_search_box(ui, y)
-            end
+        -- Search input (uses SentinelUI's built-in text input)
+        t:text_input_list({
+            label = "Search",
+            id = "quest_search",
+            elements = {
+                {
+                    label = "Query:",
+                    id = "quest_search_input",
+                    value_fn = function() return self._search_query end,
+                    on_change = function(value)
+                        self._search_query = value or ""
+                        self:_perform_search()
+                    end,
+                    placeholder = "Type quest name and press Enter...",
+                }
+            }
         })
 
         -- Search results
@@ -72,33 +84,6 @@ function QuestBrowserPanel:_build_ui()
     end)
 end
 
-function QuestBrowserPanel:_render_search_box(ui, y)
-    local window = ui.window
-    local colors = ui.colors
-
-    local label = "Search: "
-    local label_size = window:get_text_size(label)
-    window:render_text(0, { x = 16, y = y }, colors.text_primary, label)
-    y = y + label_size.y + 4
-
-    -- We'll display the current search query in a label that we can update
-    self._search_label = window:create_label(self._search_query or "", { x = 16 + label_size.x, y = y - label_size.y - 2 })
-    -- Actually, we need an input field. Let's assume we can use a textbox from SentinelUI.
-    -- Looking at the shared/ui/sentinel_ui.lua, there might be a method like `menu.input` or similar.
-    -- Since we don't have the exact API, we'll simulate with a label and update via keypresses in update().
-    -- For now, we'll just show the query.
-
-    y = y + label_size.y + 8
-
-    -- Instructions
-    local info = "Press Enter to search"
-    local info_size = window:get_text_size(info)
-    window:render_text(0, { x = 16, y = y }, colors.text_secondary, info)
-    y = y + info_size.y + 4
-
-    return y
-end
-
 function QuestBrowserPanel:_render_search_results(ui, y)
     local window = ui.window
     local colors = ui.colors
@@ -109,6 +94,9 @@ function QuestBrowserPanel:_render_search_results(ui, y)
         window:render_text(0, { x = 16, y = y }, colors.text_secondary, searching)
         return y + size.y + 10
     end
+
+    self._results_start_y = y
+    self._result_row_areas = {}
 
     if #self._search_results == 0 then
         if self._search_query and self._search_query ~= "" then
@@ -132,12 +120,15 @@ function QuestBrowserPanel:_render_search_results(ui, y)
     window:render_text(0, { x = 400, y = header_y }, colors.text_primary, "Giver")
     y = header_y + 20
 
+    local row_h = 20
+    local row_w = window:get_width() and window:get_width() - 24 or 300
+
     -- Results
     for i, quest in ipairs(self._search_results) do
         local is_selected = (self._selected_quest and self._selected_quest.id == quest.id)
-        local bg_color = is_selected and colors.background_selected or colors.background
+        local bg_color = is_selected and (colors.listbox_selected or colors.background_selected) or colors.background
         if is_selected then
-            window:render_rect({ x = 12, y = y - 2, width = window:get_width() - 24, height = 18 }, bg_color)
+            window:render_rect({ x = 12, y = y - 2, width = row_w, height = row_h }, bg_color)
         end
 
         local title = quest.title or "Unknown"
@@ -149,7 +140,14 @@ function QuestBrowserPanel:_render_search_results(ui, y)
         window:render_text(0, { x = 260, y = y }, colors.text_primary, tostring(level))
         window:render_text(0, { x = 300, y = y }, colors.text_primary, zone)
         window:render_text(0, { x = 400, y = y }, colors.text_primary, giver)
-        y = y + 20
+
+        -- Store clickable row area
+        self._result_row_areas[i] = {
+            x = 12, y = y - 2, w = row_w, h = row_h,
+            quest = quest,
+        }
+
+        y = y + row_h
     end
 
     return y + 10
@@ -185,7 +183,7 @@ function QuestBrowserPanel:_render_quest_details(ui, y)
     y = render_field("Zone", quest.zone)
     y = render_field("Giver", quest.giver_name)
     y = render_field("Required Level", quest.required_level)
-    y = render_filed("Repeatable", quest.repeatable and "Yes" or "No")
+    y = render_field("Repeatable", quest.repeatable and "Yes" or "No")
     y = render_field("Daily", quest.daily and "Yes" or "No")
     y = render_field("Quest Type", quest.quest_type)
 
@@ -258,27 +256,40 @@ function QuestBrowserPanel:update()
         self._ui:update()
     end
 
-    -- Handle search input (simplified: we check for enter key via blackboard)
-    local enter_pressed = self._blackboard:get("system.key_enter_pressed", false)
-    if enter_pressed then
-        self:_perform_search()
-        -- reset the keypress flag
-        self._blackboard:set("system.key_enter_pressed", false)
-    end
-
-    -- Handle clicks on search results and buttons
-    if self._ui and self._ui.menu then
-        local mouse_x = self._blackboard:get("system.mouse_x", 0)
-        local mouse_y = self._blackboard:get("system.mouse_y", 0)
-        local mouse_clicked = self._blackboard:get("system.mouse_clicked_left", false)
+    -- Handle clicks on search result rows for selection
+    if self._ui and self._ui.window then
+        local w = self._ui.window
+        local mouse_clicked = false
+        if w.is_mouse_button_clicked then
+            mouse_clicked = w:is_mouse_button_clicked(0)
+        end
 
         if mouse_clicked then
-            -- Check if clicked on a search result row
-            local results_start_y = 100 -- approximate, we need to calculate based on UI layout
-            -- This is getting too complex for the UI we have. We'll skip for now and implement a simpler selection method.
-            -- Alternatively, we can make each result a button.
-            -- Let's change the approach: render each result as a button.
-            -- We'll do that in a separate refactor, but due to time, we'll leave it as is and note that selection is not implemented.
+            local mx, my = nil, nil
+            if w.get_mouse_pos then
+                local ok, pos = pcall(function() return w:get_mouse_pos() end)
+                if ok and pos then
+                    mx = pos.x
+                    my = pos.y
+                end
+            end
+
+            if mx and my then
+                -- Check search result row clicks
+                for _, row in ipairs(self._result_row_areas or {}) do
+                    if mx >= row.x and mx <= row.x + row.w and
+                       my >= row.y and my <= row.y + row.h then
+                        self._selected_quest = row.quest
+                        return
+                    end
+                end
+
+                -- Check action button clicks
+                if self._pickup_button and self._ui.window then
+                    -- The button click is handled by the button creation callbacks
+                    -- (SentinelUI button API handles its own click detection)
+                end
+            end
         end
     end
 end
@@ -293,7 +304,9 @@ function QuestBrowserPanel:_perform_search()
     self._query_client:search_quests(self._search_query, function(data, err)
         self._is_searching = false
         if err then
-            print("[QuestBrowser] Search error: " .. err)
+            if self._event_bus then
+                self._event_bus:publish("log:editor", { level = "ERROR", message = "[QuestBrowser] Search error: " .. err })
+            end
             self._search_results = {}
         else
             self._search_results = data or {}
@@ -325,6 +338,7 @@ function QuestBrowserPanel:shutdown()
     self._pickup_button = nil
     self._turnin_button = nil
     self._preview_button = nil
+    self._result_row_areas = nil
 end
 
 return QuestBrowserPanel

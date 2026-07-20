@@ -61,6 +61,7 @@ function CompilePipeline:run()
     local start_time = os.clock()
 
     self:_publish("pipeline:started", {})
+    self:_log("INFO", "Pipeline started")
 
     -- Step 1: Get active profile
     local profile = self._profile_manager:get_active_profile()
@@ -87,6 +88,7 @@ function CompilePipeline:run()
     profile = migrate_result.profile
 
     self:_publish("pipeline:migration_complete", { duration = migrate_duration })
+    self:_log("INFO", "Migration complete (" .. string.format("%.1f", migrate_duration) .. "ms)")
 
     -- Step 3: Run validation (via compiler bridge)
     local validate_start = os.clock()
@@ -101,6 +103,7 @@ function CompilePipeline:run()
         errors = validation_errors,
         warnings = validation_warnings,
     })
+    self:_log("INFO", "Validation complete — " .. #validation_errors .. " errors, " .. #validation_warnings .. " warnings")
 
     -- Combine migration and validation diagnostics
     local all_errors = {}
@@ -127,6 +130,7 @@ function CompilePipeline:run()
         self._last_diagnostics = diagnostics
         self._state = PIPELINE_STATES.ERROR
         self:_publish("pipeline:failed", { diagnostics = diagnostics })
+        self:_log("ERROR", "Validation failed — " .. #all_errors .. " errors blocking compile")
         return { success = false, runtime_profile = nil, diagnostics = diagnostics }
     end
 
@@ -150,6 +154,7 @@ function CompilePipeline:run()
     end
 
     self:_publish("pipeline:compile_complete", { duration = compile_duration })
+    self:_log("INFO", "Compilation complete (" .. string.format("%.1f", compile_duration) .. "ms)")
 
     -- Check compile result
     if compile_result and compile_result.err then
@@ -270,10 +275,9 @@ function CompilePipeline:_subscribe_to_events()
         -- When the toolbar "Compile" button is pressed, run the pipeline
         local result = self:run()
 
-        -- Log to console (print works in offline test harness)
+        -- Log to console and compiler log tab
         if result.success then
-            print("[CompilePipeline] Compile completed successfully")
-            print("[CompilePipeline] Profile: " .. tostring(
+            self:_log("INFO", "Compile completed successfully — profile: " .. tostring(
                 result.runtime_profile and result.runtime_profile.profile_id or "unknown"))
         else
             local err_msg = "unknown error"
@@ -284,7 +288,7 @@ function CompilePipeline:_subscribe_to_events()
                 end
                 err_msg = table.concat(msgs, "; ")
             end
-            print("[CompilePipeline] Compile failed: " .. err_msg)
+            self:_log("ERROR", "Compile failed: " .. err_msg)
         end
     end)
 
@@ -315,6 +319,18 @@ end
 function CompilePipeline:_publish(event_name, payload)
     if self._event_bus then
         self._event_bus:publish(event_name, payload)
+    end
+end
+
+---Publish a log entry to the compiler log tab in the Console panel.
+---@param level string "INFO"|"WARN"|"ERROR"
+---@param message string
+function CompilePipeline:_log(level, message)
+    if self._event_bus then
+        self._event_bus:publish("log:compiler", {
+            level = level,
+            message = message,
+        })
     end
 end
 

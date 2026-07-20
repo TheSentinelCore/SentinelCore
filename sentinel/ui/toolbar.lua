@@ -206,8 +206,8 @@ function Toolbar:render(window_x, window_y, window_width)
         end
     )
 
-    -- Compile button
-    x = self:render_button(x, y, "Compile", "Ctrl+Shift+C - Compile profile",
+    -- Prepare button (runs the Lua compile pipeline: validate → resolve → merge)
+    x = self:render_button(x, y, "Prepare", "Ctrl+Shift+C - Validate, resolve refs, cross-Operation merge",
         function()
             self:_publish_toolbar_event("compile")
         end
@@ -298,15 +298,62 @@ function Toolbar:render(window_x, window_y, window_width)
 end
 
 function Toolbar:render_panel_dropdown()
-    -- This is called from Window:render() to show panel visibility checkboxes
-    -- in the View dropdown. Implemented as part of toolbar integration.
+    -- Renders a row of compact toggle buttons for each registered panel,
+    -- allowing the user to show/hide panels from the toolbar area.
     if not self._window or not self._window._panel_registry then return end
 
     local panel_names = self._window:get_panel_names()
     if not panel_names or #panel_names == 0 then return end
 
-    -- For now, we just need to ensure the toolbar can access the window's panels
-    -- The actual dropdown rendering would integrate with the main window UI
+    -- Use a smaller button size for the panel toggles
+    local btn_w = 70
+    local btn_h = 20
+    local spacing = 4
+    local padding = 8
+    local x = padding
+    local y = self._y_offset + self._button_height + padding + 4
+
+    -- Label
+    if self._ui and self._ui.window and self._ui.colors then
+        local w = self._ui.window
+        local c = self._ui.colors
+        local label = "Panels:"
+        local label_size = w:get_text_size(label)
+        w:render_text(0, { x = x, y = y + (btn_h - label_size.y) / 2 }, c.text_secondary, label)
+        x = x + label_size.x + spacing * 2
+
+        -- Sort panel names for stable ordering
+        local sorted = {}
+        for name in pairs(panel_names) do table.insert(sorted, name) end
+        table.sort(sorted)
+
+        for _, name in ipairs(sorted) do
+            local panel = self._window._panel_registry:get(name)
+            if panel then
+                local is_visible = panel.visible
+                local bg = is_visible and c.primary_accent or c.checkbox_inactive
+                local start_pos = { x = x, y = y }
+                local end_pos = { x = x + btn_w, y = y + btn_h }
+
+                w:render_rect_filled(start_pos, end_pos, bg, 3.0)
+                w:render_rect(start_pos, end_pos, c.section_border, 3.0, 1.0)
+
+                local text_color = is_visible and { r = 255, g = 255, b = 255, a = 255 } or c.text_secondary
+                local text_size = w:get_text_size(name)
+                local tx = x + (btn_w - text_size.x) / 2
+                local ty = y + (btn_h - text_size.y) / 2
+                w:render_text(0, { x = tx, y = ty }, text_color, name)
+
+                w:is_mouse_hovering_rect_block_movement(start_pos, end_pos)
+
+                if w:is_rect_clicked(start_pos, end_pos) then
+                    self._window:toggle_panel(name)
+                end
+
+                x = x + btn_w + spacing
+            end
+        end
+    end
 end
 
 function Toolbar:tick(delta)

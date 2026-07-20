@@ -354,7 +354,11 @@ function Window:render()
     -- instance (controls RotationSettingsUI:_is_enabled -> window:begin) must
     -- reflect the flag.
     for name, instance in pairs(self._editor_panels) do
-        if instance.set_visible then instance:set_visible(self._editor_open) end
+        -- Propagate visibility to the RotationSettingsUI beneath each panel.
+        -- The panel classes don't have set_visible themselves -- the flag lives
+        -- on instance._ui (_force_visible -> _is_enabled). Without this call,
+        -- _is_enabled() returns false and window:begin is never reached.
+        if instance._ui and instance._ui.set_visible then instance._ui:set_visible(self._editor_open) end
         local reg = self._panel_registry:get(name)
         if reg then reg.visible = self._editor_open end
     end

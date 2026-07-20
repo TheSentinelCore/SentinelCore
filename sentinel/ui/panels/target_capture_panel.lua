@@ -88,10 +88,20 @@ function TargetCapturePanel:_capture_current_target()
     self:_set_status("Fetching NPC data...")
     self._is_fetching = true
 
-    -- We need the NPC entry ID. How to get it? Possibly from the target's guid or raw memory?
-    -- For now, we'll assume the target has an entry ID field.
-    -- This is a placeholder: we need to get the entry from the target object.
+    -- Get the NPC entry ID, with fallback to direct target object query.
     local entry = self._blackboard:get("player.target_entry")
+    if not entry and target and type(target.get_npc_id) == "function" then
+        local ok, npc_id = pcall(target.get_npc_id, target)
+        if ok and npc_id then
+            entry = npc_id
+        end
+    end
+    if not entry and target and type(target.get_entry) == "function" then
+        local ok, e = pcall(target.get_entry, target)
+        if ok and e then
+            entry = e
+        end
+    end
     if not entry then
         self:_set_status("Could not get NPC entry from target")
         self._is_fetching = false
@@ -126,7 +136,23 @@ function TargetCapturePanel:_update_target_info(target)
         self._target_label:set_text("Target: " .. name)
     end
     if self._type_label then
-        local type_str = "NPC" -- placeholder
+        local is_player = self._blackboard:get("player.target_is_player", false)
+        local type_str = is_player and "Player" or "NPC"
+        -- Check additional type hints from the target object
+        if target and not is_player then
+            if type(target.is_quest_unit) == "function" then
+                local ok, is_qg = pcall(target.is_quest_unit, target)
+                if ok and is_qg then
+                    type_str = "Quest Giver"
+                end
+            end
+            if type(target.is_vendor) == "function" then
+                local ok, is_v = pcall(target.is_vendor, target)
+                if ok and is_v then
+                    type_str = "Vendor"
+                end
+            end
+        end
         self._type_label:set_text("Type: " .. type_str)
     end
 end
