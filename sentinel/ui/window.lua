@@ -9,6 +9,21 @@ local SettingsPanel = require("ui/panels/settings_panel")
 local Window = {}
 Window.__index = Window
 
+-- One-shot diagnostics (so we can confirm callbacks fire in-game without spam).
+local _diag = { initialized = false, render_menu = false, render = false }
+
+local function _log(msg)
+    if core and type(core.log) == "function" then
+        pcall(core.log, "[Sentinel UI] " .. tostring(msg))
+    end
+end
+
+local function _log_err(msg)
+    if core and type(core.log_error) == "function" then
+        pcall(core.log_error, "[Sentinel UI] " .. tostring(msg))
+    end
+end
+
 -- Panel registry: tracks all registered panels and their state
 local PanelRegistry = {}
 PanelRegistry.__index = PanelRegistry
@@ -100,6 +115,22 @@ end
 function Window:init(app)
     if self._initialized then return end
 
+    -- Host-menu elements: a tree node + "Open Editor" button in the Project
+    -- Sylvannas main window, mirroring SentinelNavClient's working pattern.
+    -- The button toggles a single shared open flag; editor windows only render
+    -- while that flag is true (Sylvannas windows open via menu.enable, not by
+    -- auto-popping). Created once, outside the render callback.
+    if core and core.menu then
+        self._menu_tree = core.menu.tree_node and core.menu.tree_node() or nil
+        self._editor_open_btn = core.menu.button and core.menu.button("sentinelcore_editor_open") or nil
+    end
+    if not self._menu_tree or not self._editor_open_btn then
+        _log_err("menu elements NOT created (core.menu.tree_node/button missing?)")
+    else
+        _log("menu tree + Open Editor button registered")
+    end
+    self._editor_open = false
+
     self._combat_module = app:get_module("combat")
     self._combat = self._combat_module and self._combat_module.get_combat and self._combat_module:get_combat() or nil
 
@@ -108,23 +139,26 @@ function Window:init(app)
     self._settings_panel:init()
 
     -- Construct, init and register editor panels as independent windows.
+    self._editor_panel_names = {}
     for _, def in ipairs(self._editor_panel_defs) do
         local PanelClass = require(def.mod)
         local instance = PanelClass:new(self._blackboard, self._event_bus)
         if instance.init then instance:init() end
-        -- Editor panels render regardless of the rotation enable toggle.
-        if instance.set_visible then instance:set_visible(true) end
+        -- Editor panels start hidden; their visibility is driven by the shared
+        -- _editor_open flag (toggled from the host-menu button) each frame.
+        if instance.set_visible then instance:set_visible(false) end
         self._editor_panels[def.name] = instance
+        self._editor_panel_names[def.name] = true
+        -- Editor panels draw in the general render callback (the path
+        -- SentinelNavClient's working UI uses). They are intentionally NOT
+        -- registered with render_window_fn, so they never double-draw in the
+        -- window callback.
         self:register_panel(def.name, function()
-            -- Editor panels draw via on_render_window (the Sylvannas custom
-            -- window callback), not the world-overlay render path.
+            if instance.render_window then instance:render_window() end
         end, {
-            default_visible = true,
+            default_visible = false,
             dock = def.dock,
             title = def.title,
-            render_window_fn = function()
-                if instance.render_window then instance:render_window() end
-            end,
         })
     end
 
@@ -309,6 +343,22 @@ end
 
 function Window:render()
     if not self._initialized then return end
+    if not _diag.render then
+        _diag.render = true
+        _log("on_render fired")
+    end
+    -- Sync editor-panel visibility to the shared open flag before drawing, so
+    -- the editor windows only appear when the host-menu "Open Editor" button is
+    -- toggled on (mirrors SentinelNavClient's menu.enable gating). Both the
+    -- registry entry (controls whether render_fn is invoked) and the panel
+    -- instance (controls RotationSettingsUI:_is_enabled -> window:begin) must
+    -- reflect the flag.
+    for name, instance in pairs(self._editor_panels) do
+        if instance.set_visible then instance:set_visible(self._editor_open) end
+        local reg = self._panel_registry:get(name)
+        if reg then reg.visible = self._editor_open end
+    end
+
     -- Render toolbar first (handles panel visibility dropdowns)
     if self._toolbar then
         self._toolbar:render_panel_dropdown()
@@ -324,10 +374,12 @@ end
 
 function Window:on_render_window()
     if not self._initialized then return end
-    -- Render every visible panel's window so it appears as a clickable/poppable
-    -- Sylvannas custom window.
+    -- Editor panels draw in the general render callback (gated above); only the
+    -- built-in combat/settings panels use the window callback here.
     for name, panel in pairs(self._panel_registry:all()) do
-        if panel.visible and type(panel.render_window_fn) == "function" then
+        if self._editor_panel_names and self._editor_panel_names[name] then
+            -- skip: editor windows render via on_render, not this callback
+        elseif panel.visible and type(panel.render_window_fn) == "function" then
             panel.render_window_fn()
         end
     end
@@ -335,8 +387,23 @@ end
 
 function Window:on_render_menu()
     if not self._initialized then return end
+    if not _diag.render_menu then
+        _diag.render_menu = true
+        _log("on_render_menu fired; tree=" .. tostring(not not self._menu_tree) .. " btn=" .. tostring(not not self._editor_open_btn))
+    end
     self._combat_panel:render_menu()
     self._settings_panel:render_menu()
+
+    -- Host-menu entry: a tree node in the Project Sylvannas main window with an
+    -- "Open Editor" button that toggles the editor window set.
+    if self._menu_tree and self._editor_open_btn then
+        self._menu_tree:render("SentinelCore Editor", function()
+            if self._editor_open_btn:render("Open Editor") then
+                self._editor_open = not self._editor_open
+                _log("editor toggled -> " .. tostring(self._editor_open))
+            end
+        end)
+    end
 end
 
 function Window:on_update()

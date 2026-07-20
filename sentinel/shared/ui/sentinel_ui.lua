@@ -890,6 +890,22 @@ function RotationSettingsUI:set_tabs(tabs)
     end
 end
 
+-- Reset all tabs/sections. Used by editor panels that rebuild their UI
+-- (e.g. QuestBrowserPanel:_build_ui) before re-adding tabs.
+function RotationSettingsUI:clear()
+    self.sections = {}
+end
+
+-- Editor panels call ui:update() / ui:tick() expecting a refresh hook.
+-- RotationSettingsUI renders from its (already-built) sections on each
+-- on_render, so there is no per-frame mutable state to advance here.
+-- Kept as explicit no-ops for API compatibility with the editor panels.
+function RotationSettingsUI:update()
+end
+
+function RotationSettingsUI:tick(_delta)
+end
+
 -- Export builder for advanced external usage/debugging.
 RotationSettingsUI.TabBuilder = TabBuilder
 

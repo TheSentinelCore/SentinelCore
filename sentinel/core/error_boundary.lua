@@ -19,6 +19,11 @@ function ErrorBoundary:wrap(module_name, operation, fn, ...)
             error = tostring(result),
         })
     end
+    -- Surface the error so it isn't silently swallowed (previously a render-time
+    -- throw would kill the UI with no indication). Use core.log_error if present.
+    if core and type(core.log_error) == "function" then
+        pcall(core.log_error, "[Sentinel][error_boundary] " .. tostring(module_name) .. ":" .. tostring(operation) .. " -> " .. tostring(result))
+    end
     return false, result
 end
 
