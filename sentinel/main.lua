@@ -18,7 +18,7 @@ end
 
 local function clear_module_cache()
     if not package or not package.loaded then return end
-    local prefixes = { "runtime/", "core/bt/", "modules/", "shared/", "ui/" }
+    local prefixes = { "runtime/", "core/bt/", "modules/", "shared/" }
     for key in pairs(package.loaded) do
         for _, prefix in ipairs(prefixes) do
             if key:sub(1, #prefix) == prefix then
@@ -54,7 +54,7 @@ local function ensure_initialized()
     initialized = true
     last_init_error = nil
     _G.Sentinel.app = app
-    log_info("SentinelCore loaded (UI + Combat Engine)")
+    log_info("SentinelCore loaded (Combat Engine)")
     return true
 end
 
@@ -70,10 +70,6 @@ _G.Sentinel = {
     end,
     combat = function()
         if ensure_initialized() then return app:get_module("combat") end
-        return nil
-    end,
-    ui = function()
-        if ensure_initialized() then return app:get_module("ui") end
         return nil
     end,
     reload = function()
@@ -101,13 +97,6 @@ _G.Sentinel = {
             return false
         end
     end,
-    reload_ui = function()
-        if ensure_initialized() then
-            local ui = app:get_module("ui")
-            if ui and ui.reload_ui then return ui.reload_ui() end
-        end
-        return false
-    end,
 }
 
 core.register_on_pre_tick_callback(function()
@@ -118,6 +107,15 @@ core.register_on_update_callback(function()
     if ensure_initialized() then app:on_update() end
 end)
 
+core.register_on_spell_cast_callback(function(data)
+    if ensure_initialized() then app:on_spell_cast(data) end
+end)
+
+core.register_on_legit_spell_cast_callback(function(data)
+    if ensure_initialized() then app:on_legit_spell_cast(data) end
+end)
+
+-- Optional render callbacks (no-op by default, registered for extensibility)
 core.register_on_render_callback(function()
     if ensure_initialized() then app:on_render() end
 end)
@@ -128,14 +126,6 @@ end)
 
 core.register_on_render_menu_callback(function()
     if ensure_initialized() then app:on_render_menu() end
-end)
-
-core.register_on_spell_cast_callback(function(data)
-    if ensure_initialized() then app:on_spell_cast(data) end
-end)
-
-core.register_on_legit_spell_cast_callback(function(data)
-    if ensure_initialized() then app:on_legit_spell_cast(data) end
 end)
 
 local function on_unload()

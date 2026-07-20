@@ -1,5 +1,5 @@
 -- sentinel/tests/run_offline.lua
--- Offline test harness with mock Sylvannas APIs
+-- Offline test harness with mock Sylvannas APIs (combat-only)
 -- Usage: lua sentinel/tests/run_offline.lua
 
 -- Mock Sylvannas global API
@@ -89,8 +89,6 @@ _G.core = {
 -- Mock JSON module
 _G.JSON = {
     parse = function(str)
-        -- Simple JSON parse using loadstring for Lua tables
-        -- In production this would use a real JSON parser
         local ok, result = pcall(function()
             return assert(loadstring("return " .. str))()
         end)
@@ -98,7 +96,6 @@ _G.JSON = {
         return nil
     end,
     stringify = function(tbl)
-        -- Simple table to JSON string
         local function serialize(val, indent)
             local indent = indent or ""
             local t = type(val)
@@ -155,70 +152,44 @@ package.path = table.concat({
     package.path,
 }, ";")
 
--- Run test modules
+-- Run test modules (combat + core + infrastructure only)
 local test_modules = {
     -- Core
     "tests/core/test_event_bus",
     "tests/core/test_blackboard",
     "tests/core/test_bt",
 
-    -- Runtime
+    -- Infrastructure (runtime sensors, nav, module registry)
     "tests/runtime/test_sensor_hub",
     "tests/runtime/test_nav_adapter",
-    "tests/runtime/test_query_client",
-    "tests/runtime/test_profile_manager",
-    "tests/runtime/test_operation_scheduler",
-    "tests/runtime/test_runtime_action_executor",
-    "tests/runtime/test_runtime_engine",
-    "tests/runtime/test_migration_registry",
-    "tests/runtime/test_compiler_bridge",
-    "tests/runtime/test_compile_pipeline",
-    "tests/runtime/test_validation_service",
-    "tests/runtime/test_validation_panel_wiring",
-    "tests/runtime/test_dogfood_profile",
-    "tests/runtime/test_variable_store",
-    "tests/runtime/test_event_dispatcher",
-    "tests/runtime/test_profile_state",
-    "tests/runtime/test_dry_run",
-    "tests/runtime/test_telemetry",
-    "tests/runtime/test_command_history",
-    "tests/runtime/test_compiler_stages",
-    "tests/runtime/test_runtime_context",
     "tests/runtime/test_module_registry",
-    "tests/runtime/test_stage_optimization",
-    "tests/runtime/test_route_analysis",
-    "tests/runtime/test_storage_manager",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
     "tests/modules/combat/test_spell_dispatcher",
     "tests/modules/combat/test_target_selector",
-    -- Quest module (runtime execution)
-    "tests/modules/quest/test_quest_module",
-    "tests/modules/quest/test_goal_checking",
-    "tests/modules/quest/test_sub_operations",
-    -- UI module (IDE core)
-    "tests/ui/test_window",
-    "tests/ui/test_toolbar",
-    "tests/ui/test_toolbar_undo_wiring",
-    "tests/ui/test_explorer_panel",
-    "tests/ui/test_inspector_panel",
-    "tests/ui/test_timeline_panel",
-    -- UI module (utility panels)
-    "tests/ui/test_action_palette_panel",
-    "tests/ui/test_variables_panel",
-    "tests/ui/test_validation_panel",
-    "tests/ui/test_console_panel",
-    "tests/ui/test_console_diagnostics",
-    "tests/ui/test_sentinel_ui_render_aliases",
-    "tests/ui/test_window_render_window",
-    "tests/ui/test_window_init_real_ui",
-    -- Operation module (Phase 5)
-    "tests/modules/operation/test_all",
-    -- Integrations (Phase 7)
-    "tests/integrations/test_bridge_traits",
-    -- E2E Integration Tests (SENT-6.12)
-    "tests/integration/test_northshire_e2e",
+    "tests/modules/combat/test_module",
+    "tests/modules/combat/test_helper_call_shapes",
+    "tests/modules/combat/test_seal_policy",
+    "tests/modules/combat/test_swing_tracker",
+    "tests/modules/combat/test_combat_zone_detector",
+    "tests/modules/combat/test_pvp_target_selector",
+    "tests/modules/combat/test_retribution_tbc",
+
+    -- Combat profiles
+    "tests/modules/combat/profiles/mage/test_frost_conditions",
+    "tests/modules/combat/profiles/mage/test_frost_actions",
+    "tests/modules/combat/profiles/mage/test_maintenance_tree",
+    "tests/modules/combat/profiles/mage/test_aoe_tree",
+    "tests/modules/combat/profiles/mage/test_frost_tbc",
+    "tests/modules/combat/profiles/mage/test_pet_controller",
+
+    -- Shared libs
+    "tests/shared/test_compat",
+    "tests/shared/test_humanization",
+
+    -- Integration
+    "tests/integration/test_combat_dummy",
 }
 
 local passed = 0
@@ -229,9 +200,6 @@ for _, mod_name in ipairs(test_modules) do
     local ok, result = pcall(function()
         local test_suite = require(mod_name)
 
-        -- Support two patterns:
-        --   1. Module has a `run()` function (legacy pattern)
-        --   2. Module has individual `test*` functions (new pattern)
         if type(test_suite.run) == "function" then
             local run_ok, run_err = pcall(test_suite.run)
             if run_ok then
@@ -243,7 +211,6 @@ for _, mod_name in ipairs(test_modules) do
                 io.write("F")
             end
         else
-            -- Fallback: look for individual test functions
             local found = false
             for name, fn in pairs(test_suite) do
                 if type(fn) == "function" and name:match("^test") then

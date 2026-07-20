@@ -6,7 +6,6 @@ local SensorHub = require("runtime/sensor_hub")
 local CallbackBridge = require("runtime/callback_bridge")
 local NavAdapter = require("integrations/nav_client/adapter")
 local IziBridge = require("integrations/izi_bridge")
-local Window = require("ui/window")
 
 local SentinelApp = {}
 SentinelApp.__index = SentinelApp
@@ -26,45 +25,18 @@ function SentinelApp:new()
     o._callback_bridge = CallbackBridge:new(o._event_bus)
     o._nav_adapter = NavAdapter:new(o._event_bus)
     o._izi_bridge = IziBridge:new()
-    o._runtime_context = nil
     return o
-end
-
----Create and initialize RuntimeContext with module registry - SENT-8.1
----@return table RuntimeContext instance
-function SentinelApp:create_runtime_context()
-    local RuntimeContext = require("runtime/runtime_context")
-    self._runtime_context = RuntimeContext:new(self._blackboard, self._event_bus)
-    self._runtime_context:initialize(self)
-    return self._runtime_context
-end
-
----Get the RuntimeContext (creates if needed) - SENT-8.1
----@return table RuntimeContext instance
-function SentinelApp:get_runtime_context()
-    return self._runtime_context
 end
 
 function SentinelApp:initialize()
     -- Register modules declaratively via ModuleRegistry
     self._registry:register_all(self._blackboard, self._event_bus)
 
-    -- Get module references for direct access
+    -- Get module reference for direct access
     self._combat = self._registry:get("combat")
-    self._ui = self._registry:get("ui")
 
-    -- Initialize modules (passes app to UI, calls combat's initialize)
+    -- Initialize modules
     self._registry:initialize_all(self)
-
-    -- The editor UI (Window) is not registered as a declarative module; build
-    -- and initialize it directly so its panels actually render. Without this
-    -- the on_render / on_render_window callbacks never draw anything.
-    if not self._ui then
-        self._ui = Window:new(self._blackboard, self._event_bus)
-    end
-    if self._ui and type(self._ui.init) == "function" then
-        self._ui:init(self)
-    end
 
     -- Combat module has its own initialize method
     if self._combat and self._combat.initialize then
@@ -79,9 +51,6 @@ function SentinelApp:shutdown()
         if module and type(module.shutdown) == "function" then
             module:shutdown()
         end
-    end
-    if self._ui and type(self._ui.shutdown) == "function" then
-        self._ui:shutdown()
     end
     -- Shutdown modules via the registry
     self._registry:shutdown_all()
@@ -99,11 +68,6 @@ function SentinelApp:on_update()
     -- Poll nav adapter so all modules see fresh nav state
     self._nav_adapter:poll()
 
-    if self._ui then
-        self._error_boundary:wrap("ui", "update", function()
-            self._ui:on_update()
-        end)
-    end
     if self._combat and self._combat.update then
         self._error_boundary:wrap("combat", "update", function()
             self._combat:update(self._blackboard)
@@ -113,28 +77,14 @@ end
 
 function SentinelApp:on_render()
     self._callback_bridge:on_render()
-    if self._ui then
-        self._error_boundary:wrap("ui", "render", function()
-            self._ui:on_render()
-        end)
-    end
 end
 
 function SentinelApp:on_render_window()
-    if self._ui then
-        self._error_boundary:wrap("ui", "render_window", function()
-            self._ui:on_render_window()
-        end)
-    end
+    -- No editor UI to render in combat-only mode
 end
 
 function SentinelApp:on_render_menu()
     self._callback_bridge:on_render_menu()
-    if self._ui then
-        self._error_boundary:wrap("ui", "render_menu", function()
-            self._ui:on_render_menu()
-        end)
-    end
 end
 
 function SentinelApp:on_spell_cast(data)
@@ -155,10 +105,6 @@ end
 
 function SentinelApp:get_module(name)
     return self._registry:get(name)
-end
-
-function SentinelApp:get_ui()
-    return self._ui and self._ui.get_ui and self._ui.get_ui() or nil
 end
 
 return SentinelApp

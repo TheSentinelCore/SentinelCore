@@ -15,18 +15,10 @@ local test_modules = {
     "tests/core/test_blackboard",
     "tests/core/test_bt",
 
-    -- Runtime
+    -- Infrastructure (runtime sensors, nav, module registry)
     "tests/runtime/test_sensor_hub",
     "tests/runtime/test_nav_adapter",
-    "tests/runtime/test_query_client",
-    "tests/runtime/test_profile_manager",
-    "tests/runtime/test_operation_scheduler",
-    "tests/runtime/test_action_executor",
-    "tests/runtime/test_runtime_action_executor",
-    "tests/runtime/test_runtime_engine",
-    "tests/runtime/test_runtime_context",
     "tests/runtime/test_module_registry",
-    "tests/runtime/test_operation_manager",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
@@ -47,23 +39,10 @@ local test_modules = {
 
     -- Shared
     "tests/shared/test_compat",
-    "tests/shared/test_izi_bridge",
     "tests/shared/test_humanization",
-
-    -- Operation module (Phase 5)
-    "tests/modules/operation/test_goal_coverage",
-    "tests/modules/operation/test_condition_evaluator",
-    "tests/modules/operation/test_dependency_graph",
-    "tests/modules/operation/test_cycle_detector",
-    "tests/modules/operation/test_topological_sort",
-    "tests/modules/operation/test_operation_lifecycle",
-    "tests/modules/operation/test_sub_operation_composer",
 
     -- Integration
     "tests/integration/test_combat_dummy",
-
-    -- Bridge traits (SENT-7.1 through SENT-7.7)
-    "tests/integrations/test_bridge_traits",
 }
 
 local failures = 0

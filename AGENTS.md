@@ -9,30 +9,26 @@
 ## Project Structure
 
 ```
-sentinel/                     # Main quest execution engine (Lua)
+sentinel/                     # Combat engine + runtime (Lua)
 ├── modules/
-│   ├── combat/             # Rotation framework, spell dispatcher, target selector
-│   └── quest/              # Quest automation (runtime execution of compiled profiles)
+│   └── combat/             # Rotation framework, spell dispatcher, target selector
 ├── core/                   # Shared engine (BT, blackboard, event_bus, geometry)
-├── integrations/           # Adapters for external systems (nav_client)
+├── integrations/           # Adapters for external systems (izi_bridge, nav_client)
 ├── shared/                 # Cross-cutting libraries
-├── runtime/                # Runtime infrastructure (sensors, module registry)
+├── runtime/                # Runtime infrastructure (sensors, module registry, app)
 ├── tests/                  # Lua tests (run via _G.SentinelCore.run_tests())
-├── docs/
-│   └── adr/                # Architecture decisions
 └── CONTEXT.md              # Domain glossary
 ```
 
 ## Execution Model
 
-- **Behavior Trees** — phases are BT sequences (see `core/bt/`). Priority selector governs: safety > corpse_run > pvp > rest > loot > vendor > combat > pull > acquire.
+- **Behavior Trees** — combat rotation uses BT sequences (see `core/bt/`). Priority selector governs action selection.
 - **Blackboard** — shared state keyed by domain (`player.*`, `combat.*`, `module.*`). Use `module.<module_name>.*` for module state.
-- **Event Bus** — decoupled communication via `event_bus:subscribe/publish`. Used for death, kill, loot, stuck, engage events.
+- **Event Bus** — decoupled communication via `event_bus:subscribe/publish`. Used for engage, disengage, spell cast events.
 
 ## Cross-Service Integration
 
 ```
-SentinelCore → SentinelQueryServer   # core.http_get (GET endpoints only)
 SentinelCore → SentinelNavClient     # NavigationAdapter wraps _G.SentinelNavClient.client
 SentinelNavClient → SentinelNavServer # path, raycast, random-points endpoints
 ```
@@ -45,15 +41,13 @@ SentinelNavClient → SentinelNavServer # path, raycast, random-points endpoints
 
 ## Key Anti-Patterns to Avoid
 
-- Don't access `_pending_kill_targets` or `_telemetry._last_refresh_ms` directly — use public interface
 - Don't use `GetLootSlotLink`, `GetItemInfo`, or other WoW APIs — use Sylvannas `core.input.*` and `core.object_manager.*`
 - Don't implement inline `distance_3d` — use `core/geometry.lua::Geometry.distance()` with nil-safe semantics
 - Don't add fallback logic to `queue_position` — spell_queue uses method call convention
 
 ## Domain Documentation
 
-- `CONTEXT.md` — domain glossary used by all modules
-- `docs/adr/` — architecture decisions for deep modules
+- `sentinel/CONTEXT.md` — domain glossary used by all modules
 
 ## Agent skills
 
@@ -61,7 +55,7 @@ This repository is configured for the Matt Pocock engineering skills suite. The 
 
 - `docs/agents/issue-tracker.md` — Local Markdown files under `.scratch/<feature>/`
 - `docs/agents/triage-labels.md` — Canonical triage label vocabulary (bug/enhancement + 5 states)
-- `docs/agents/domain.md` — Single-context domain doc layout (`sentinel/CONTEXT.md` + `sentinel/docs/adr/`)
+- `docs/agents/domain.md` — Single-context domain doc layout (`sentinel/CONTEXT.md`)
 
 Skills that depend on this setup: `to-prd`, `to-tickets`, `triage`, `grill-with-docs`, `diagnose`, `improve-codebase-architecture`.
 

@@ -23,7 +23,7 @@ local MODULE_SCHEMA = {
 	state = { type = "string", required = false, default = MODULE_STATES.UNLOADED },
 }
 
--- Declarative module configuration registry
+-- Declarative module configuration registry (combat-only)
 ModuleRegistry.modules = {
 	combat = {
 		namespace = "combat",
@@ -35,18 +35,6 @@ ModuleRegistry.modules = {
 		init = function(blackboard, event_bus)
 			local CombatModule = require("modules/combat/init")
 			return CombatModule:new(blackboard, event_bus)
-		end,
-	},
-	quest = {
-		namespace = "quest",
-		capabilities = { "goal_checking", "sub_operations", "profile_execution" },
-		configuration = {
-			enabled = true,
-			priority = 5,
-		},
-		init = function(blackboard, event_bus)
-			local QuestModule = require("modules/quest/init")
-			return QuestModule:new(blackboard, event_bus)
 		end,
 	},
 }
