@@ -1,0 +1,11 @@
+[package]
+name = "sentinel-editor"
+description = "In-Game Editor for Sentinel Questing (Phase 8)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sentinel-models = { path = "../shared" }
+sentinel-validator = { path = "../validator" }
+serde_json = { workspace = true }

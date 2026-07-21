@@ -9,3 +9,10 @@ license.workspace = true
 sentinel-models = { path = "../shared" }
 uuid = { workspace = true }
 thiserror = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+sentinel-importer = { path = "../importer" }
+sentinel-queryclient = { path = "../queryclient" }
+tokio = { workspace = true }
+serde_json = { workspace = true }

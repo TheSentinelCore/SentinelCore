@@ -784,9 +784,22 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "sentinel-compiler"
 version = "0.1.0"
 dependencies = [
+ "sentinel-importer",
  "sentinel-models",
+ "sentinel-queryclient",
+ "serde_json",
  "thiserror 1.0.69",
+ "tokio",
  "uuid",
+]
+
+[[package]]
+name = "sentinel-editor"
+version = "0.1.0"
+dependencies = [
+ "sentinel-models",
+ "sentinel-validator",
+ "serde_json",
 ]
 
 [[package]]

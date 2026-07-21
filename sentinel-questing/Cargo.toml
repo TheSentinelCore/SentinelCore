@@ -24,6 +24,7 @@ members = [
     "validator",
     "compiler",
     "runtime",
+    "editor",
 ]
 
 [workspace.package]
