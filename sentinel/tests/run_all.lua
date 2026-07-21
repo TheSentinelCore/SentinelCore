@@ -41,6 +41,9 @@ local test_modules = {
     "tests/shared/test_compat",
     "tests/shared/test_humanization",
 
+    -- Questing module
+    "tests/modules/questing/test_runtime_action",
+
     -- Integration
     "tests/integration/test_combat_dummy",
 }

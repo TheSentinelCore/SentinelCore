@@ -206,17 +206,148 @@ function RuntimeAction.execute_use_item(payload, ctx)
     return "blocked"
 end
 
-function RuntimeAction.execute_condition(payload, ctx)
-    local cond = payload.condition
-
-    -- Evaluate condition using Sylvanas APIs
-    -- For now, check simple conditions
-    if cond == "AlwaysTrue" then
-        return "success"
+--- Evaluate a single RuntimeCondition against game state.
+--- Returns true/false.
+--- Each condition type maps to a handler in the lookup table.
+function RuntimeAction.evaluate_condition(ctx, cond)
+    -- Unit variant (AlwaysTrue, AlwaysFalse — serialised as bare string)
+    if type(cond) == "string" then
+        local handler = RuntimeAction._condition_handlers[cond]
+        if handler then
+            return handler(ctx, nil)
+        end
+        return true
     end
 
-    -- TODO: Implement condition evaluation
-    return "success"
+    -- Struct variant — { type = "VariantName", payload = <value> }
+    if type(cond) == "table" and cond.type then
+        local handler = RuntimeAction._condition_handlers[cond.type]
+        if handler then
+            return handler(ctx, cond.payload)
+        end
+        return true
+    end
+
+    return true
+end
+
+--- Execute a Condition action (gate).
+--- Returns "success" if condition met, "skipped" if not.
+function RuntimeAction.execute_condition(payload, ctx)
+    local cond = payload.condition
+    local ok = RuntimeAction.evaluate_condition(ctx, cond)
+    return ok and "success" or "skipped"
+end
+
+-- ============================================================================
+-- Condition handler lookup table
+-- Each handler receives (ctx, payload) and returns true/false.
+-- ============================================================================
+RuntimeAction._condition_handlers = {}
+
+-- Always true — always passes
+RuntimeAction._condition_handlers["AlwaysTrue"] = function(ctx, _)
+    return true
+end
+
+--- Quest conditions ---
+RuntimeAction._condition_handlers["QuestAccepted"] = function(ctx, quest_entry)
+    return ctx:is_quest_active(quest_entry)
+end
+
+RuntimeAction._condition_handlers["QuestCompleted"] = function(ctx, quest_entry)
+    return ctx:is_quest_completed(quest_entry)
+end
+
+RuntimeAction._condition_handlers["QuestRewarded"] = function(ctx, quest_entry)
+    return ctx:is_quest_completed(quest_entry)
+end
+
+RuntimeAction._condition_handlers["ObjectiveComplete"] = function(ctx, payload)
+    local quest_entry = payload[1]
+    local objective_idx = payload[2]
+    return ctx:is_objective_complete(quest_entry, objective_idx)
+end
+
+--- Level conditions ---
+RuntimeAction._condition_handlers["LevelAtLeast"] = function(ctx, level)
+    return ctx:get_player_level() >= level
+end
+
+RuntimeAction._condition_handlers["LevelBelow"] = function(ctx, level)
+    return ctx:get_player_level() < level
+end
+
+--- Item conditions ---
+RuntimeAction._condition_handlers["HasItem"] = function(ctx, item_entry)
+    local count = ctx:get_item_count(item_entry)
+    return count ~= nil and count > 0
+end
+
+RuntimeAction._condition_handlers["ItemCountAtLeast"] = function(ctx, payload)
+    local item_entry = payload[1]
+    local count = payload[2]
+    return (ctx:get_item_count(item_entry) or 0) >= count
+end
+
+--- Gold condition ---
+RuntimeAction._condition_handlers["GoldAtLeast"] = function(ctx, copper)
+    return (ctx:get_money() or 0) >= copper
+end
+
+--- Profession condition ---
+RuntimeAction._condition_handlers["ProfessionSkillAtLeast"] = function(ctx, payload)
+    local skill_name = payload[1]
+    local skill_level = payload[2]
+    return (ctx:get_skill_level(skill_name) or 0) >= skill_level
+end
+
+--- Item cooldown ---
+RuntimeAction._condition_handlers["ItemCooldownReady"] = function(ctx, item_entry)
+    return ctx:is_item_ready(item_entry)
+end
+
+--- Reputation condition ---
+RuntimeAction._condition_handlers["ReputationAtLeast"] = function(ctx, payload)
+    local faction = payload[1]
+    local standing = payload[2]
+    return (ctx:get_reputation(faction) or -42000) >= standing
+end
+
+--- Player conditions ---
+RuntimeAction._condition_handlers["RaceIs"] = function(ctx, race_name)
+    return ctx:get_player_race() == race_name
+end
+
+RuntimeAction._condition_handlers["ClassIs"] = function(ctx, class_name)
+    return ctx:get_player_class() == class_name
+end
+
+RuntimeAction._condition_handlers["FactionIs"] = function(ctx, faction_name)
+    return ctx:get_player_faction() == faction_name
+end
+
+--- Logical operators ---
+RuntimeAction._condition_handlers["Not"] = function(ctx, inner)
+    return not RuntimeAction.evaluate_condition(ctx, inner)
+end
+
+RuntimeAction._condition_handlers["All"] = function(ctx, conditions)
+    for _, subcond in ipairs(conditions) do
+        if not RuntimeAction.evaluate_condition(ctx, subcond) then
+            return false
+        end
+    end
+    return true
+end
+
+RuntimeAction._condition_handlers["Any"] = function(ctx, conditions)
+    for _, subcond in ipairs(conditions) do
+        if RuntimeAction.evaluate_condition(ctx, subcond) then
+            return true
+        end
+    end
+    return false
 end
 
 function RuntimeAction.execute_set_variable(payload, ctx)

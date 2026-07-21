@@ -37,15 +37,22 @@ function RuntimeProfile:load()
     return nil, "no data file API"
 end
 
---- Runtime context with helper methods
+--- Runtime context with helper methods and Sylvanas API facade.
 function RuntimeProfile:create_context()
     local ctx = {
         variables = self._variables,
         query = self._query,
+
+        -- Quest log tracking caches (W2.3, W2.4)
+        _completed_quests = {},   -- { [quest_entry] = true }
+        _active_quests = {},      -- { [quest_entry] = true }
+        _quest_log_dirty = true,  -- refresh on next query
     }
 
+    -- ====================================================================
+    -- Navigation helpers (stubs — filled by Wave 3)
+    -- ====================================================================
     function ctx:is_at_npc(entry)
-        -- Check if player is near the specified NPC entry
         if core and core.object_manager and core.object_manager.GetNearestCreature then
             local npc = core.object_manager.GetNearestCreature({ entry })
             if npc and npc.IsValid and npc:IsValid() then
@@ -56,19 +63,173 @@ function RuntimeProfile:create_context()
     end
 
     function ctx:is_at_destination(zone_name, tolerance)
-        -- Check if player is in the destination zone
         if core and core.object_manager and core.object_manager.GetPlayerInfo then
             local player = core.object_manager.GetPlayerInfo()
-            -- TODO: Use QueryServer to get zone bounds and check position
             return false
         end
         return false
     end
 
     function ctx:get_zone_waypoint(zone_name)
-        -- Query zone center coordinates
-        -- TODO: Use QueryServer
         return nil
+    end
+
+    -- ====================================================================
+    -- Quest log tracking (W2.3, W2.4)
+    -- ====================================================================
+
+    --- Refresh the quest log caches from Sylvanas APIs.
+    --- Called automatically on first access; can be called manually to force.
+    function ctx:_refresh_quest_log()
+        self._completed_quests = {}
+        self._active_quests = {}
+
+        if core and core.object_manager then
+            -- Query completed quests
+            if core.object_manager.GetCompletedQuests then
+                local completed = core.object_manager.GetCompletedQuests()
+                if type(completed) == "table" then
+                    for _, entry in ipairs(completed) do
+                        self._completed_quests[tostring(entry)] = true
+                    end
+                end
+            end
+
+            -- Query active quests
+            if core.object_manager.GetActiveQuests then
+                local active = core.object_manager.GetActiveQuests()
+                if type(active) == "table" then
+                    for _, entry in ipairs(active) do
+                        self._active_quests[tostring(entry)] = true
+                    end
+                end
+            end
+        end
+
+        self._quest_log_dirty = false
+    end
+
+    function ctx:is_quest_completed(quest_entry)
+        if self._quest_log_dirty then
+            self:_refresh_quest_log()
+        end
+        return self._completed_quests[tostring(quest_entry)] == true
+    end
+
+    function ctx:is_quest_active(quest_entry)
+        if self._quest_log_dirty then
+            self:_refresh_quest_log()
+        end
+        return self._active_quests[tostring(quest_entry)] == true
+    end
+
+    function ctx:is_objective_complete(quest_entry, objective_idx)
+        if core and core.object_manager and core.object_manager.GetQuestObjectiveInfo then
+            local completed, _ = core.object_manager.GetQuestObjectiveInfo(quest_entry, objective_idx)
+            return completed == true
+        end
+        -- Fallback: check if quest is completed
+        return self:is_quest_completed(quest_entry)
+    end
+
+    -- ====================================================================
+    -- Player stats facade (W2.5)
+    -- ====================================================================
+
+    function ctx:get_player_level()
+        if core and core.unit and core.unit.get_level then
+            return core.unit.get_level("player") or 1
+        end
+        return 1
+    end
+
+    function ctx:get_player_class()
+        if core and core.object_manager and core.object_manager.GetPlayerInfo then
+            local info = core.object_manager.GetPlayerInfo()
+            if info and info.class_name then
+                return info.class_name
+            end
+        end
+        if core and core.unit and core.unit.get_class then
+            return core.unit.get_class("player") or "Unknown"
+        end
+        return "Unknown"
+    end
+
+    function ctx:get_player_race()
+        if core and core.object_manager and core.object_manager.GetPlayerInfo then
+            local info = core.object_manager.GetPlayerInfo()
+            if info and info.race_name then
+                return info.race_name
+            end
+        end
+        if core and core.unit and core.unit.get_race then
+            return core.unit.get_race("player") or "Unknown"
+        end
+        return "Unknown"
+    end
+
+    function ctx:get_player_faction()
+        if core and core.object_manager and core.object_manager.GetPlayerInfo then
+            local info = core.object_manager.GetPlayerInfo()
+            if info and info.faction then
+                return info.faction
+            end
+        end
+        -- Fallback: derive from race
+        local race = ctx:get_player_race()
+        local alliance_races = { Human = true, Dwarf = true, NightElf = true, Gnome = true, Draenei = true }
+        local horde_races = { Orc = true, Undead = true, Tauren = true, Troll = true, BloodElf = true }
+        if alliance_races[race] then return "Alliance" end
+        if horde_races[race] then return "Horde" end
+        return "Neutral"
+    end
+
+    -- ====================================================================
+    -- Inventory facade (W2.5)
+    -- ====================================================================
+
+    function ctx:get_item_count(item_entry)
+        if core and core.object_manager and core.object_manager.GetItemCount then
+            return core.object_manager.GetItemCount(item_entry) or 0
+        end
+        return 0
+    end
+
+    function ctx:get_money()
+        if core and core.unit and core.unit.get_money then
+            return core.unit.get_money() or 0
+        end
+        return 0
+    end
+
+    -- ====================================================================
+    -- Skill / Reputation / Cooldown facade (W2.5)
+    -- ====================================================================
+
+    function ctx:get_skill_level(skill_name)
+        if core and core.unit and core.unit.get_skill then
+            local skill = core.unit.get_skill(skill_name)
+            if skill then
+                return skill.current or 0
+            end
+        end
+        return 0
+    end
+
+    function ctx:is_item_ready(item_entry)
+        if core and core.spell and core.spell.get_item_cooldown then
+            local cd = core.spell.get_item_cooldown(item_entry)
+            return cd == nil or cd == 0
+        end
+        return true -- Assume ready if no API
+    end
+
+    function ctx:get_reputation(faction_id)
+        if core and core.unit and core.unit.get_reputation then
+            return core.unit.get_reputation(faction_id) or 0
+        end
+        return 0
     end
 
     return ctx
