@@ -3,7 +3,24 @@
 -- Usage: lua sentinel/tests/run_offline.lua
 
 -- Mock Sylvannas global API
-_G.SentinelCore = {}
+_G.SentinelCore = {
+    AcceptQuest = function(quest_id) return true end,
+    SelectQuestEntry = function(quest_id) return true end,
+    HasQuest = function(quest_id) return false end,
+    TurnInQuest = function(quest_id) return true end,
+    AutoAcceptQuest = function(quest_id) return true end,
+    UseItem = function(item_id) return true end,
+    Repair = function() return true end,
+    Train = function() return true end,
+    TakeFlight = function(dest) return true end,
+    UseHearthstone = function() return true end,
+    LearnFlightPath = function() return true end,
+    OpenMailbox = function() return true end,
+    OpenBank = function() return true end,
+    InteractNpc = function(entry, gossip) return true end,
+    SellGreys = function() return true end,
+    BuyItems = function(items) return true end,
+}
 
 -- Mock core namespace
 _G.core = {
@@ -152,7 +169,7 @@ package.path = table.concat({
     package.path,
 }, ";")
 
--- Run test modules (combat + core + infrastructure only)
+-- Run test modules (combat + core + infrastructure + questing)
 local test_modules = {
     -- Core
     "tests/core/test_event_bus",
@@ -183,6 +200,9 @@ local test_modules = {
     "tests/modules/combat/profiles/mage/test_aoe_tree",
     "tests/modules/combat/profiles/mage/test_frost_tbc",
     "tests/modules/combat/profiles/mage/test_pet_controller",
+
+    -- Questing module
+    "tests/modules/questing/test_runtime_action",
 
     -- Shared libs
     "tests/shared/test_compat",
