@@ -6,6 +6,7 @@
 --- - Execute actions via Sylvanas APIs
 --- - Track quest state and progress
 --- - Navigate between objectives
+--- - In-game editor (optional, toggled via /qe or toggle_editor())
 
 local RuntimeProfile = require("modules/questing/runtime_profile")
 local Blackboard = require("core/blackboard")
@@ -22,6 +23,8 @@ function QuestingModule:new(blackboard, event_bus)
     end)
     o._executor = nil
     o._enabled = false
+    -- Editor (lazy-loaded on first toggle)
+    o._editor = nil
     return o
 end
 
@@ -60,6 +63,44 @@ end
 
 function QuestingModule:is_enabled()
     return self._enabled
+end
+
+-- ======================================================================
+-- Editor integration
+-- ======================================================================
+
+--- Get or create the editor instance (lazy).
+function QuestingModule:_get_editor()
+    if not self._editor then
+        local QuestingEditor = require("modules/questing/editor_ui")
+        self._editor = QuestingEditor:new()
+    end
+    return self._editor
+end
+
+--- Toggle the in-game quest profile editor.
+function QuestingModule:toggle_editor()
+    local editor = self:_get_editor()
+    editor:toggle()
+    if editor:is_visible() then
+        self._event_bus:publish("questing:editor_opened", {})
+    else
+        self._event_bus:publish("questing:editor_closed", {})
+    end
+end
+
+--- Reload the current executor from a compiled profile.
+--- Useful after the editor compiles a project — the new profile JSON
+--- can be loaded directly.
+---@param profile_json string Compiled RuntimeProfile JSON
+function QuestingModule:load_compiled_profile(profile_json)
+    -- Create a temporary executor that loads from a JSON string
+    -- (by writing to a temp file and loading it)
+    local temp_path = "SentinelCore/questing/_editor_compile.json"
+    if core and core.write_file then
+        core.write_file(temp_path, profile_json)
+    end
+    return self:initialize(temp_path)
 end
 
 return QuestingModule

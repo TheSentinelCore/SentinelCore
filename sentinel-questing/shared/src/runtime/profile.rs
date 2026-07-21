@@ -82,3 +82,94 @@ pub fn compute_content_hash(profile: &RuntimeProfile) -> String {
     }
     format!("{:016x}", h)
 }
+
+// ======================================================================
+// Tests (W8.3 — Profile hash stability)
+// ======================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::RuntimeOperation;
+
+    fn sample_op(name: &str) -> RuntimeOperation {
+        RuntimeOperation {
+            id: uuid::Uuid::nil(),
+            name: name.to_string(),
+            entry_conditions: Vec::new(),
+            exit_conditions: Vec::new(),
+            actions: Vec::new(),
+        }
+    }
+
+    /// Verifies that identical profiles produce the same hash.
+    #[test]
+    fn deterministic_hash_identical() {
+        let ops = vec![sample_op("op1"), sample_op("op2")];
+        let p1 = RuntimeProfile::new("a".to_string(), ops.clone());
+        let p2 = RuntimeProfile::new("b".to_string(), ops.clone());
+        // Different profile names but same operations → same hash
+        assert_eq!(
+            compute_content_hash(&p1),
+            compute_content_hash(&p2),
+            "Hash must depend on operations only, not metadata"
+        );
+    }
+
+    /// Verifies that different operations produce different hashes.
+    #[test]
+    fn different_ops_different_hash() {
+        let ops_a = vec![sample_op("alpha")];
+        let ops_b = vec![sample_op("beta")];
+        let p1 = RuntimeProfile::new("x".to_string(), ops_a);
+        let p2 = RuntimeProfile::new("x".to_string(), ops_b);
+        assert_ne!(
+            compute_content_hash(&p1),
+            compute_content_hash(&p2),
+            "Different ops must produce different hashes"
+        );
+    }
+
+    /// Verifies the hash is deterministic (same input → same output, always).
+    #[test]
+    fn hash_is_deterministic() {
+        let ops = vec![sample_op("deterministic")];
+        let profile = RuntimeProfile::new("test".to_string(), ops);
+        // Run twice, expect same result
+        let hash1 = compute_content_hash(&profile);
+        let hash2 = compute_content_hash(&profile);
+        assert_eq!(hash1, hash2);
+    }
+
+    /// Verifies the hash is non-empty and hex-formatted.
+    #[test]
+    fn hash_format() {
+        let ops = vec![sample_op("format-test")];
+        let profile = RuntimeProfile::new("test".to_string(), ops);
+        let hash = compute_content_hash(&profile);
+        assert_eq!(hash.len(), 16, "Expected 16-char hex hash, got {}", hash);
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash must be hex-only: {}",
+            hash
+        );
+    }
+
+    /// Adding an action to an operation must change the hash.
+    #[test]
+    fn adding_action_changes_hash() {
+        let ops1 = vec![sample_op("action-test")];
+        let mut ops2 = vec![sample_op("action-test")];
+        // Give ops2 an action
+        if let Some(op) = ops2.get_mut(0) {
+            op.actions.push(crate::runtime::RuntimeAction::Comment(
+                crate::runtime::RuntimeComment {
+                    text: "hi".to_string(),
+                },
+            ));
+        }
+        let p1 = RuntimeProfile::new("x".to_string(), ops1);
+        let p2 = RuntimeProfile::new("x".to_string(), ops2);
+        assert_ne!(compute_content_hash(&p1), compute_content_hash(&p2));
+    }
+}

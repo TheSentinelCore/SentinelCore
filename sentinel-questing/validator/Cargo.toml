@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 sentinel-models = { path = "../shared" }
 uuid = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
