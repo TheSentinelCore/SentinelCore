@@ -18,6 +18,15 @@ local LOOT_RANGE = 5.0       -- Looting objects
 local COMBAT_RANGE = 30.0     -- Spell / melee range
 local ARRIVAL_TOLERANCE = 5.0 -- Close enough to destination
 
+-- ============================================================================
+-- Recovery state machine constants (W4.1, W4.4)
+-- ============================================================================
+local MAX_RETRIES_PER_ACTION = 5        -- Max retry attempts for one action
+local MAX_CONSECUTIVE_FAILURES = 3      -- Max failures before profile stops
+local NAV_TIMEOUT = 30.0                -- Seconds before navigation is considered timed out
+local GHOST_TIMEOUT = 120.0             -- Seconds before ghost recovery is abandoned
+local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks
+
 local RuntimeProfile = {}
 RuntimeProfile.__index = RuntimeProfile
 
@@ -28,9 +37,19 @@ function RuntimeProfile:new(json_path)
     o._blackboard = Blackboard:new()
     o._query = QueryClient:new("127.0.0.1", 3030)
     o._current_operation_idx = 1
+    o._current_op_id = nil              -- Tracks identity for retry reset
     o._variables = {}
-    o._event_bus = EventBus:new()   -- W3.3
-    o._nav = NavAdapter:new(o._event_bus)  -- W3.3
+    o._event_bus = EventBus:new()       -- W3.3
+    o._nav = NavAdapter:new(o._event_bus) -- W3.3
+
+    -- Recovery state machine (W4.1–W4.5)
+    o._state = "running"                -- "running" | "navigating" | "ghost" | "failed" | "finished"
+    o._current_action_retries = 0       -- Per-action retry count (W4.1)
+    o._consecutive_failures = 0         -- Across-action failure count (W4.4)
+    o._nav_start_time = nil             -- When navigation began (W4.2)
+    o._ghost_start_time = nil           -- When death was detected (W4.3)
+    o._last_blocked_action = nil        -- Copy of the action that triggered blocked
+    o._execution_log = {}               -- Structured log entries (W4.5)
     return o
 end
 
@@ -344,20 +363,91 @@ function RuntimeProfile:create_context()
     return ctx
 end
 
+-- ============================================================================
+-- Recovery state machine methods (Wave 4)
+-- ============================================================================
+
+--- Main entry point, called each tick.
+--- Dispatches to the current state machine state.
 function RuntimeProfile:execute()
     if not self._profile then
         return "error", "profile not loaded"
     end
 
+    -- Death detection runs before every state (W4.3)
+    local dead = self:_is_player_dead()
+    if dead and self._state ~= "ghost" then
+        self:_log_event("death_detected", { state = self._state })
+        self._state = "ghost"
+        self._ghost_start_time = (_G.GetTime and _G.GetTime()) or 0
+        return "running", "player dead, entering ghost recovery"
+    end
+
+    if self._state == "running" then
+        return self:_execute_running()
+    elseif self._state == "navigating" then
+        return self:_execute_navigating()
+    elseif self._state == "ghost" then
+        return self:_execute_ghost()
+    elseif self._state == "failed" then
+        return "error", "profile failed after " .. self._consecutive_failures .. " consecutive failures"
+    elseif self._state == "finished" then
+        return "finished", "completed all operations"
+    end
+    return "error", "unknown state: " .. tostring(self._state)
+end
+
+-- ====================================================================
+-- W4.5 — Structured logging
+-- ====================================================================
+
+--- Emit a structured log entry to event bus and internal log.
+function RuntimeProfile:_log_event(event_type, data)
+    local entry = {
+        event = event_type,
+        timestamp = (_G.GetTime and _G.GetTime()) or 0,
+        operation = self._current_operation_idx,
+        state = self._state,
+    }
+    if data then
+        for k, v in pairs(data) do entry[k] = v end
+    end
+    table.insert(self._execution_log, entry)
+
+    -- Also publish to event bus for external listeners (editor UI, etc.)
+    if self._event_bus then
+        self._event_bus:publish("questing:log", entry)
+    end
+    -- Update blackboard
+    self._blackboard:set("questing.last_log", entry)
+end
+
+-- ====================================================================
+-- W4.1 — Running state: execute current action, handle outcomes
+-- ====================================================================
+
+function RuntimeProfile:_execute_running()
     local operations = self._profile.operations or {}
     if #operations == 0 then
+        self._state = "finished"
         return "finished", "no operations"
     end
 
-    -- Execute current operation
     local op = operations[self._current_operation_idx]
     if not op then
+        self._state = "finished"
         return "finished", "completed all operations"
+    end
+
+    -- Detect operation change → reset per-action retry counter (W4.1)
+    local op_id = op.id or self._current_operation_idx
+    if op_id ~= self._current_op_id then
+        self._current_op_id = op_id
+        self._current_action_retries = 0
+        -- If nav was left active from a previous op, stop it
+        if self._nav:is_active() then
+            self._nav:stop("op_change")
+        end
     end
 
     local action = op.action
@@ -367,26 +457,362 @@ function RuntimeProfile:execute()
 
     self._blackboard:set("questing.current_operation", self._current_operation_idx)
     self._blackboard:set("questing.current_status", status)
+    self._blackboard:set("questing.current_action", action and action.type or "unknown")
 
     if status == "success" then
+        self:_log_event("action_success", { action_type = action and action.type, msg = msg })
+        self._current_action_retries = 0
+        self._consecutive_failures = 0
+        self:_advance_operation(op)
+        return "running", "next operation"
+
+    elseif status == "skipped" then
+        self:_log_event("action_skipped", { action_type = action and action.type, msg = msg })
+        -- Skipped conditions should advance per normal flow
         if op.next_condition == "auto" or op.next_condition == "always" then
-            self._current_operation_idx = self._current_operation_idx + 1
-        elseif op.next_condition == "conditional" and op.condition_id then
-            -- Check condition result
-            -- TODO: Use QueryServer to evaluate
             self._current_operation_idx = self._current_operation_idx + 1
         else
             self._current_operation_idx = self._current_operation_idx + 1
         end
-        return "running", "next operation"
-    else
-        return "running", msg
+        return "running", "skipped, advancing"
+
+    elseif status == "retry" then
+        self._current_action_retries = self._current_action_retries + 1
+        self:_log_event("action_retry", {
+            action_type = action and action.type,
+            retry = self._current_action_retries,
+            max = MAX_RETRIES_PER_ACTION,
+        })
+
+        if self._current_action_retries >= MAX_RETRIES_PER_ACTION then
+            -- Exhausted retries → treat as failure
+            self:_log_event("action_retry_exhausted", { action_type = action and action.type })
+            self._consecutive_failures = self._consecutive_failures + 1
+            self:_check_consecutive_failures()
+            self._current_operation_idx = self._current_operation_idx + 1
+            return "running", "retries exhausted, skipping operation"
+        end
+        return "running", "retry"
+
+    elseif status == "blocked" then
+        self:_log_event("action_blocked", { action_type = action and action.type, msg = msg })
+
+        -- Enter navigation recovery (W4.2)
+        return self:_handle_blocked(action)
+
+    elseif status == "failed" then
+        self:_log_event("action_failed", { action_type = action and action.type, msg = msg })
+        self._consecutive_failures = self._consecutive_failures + 1
+        self:_check_consecutive_failures()
+        self._current_operation_idx = self._current_operation_idx + 1
+        return "running", "action failed, skipping"
+    end
+
+    return "running", tostring(status)
+end
+
+-- ====================================================================
+-- W4.4 — Consecutive failure check
+-- ====================================================================
+
+function RuntimeProfile:_check_consecutive_failures()
+    if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES then
+        self:_log_event("profile_failed", {
+            consecutive_failures = self._consecutive_failures,
+        })
+        self._state = "failed"
     end
 end
 
+-- ====================================================================
+-- W4.2 — Navigating state: poll NavAdapter, retry on arrival
+-- ====================================================================
+
+function RuntimeProfile:_execute_navigating()
+    -- If nav completed without us noticing, check if we're there
+    if not self._nav:is_active() then
+        local state = self._nav:get_state()
+        if state == "idle" or state == "arrived" then
+            -- Nav finished; retry the action
+            self:_log_event("nav_arrived", {})
+            self._state = "running"
+            return "running", "navigated, retry"
+        end
+    end
+
+    -- Poll nav
+    local state, progress = self._nav:poll()
+    self._blackboard:set("questing.nav_state", state)
+
+    if state == "arrived" or state == "idle" then
+        self._nav:stop("arrived")
+        self:_log_event("nav_arrived", {})
+        self._state = "running"
+        return "running", "navigated, retry"
+
+    elseif state == "requesting_path" or state == "moving" then
+        -- Check timeout
+        local now = (_G.GetTime and _G.GetTime()) or 0
+        if self._nav_start_time and (now - self._nav_start_time) > NAV_TIMEOUT then
+            self:_log_event("nav_timeout", { duration = now - self._nav_start_time })
+            self._current_action_retries = self._current_action_retries + 1
+            self._nav:stop("timeout")
+            self._last_blocked_action = nil
+            self._state = "running"
+            if self._current_action_retries >= MAX_RETRIES_PER_ACTION then
+                self._consecutive_failures = self._consecutive_failures + 1
+                self:_check_consecutive_failures()
+                self._current_operation_idx = self._current_operation_idx + 1
+                return "running", "nav timeout, retries exhausted"
+            end
+            return "running", "nav timeout, retry"
+        end
+        return "running", "navigating"
+
+    elseif state == "stuck" then
+        -- Pathfinding issue: increment retries, go back to running
+        self:_log_event("nav_stuck", {})
+        self._current_action_retries = self._current_action_retries + 1
+        self._nav:stop("stuck")
+        self._state = "running"
+        return "running", "nav stuck, retry"
+
+    else
+        -- failed / unknown
+        self:_log_event("nav_failed", { state = state })
+        self._state = "running"
+        return "running", "nav failed, retry"
+    end
+end
+
+-- ====================================================================
+-- W4.3 — Ghost state: death recovery
+-- ====================================================================
+
+function RuntimeProfile:_execute_ghost()
+    -- Check if still dead
+    local dead = self:_is_player_dead()
+    if not dead then
+        -- Alive again! Return to running, retry current operation
+        self:_log_event("ghost_rezzed", {})
+        self._state = "running"
+        self._ghost_start_time = nil
+        return "running", "resurrected, retry"
+    end
+
+    local now = (_G.GetTime and _G.GetTime()) or 0
+    local elapsed = self._ghost_start_time and (now - self._ghost_start_time) or 0
+
+    -- Timeout: skip current operation
+    if elapsed >= GHOST_TIMEOUT then
+        self:_log_event("ghost_timeout", { duration = elapsed })
+        self._ghost_start_time = nil
+        self._current_operation_idx = self._current_operation_idx + 1
+        self._state = "running"
+        return "running", "ghost recovery timed out, skipping operation"
+    end
+
+    -- Release corpse if we have spirit
+    if core and core.unit and core.unit.has_spirit then
+        local has_spirit = core.unit.has_spirit("player")
+        if has_spirit and core.input and core.input.release_corpse then
+            core.input.release_corpse()
+            self:_log_event("ghost_release_corpse", {})
+        end
+    end
+
+    -- Attempt auto-resurrection if available
+    if core and core.unit and core.unit.resurrect then
+        core.unit.resurrect("player")
+        self:_log_event("ghost_resurrect_attempt", {})
+    end
+
+    -- Check every GHOST_RETRY_INTERVAL seconds
+    if elapsed % GHOST_RETRY_INTERVAL < 1.0 then
+        -- Just polled; return running to tick again
+    end
+
+    return "running", "ghost recovery (" .. tostring(math.floor(elapsed)) .. "s)"
+end
+
+-- ====================================================================
+-- W4.2 — Blocked handler: resolve target and start navigation
+-- ====================================================================
+
+--- Called when an action returns "blocked".
+--- Attempts to resolve a navigation target from the action payload
+--- and starts NavAdapter movement. Transitions to "navigating" state.
+function RuntimeProfile:_handle_blocked(action)
+    -- If nav is already active (action handler started it), just poll
+    if self._nav:is_active() then
+        self._state = "navigating"
+        self._nav_start_time = (_G.GetTime and _G.GetTime()) or 0
+        self._last_blocked_action = action
+        self:_log_event("nav_already_active", { action_type = action and action.type })
+        return "running", "navigating"
+    end
+
+    -- Resolve target position from action payload
+    local target_pos = self:_resolve_nav_target(action)
+    if not target_pos then
+        -- Can't navigate: increment retries
+        self._current_action_retries = self._current_action_retries + 1
+        return "running", "blocked (no nav target)"
+    end
+
+    -- Start navigation
+    local ok, err = self._nav:move_to(target_pos, { tolerance = ARRIVAL_TOLERANCE })
+    if not ok then
+        self._current_action_retries = self._current_action_retries + 1
+        self:_log_event("nav_dispatch_failed", { error = err })
+        return "running", "blocked (nav dispatch failed)"
+    end
+
+    self._state = "navigating"
+    self._nav_start_time = (_G.GetTime and _G.GetTime()) or 0
+    self._last_blocked_action = action
+    self:_log_event("nav_started", {
+        target = target_pos,
+        action_type = action and action.type,
+    })
+    return "running", "navigating to target"
+end
+
+-- ====================================================================
+-- Target resolution helpers
+-- ====================================================================
+
+--- Resolve a navigation target from an action's payload.
+--- Returns {x, y, z} or nil.
+function RuntimeProfile:_resolve_nav_target(action)
+    if not action or not action.payload then return nil end
+    local p = action.payload
+
+    -- 1. Explicit position coordinates
+    if p.position and type(p.position) == "table" and p.position.x then
+        return { x = p.position.x, y = p.position.y, z = p.position.z }
+    end
+
+    -- 2. NPC entry → look up in object manager
+    if p.npc_entry then
+        return self:_get_npc_position(p.npc_entry)
+    end
+
+    -- 3. Object entry → look up in object manager
+    if p.object_entry then
+        return self:_get_object_position(p.object_entry)
+    end
+
+    -- 4. Creature entries (first one) → look up
+    if p.creature_entries and type(p.creature_entries) == "table" and #p.creature_entries > 0 then
+        return self:_get_npc_position(p.creature_entries[1])
+    end
+
+    -- 5. Zone destination string (e.g. "Elwynn Forest")
+    if p.destination and type(p.destination) == "string" then
+        -- Create a temporary context for zone waypoint resolution
+        local ctx = self:create_context()
+        return ctx:get_zone_waypoint(p.destination)
+    end
+
+    return nil
+end
+
+--- Look up an NPC's position from the object manager.
+function RuntimeProfile:_get_npc_position(npc_entry)
+    if core and core.object_manager and core.object_manager.GetNearestCreature then
+        local npc = core.object_manager.GetNearestCreature({ npc_entry })
+        if npc and npc.get_position then
+            local ok, pos = pcall(npc.get_position, npc)
+            if ok and pos then
+                return { x = pos.x, y = pos.y, z = pos.z }
+            end
+        end
+    end
+    return nil
+end
+
+--- Look up a game object's position from the object manager.
+function RuntimeProfile:_get_object_position(object_entry)
+    if core and core.object_manager then
+        local obj = nil
+        if core.object_manager.GetNearestGameObject then
+            obj = core.object_manager.GetNearestGameObject({ object_entry })
+        elseif core.object_manager.GetNearestObject then
+            obj = core.object_manager.GetNearestObject({ object_entry })
+        end
+        if obj and obj.get_position then
+            local ok, pos = pcall(obj.get_position, obj)
+            if ok and pos then
+                return { x = pos.x, y = pos.y, z = pos.z }
+            end
+        end
+    end
+    return nil
+end
+
+--- Check if the player is dead using Sylvanas unit API.
+function RuntimeProfile:_is_player_dead()
+    if core and core.unit and core.unit.is_dead then
+        local ok, dead = pcall(core.unit.is_dead, core.unit, "player")
+        if ok then
+            return dead == true
+        end
+    end
+    -- Fallback: check health
+    if core and core.unit and core.unit.get_health then
+        local ok, health = pcall(core.unit.get_health, core.unit, "player")
+        if ok and type(health) == "number" then
+            return health <= 0
+        end
+    end
+    return false -- Assume alive if no API
+end
+
+--- Advance to the next operation based on the operation's next_condition.
+function RuntimeProfile:_advance_operation(op)
+    if not op or not op.next_condition or op.next_condition == "auto" or op.next_condition == "always" then
+        self._current_operation_idx = self._current_operation_idx + 1
+    elseif op.next_condition == "conditional" and op.condition_id then
+        -- Evaluate the condition to decide next operation
+        -- For now, advance sequentially. Full conditional branching needs
+        -- the editor's condition evaluation integration.
+        self._current_operation_idx = self._current_operation_idx + 1
+    else
+        self._current_operation_idx = self._current_operation_idx + 1
+    end
+end
+
+-- ====================================================================
+-- Reset / lifecycle
+-- ====================================================================
+
 function RuntimeProfile:reset()
     self._current_operation_idx = 1
+    self._current_op_id = nil
     self._variables = {}
+    self._state = "running"
+    self._current_action_retries = 0
+    self._consecutive_failures = 0
+    self._nav_start_time = nil
+    self._ghost_start_time = nil
+    self._last_blocked_action = nil
+    self._execution_log = {}
+    if self._nav then
+        self._nav:stop("reset")
+    end
+end
+
+function RuntimeProfile:get_log()
+    return self._execution_log
+end
+
+function RuntimeProfile:get_state()
+    return self._state, {
+        operation = self._current_operation_idx,
+        retries = self._current_action_retries,
+        consecutive_failures = self._consecutive_failures,
+    }
 end
 
 return RuntimeProfile

@@ -44,6 +44,7 @@ local test_modules = {
     -- Questing module
     "tests/modules/questing/test_runtime_action",
     "tests/modules/questing/test_runtime_nav",
+    "tests/modules/questing/test_runtime_profile",
 
     -- Integration
     "tests/integration/test_combat_dummy",
