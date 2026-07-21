@@ -9,6 +9,7 @@ Schema.allowed_roots = {
     nav = true,
     module = true,
     operation = true,
+    questing = true,  -- Added for questing module
 }
 
 local function split_first(key)
@@ -24,7 +25,7 @@ function Schema.validate_key(key)
     if not Schema.allowed_roots[root] then
         return false, "root_not_allowed"
     end
-    if root == "module" then
+    if root == "module" or root == "questing" then
         local module_name = rest and rest:match("^([^.]+)")
         if not module_name or module_name == "" then
             return false, "module_namespace_requires_module_name_and_key"
