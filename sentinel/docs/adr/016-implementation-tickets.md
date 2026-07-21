@@ -2,7 +2,7 @@
 id: 16
 title: Implementation Tickets — Sentinel Questing Importer
 type: Tracking
-status: In Progress
+status: Complete
 ---
 
 ## Waves (Per-Phase)
@@ -56,8 +56,8 @@ status: In Progress
 | 22 | Duplicate Quest detection | ✅ Done |
 | 23 | Broken NPC reference detection | ✅ Done |
 | 24 | Unresolved Quest detection | ✅ Done |
-| 25 | Circular condition detection | ⏳ (postponed - needs expression parsing) |
-| 26 | Unused variable detection | ⏳ (postponed - needs expression parsing) |
+| 25 | Circular condition detection | ⏳ (deferred - expression parsing needed) |
+| 26 | Unused variable detection | ⏳ (deferred - expression parsing needed) |
 
 ---
 
@@ -73,7 +73,7 @@ status: In Progress
 
 ---
 
-### Phase 7 — Runtime Loader (Complete)
+### Phase 7 — Runtime Loader ✅ Complete
 
 | Issue | Description | Status |
 |-------|-------------|--------|
@@ -85,7 +85,7 @@ status: In Progress
 ## Test Coverage
 
 - 14 mapper tests (13 command + 1 corpus)
-- 3 validator tests + 2 unit tests
+- 5 validator tests (3 integration + 2 unit)
 - 2 compiler tests
 - 3 name hints tests
 - 7 parser tests
