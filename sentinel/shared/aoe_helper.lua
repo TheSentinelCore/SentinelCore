@@ -10,7 +10,6 @@ local function safe_require(module_name)
 end
 
 local spell_prediction = safe_require("common/modules/spell_prediction")
-local spell_queue = safe_require("common/modules/spell_queue")
 local core = safe_require("core")
 local izi = safe_require("common/izi_sdk")
 
