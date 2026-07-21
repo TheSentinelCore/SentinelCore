@@ -50,7 +50,155 @@ function RuntimeProfile:new(json_path)
     o._ghost_start_time = nil           -- When death was detected (W4.3)
     o._last_blocked_action = nil        -- Copy of the action that triggered blocked
     o._execution_log = {}               -- Structured log entries (W4.5)
+
+    -- Persistence (W5.2, W5.3)
+    o._save_path = o:_compute_save_path()
+    o._dirty = false                    -- Track unsaved changes
     return o
+end
+
+-- ====================================================================
+-- Persistence helpers (W5.2)
+-- ====================================================================
+
+--- Derive the save file path from the profile JSON path.
+--- e.g. "profiles/mage.json" → "profiles/mage.save.json"
+function RuntimeProfile:_compute_save_path()
+    local path = self._json_path or "questing"
+    if path:match("%.json$") then
+        return path:gsub("%.json$", ".save.json")
+    end
+    return path .. ".save.json"
+end
+
+--- Serialize current execution state for persistence.
+function RuntimeProfile:_serialize_state()
+    return {
+        version = 1,
+        profile_fingerprint = (self._profile and self._profile.content_hash) or "",
+        current_operation_idx = self._current_operation_idx,
+        variables = self._variables,
+        saved_at = (_G.GetTime and _G.GetTime()) or 0,
+    }
+end
+
+--- Persist execution state to disk.
+--- Called on operation advance, variable change, stop, and reset.
+function RuntimeProfile:_save()
+    local data = self:_serialize_state()
+    local json = nil
+    if JSON and JSON.stringify then
+        json = JSON.stringify(data)
+    else
+        -- Manual JSON serialization fallback
+        json = self:_serialize_lua(data)
+    end
+    if not json then
+        return false
+    end
+    if core and core.write_data_file then
+        local ok, err = pcall(core.write_data_file, core, self._save_path, json)
+        if ok then
+            self._dirty = false
+            return true
+        end
+    elseif core and core.write_file then
+        local ok, err = pcall(core.write_file, core, self._save_path, json)
+        if ok then
+            self._dirty = false
+            return true
+        end
+    end
+    -- Fallback: write to standard Lua file
+    local f, err = io.open(self._save_path, "w")
+    if f then
+        f:write(json)
+        f:close()
+        self._dirty = false
+        return true
+    end
+    return false
+end
+
+--- Attempt to restore execution state from a previous save file.
+--- Returns true if state was restored, false if no save or fingerprint mismatch.
+function RuntimeProfile:_load_save()
+    if not (core and core.read_data_file) then
+        return false
+    end
+    local json, err = core.read_data_file(self._save_path)
+    if not json then
+        return false
+    end
+    local decoded = nil
+    if JSON and JSON.parse then
+        decoded = JSON.parse(json)
+    else
+        local fn, err = load("return " .. json)
+        if fn then
+            decoded = fn()
+        end
+    end
+    if not decoded or type(decoded) ~= "table" then
+        return false
+    end
+    -- Verify fingerprint matches current profile
+    local profile_hash = self._profile and self._profile.content_hash or ""
+    local save_fingerprint = decoded.profile_fingerprint or ""
+    if profile_hash == "" or save_fingerprint == "" or save_fingerprint ~= profile_hash then
+        return false -- Fingerprint mismatch or empty → start fresh
+    end
+    -- Restore state
+    if type(decoded.current_operation_idx) == "number" then
+        self._current_operation_idx = decoded.current_operation_idx
+    end
+    if type(decoded.variables) == "table" then
+        self._variables = decoded.variables
+    end
+    self._dirty = false
+    self:_log_event("save_restored", {
+        operation = self._current_operation_idx,
+        variable_count = self._variables and #self._variables or 0,
+    })
+    return true
+end
+
+--- Minimal Lua table serialization (compatible with load() parser).
+--- Outputs Lua-like table literals that can be parsed by load("return ...").
+function RuntimeProfile:_serialize_lua(t)
+    if t == nil then return "nil" end
+    if type(t) == "number" then return tostring(t) end
+    if type(t) == "string" then return '"' .. t:gsub('"', '\\"') .. '"' end
+    if type(t) == "boolean" then return t and "true" or "false" end
+    if type(t) ~= "table" then return '"' .. tostring(t) .. '"' end
+    -- Check if array-like (consecutive numeric keys starting at 1)
+    local is_array = true
+    local max_key = 0
+    local count = 0
+    for k, _ in pairs(t) do
+        count = count + 1
+        if type(k) ~= "number" or k ~= math.floor(k) or k < 1 then
+            is_array = false
+            break
+        end
+        if k > max_key then max_key = k end
+    end
+    if is_array and max_key == count then
+        local parts = {}
+        for i = 1, max_key do
+            parts[i] = self:_serialize_lua(t[i])
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    -- Table with mixed/string keys
+    local parts = {}
+    for k, v in pairs(t) do
+        local key_str = type(k) == "string"
+            and '["' .. k:gsub('"', '\\"') .. '"]'
+            or "[" .. tostring(k) .. "]"
+        parts[#parts + 1] = key_str .. "=" .. self:_serialize_lua(v)
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
 end
 
 function RuntimeProfile:load()
@@ -64,6 +212,17 @@ function RuntimeProfile:load()
             decoded = load("return " .. json)()
         end
         self._profile = decoded
+
+        -- W5.2 — Attempt to restore execution state from save file
+        local restored = self:_load_save()
+        if restored then
+            self:_log_event("load_with_save", {
+                operation = self._current_operation_idx,
+            })
+        else
+            self:_log_event("load_fresh", {})
+        end
+
         return true
     end
     return nil, "no data file API"
@@ -474,6 +633,7 @@ function RuntimeProfile:_execute_running()
         else
             self._current_operation_idx = self._current_operation_idx + 1
         end
+        self:_save()  -- W5.3 — Save on skipped advance
         return "running", "skipped, advancing"
 
     elseif status == "retry" then
@@ -770,6 +930,7 @@ function RuntimeProfile:_is_player_dead()
 end
 
 --- Advance to the next operation based on the operation's next_condition.
+--- Also triggers auto-save of execution state (W5.3).
 function RuntimeProfile:_advance_operation(op)
     if not op or not op.next_condition or op.next_condition == "auto" or op.next_condition == "always" then
         self._current_operation_idx = self._current_operation_idx + 1
@@ -781,6 +942,8 @@ function RuntimeProfile:_advance_operation(op)
     else
         self._current_operation_idx = self._current_operation_idx + 1
     end
+    -- W5.3 — Auto-save after operation advance
+    self:_save()
 end
 
 -- ====================================================================

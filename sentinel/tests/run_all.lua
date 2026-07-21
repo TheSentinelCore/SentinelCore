@@ -45,6 +45,7 @@ local test_modules = {
     "tests/modules/questing/test_runtime_action",
     "tests/modules/questing/test_runtime_nav",
     "tests/modules/questing/test_runtime_profile",
+    "tests/modules/questing/test_runtime_persistence",
 
     -- Integration
     "tests/integration/test_combat_dummy",

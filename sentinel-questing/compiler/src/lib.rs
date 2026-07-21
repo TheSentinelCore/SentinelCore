@@ -7,11 +7,12 @@ use uuid::Uuid;
 
 use sentinel_models::authoring::{Action, ActionPayload, Project};
 use sentinel_models::runtime::{
-    RuntimeAction, RuntimeOperation, RuntimeProfile, RuntimeAcceptQuest, RuntimeFlight, RuntimeHearth,
-    RuntimeKill, RuntimeVendor, RuntimeTrain, RuntimeUseItem, RuntimeComment, RuntimeTravel,
-    RuntimeTurnInQuest, RuntimeWaypoint, RuntimeRepair, RuntimeLearnFlightPath, RuntimeConditionAction,
-    RuntimeSetVariable, RuntimeEscort, RuntimePatrol, RuntimeGrind, RuntimeLoot, RuntimeBank,
-    RuntimeMailbox, RuntimeWait, RuntimeCondition, RuntimeInteractNpc,
+    compute_content_hash, RuntimeAction, RuntimeOperation, RuntimeProfile, RuntimeAcceptQuest,
+    RuntimeFlight, RuntimeHearth, RuntimeKill, RuntimeVendor, RuntimeTrain, RuntimeUseItem,
+    RuntimeComment, RuntimeTravel, RuntimeTurnInQuest, RuntimeWaypoint, RuntimeRepair,
+    RuntimeLearnFlightPath, RuntimeConditionAction, RuntimeSetVariable, RuntimeEscort,
+    RuntimePatrol, RuntimeGrind, RuntimeLoot, RuntimeBank, RuntimeMailbox, RuntimeWait,
+    RuntimeCondition, RuntimeInteractNpc,
 };
 
 /// Compiler errors that prevent profile generation.
@@ -38,7 +39,9 @@ impl Compiler {
             .map(|op| resolve_operation(op, &npc_uuid_to_entry))
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(RuntimeProfile::new(project.metadata.name.clone(), runtime_operations))
+        let mut profile = RuntimeProfile::new(project.metadata.name.clone(), runtime_operations);
+        profile.content_hash = compute_content_hash(&profile);
+        Ok(profile)
     }
 }
 

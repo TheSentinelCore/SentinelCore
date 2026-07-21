@@ -32,6 +32,10 @@ pub struct RuntimeProfile {
     pub npcs: Vec<RuntimeNpc>,
     #[serde(default)]
     pub quests: Vec<RuntimeQuest>,
+    /// Content fingerprint — deterministic hash of operations for save/load matching.
+    /// Computed during compilation. Lua runtime uses this to verify save file compatibility.
+    #[serde(default)]
+    pub content_hash: String,
 }
 
 fn default_game_version() -> String {
@@ -51,6 +55,7 @@ impl RuntimeProfile {
             areas: Vec::new(),
             npcs: Vec::new(),
             quests: Vec::new(),
+            content_hash: String::new(),
         }
     }
 }
@@ -60,4 +65,20 @@ impl RuntimeProfile {
     pub fn total_actions(&self) -> usize {
         self.operations.iter().map(|o| o.actions.len()).sum()
     }
+}
+
+/// Compute a deterministic content fingerprint for a RuntimeProfile.
+/// Used by the Lua runtime to verify save file compatibility across compilations.
+///
+/// The hash is computed from the operations only (not metadata like name/description),
+/// so that renamed profiles still match their save files.
+pub fn compute_content_hash(profile: &RuntimeProfile) -> String {
+    // Serialize operations to canonical JSON for deterministic input
+    let ops_json = serde_json::to_string(&profile.operations).unwrap_or_default();
+    // Simple polynomial hash (deterministic, no random seed)
+    let mut h: u64 = 0;
+    for b in ops_json.bytes() {
+        h = h.wrapping_mul(31).wrapping_add(b as u64);
+    }
+    format!("{:016x}", h)
 }

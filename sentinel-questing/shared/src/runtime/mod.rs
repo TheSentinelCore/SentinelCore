@@ -25,7 +25,7 @@ pub use area::RuntimeArea;
 pub use condition::RuntimeCondition;
 pub use npc::RuntimeNpc;
 pub use operation::RuntimeOperation;
-pub use profile::RuntimeProfile;
+pub use profile::{compute_content_hash, RuntimeProfile};
 pub use quest::RuntimeQuest;
 pub use variable::RuntimeVariable;
 pub use waypoint::RuntimeWaypoint;
