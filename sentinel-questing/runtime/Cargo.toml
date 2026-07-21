@@ -1,0 +1,11 @@
+[package]
+name = "sentinel-runtime"
+description = "Runtime loader for Sentinel Questing (Phase 7)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sentinel-models = { path = "../shared" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,43 @@
+# Sentinel Questing — Cargo workspace
+#
+# Layout (per 04_IMPLEMENTATION_PLAN.md §3, extended by 05 §Part 5):
+#   sentinel-questing/
+#     shared/        -> crate `sentinel-models`   (authoring + runtime data models, Phase 1)
+#     queryclient/   -> crate `sentinel-queryclient`   (Phase 2)
+#     queryserver/   -> crate `sentinel-queryserver`   (Phase 2, owns tbcmangos.sqlite)
+#     importer/      -> crate `sentinel-importer`      (Phase 4)
+#     validator/     -> crate `sentinel-validator`     (Phase 5)
+#     compiler/      -> crate `sentinel-compiler`      (Phase 6)
+#     runtime/       -> crate `sentinel-runtime` (Lua FFI / loader spec) (Phase 7)
+#     editor/        -> crate `sentinel-editor`        (Phase 8)
+#     tests/         -> integration tests             (Phase 9)
+#
+# Members are added here as each crate is introduced. Only `shared` + `queryclient` exist in Phases 1-2.
+
+[workspace]
+resolver = "2"
+members = [
+    "shared",
+    "query-types",
+    "queryclient",
+    "importer",
+    "validator",
+    "compiler",
+    "runtime",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["serde", "v4"] }
+thiserror = "1"
+tracing = "0.1"
+async-trait = "0.1"
+url = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

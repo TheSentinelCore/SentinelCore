@@ -1,0 +1,13 @@
+[package]
+name = "sentinel-validator"
+description = "Validates Sentinel Projects for errors and warnings (Phase 5)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sentinel-models = { path = "../shared" }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

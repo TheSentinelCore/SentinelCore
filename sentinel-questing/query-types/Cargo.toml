@@ -1,0 +1,9 @@
+[package]
+name = "sentinel-query-types"
+description = "Wire DTOs shared by sentinel-queryclient and SentinelQueryServer (ADR 01 §10)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }

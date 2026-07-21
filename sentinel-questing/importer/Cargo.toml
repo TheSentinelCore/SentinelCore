@@ -1,0 +1,19 @@
+[package]
+name = "sentinel-importer"
+description = "RestedXP guide importer — core parser (Phase 4, Wave 1) + project builder (Phase 4, Wave 2 + Wave 3)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+chrono = "0.4"
+regex = "1"
+sentinel-models = { path = "../shared" }
+sentinel-queryclient = { path = "../queryclient" }
+
+[dev-dependencies]
+tokio = { workspace = true }
