@@ -15,4 +15,7 @@ serde_json = { workspace = true }
 sentinel-importer = { path = "../importer" }
 sentinel-queryclient = { path = "../queryclient" }
 tokio = { workspace = true }
-serde_json = { workspace = true }
+
+[[bin]]
+name = "sentinel-compile"
+path = "src/main.rs"
