@@ -6,6 +6,17 @@ local RuntimeAction = require("modules/questing/runtime_action")
 local Blackboard = require("core/blackboard")
 local Compat = require("shared/compat")
 local QueryClient = require("shared/query_client")
+local Geometry = require("core/geometry")
+local EventBus = require("core/event_bus")
+local NavAdapter = require("integrations/nav_client/adapter")
+
+-- ============================================================================
+-- Named constants for proximity checks (W3.1, W3.2, W3.6)
+-- ============================================================================
+local INTERACT_RANGE = 5.0   -- Talking to NPCs, looting, interacting
+local LOOT_RANGE = 5.0       -- Looting objects
+local COMBAT_RANGE = 30.0     -- Spell / melee range
+local ARRIVAL_TOLERANCE = 5.0 -- Close enough to destination
 
 local RuntimeProfile = {}
 RuntimeProfile.__index = RuntimeProfile
@@ -18,6 +29,8 @@ function RuntimeProfile:new(json_path)
     o._query = QueryClient:new("127.0.0.1", 3030)
     o._current_operation_idx = 1
     o._variables = {}
+    o._event_bus = EventBus:new()   -- W3.3
+    o._nav = NavAdapter:new(o._event_bus)  -- W3.3
     return o
 end
 
@@ -42,6 +55,7 @@ function RuntimeProfile:create_context()
     local ctx = {
         variables = self._variables,
         query = self._query,
+        nav = self._nav,           -- W3.3: NavAdapter for movement
 
         -- Quest log tracking caches (W2.3, W2.4)
         _completed_quests = {},   -- { [quest_entry] = true }
@@ -50,27 +64,122 @@ function RuntimeProfile:create_context()
     }
 
     -- ====================================================================
-    -- Navigation helpers (stubs — filled by Wave 3)
+    -- Navigation helpers (W3.1, W3.2, W3.3)
     -- ====================================================================
-    function ctx:is_at_npc(entry)
+
+    --- Resolve player's current position.
+    --- Returns {x, y, z} table or nil.
+    function ctx:_get_player_pos()
+        if core and core.object_manager and core.object_manager.get_local_player then
+            local player = core.object_manager.get_local_player()
+            if player and player.get_position then
+                local ok, pos = pcall(player.get_position, player)
+                if ok and type(pos) == "table" then
+                    return pos
+                end
+            end
+        end
+        return nil
+    end
+
+    --- Check if a specific NPC entry is within interaction range.
+    --- @param entry number|string NPC ID
+    --- @param range number Override distance (default INTERACT_RANGE)
+    --- @return boolean
+    function ctx:is_at_npc(entry, range)
+        range = range or INTERACT_RANGE
         if core and core.object_manager and core.object_manager.GetNearestCreature then
             local npc = core.object_manager.GetNearestCreature({ entry })
             if npc and npc.IsValid and npc:IsValid() then
+                -- Try precise distance check
+                local player_pos = self:_get_player_pos()
+                if player_pos and npc.get_position then
+                    local ok, npc_pos = pcall(npc.get_position, npc)
+                    if ok and npc_pos then
+                        return Geometry.distance(player_pos, npc_pos) <= range
+                    end
+                end
+                return true -- NPC exists nearby; best-effort
+            end
+        end
+        return false
+    end
+
+    --- Check if a specific game object entry is within loot range.
+    --- @param entry number|string Object ID
+    --- @param range number Override distance (default LOOT_RANGE)
+    --- @return boolean
+    function ctx:is_at_object(entry, range)
+        range = range or LOOT_RANGE
+        if core and core.object_manager then
+            local nearest_obj = nil
+            if core.object_manager.GetNearestGameObject then
+                nearest_obj = core.object_manager.GetNearestGameObject({ entry })
+            elseif core.object_manager.GetNearestObject then
+                nearest_obj = core.object_manager.GetNearestObject({ entry })
+            end
+            if nearest_obj and nearest_obj.IsValid and nearest_obj:IsValid() then
+                local player_pos = self:_get_player_pos()
+                if player_pos and nearest_obj.get_position then
+                    local ok, obj_pos = pcall(nearest_obj.get_position, nearest_obj)
+                    if ok and obj_pos then
+                        return Geometry.distance(player_pos, obj_pos) <= range
+                    end
+                end
                 return true
             end
         end
         return false
     end
 
-    function ctx:is_at_destination(zone_name, tolerance)
-        if core and core.object_manager and core.object_manager.GetPlayerInfo then
-            local player = core.object_manager.GetPlayerInfo()
+    --- Check if player is at a destination position.
+    --- Accepts {x, y, z} table or a zone name string (resolved via get_zone_waypoint).
+    --- @param dest table|string Position or zone name
+    --- @param tolerance number Yards (default ARRIVAL_TOLERANCE)
+    --- @return boolean
+    function ctx:is_at_destination(dest, tolerance)
+        tolerance = tolerance or ARRIVAL_TOLERANCE
+        local target_pos = dest
+        if type(dest) == "string" then
+            target_pos = self:get_zone_waypoint(dest)
+            if not target_pos then
+                return false -- Can't resolve zone to a position
+            end
+        end
+        if type(target_pos) ~= "table" then
             return false
         end
-        return false
+        local player_pos = self:_get_player_pos()
+        if not player_pos then
+            return false
+        end
+        local dist = Geometry.distance(player_pos, target_pos)
+        return dist <= tolerance
     end
 
+    --- Resolve a zone name to a waypoint position.
+    --- Returns {x, y, z} or nil.
     function ctx:get_zone_waypoint(zone_name)
+        -- Attempt to resolve via QueryServer
+        if self.query and self.query.resolve_zone then
+            local ok, result = pcall(self.query.resolve_zone, self.query, zone_name)
+            if ok and type(result) == "table" then
+                return result
+            end
+        end
+        -- Fallback: check hardcoded zone centroids (small set of common zones)
+        local zone_centroids = {
+            ["Elwynn Forest"] = { x = -8949.95, y = -132.49, z = 83.53 },
+            ["Dun Morogh"]    = { x = -5401.32, y = -2403.51, z = 400.09 },
+            ["Teldrassil"]    = { x = 9947.52, y = 2054.02, z = 1329.63 },
+            ["Mulgore"]       = { x = -2237.03, y = -438.46, z = -5.74 },
+            ["Tirisfal Glades"] = { x = 1810.12, y = 227.96, z = -8.99 },
+            ["Durotar"]       = { x = 259.65, y = -4749.60, z = 10.97 },
+        }
+        local centroid = zone_centroids[zone_name]
+        if centroid then
+            return { x = centroid.x, y = centroid.y, z = centroid.z }
+        end
         return nil
     end
 

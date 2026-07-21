@@ -2,6 +2,11 @@
 --- Executes RuntimeAction types defined in RuntimeProfile
 --- Returns: "success", "retry", "blocked", "failed", "skipped"
 
+-- ============================================================================
+-- Named constants for navigation and proximity (W3.1, W3.6)
+-- ============================================================================
+local NAV_RETRY_DELAY = 1.0    -- Seconds between navigation retries
+
 local RuntimeAction = {}
 
 -- Execute a single action
@@ -95,24 +100,59 @@ function RuntimeAction.execute_turnin_quest(payload, ctx)
 end
 
 function RuntimeAction.execute_travel(payload, ctx)
-    local dest = payload.destination
-    local tolerance = payload.tolerance or 5.0
+    local dest   = payload.destination    -- string zone name (e.g. "Elwynn Forest")
+    local tol    = payload.tolerance or 5.0
+    local target = payload.position       -- {x, y, z} from compiler (preferred)
 
-    if ctx:is_at_destination(dest, tolerance) then
+    -- Resolve target position: prefer explicit coords, fall back to zone waypoint
+    local target_pos = nil
+    if type(target) == "table" and target.x then
+        target_pos = target
+    elseif type(dest) == "string" then
+        target_pos = ctx:get_zone_waypoint(dest)
+    end
+
+    if not target_pos then
+        return "blocked" -- No known position to navigate to
+    end
+
+    -- Already there?
+    if ctx:is_at_destination(target_pos, tol) then
         return "success"
     end
 
-    if _G.SentinelNavClient and _G.SentinelNavClient.navigate_to_zone then
-        return _G.SentinelNavClient.navigate_to_zone(dest) and "success" or "retry"
+    -- Already navigating? Poll for arrival.
+    if ctx.nav and ctx.nav:is_active() then
+        local state, progress = ctx.nav:poll()
+        if state == "arrived" or state == "idle" then
+            -- Arrived: verify position
+            if ctx:is_at_destination(target_pos, tol) then
+                ctx.nav:stop("arrived")
+                return "success"
+            end
+            -- Not close enough; allow re-navigation below
+        elseif state == "requesting_path" or state == "moving" then
+            return "blocked" -- Still navigating
+        elseif state == "stuck" then
+            return "retry" -- Pathfinding issue; outer loop can try recovery
+        else
+            -- failed / unknown → fall through to retry
+        end
     end
 
-    if core and core.input and core.input.move then
-        -- Fallback: use zone name as waypoint if available
-        local zone_info = ctx:get_zone_waypoint(dest)
-        if zone_info then
-            core.input.move(zone_info.x, zone_info.y, zone_info.z)
-            return "success"
+    -- Start navigation via NavAdapter
+    if ctx.nav then
+        local ok, err = ctx.nav:move_to(target_pos, { tolerance = tol })
+        if ok then
+            return "blocked" -- Will be polled on subsequent tick
         end
+        return "retry" -- Dispatch failed; outer loop can retry
+    end
+
+    -- No NavAdapter available: use raw key movement as last resort
+    if core and core.input and core.input.move then
+        core.input.move(target_pos.x or 0, target_pos.y or 0, target_pos.z or 0)
+        return "blocked"
     end
 
     return "blocked" -- Navigation unavailable
@@ -120,7 +160,6 @@ end
 
 function RuntimeAction.execute_kill(payload, ctx)
     local entries = payload.creature_entries or {}
-    local quantity = payload.quantity
 
     -- Find and target nearest creature
     if core and core.object_manager and core.object_manager.GetNearestCreature then
@@ -129,7 +168,37 @@ function RuntimeAction.execute_kill(payload, ctx)
             if target:IsDead() then
                 return "success"
             end
-            return "success" -- Trust kill loop to handle timing
+            -- Check proximity — if out of combat range, initiate navigation (W3.6)
+            if not ctx:is_at_npc(entries[1], 30.0) then
+                -- Start navigation to target's position
+                if ctx.nav and not ctx.nav:is_active() then
+                    local npc_pos = nil
+                    if target.get_position then
+                        local ok, pos = pcall(target.get_position, target)
+                        if ok then npc_pos = pos end
+                    end
+                    if npc_pos then
+                        ctx.nav:move_to(npc_pos, { tolerance = 5.0 })
+                    end
+                end
+                return "blocked" -- Navigate to target first
+            end
+            return "success" -- In range, trust kill loop
+        end
+    end
+
+    -- No targets found — check if we should navigate to a known spawn area
+    local dest = payload.destination
+    if dest and ctx.nav and not ctx.nav:is_active() then
+        local target_pos = nil
+        if type(dest) == "table" and dest.x then
+            target_pos = dest
+        elseif type(dest) == "string" then
+            target_pos = ctx:get_zone_waypoint(dest)
+        end
+        if target_pos then
+            ctx.nav:move_to(target_pos)
+            return "blocked" -- Navigating to spawn area
         end
     end
     return "blocked" -- No targets nearby or no API
@@ -411,6 +480,28 @@ end
 
 function RuntimeAction.execute_loot(payload, ctx)
     local object_entry = payload.object_entry
+
+    -- Proximity check (W3.6) — if object not in range, navigate first
+    if not ctx:is_at_object(object_entry) then
+        if ctx.nav and not ctx.nav:is_active() then
+            -- Try to get nearest object's position for navigation
+            if core and core.object_manager then
+                local nearest_obj = nil
+                if core.object_manager.GetNearestGameObject then
+                    nearest_obj = core.object_manager.GetNearestGameObject({ object_entry })
+                elseif core.object_manager.GetNearestObject then
+                    nearest_obj = core.object_manager.GetNearestObject({ object_entry })
+                end
+                if nearest_obj and nearest_obj.get_position then
+                    local ok, obj_pos = pcall(nearest_obj.get_position, nearest_obj)
+                    if ok and obj_pos then
+                        ctx.nav:move_to(obj_pos, { tolerance = 5.0 })
+                    end
+                end
+            end
+        end
+        return "blocked" -- Not in loot range
+    end
 
     if core and core.input and core.input.loot_object then
         core.input.loot_object(object_entry)
