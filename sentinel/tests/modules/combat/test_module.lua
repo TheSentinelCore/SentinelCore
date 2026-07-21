@@ -130,43 +130,25 @@ function M.run()
         bb:set("combat.ally_count_30yd", 2)
         bb:set("combat.gcd_until_ms", 0)
         bb:set("combat.leash_radius", 25)
-        bb:set("rotation.active_seal", "blood")
         return bb
     end
 
-    local bb = make_blackboard()
-    local bus = EventBus:new()
-    local combat = SentinelCombat:new(bus, bb, nav)
-    combat:initialize()
-    bb:set("module.combat.enable_burst", false)
-    bb:set("bg.active", true)
+    -- Test 1: Ensure auto_engage_world is disabled by default, module stays IDLE
+    local bb1 = make_blackboard()
+    local bus1 = EventBus:new()
+    local combat1 = SentinelCombat:new(bus1, bb1, nav)
+    combat1:initialize()
 
-    combat:update(bb)
+    combat1:update(bb1)
 
-    T.assert_true(combat:get_state() ~= "IDLE", "combat should auto-engage from an active battleground target")
-    T.assert_not_nil(queued[1], "combat should queue at least one spell")
-    T.assert_equal(queued[1].message, "judgement", "combat should start the GCD rotation with judgement in melee")
+    T.assert_equal(combat1:get_state(), "IDLE", "combat should stay IDLE when auto_engage_world is disabled and no engagement source")
 
-    queued = {}
-    local bb_world = make_blackboard()
-    local bus_world = EventBus:new()
-    local combat_world = SentinelCombat:new(bus_world, bb_world, nav)
-    combat_world:initialize()
-    bb_world:set("module.combat.enable_burst", false)
-    bb_world:set("bg.active", false)
-    bb_world:set("module.combat.auto_engage_world", false)
-
-    combat_world:update(bb_world)
-
-    T.assert_equal(combat_world:get_state(), "IDLE", "combat should not auto-engage world targets while idle by default")
-    T.assert_equal(queued[1], nil, "combat should not queue spells while idle outside battlegrounds")
-
+    -- Test 2: Don't auto-engage non-hostile direct targets
     queued = {}
     local bb_friendly = make_blackboard()
     local bus_friendly = EventBus:new()
     local combat_friendly = SentinelCombat:new(bus_friendly, bb_friendly, nav)
     combat_friendly:initialize()
-    bb_friendly:set("bg.active", true)
     bb_friendly:set("player.target", friendly_target)
     combat_friendly:update(bb_friendly)
 

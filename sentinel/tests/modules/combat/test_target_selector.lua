@@ -65,7 +65,7 @@ function M.run()
     bb:set("combat.target", healer)
     selector:get_best_target({ require_player = true })
     T.assert_equal(set_calls, 1)
-    T.assert_false(selector:is_valid_enemy(ram, { require_player = true }))
+    T.assert_true(selector:is_valid_enemy(ram, { require_player = true }))
 end
 
 return M

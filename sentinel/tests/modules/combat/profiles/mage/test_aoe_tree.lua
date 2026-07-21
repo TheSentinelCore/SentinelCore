@@ -27,10 +27,10 @@ function M.run()
         T.assert_true(#tree.children[i].children >= 2, "branch " .. i .. " should have at least 2 children")
     end
 
-    -- re_freeze contains a nested freeze_options selector
+    -- re_freeze contains a nested freeze_options selector (after condition children)
     local re_freeze = tree.children[4]
-    T.assert_equal(re_freeze.children[2].name, "freeze_options", "re_freeze should contain freeze_options selector")
-    T.assert_equal(#re_freeze.children[2].children, 2, "freeze_options should have 2 children (cone_of_cold, frost_nova)")
+    T.assert_equal(re_freeze.children[3].name, "freeze_options", "re_freeze should contain freeze_options selector")
+    T.assert_equal(#re_freeze.children[3].children, 2, "freeze_options should have 2 children (cone_of_cold, frost_nova)")
 
     -- emergency_escape contains a nested escape_tools selector
     local emergency = tree.children[5]

@@ -1,119 +1,9 @@
 local QueuePriorities = require("shared/queue_priorities")
 local Status = require("core/bt/status")
 local AuraCatalog = require("modules/combat/aura_catalog")
+local H = require("shared/combat_helpers")
 
 local ActionLibrary = {}
-
--- Helper functions
-local function num(value)
-    return tonumber(value) or 0
-end
-
-local function safe_call(obj, method, ...)
-    if not obj or type(obj[method]) ~= "function" then
-        return false, nil
-    end
-    return pcall(obj[method], obj, ...)
-end
-
-local function player_and_target(blackboard)
-    return blackboard:get("player.object"), blackboard:get("combat.target") or blackboard:get("player.target")
-end
-
-local function resolve_spell_helper()
-    if spell_helper then
-        return spell_helper
-    end
-    local ok, mod = pcall(require, "common/utility/spell_helper")
-    if ok and mod then
-        spell_helper = mod
-        return spell_helper
-    end
-    return nil
-end
-
-local function call_helper(fn, owner, ...)
-    if type(fn) ~= "function" then
-        return false, nil
-    end
-    if _spell_helper_call_style == "plain" then
-        local ok, value = pcall(fn, ...)
-        if ok then
-            return true, value
-        end
-    end
-    local ok, value = pcall(fn, owner, ...)
-    if ok then
-        return true, value
-    end
-    if _spell_helper_call_style ~= "plain" then
-        return pcall(fn, ...)
-    end
-    return false, nil
-end
-
-local function resolve_spell_helper_cached()
-    if _spell_helper_resolved then
-        return _spell_helper_ref
-    end
-    
-    if spell_helper then
-        _spell_helper_ref = spell_helper
-        _spell_helper_resolved = true
-        _spell_helper_call_style = "self"
-        return _spell_helper_ref
-    end
-    
-    local ok, mod = pcall(require, "common/utility/spell_helper")
-    if ok and mod then
-        _spell_helper_ref = mod
-        _spell_helper_resolved = true
-        _spell_helper_call_style = "self"
-        return _spell_helper_ref
-    end
-    
-    _spell_helper_resolved = true
-    return nil
-end
-
-local function spell_id_for(blackboard, spell_key, mode)
-    local catalog = blackboard:get("module.combat.catalog")
-    if not catalog then
-        return nil
-    end
-    if mode == "lowest" then
-        return catalog:resolve_lowest_rank(spell_key)
-    end
-    return catalog:resolve_best_rank(spell_key)
-end
-
-local function dispatcher(blackboard)
-    return blackboard:get("module.combat.dispatcher")
-end
-
-local function queue_target(blackboard, action_id, spell_key, target, priority, opts, mode)
-    local d = dispatcher(blackboard)
-    local spell_id = spell_id_for(blackboard, spell_key, mode)
-    if not d or not spell_id then
-        return Status.FAILURE
-    end
-    if d:queue_target(action_id, spell_id, target, priority, action_id, opts) then
-        return Status.SUCCESS
-    end
-    return Status.FAILURE
-end
-
-local function queue_position(blackboard, action_id, spell_key, position, priority, mode)
-    local d = dispatcher(blackboard)
-    local spell_id = spell_id_for(blackboard, spell_key, mode)
-    if not d or not spell_id or type(position) ~= "table" then
-        return Status.FAILURE
-    end
-    if d:queue_position(action_id, spell_id, position, priority, action_id) then
-        return Status.SUCCESS
-    end
-    return Status.FAILURE
-end
 
 -- ============================================================================
 -- BASIC ACTIONS
@@ -129,12 +19,12 @@ function ActionLibrary.cast_target(spell_key, target_fn, priority, opts)
     target_fn = target_fn or function(bb) return bb:get("combat.target") or bb:get("player.target") end
     priority = priority or QueuePriorities.DEFAULT
     return function(blackboard)
-        local _, target = player_and_target(blackboard)
+        local _, target = H.player_and_target(blackboard)
         local actual_target = target_fn and target_fn(blackboard) or target
         if not actual_target then
             return Status.FAILURE
         end
-        return queue_target(blackboard, spell_key .. "_target", spell_key, actual_target, priority, opts)
+        return H.queue_target(blackboard, spell_key .. "_target", spell_key, actual_target, priority, opts)
     end
 end
 
@@ -150,7 +40,7 @@ function ActionLibrary.cast_self(spell_key, priority, opts)
         if not player then
             return Status.FAILURE
         end
-        return queue_target(blackboard, spell_key .. "_self", spell_key, player, priority, opts)
+        return H.queue_target(blackboard, spell_key .. "_self", spell_key, player, priority, opts)
     end
 end
 
@@ -171,7 +61,7 @@ function ActionLibrary.cast_position(spell_key, position_fn, priority, opts)
         if not position or type(position) ~= "table" then
             return Status.FAILURE
         end
-        return queue_position(blackboard, spell_key .. "_position", spell_key, position, priority, opts)
+        return H.queue_position(blackboard, spell_key .. "_position", spell_key, position, priority, opts)
     end
 end
 
@@ -187,7 +77,7 @@ function ActionLibrary.use_item(item_id, priority)
             return Status.FAILURE
         end
         -- Use spell queue for items that support it (consistent with spell casting)
-        local d = dispatcher(blackboard)
+        local d = H.dispatcher(blackboard)
         if d and d.queue_item_self then
             local ok, result = pcall(d.queue_item_self, d, item_id, priority, "use_item")
             if ok and result ~= false then
@@ -221,7 +111,7 @@ function ActionLibrary.use_item_on_target(item_id, target_fn, priority)
             return Status.FAILURE
         end
         -- Try spell queue first
-        local d = dispatcher(blackboard)
+        local d = H.dispatcher(blackboard)
         if d and d.queue_item_target then
             local ok, result = pcall(d.queue_item_target, d, item_id, target, priority, "use_item_on_target")
             if ok and result ~= false then
@@ -249,11 +139,11 @@ end
 function ActionLibrary.interrupt(spell_key, priority, opts)
     priority = priority or QueuePriorities.INTERRUPT
     return function(blackboard)
-        local _, target = player_and_target(blackboard)
+        local _, target = H.player_and_target(blackboard)
         if not target then
             return Status.FAILURE
         end
-        return queue_target(blackboard, spell_key .. "_interrupt", spell_key, target, priority, opts)
+        return H.queue_target(blackboard, spell_key .. "_interrupt", spell_key, target, priority, opts)
     end
 end
 

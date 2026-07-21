@@ -1,83 +1,8 @@
 local AuraCatalog = require("modules/combat/aura_catalog")
+local H = require("shared/combat_helpers")
+local SpellHelper = require("shared/spell_helper")
 
 local Cond = {}
-local _spell_helper_ref = nil
-local _spell_helper_resolved = false
-local _spell_helper_call_style = "self"
-
-local function num(value)
-    return tonumber(value) or 0
-end
-
-local function safe_call(obj, method, ...)
-    if not obj or type(obj[method]) ~= "function" then
-        return false, nil
-    end
-    return pcall(obj[method], obj, ...)
-end
-
-local function distance(a, b)
-    if type(a) ~= "table" or type(b) ~= "table" then
-        return 99999
-    end
-    local dx = num(a.x) - num(b.x)
-    local dy = num(a.y) - num(b.y)
-    local dz = num(a.z) - num(b.z)
-    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
-end
-
-local function player_and_target(blackboard)
-    return blackboard:get("player.object"), blackboard:get("combat.target") or blackboard:get("player.target")
-end
-
-local function resolve_spell_helper()
-    if spell_helper then
-        _spell_helper_ref = spell_helper
-        _spell_helper_resolved = true
-        _spell_helper_call_style = "self"
-        return _spell_helper_ref
-    end
-    if not _spell_helper_resolved then
-        local ok, mod = pcall(require, "common/utility/spell_helper")
-        if ok and mod then
-            _spell_helper_ref = mod
-            _spell_helper_call_style = "self"
-        end
-        _spell_helper_resolved = true
-    end
-    return _spell_helper_ref
-end
-
-local function call_helper(fn, owner, ...)
-    if type(fn) ~= "function" then
-        return false, nil
-    end
-    if _spell_helper_call_style == "plain" then
-        local ok, value = pcall(fn, ...)
-        if ok then
-            return true, value
-        end
-    end
-    local ok, value = pcall(fn, owner, ...)
-    if ok then
-        return true, value
-    end
-    if _spell_helper_call_style ~= "plain" then
-        return pcall(fn, ...)
-    end
-    return false, nil
-end
-
-local function spell_id_for(blackboard, spell_key, mode)
-    local catalog = blackboard:get("module.combat.catalog")
-    if not catalog then
-        return nil
-    end
-    if mode == "lowest" then
-        return catalog:resolve_lowest_rank(spell_key)
-    end
-    return catalog:resolve_best_rank(spell_key)
-end
 
 -- ---------------------------------------------------------------------------
 -- Aura IDs for buff checking
@@ -92,65 +17,57 @@ local arcane_intellect_aura_ids = { 1459, 1460, 1461, 10156, 10157, 27126 }
 
 function Cond.health_below(threshold)
     return function(blackboard)
-        return num(blackboard:get("player.health_pct", 0)) < threshold
+        return H.num(blackboard:get("player.health_pct", 0)) < threshold
     end
 end
 
 function Cond.mana_below(threshold)
     return function(blackboard)
-        return num(blackboard:get("player.mana_pct", 0)) < threshold
+        return H.num(blackboard:get("player.mana_pct", 0)) < threshold
     end
 end
 
 function Cond.health_above(threshold)
     return function(blackboard)
-        return num(blackboard:get("player.health_pct", 0)) > threshold
+        return H.num(blackboard:get("player.health_pct", 0)) > threshold
     end
 end
 
 function Cond.mana_above(threshold)
     return function(blackboard)
-        return num(blackboard:get("player.mana_pct", 0)) > threshold
+        return H.num(blackboard:get("player.mana_pct", 0)) > threshold
     end
 end
 
 function Cond.level_at_least(level)
     return function(blackboard)
-        return num(blackboard:get("player.level", 0)) >= level
+        return H.num(blackboard:get("player.level", 0)) >= level
     end
 end
 
 function Cond.enemies_in_melee(min_count)
     return function(blackboard)
-        return num(blackboard:get("combat.enemy_count_10yd", 0)) >= min_count
+        return H.num(blackboard:get("combat.enemy_count_10yd", 0)) >= min_count
     end
 end
 
 function Cond.spell_ready(spell_key, mode, cast_target)
     return function(blackboard)
-        local player, target = player_and_target(blackboard)
-        local spell_id = spell_id_for(blackboard, spell_key, mode)
+        local player, target = H.player_and_target(blackboard)
+        local spell_id = H.spell_id_for(blackboard, spell_key, mode)
         local cooldowns = blackboard:get("module.combat.cooldowns")
         if not spell_id or not cooldowns or not cooldowns:spell_ready(spell_id) then
             return false
         end
-        local helper = resolve_spell_helper()
-        if not helper or type(helper.is_spell_castable) ~= "function" then
-            return true
-        end
         local source = player
         local dest = cast_target == "self" and player or (target or player)
-        local ok, castable = call_helper(helper.is_spell_castable, helper, spell_id, source, dest, true, true)
-        if not ok or castable ~= true then
+        if not SpellHelper.is_spell_castable(spell_id, source, dest) then
             return false
         end
         -- Check line of sight for targeted spells (not self-cast)
         if cast_target ~= "self" and dest and dest ~= source then
-            if type(helper.is_spell_in_line_of_sight) == "function" then
-                local los_ok, in_los = call_helper(helper.is_spell_in_line_of_sight, helper, spell_id, source, dest)
-                if los_ok and in_los ~= true then
-                    return false
-                end
+            if not SpellHelper.is_spell_in_los(spell_id, source, dest) then
+                return false
             end
         end
         return true
@@ -175,23 +92,23 @@ function Cond.in_combat(blackboard)
 end
 
 function Cond.target_valid(blackboard)
-    local _, target = player_and_target(blackboard)
+    local _, target = H.player_and_target(blackboard)
     if not target then
         return false
     end
-    local ok_dead, dead = safe_call(target, "is_dead")
+    local ok_dead, dead = H.safe_call(target, "is_dead")
     return not ok_dead or dead ~= true
 end
 
 function Cond.target_casting_interruptible(blackboard)
-    local _, target = player_and_target(blackboard)
+    local _, target = H.player_and_target(blackboard)
     if not target then
         return false
     end
-    local ok_casting, casting = safe_call(target, "is_casting_spell")
-    local ok_channel, channeling = safe_call(target, "is_channelling_spell")
+    local ok_casting, casting = H.safe_call(target, "is_casting_spell")
+    local ok_channel, channeling = H.safe_call(target, "is_channelling_spell")
     if (ok_casting and casting == true) or (ok_channel and channeling == true) then
-        local ok_interruptible, interruptible = safe_call(target, "is_active_spell_interruptable")
+        local ok_interruptible, interruptible = H.safe_call(target, "is_active_spell_interruptable")
         return ok_interruptible and interruptible == true
     end
     return false
@@ -241,20 +158,20 @@ end
 --- threshold is 0-1 scale; get_health_percentage returns 1-100.
 function Cond.target_health_below(threshold)
     return function(blackboard)
-        local _, target = player_and_target(blackboard)
+        local _, target = H.player_and_target(blackboard)
         if not target then return false end
-        local ok, pct = safe_call(target, "get_health_percentage")
-        return ok and num(pct) / 100 < threshold
+        local ok, pct = H.safe_call(target, "get_health_percentage")
+        return ok and H.num(pct) / 100 < threshold
     end
 end
 
 --- threshold is 0-1 scale; get_health_percentage returns 1-100.
 function Cond.target_health_above(threshold)
     return function(blackboard)
-        local _, target = player_and_target(blackboard)
+        local _, target = H.player_and_target(blackboard)
         if not target then return false end
-        local ok, pct = safe_call(target, "get_health_percentage")
-        return ok and num(pct) / 100 > threshold
+        local ok, pct = H.safe_call(target, "get_health_percentage")
+        return ok and H.num(pct) / 100 > threshold
     end
 end
 
@@ -265,14 +182,14 @@ end
 function Cond.hostile_count_at_least(count, radius)
     return function(blackboard)
         local key = "combat.enemy_count_" .. tostring(radius) .. "yd"
-        return num(blackboard:get(key, 0)) >= count
+        return H.num(blackboard:get(key, 0)) >= count
     end
 end
 
 function Cond.hostile_count_below(count, radius)
     return function(blackboard)
         local key = "combat.enemy_count_" .. tostring(radius) .. "yd"
-        return num(blackboard:get(key, 0)) < count
+        return H.num(blackboard:get(key, 0)) < count
     end
 end
 
@@ -282,7 +199,7 @@ end
 
 function Cond.target_in_range(range)
     return function(blackboard)
-        return num(blackboard:get("combat.target_distance", 99999)) <= range
+        return H.num(blackboard:get("combat.target_distance", 99999)) <= range
     end
 end
 
@@ -422,13 +339,13 @@ end
 -- ---------------------------------------------------------------------------
 
 function Cond.safe_to_evocate(blackboard)
-    local enemy_count = num(blackboard:get("combat.enemy_count_10yd", 0))
+    local enemy_count = H.num(blackboard:get("combat.enemy_count_10yd", 0))
     if enemy_count > 0 then return false end
     if blackboard:get("combat.kite_state", "NONE") ~= "NONE" then return false end
 
     -- Use health prediction if available for safer evocation check
     local player = blackboard:get("player.object")
-    local hp_pct = num(blackboard:get("player.health_pct", 0))
+    local hp_pct = H.num(blackboard:get("player.health_pct", 0))
     if player then
         local izi_bridge = blackboard:get("module.combat.izi_bridge")
         if izi_bridge then

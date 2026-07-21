@@ -1,44 +1,25 @@
 local Events = require("modules/combat/events")
+local SpellQueue = require("shared/spell_queue")
 
 local SpellDispatcher = {}
 SpellDispatcher.__index = SpellDispatcher
 
 -- ---------------------------------------------------------------------------
--- Spell queue resolution and method dispatch
+-- Spell key → ID resolution (deep module integration)
 -- ---------------------------------------------------------------------------
 
-local _spell_queue_ref = nil
-local _spell_queue_resolved = false
-
-local function resolve_spell_queue()
-    if spell_queue then
-        _spell_queue_ref = spell_queue
-        _spell_queue_resolved = true
-        return _spell_queue_ref
+---Resolve a spell key to its best-rank ID via the blackboard catalog.
+---@param blackboard table
+---@param spell_key string
+---@param mode string|nil "lowest" for lowest rank, nil/other for best rank
+---@return number|nil
+local function spell_id_for(blackboard, spell_key, mode)
+    local catalog = blackboard:get("module.combat.catalog")
+    if not catalog then return nil end
+    if mode == "lowest" then
+        return catalog:resolve_lowest_rank(spell_key)
     end
-    if not _spell_queue_resolved then
-        local ok, mod = pcall(require, "common/modules/spell_queue")
-        if ok and mod then
-            _spell_queue_ref = mod
-        end
-        _spell_queue_resolved = true
-    end
-    return _spell_queue_ref
-end
-
----Call a spell queue method using method-call convention (queue:method(...)).
----The spell_queue module is external and its calling convention varies.
----We always try method-call first (our canonical convention).
----@param queue table The spell queue instance
----@param method_name string The method name to call
----@param ... any Arguments to pass after the method name
----@return boolean ok Whether the call succeeded (no error thrown)
----@return any result The return value from the method
-local function call_queue_method(queue, method_name, ...)
-    if not queue or type(queue[method_name]) ~= "function" then
-        return false, nil
-    end
-    return pcall(queue[method_name], queue, ...)
+    return catalog:resolve_best_rank(spell_key)
 end
 
 -- ---------------------------------------------------------------------------
@@ -100,15 +81,32 @@ local function snapshot_signature(snapshot, spell_id, queue_priority, target, mo
     return tostring(count) .. ":" .. tostring(latest_timestamp)
 end
 
-local function get_queue_snapshot(queue)
-    if not queue or type(queue.get_queue_snapshot) ~= "function" then
-        return nil
-    end
-    local ok, snapshot = pcall(queue.get_queue_snapshot, queue)
-    if ok and type(snapshot) == "table" then
-        return snapshot
-    end
-    return nil
+---Queue a spell by key (resolves to best-rank ID internally).
+---Canonical entry point — prefer over pre-resolved queue_target.
+---@param spell_key string
+---@param target table
+---@param queue_priority number
+---@param message string
+---@param opts table|nil
+---@param mode string|nil "lowest" for lowest known rank, nil for best
+---@return boolean
+function SpellDispatcher:queue_spell(spell_key, target, queue_priority, message, opts, mode)
+    local spell_id = spell_id_for(self._blackboard, spell_key, mode)
+    if not spell_id then return false end
+    return self:queue_target(message or spell_key, spell_id, target, queue_priority, message, opts)
+end
+
+---Queue a position-targeted spell by key (resolves to best-rank ID internally).
+---@param spell_key string
+---@param position table
+---@param queue_priority number
+---@param message string|nil
+---@param mode string|nil "lowest" for lowest known rank, nil for best
+---@return boolean
+function SpellDispatcher:queue_position_spell(spell_key, position, queue_priority, message, mode)
+    local spell_id = spell_id_for(self._blackboard, spell_key, mode)
+    if not spell_id then return false end
+    return self:queue_position(message or spell_key, spell_id, position, queue_priority, message)
 end
 
 function SpellDispatcher:new(event_bus, blackboard)
@@ -187,29 +185,23 @@ function SpellDispatcher:queue_target(action_id, spell_id, target, queue_priorit
         target_guid = target_key ~= "nil" and target_key or nil,
     })
 
-    local queue = resolve_spell_queue()
-    if not queue then
-        self:_block(action_id, spell_id, "spell_queue_unavailable")
-        return false
-    end
-
     local before_snapshot = nil
     local before_signature = nil
     if not opts.fast then
-        before_snapshot = get_queue_snapshot(queue)
+        before_snapshot = SpellQueue.snapshot()
         before_signature = snapshot_signature(before_snapshot, spell_id, queue_priority, target, "target")
     end
 
     -- Dispatch to spell queue using canonical method-call convention.
-    -- Only method_with_self is supported (flat calls were dead code).
     local ok, queued = false, nil
     local queue_method = ""
-    if opts.fast and type(queue.queue_spell_target_fast) == "function" then
-        ok, queued = call_queue_method(queue, "queue_spell_target_fast",
+    if opts.fast then
+        ok, queued = SpellQueue.call("queue_spell_target_fast",
             spell_id, target, queue_priority, message, opts.allow_movement ~= false)
         queue_method = "method_with_self"
-    elseif type(queue.queue_spell_target) == "function" then
-        ok, queued = call_queue_method(queue, "queue_spell_target",
+    end
+    if not ok then
+        ok, queued = SpellQueue.call("queue_spell_target",
             spell_id, target, queue_priority, message, opts.allow_movement ~= false)
         queue_method = "method_with_self"
     end
@@ -217,7 +209,7 @@ function SpellDispatcher:queue_target(action_id, spell_id, target, queue_priorit
     -- Verify by snapshot comparison (non-fast only)
     local observed = true
     if ok and not opts.fast and before_signature ~= nil then
-        local after_snapshot = get_queue_snapshot(queue)
+        local after_snapshot = SpellQueue.snapshot()
         local after_signature = snapshot_signature(after_snapshot, spell_id, queue_priority, target, "target")
         observed = after_signature ~= before_signature
         self._blackboard:set("rotation.last_queue_snapshot_size", after_snapshot and #after_snapshot or 0)
@@ -248,14 +240,12 @@ function SpellDispatcher:queue_position(action_id, spell_id, position, queue_pri
     end
     self._blackboard:set("rotation.last_queue_position_key", position_key)
 
-    local queue = resolve_spell_queue()
-    if not queue or type(queue.queue_spell_position) ~= "function" then
+    local ok, queued = SpellQueue.call("queue_spell_position",
+        spell_id, position, queue_priority, message, true)
+    if not ok then
         self:_block(action_id, spell_id, "spell_queue_position_unavailable")
         return false
     end
-
-    local ok, queued = call_queue_method(queue, "queue_spell_position",
-        spell_id, position, queue_priority, message, true)
     self:_set_queue_diag("position", "method_with_self", ok, nil)
     if ok and queued ~= false then
         self:_commit(signature, action_id, spell_id, "position", queue_priority, now_ms)

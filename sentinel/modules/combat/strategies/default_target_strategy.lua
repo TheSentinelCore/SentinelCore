@@ -3,6 +3,7 @@ DefaultTargetStrategy.__index = DefaultTargetStrategy
 
 local AuraCatalog = require("modules/combat/aura_catalog")
 local Events = require("modules/combat/events")
+local SpellHelper = require("shared/spell_helper")
 
 local function safe_call(obj, method, ...)
     if not obj or type(obj[method]) ~= "function" then
@@ -156,10 +157,8 @@ function DefaultTargetStrategy:_score(player, candidate, current_target, leash_c
     if dist <= 10 then score = score + 10 end
     if dist <= 5 then score = score + 10 end
 
-    local helper = resolve_spell_helper()
-    if helper and type(helper.is_spell_in_line_of_sight) == "function" then
-        local ok_los, los = call_helper(helper.is_spell_in_line_of_sight, helper, 20271, player, candidate)
-        if ok_los and los ~= true then score = score - 15 end
+    if not SpellHelper.is_spell_in_los(20271, player, candidate) then
+        score = score - 15
     end
 
     if leash_center and leash_radius and ok_candidate_pos and type(candidate_pos) == "table" then
@@ -171,41 +170,15 @@ function DefaultTargetStrategy:_score(player, candidate, current_target, leash_c
     return score, dist
 end
 
--- Spell helper resolution
-local _spell_helper_ref = nil
-local _spell_helper_resolved = false
-local _spell_helper_call_style = "self"
-
-local function call_helper(fn, owner, ...)
-    if type(fn) ~= "function" then return false, nil end
-    if _spell_helper_call_style == "plain" then
-        local ok, value = pcall(fn, ...)
-        if ok then return true, value end
+-- Helper for targeting
+local function set_target(unit)
+    if not core or not core.input or type(core.input.set_target) ~= "function" then
+        return false
     end
-    local ok, value = pcall(fn, owner, ...)
-    if ok then return true, value end
-    if _spell_helper_call_style ~= "plain" then
-        return pcall(fn, ...)
-    end
-    return false, nil
-end
-
-local function resolve_spell_helper()
-    if spell_helper then
-        _spell_helper_ref = spell_helper
-        _spell_helper_resolved = true
-        _spell_helper_call_style = "self"
-        return _spell_helper_ref
-    end
-    if not _spell_helper_resolved then
-        local ok, mod = pcall(require, "common/utility/spell_helper")
-        if ok and mod then
-            _spell_helper_ref = mod
-            _spell_helper_call_style = "self"
-        end
-        _spell_helper_resolved = true
-    end
-    return _spell_helper_ref
+    local ok = pcall(core.input.set_target, unit)
+    if ok then return true end
+    ok = pcall(core.input.set_target, core.input, unit)
+    return ok
 end
 
 function DefaultTargetStrategy:get_best_target(opts)
@@ -267,17 +240,6 @@ function DefaultTargetStrategy:get_best_target(opts)
     end
 
     return best_unit, best_score
-end
-
--- Helper for targeting
-local function set_target(unit)
-    if not core or not core.input or type(core.input.set_target) ~= "function" then
-        return false
-    end
-    local ok = pcall(core.input.set_target, unit)
-    if ok then return true end
-    ok = pcall(core.input.set_target, core.input, unit)
-    return ok
 end
 
 return DefaultTargetStrategy

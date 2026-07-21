@@ -185,7 +185,7 @@ function M.run()
         local player = make_player()
 
         local target_a = make_enemy({ guid = "switch_a", class_id = 1, health = 50, max_health = 100, position = { x = 10, y = 0, z = 0 } })
-        local target_b = make_enemy({ guid = "switch_b", class_id = 8, role = 1, health = 50, max_health = 100, position = { x = 10, y = 0, z = 0 } })
+        local target_b = make_enemy({ guid = "switch_b", class_id = 4, health = 50, max_health = 100, position = { x = 10, y = 0, z = 0 } })
 
         -- First select target_a alone
         selector._collect_enemies = function(self, p, s) return { target_a } end

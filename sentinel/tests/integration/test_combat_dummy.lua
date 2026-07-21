@@ -168,6 +168,7 @@ function M.test_combat_engage_disengage_cycle()
         hostile = true,
         health = 100,
         max_health = 100,
+        is_player = false,
         name = "Training Dummy",
     })
 
@@ -220,6 +221,7 @@ function M.test_combat_idle_no_auto_engage_when_disabled()
         guid = "target-dummy",
         position = { x = 5, y = 0, z = 0 },
         hostile = true,
+        is_player = false,
         name = "Training Dummy",
     })
 
@@ -287,6 +289,7 @@ function M.test_combat_shutdown_cleans_up()
         guid = "target-dummy",
         position = { x = 5, y = 0, z = 0 },
         hostile = true,
+        is_player = false,
         name = "Training Dummy",
     })
 

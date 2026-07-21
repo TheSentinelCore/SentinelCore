@@ -125,7 +125,7 @@ function PvPTargetSelector.new(event_bus, blackboard)
     self._blackboard = blackboard
     self.unit_helper = safe_require("common/utility/unit_helper")
     self.izi = safe_require("common/izi_sdk")
-    self.spell_helper = safe_require("common/utility/spell_helper")
+    self.spell_helper = require("shared/spell_helper")
     self.pvp_helper = safe_require("common/utility/pvp_helper")
     self.buff_manager = safe_require("common/modules/buff_manager")
 
