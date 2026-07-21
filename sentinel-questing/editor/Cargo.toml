@@ -5,10 +5,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "import-guides"
+path = "src/bin/import-guides.rs"
+
 [dependencies]
 sentinel-models = { path = "../shared" }
 sentinel-validator = { path = "../validator" }
 sentinel-compiler = { path = "../compiler" }
+sentinel-importer = { path = "../importer" }
+sentinel-queryclient = { path = "../queryclient" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

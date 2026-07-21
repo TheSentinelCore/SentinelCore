@@ -1,0 +1,6036 @@
+{
+  "metadata": {
+    "id": "8385ceec-98d2-4b7e-8bac-8f18218b5e2b",
+    "name": "12-14 Darkshore",
+    "author": "",
+    "description": "",
+    "version": "0.1.0",
+    "schema_version": "1.0.0",
+    "game_version": "2.4.3",
+    "faction": "Alliance",
+    "created_at": "2026-07-21T06:15:23.443294790+00:00",
+    "updated_at": "2026-07-21T06:15:23.443294790+00:00"
+  },
+  "settings": {
+    "auto_repair": false,
+    "auto_vendor": false,
+    "auto_train": false,
+    "learn_flight_paths": false,
+    "auto_hearth": false,
+    "skip_optional": false,
+    "stop_on_death": false,
+    "stop_on_validation_errors": false,
+    "compile_optimization": false,
+    "coordinate_mode": "World"
+  },
+  "variables": [],
+  "npc_library": [],
+  "quest_library": [],
+  "object_library": [],
+  "areas": [],
+  "operations": [
+    {
+      "id": "3c6e048a-6290-4475-9723-dd13b2fdd7bf",
+      "name": "Step 0",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "58eb4344-74ce-4c0b-9d11-7fa495605538",
+          "enabled": true,
+          "note": "Abandon Return to Brock. You won't turn this in",
+          "type": "Comment",
+          "payload": {
+            "text": ".abandon 6392"
+          }
+        }
+      ]
+    },
+    {
+      "id": "063d7f3d-adda-4a57-a084-da6b8ba8eb43",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "f1b02e87-3b67-4ccb-ad0a-df4b16b24165",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "168466d6-7d1f-4541-b61a-6e79405ee4b7",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1afb1a67-bbcd-44ce-bf07-3d47e3c2bf61",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c26e1c5f-b5ed-434b-b860-84f43b0dc514",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1437",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "581e01d4-204e-4dd4-b54c-2aef1fa2e45e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "dc8a8290-5cc2-4e94-a7ef-d246f609951d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".money <0.08 << !Hunter"
+          }
+        },
+        {
+          "id": "bc3e5449-0d94-404d-a4de-0429ee24fcc6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        }
+      ]
+    },
+    {
+      "id": "43826446-bdec-4c0a-8a43-fe38e5a2a780",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "5d8535e5-ea8b-4f58-a98d-a82bfab24c4f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "11c64154-915c-4016-8bd7-a54e932c89ee",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "ac14af1b-1bc0-4344-89e1-2b91f5cafe8b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        }
+      ]
+    },
+    {
+      "id": "94078b69-129b-4515-b36f-d9f502b5de18",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "a9ba8ff2-3570-4ef0-a9ec-e8ff2deb9d6a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "512324c7-b4d7-4a84-b51a-af1ea1c61fb7",
+          "enabled": true,
+          "note": "Travel to the dock for the boat to Auberdine",
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f1a74737-4caa-4cd6-a061-bc49aa56392e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fa4fc5ae-1dd9-4135-ac24-bb2f4a182057",
+      "name": "Step 4",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "99a4ebe9-889d-41db-a7bc-c215770480f7",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Create a|r |T135805:0|t[Basic Campfire] |cRXP_WARN_(under the General Tab of your Spellbook)|r"
+          }
+        },
+        {
+          "id": "ef3df711-10d0-43b3-b830-78d0c1941a1f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".usespell 818"
+          }
+        },
+        {
+          "id": "71d09b10-7739-45db-a0f1-1a4a8e81a114",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        },
+        {
+          "id": "f2db1216-a9b5-4e85-b577-78b66d22006c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 769,1 --Chunk of Boar Meat (1+)"
+          }
+        },
+        {
+          "id": "b3d6afa8-c9c8-4b5d-80b8-14a56756f9b3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 2672,1 --Stringy Wolf Meat (1+)"
+          }
+        },
+        {
+          "id": "fdf6c698-2f76-4d16-b4f6-594764a66b8f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4470,1 --Simple Wood (1+)"
+          }
+        },
+        {
+          "id": "20a84d0f-3ddb-4038-8439-828001c17907",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4471,1 --Flint and Tinder (1)"
+          }
+        },
+        {
+          "id": "44fc2946-da30-4f9e-98a7-d57f5df77b85",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,50,1 -- shows if cooking is <50"
+          }
+        },
+        {
+          "id": "016ebac0-74da-463e-a0c2-cd5f4fd3bb4b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1 -- shows if cooking is >1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "09d88123-a28e-498b-a0aa-b82b9a586c9f",
+      "name": "Step 5",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "a94a76f4-ef50-41f8-8172-d6ead2a43fef",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Create a|r |T135805:0|t[Basic Campfire] |cRXP_WARN_(under the General Tab of your Spellbook)|r"
+          }
+        },
+        {
+          "id": "39c67a2f-ce2f-44a0-9c17-73a6ce67a1fb",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".usespell 818"
+          }
+        },
+        {
+          "id": "2b905f9d-0283-4a6e-9bb5-68147155eb42",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        },
+        {
+          "id": "d43f2fe1-a459-4ffb-97de-a844e50832e5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 769,<1 --Chunk of Boar Meat (<1)"
+          }
+        },
+        {
+          "id": "049c4a9a-0b73-445c-acf7-5c88a9352ec5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 2672,1 --Stringy Wolf Meat (1+)"
+          }
+        },
+        {
+          "id": "5c5ce543-361a-4d16-a4c6-dc82241ecf01",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4470,1 --Simple Wood (1+)"
+          }
+        },
+        {
+          "id": "2ffd77a8-f0ee-461c-a3ae-2cb2b215b7bb",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4471,1 --Flint and Tinder (1)"
+          }
+        },
+        {
+          "id": "28e859a5-a54f-4e4a-90df-42463375c5c9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,50,1 -- shows if cooking is <50"
+          }
+        },
+        {
+          "id": "814f78d8-7639-467d-b83a-6de63c2bfc5a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1 -- shows if cooking is >1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ba56bfcb-6d58-4e0b-b624-a0853596f5b2",
+      "name": "Step 6",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "5b798850-4c51-4b5a-8ecc-e7cacb040d33",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Create a|r |T135805:0|t[Basic Campfire] |cRXP_WARN_(under the General Tab of your Spellbook)|r"
+          }
+        },
+        {
+          "id": "e03194f5-c5aa-4b93-abf0-8e4c7f49a877",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".usespell 818"
+          }
+        },
+        {
+          "id": "0968b0d4-4e83-41c2-a638-0aec8d74a93c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        },
+        {
+          "id": "56130d76-7648-4042-83b7-8cbc7ab01ad3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 769,1 --Chunk of Boar Meat (1+)"
+          }
+        },
+        {
+          "id": "dced33cc-61d1-46fa-a84f-0587141382f8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 2672,<1 --Stringy Wolf Meat (<1)"
+          }
+        },
+        {
+          "id": "00e9f8f0-4f72-4bf5-8135-1f6d9265e275",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4470,1 --Simple Wood (1+)"
+          }
+        },
+        {
+          "id": "1f2be11f-878e-477b-ae45-2f4e5d36059c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4471,1 --Flint and Tinder (1)"
+          }
+        },
+        {
+          "id": "48407c97-07e4-4592-8d57-f2336b723a76",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,50,1 -- shows if cooking is <50"
+          }
+        },
+        {
+          "id": "959bf16f-21ba-456b-bc45-0e9cf0537ce8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1 -- shows if cooking is >1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "32992b56-d22e-4381-bd66-dd1322af9988",
+      "name": "Step 7",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "f963d9b6-39fe-454f-86fb-de4664d1ab76",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".usespell 2550"
+          }
+        },
+        {
+          "id": "21dae5a6-0598-46ef-bc70-1335cad94b90",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        },
+        {
+          "id": "22e9b071-219b-45d3-96a0-0a6fde713861",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 769,1 --Chunk of Boar Meat (1+)"
+          }
+        },
+        {
+          "id": "c44be101-fdf4-4ed8-91e4-6f627f1c08da",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 2672,1 --Stringy Wolf Meat (1+)"
+          }
+        },
+        {
+          "id": "5195d3f6-1044-4988-af4a-90b2f7348273",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4471,1 --Flint and Tinder (1)"
+          }
+        },
+        {
+          "id": "bcb44f3c-1c4e-41b6-878d-fa9c6a640fa8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,50,1 -- shows if cooking is <50"
+          }
+        },
+        {
+          "id": "99d5b8ca-d4ef-406e-95e6-7c5d4e8697ca",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1 -- shows if cooking is >1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0229cf9a-215c-4de1-9fb5-e05229aa4489",
+      "name": "Step 8",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "3c661b24-94ca-4b6c-a4f1-3c7f877f25cf",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".usespell 2550"
+          }
+        },
+        {
+          "id": "b63dc7d1-c4e7-429f-9a6a-c441b2c7c6f9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        },
+        {
+          "id": "d198da14-d03f-4547-bf30-f3ad708e76ab",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 769,<1 --Chunk of Boar Meat (<1)"
+          }
+        },
+        {
+          "id": "8153d0fa-7cff-4110-a5a5-1bf8e8640590",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 2672,1 --Stringy Wolf Meat (1)"
+          }
+        },
+        {
+          "id": "f1d54e3c-3a5f-43c1-9ce4-28efa1dc0617",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4471,1 --Flint and Tinder (1)"
+          }
+        },
+        {
+          "id": "1c924198-6d17-4718-a022-75b0bbc5415e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,50,1 -- shows if cooking is <50"
+          }
+        },
+        {
+          "id": "300ffc67-b6b0-485f-bc0b-ce3f47fdd933",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1 -- shows if cooking is >1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "21897f3e-933f-498c-807b-a0168b24b7b1",
+      "name": "Step 9",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "a39686c1-561a-4f54-82ea-a89eafd7cc72",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".usespell 2550"
+          }
+        },
+        {
+          "id": "dae7be1b-b7e9-4122-b994-5790e087642f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore"
+          }
+        },
+        {
+          "id": "c23e966e-b998-4cf1-972e-5841ac5c62e6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 769,1 --Chunk of Boar Meat (1)"
+          }
+        },
+        {
+          "id": "fd103b69-304a-45d4-8bfd-26dfbc2231f0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 2672,<1 --Stringy Wolf Meat (<1)"
+          }
+        },
+        {
+          "id": "62f468cd-af6b-4fb2-9de5-99ee11a9b34b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 4471,1 --Flint and Tinder (1)"
+          }
+        },
+        {
+          "id": "9a9969e0-ce76-4fbd-a529-44357e45ce59",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,50,1 -- shows if cooking is <50"
+          }
+        },
+        {
+          "id": "2cc2c496-e4cc-4f2c-afea-62ffa0af5c3a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1 -- shows if cooking is >1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "4a59a3c1-6b70-46ee-8ca4-4eaa866251cc",
+      "name": "1437",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "b30c9939-69f3-460b-b7b9-d8e2bd2a6530",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1437",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "8466456d-1ded-426d-a0ea-19e376685f23",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the boat to Darkshore"
+          }
+        },
+        {
+          "id": "86481cd5-60fc-4d29-ae22-0f49dc0dd8d6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill firstaid,75,1 -- shows if firstaid is <75"
+          }
+        },
+        {
+          "id": "a43b7fcf-0d29-45dc-8d7c-09c3305735d6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill firstaid,<1,1 -- shows if firstaid is >1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b8ad4da5-c21b-4d88-8d95-70b20f3434e7",
+      "name": "label:DarkshoreBoat",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "9b834afb-8622-457a-ba79-b80c4a2a612a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1437",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a8ffbcca-4d8a-4894-aac5-6e701950cef3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the boat to Darkshore"
+          }
+        }
+      ]
+    },
+    {
+      "id": "6d8d9d61-9db0-4541-9057-5ed1fe868549",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "cbd03ef9-b125-4a7d-88ec-e7b2110e2e3f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0ad625f3-f55b-42be-b95e-a64935465006",
+          "enabled": true,
+          "note": "Accept The Family and the Fishing Pole",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1141"
+          }
+        },
+        {
+          "id": "54fcd1e7-f0d7-4d0b-8cc2-463f32759e24",
+          "enabled": true,
+          "note": "Turn in The Family and the Fishing Pole",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1141"
+          }
+        },
+        {
+          "id": "2a214739-a13a-4435-b4e6-c82b9425c1bf",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 12238,6 -- Darkshore Grouper (6)"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e38cae69-90e7-4e74-8ccf-2a7f7335e54b",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "e1c00445-6f55-449f-b92c-4f11aa184516",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "771c3c9d-0d32-48eb-ae1f-588f67d61850",
+          "enabled": true,
+          "note": "Turn in Flight to Auberdine << NightElf",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 6342"
+          }
+        },
+        {
+          "id": "6f086c46-658a-4c89-b296-bf7b980b4228",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".collect item=4592"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d1f13aee-c295-4719-8ca3-28eb106f2788",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "8c3a7ecd-040e-44d5-a20c-5e88107a480d",
+          "enabled": true,
+          "note": "Travel up stairs toward |cRXP_FRIENDLY_Wizbang Cranktoggle|r",
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "a2d100d1-159c-4a64-9118-1d1606ca3825",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "6f994f6b-2e71-4d0b-b8d1-df4954bd6b1b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0de8a185-a06f-4fd3-8092-2a5ced5a19d9",
+          "enabled": true,
+          "note": "Accept Buzzbox 827",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 983"
+          }
+        }
+      ]
+    },
+    {
+      "id": "88bc85e4-9596-4841-a370-7eef2afd3180",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "4052fbf9-fe8f-482e-a38f-9e242a3a7bdb",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "76ad7f42-596e-426a-aef5-4fd4738c1bf1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Set your Hearthstone to Auberdine"
+          }
+        },
+        {
+          "id": "1880c60f-2399-4f0a-a246-11d82bb79af7",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bindlocation 442"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a29e3204-5215-4298-98e6-0bdb5c6644e0",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "c871c55f-9fc7-4a2d-b18c-c6e846a19818",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d2002fc3-eeee-4743-b258-0d93ba01c65b",
+          "enabled": true,
+          "note": "Accept Plagued Lands",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 2118"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7dfe2681-7147-4340-8ea3-acf2935c6071",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "2c26d027-ede5-4595-96d3-6667fe70f729",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4de21cf3-28e0-4fcb-a9d1-d05f3910f57a",
+          "enabled": true,
+          "note": "Accept How Big a Threat?",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 984"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d08e7165-845d-455a-8bf4-43781aeb11be",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "5e65817a-4b54-4882-aeeb-0acfc5e924c7",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e046742e-3f83-4b48-8aa1-25ab9682d74c",
+          "enabled": true,
+          "note": "Accept Easy Strider Living",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 2178"
+          }
+        },
+        {
+          "id": "e0d8e93a-fd80-4e15-a252-5829494287bb",
+          "enabled": true,
+          "note": "Turn in Easy Strider Living",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2178"
+          }
+        },
+        {
+          "id": "c72e88e6-4b1d-4504-b4f6-f0ffdfcbb28b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 5469,5 -- Strider Meat (5)"
+          }
+        },
+        {
+          "id": "0f832d85-ede7-4f5b-97b9-53380b439ab9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<10,1 -- step only displays if skill is 10 or higher"
+          }
+        }
+      ]
+    },
+    {
+      "id": "c4d0a0ab-a4a8-4a96-a704-474365b033ca",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "e96ac007-ebbc-4410-ae83-c0f8d7118723",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f9b93af2-9107-4a71-a9b1-5cdf733414b3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "fa92ded3-1b19-4e3b-9932-334501055a0c",
+          "enabled": true,
+          "note": "Accept Washed Ashore",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 3524"
+          }
+        },
+        {
+          "id": "ff9beeaf-8df4-46a2-90d3-f2cb6ae6724a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".xp <11,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "1cf99082-e206-437b-8753-8848544f501b",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [
+        "!NightElf"
+      ],
+      "actions": [
+        {
+          "id": "8499185e-19c5-4418-b852-94b0b61a3b2c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "bb93bd78-cb91-44c9-b1cc-73f288b8acd6",
+          "enabled": true,
+          "note": "Get the Auberdine flight path",
+          "type": "Comment",
+          "payload": {
+            "text": ".fp (unresolved NPC)"
+          }
+        },
+        {
+          "id": "b4b96280-8493-42f3-acfe-33b0b563f27c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bafaf0c7-5be4-41fd-874a-8092f3d5973e",
+      "name": "Step 22",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "064469dc-e4d3-455a-acb4-03ef143a51fc",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".collect item=5469,count=5"
+          }
+        },
+        {
+          "id": "1fd64637-2b01-4ed5-9b13-9919feabd859",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "ca4835ce-aabb-44fa-9491-96a551c1eec6",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "4677a868-478f-42ed-a878-9356dce02def",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<10,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ca6a83a6-2a39-4e10-b0db-8a92640de33f",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Hunter"
+      ],
+      "actions": [
+        {
+          "id": "1fc6ba99-b006-4e82-92fb-2e40f1d8a8dc",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2400cb15-c1e7-4085-bd44-a26e5539f7e5",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "70addd09-4da3-4c18-b633-5831265b818f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "773e2ddf-c645-4d42-bfe5-c0a46fddcd3f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d8d6d03f-ce90-4978-8d67-36bf65ee70b0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "36ec271d-45f4-463c-82d0-3199db116749",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0c458449-0136-4ede-8463-f07c2bc9c032",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".train 2981"
+          }
+        },
+        {
+          "id": "e8dfa640-5e0f-476a-9435-e1fe42bdf532",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Click here for more info about pet training|r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "5cd89fdd-e39e-424f-93a3-effd3e34d022",
+      "name": "label:BuzzBox1",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "7713b703-1c56-47c8-9031-dc1f6b8ea6de",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6cea2c16-54ff-45bc-ba2c-663da7c22f15",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "51cc7f6b-8569-498b-8e04-e049614b39d0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "cc1a4796-db3e-4402-8d93-0a8c3f08399b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,36.091,51.501,60,0"
+          }
+        },
+        {
+          "id": "1ea8ecf6-b5a2-4374-894b-5c56390217b1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,37.115,52.368,60,0"
+          }
+        },
+        {
+          "id": "9f89e26b-e114-46d8-a022-8e8521ae57d0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,37.130,53.663,60,0"
+          }
+        },
+        {
+          "id": "bebb9bfe-e4f5-4024-be6f-3139ebd8e042",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,36.740,55.221,60,0"
+          }
+        },
+        {
+          "id": "3e3766e5-ecb6-487b-b163-3187330052a7",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,35.655,55.872,60,0"
+          }
+        },
+        {
+          "id": "da658dd7-b0f1-4e06-82ba-3a727b51625c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,35.088,55.085,60,0"
+          }
+        },
+        {
+          "id": "36bc14c1-58f6-42ea-9bc2-f173c722167a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,35.275,53.464,60,0"
+          }
+        },
+        {
+          "id": "01306a69-5cb9-4b81-b1a4-469f0281d9b3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,36.091,51.501,60,0"
+          }
+        },
+        {
+          "id": "e96b9490-70d3-43b3-8128-f253d9acbec5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,36.280,50.071,60,0"
+          }
+        },
+        {
+          "id": "ce109596-d3b6-4105-a645-24bb4faf3c87",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,36.523,48.554,60,0"
+          }
+        },
+        {
+          "id": "ec4ef3b6-9b21-443b-ab68-6d73ddbac975",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,35.977,48.408,60,0"
+          }
+        },
+        {
+          "id": "6b11c37e-8fa2-4aa4-b0ec-42fef88bb344",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,35.902,47.145,60,0"
+          }
+        },
+        {
+          "id": "67a16d27-90f4-43b5-884c-021c05645261",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,35.759,45.455,60,0"
+          }
+        },
+        {
+          "id": "5e205905-8b77-4682-bb35-7dd96f2fb3c5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,36.051,44.757,60,0"
+          }
+        },
+        {
+          "id": "636216ee-42bf-4523-8733-b2f7dc7e61fb",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 983"
+          }
+        },
+        {
+          "id": "cf8ce90a-ac0b-4ad1-90b2-2aa57da9752b",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "417f8f35-6c3e-4fe7-934b-e5fb8cbf28fe",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "2bb614d2-1e14-49cc-9fe7-805b83b85eeb",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 983"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bb02f59b-93da-4746-834f-c6176933f69c",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f122f1ff-ac3a-4afc-ab98-63e2aec567ad",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 3524"
+          }
+        },
+        {
+          "id": "00fc82b5-ed67-4c3a-9690-5804acc4ae82",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "522ae2ee-8f87-425b-849d-6ce0619d479c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 3524"
+          }
+        }
+      ]
+    },
+    {
+      "id": "833840cd-b422-4fa6-8059-011eda324355",
+      "name": "label:RabidThistle",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "8155c2df-d912-4a3a-95a0-05a16db6fc95",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3c5e8eac-17ec-43c2-bfe8-bcc4a55e45b4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7897dbca-94d9-4299-99e0-087b2c9bc632",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d64f31c3-5289-4654-bb2b-72ba65cedac4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "89373557-b64d-41c8-9224-e7d064923632",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "19176933-10db-46d4-8595-fe9606aa50d2",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9a8fb80e-f154-4057-a496-0657855d982a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "51632ae9-88ce-4952-a94a-f675ae93b947",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5a137547-ff53-43a5-a45d-357dbc149d10",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 2118"
+          }
+        },
+        {
+          "id": "ac8882ef-c3e7-43da-b817-8d430bb9f5c1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".unitscan Rabid Thistle Bear"
+          }
+        },
+        {
+          "id": "1944336c-7749-4473-9370-b20a29ca6ca0",
+          "enabled": true,
+          "type": "UseItem",
+          "payload": {
+            "item": 7586
+          }
+        }
+      ]
+    },
+    {
+      "id": "20e10531-3406-4fda-9968-d1194e2398c9",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "43e849c5-a4f6-4596-a03f-cca3d1dccdcc",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "46054072-ab72-4cd6-a233-fa601538252d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 984"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f1d3bf39-1759-4eb1-8f68-9e9598bfbfd6",
+      "name": "Step 28",
+      "enabled": true,
+      "conditions": [],
+      "actions": []
+    },
+    {
+      "id": "71182363-00e0-4852-887b-ab2aacede45d",
+      "name": "Step 29",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "689ba641-806e-4713-ba59-5272905720e5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Grind to 6760+/7600xp"
+          }
+        }
+      ]
+    },
+    {
+      "id": "aa2adb8e-ed4b-4210-af67-ac715bb2bfa5",
+      "name": "label:Auber1",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "29e2a3e9-6bba-435c-9bc6-8258c6f3d4b8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Travel to Auberdine"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fbd0220f-8556-425f-8b25-b54b5581ff4b",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f257f1d2-533a-472f-896f-a04cdd56cf9f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "686d2734-ee3f-4d94-bc64-9e43cc35ad4c",
+          "enabled": true,
+          "note": "Turn in Buzzbox 827",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 983"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f24eee5e-bb3e-48de-bd05-884123d8f386",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "8e24b2e4-d582-4160-a5b6-d963621b0fe3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a84f4c4f-dd72-4533-a421-1c19c00254df",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4b707db2-d161-4b54-99d1-3d6a44aaa6f8",
+          "enabled": true,
+          "note": "Accept Washed Ashore",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 3524"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bf8ddfc9-3378-4b6d-bf70-25629ad9ec45",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "5e030dee-65a8-47c1-bcbb-54816b97fb12",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 3524"
+          }
+        },
+        {
+          "id": "f3249340-9e39-4cde-a0bb-b98cd569d642",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0220c935-8099-4444-9358-0bd63a5ce072",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 3524"
+          }
+        }
+      ]
+    },
+    {
+      "id": "667a3e8b-c3d4-4cd4-a6d1-7fcf53eb34c5",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "68e09d02-7a00-4512-a531-99a12ee64fe8",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0c2df22f-6e95-4834-ad98-5ab64033c2b6",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d03769ee-cace-4fa2-977e-8129d91a6533",
+          "enabled": true,
+          "note": "Turn in Washed Ashore",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 3524"
+          }
+        },
+        {
+          "id": "7abc48eb-3b8c-475e-8b58-77824b7d8bbe",
+          "enabled": true,
+          "note": "Accept Washed Ashore",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4681"
+          }
+        }
+      ]
+    },
+    {
+      "id": "47af1d95-75d3-49f7-9612-d499a6818218",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "11941951-28dc-40dc-acc0-2dd102bf0162",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6dfa293c-121b-44ae-ab05-3aac490a3232",
+          "enabled": true,
+          "note": "Accept For Love Eternal",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 963"
+          }
+        }
+      ]
+    },
+    {
+      "id": "9cb74deb-c893-4946-8533-ee912422ca67",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f658772c-4b30-4ee3-9fef-e5cdd9292bac",
+          "enabled": true,
+          "note": "Travel to the end of the dock, then jump into the water",
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "58405302-a928-4d61-9346-4091538dd469",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9bf67a0a-6728-48d5-83f2-c4fd8315bb91",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "8851f4fc-09a0-4578-9b9d-215c37af6392",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 4681"
+          }
+        }
+      ]
+    },
+    {
+      "id": "70d8c4f5-1f27-452f-a3c2-06b9788f4877",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "5bc5fc87-adba-40a0-901b-1bfd7545936b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "440b5000-0c25-4d37-bdaf-d8963578454b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7181cb1c-5551-42ad-bd5f-491861e8e894",
+          "enabled": true,
+          "note": "Turn in Washed Ashore",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4681"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e51ab5fb-4f33-4a32-af6c-ce445a18c8a1",
+      "name": "Step 39",
+      "enabled": true,
+      "conditions": [
+        "!Dwarf",
+        "!Hunter"
+      ],
+      "actions": [
+        {
+          "id": "ccb44f53-e77a-485a-9592-7f41ba94409f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".xp 12"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b0b9b54c-831a-4f3c-b385-3b66f9adcd3d",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "!Dwarf",
+        "!Hunter"
+      ],
+      "actions": [
+        {
+          "id": "e79d0ac5-3f4f-47be-a763-54dc2456b21a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3d0fb1db-a516-4483-9216-09aff3dab636",
+          "enabled": true,
+          "note": "Accept The Red Crystal",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4811"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a6004c1c-b07f-43ab-819b-fa64b790c7e5",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "86203c6b-4f87-479c-a8cd-44cb3c629910",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "278e452a-bb86-4777-9115-9ed776871c47",
+          "enabled": true,
+          "note": "Turn in Plagued Lands",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2118"
+          }
+        },
+        {
+          "id": "7348ea0c-6e76-4e4b-a03d-84d1a553c320",
+          "enabled": true,
+          "note": "Accept Cleansing of the Infected",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 2138"
+          }
+        }
+      ]
+    },
+    {
+      "id": "6d5ae3f4-16f0-4689-8b2e-1141b313328a",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "783ef0da-462b-4e73-85fb-37e52a402447",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "fd8615ba-a22c-48a8-b0a3-04cc0a62edb9",
+          "enabled": true,
+          "note": "Turn in Plagued Lands",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2118"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7bc2b5b5-e75a-46e7-a788-a5f2d305cfbe",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9ab0f643-9409-46f5-a443-cddfcd5be400",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c1762538-599e-4f74-86e6-83d409e42cfb",
+          "enabled": true,
+          "note": "Turn in How Big a Threat?",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 984"
+          }
+        }
+      ]
+    },
+    {
+      "id": "732c886c-492c-4095-aeb2-ea9d10c0e22a",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "017f5f90-63d5-48ba-99a7-e2c9de882b8a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ada75c9b-ebba-4058-9e4b-ce37365fbb16",
+          "enabled": true,
+          "note": "Turn in How Big a Threat?",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 984"
+          }
+        },
+        {
+          "id": "b3130964-d7c7-475d-ac7d-9305cbb5a8c5",
+          "enabled": true,
+          "note": "Accept How Big a Threat?",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 985"
+          }
+        },
+        {
+          "id": "82994f9e-4810-4736-9867-188319737f0f",
+          "enabled": true,
+          "note": "Accept Thundris Windweaver",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4761"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2557e415-8283-447a-88e4-f2ddf6be5ead",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "930528cd-cba3-44cf-a046-a75eac7ac6ad",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d6a8c2a6-e864-4c92-855f-a43924bd5a6c",
+          "enabled": true,
+          "note": "Turn in How Big a Threat?",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 984"
+          }
+        },
+        {
+          "id": "07df338c-0bf7-47a6-a150-5a4069865e2a",
+          "enabled": true,
+          "note": "Accept Thundris Windweaver",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4761"
+          }
+        }
+      ]
+    },
+    {
+      "id": "5058b224-91db-45bd-9bd2-5b4892584d6c",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "3bb5f973-a85f-4135-a89f-700c7aafb9c3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2dc8404f-8a98-4719-8a0c-2f8263ef53d9",
+          "enabled": true,
+          "note": "Accept Easy Strider Living",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 2178"
+          }
+        },
+        {
+          "id": "3b7505ec-41da-4a16-9eb7-ca41e5350350",
+          "enabled": true,
+          "note": "Turn in Easy Strider Living",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2178"
+          }
+        },
+        {
+          "id": "3123aaec-4b4d-4b60-8f14-f36a7a542708",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 5469,5 -- Strider Meat (5)"
+          }
+        },
+        {
+          "id": "d5f213dc-1581-4c3b-b592-7f3ef6e01727",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<10,1 -- step only displays if skill is 10 or higher"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e1a7130c-ee91-4933-8639-0afbfc4a108c",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "3977aaa8-a944-4a1f-b05d-84e89cc852d6",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5bb0140a-6079-47da-8df5-2016c3b38b23",
+          "enabled": true,
+          "note": "Turn in Thundris Windweaver",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4761"
+          }
+        },
+        {
+          "id": "df1a39de-95d0-4a9d-9d09-1dcbeaaa6988",
+          "enabled": true,
+          "note": "Accept The Cliffspring River",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4762"
+          }
+        },
+        {
+          "id": "87b045c6-231a-4e98-80c4-612e9491674f",
+          "enabled": true,
+          "note": "Accept Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 954"
+          }
+        },
+        {
+          "id": "8c5cc488-7dd1-45bb-abd5-3691dbbd7f9c",
+          "enabled": true,
+          "note": "Accept Tools of the Highborne",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 958"
+          }
+        }
+      ]
+    },
+    {
+      "id": "3357b601-9511-40a1-9ba7-8f49a268343f",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "39468aae-258f-413b-81a4-5cbe92df0fee",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "23dceb8e-3b44-4e78-8a9b-2abb32243805",
+          "enabled": true,
+          "note": "Turn in Thundris Windweaver",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4761"
+          }
+        },
+        {
+          "id": "beed4fdb-ee8a-4d02-89e4-fa0e48a5c365",
+          "enabled": true,
+          "note": "Accept The Cliffspring River",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4762"
+          }
+        },
+        {
+          "id": "2351fcf0-96ab-411f-810f-ac3a32bc4457",
+          "enabled": true,
+          "note": "Accept Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 954"
+          }
+        }
+      ]
+    },
+    {
+      "id": "71e06f35-ac8b-4f04-a432-9263b3e37584",
+      "name": "Step 49",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "a62b6c3b-ae81-48e8-86b1-d796a2bb102e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".collect item=5469,count=5"
+          }
+        },
+        {
+          "id": "59efb6bd-86a8-4389-9ff4-2e09ecc3d12e",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "b4c46d8d-ddab-4857-b660-42bc5937ac23",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "16fc3ceb-57ae-4a03-a72e-7add42f1ad2a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1"
+          }
+        },
+        {
+          "id": "13b097bc-192d-46e2-b3ab-aab3f4cc4235",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore,1 << Druid"
+          }
+        }
+      ]
+    },
+    {
+      "id": "4e754dac-fbac-462e-993f-7d6d2e3a561a",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [
+        "Druid"
+      ],
+      "actions": [
+        {
+          "id": "0f92597c-571a-4014-9d16-3b6936744c0c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "39e0a7b3-b133-4e1c-8fd8-552a4257da53",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e77aa777-090e-4aa7-b570-4653e1de3e15",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Use the|r |T132857:0|t[Cenarion Moondust] |cRXP_WARN_at the |cRXP_PICK_Moonkin Stone|r inside the cave to summon|r |cRXP_ENEMY_Lunaclaw|r"
+          }
+        },
+        {
+          "id": "94013b75-f676-46f3-9a9b-ca6e27ca642d",
+          "enabled": true,
+          "type": "UseItem",
+          "payload": {
+            "item": 15208
+          }
+        }
+      ]
+    },
+    {
+      "id": "bf0a856f-8b6b-441a-95d7-ba80ea5aa717",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [
+        "Druid"
+      ],
+      "actions": [
+        {
+          "id": "a9239948-16be-4453-ad6c-b8b1bf9a67c3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "97f22fa2-499c-402e-ae83-4671241d62a0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "157c8ea0-4291-47b9-89e7-83ece9da3aa8",
+          "enabled": true,
+          "note": "Kill |cRXP_ENEMY_Lunaclaw|r. Talk to the |cRXP_FRIENDLY_Lunaclaw Spirit|r",
+          "type": "UseItem",
+          "payload": {
+            "item": 15208
+          }
+        },
+        {
+          "id": "a659bafb-f1cb-45b5-a3fb-7572ea06d8d8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skipgossip "
+          }
+        },
+        {
+          "id": "5b4485ac-0332-4ac7-ad31-337ec6bb3c3e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 6001"
+          }
+        },
+        {
+          "id": "0b5bfc52-af06-4385-b762-63a248b15c0f",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "5f644112-4566-4548-beb0-a79eec1326cf",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "!Dwarf",
+        "!Hunter"
+      ],
+      "actions": [
+        {
+          "id": "57c24517-38c9-4f88-9909-3b0e1dd350ba",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4e879d2a-e89c-4216-b622-f7b71faa494d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 4811"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f865df32-4b53-487b-9948-719bb4b5682e",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "c98adc19-1d47-448b-a39b-abd529b0f985",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7a5c6cc4-8c94-425c-b014-aca44b5b9ba0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b663c546-a715-4738-97a9-5095f2551f3a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "efd7dc45-7392-4b30-9fdb-069875241969",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2a93333e-e7d4-435b-9e17-32a0b61bac46",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e72986e2-be91-4ca4-8d9f-fabb329035d9",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e2900f3b-8e15-49ab-aa27-26c8273fa23e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".collect item=6889,count=10"
+          }
+        },
+        {
+          "id": "3aee0371-2847-49b1-82da-ec132c7f3c50",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "58a77a36-0656-47fc-ac49-f8371fbc660f",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "23283561-afe0-4477-b333-ac395d6c1c0b",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "6dd26c22-0631-4db0-b080-c45c9ad4cfc9",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "215c4f1d-5c19-4e39-874b-263ddc00d6bf",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,10,1 --XX Shows if cooking skill is <10"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e81543c3-f5a4-4e38-89b7-4e5f1f2d359c",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f5f92efe-fabd-4829-b716-9127870c2268",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c5edd0db-ce12-4c4a-aeea-647294b9927d",
+          "enabled": true,
+          "note": "Turn in Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 954"
+          }
+        },
+        {
+          "id": "78597e03-9946-4b73-baff-84600c9ecedd",
+          "enabled": true,
+          "note": "Accept Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 955"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e2c5e738-ef7f-479d-890b-159a13e1d0a5",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "0c3d01d5-61b3-41e7-a605-353150827855",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b65fed59-b727-4a51-8fce-93118915f313",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "28f624aa-fad8-49e9-84d1-c6b57e3adbb4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9261c4f5-9c26-4987-8ffe-334366309830",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d5481f8f-99ec-4c57-8742-6ce07bfdab5a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f40627bc-f35f-4dd0-9436-cf113e28e39e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9b08c3b7-4860-4e87-9d2b-f3b2a67f6d45",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3d6ad0bc-fe54-443c-80b8-33c464edaa67",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "811518e9-5e25-4d4b-9e45-9fc5c3d8d4ad",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e2cc7eb7-7bf1-4c51-bd04-824846b49794",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5fa9b580-6a79-4840-89c1-802b4c403b93",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "afe18373-2a2b-4e5d-94e4-c7509315a4ba",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6ecb4713-a3ae-4b9a-b338-c4be29d99946",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "72a22465-76ab-4cad-9337-0e19feea39ee",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "785c4177-0911-4fb1-9867-94fd222d7000",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "76f02b07-acce-40fc-a9ed-593779219aae",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c181a207-ebd5-4e98-9ef0-b86e456d6d87",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f829213c-4231-4ab0-9a9e-11e422314c85",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "87e81d51-4210-4a8e-822d-ef5c58a296c2",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1180cb9c-2b11-48f9-b859-2949c2ef1ef3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 955"
+          }
+        },
+        {
+          "id": "327891d9-c34d-4bc2-8346-3f66827fce09",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "97cbcfb9-c251-454a-a8b1-cebf9e26ed2f",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "2d845b26-2007-436a-aac6-a01993b9d3c7",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 955"
+          }
+        }
+      ]
+    },
+    {
+      "id": "6a1ad36e-5e41-423d-99d4-a95baad7bd42",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f16f2655-602b-45e0-ab8e-b38e2bc57eac",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c35e7db8-1e0a-4a4a-a564-7bb1874215c9",
+          "enabled": true,
+          "note": "Turn in Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 955"
+          }
+        },
+        {
+          "id": "093e4720-6e38-4ba3-9b36-2aa132c739cf",
+          "enabled": true,
+          "note": "Accept Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 956"
+          }
+        },
+        {
+          "id": "a9c640f2-a5da-41b3-a019-bf7e893a2aba",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 955"
+          }
+        }
+      ]
+    },
+    {
+      "id": "6430e698-534b-4662-85d4-49abf1da429e",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "2192a1c1-4632-4e42-8a5a-df0ebb8c3a3d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7353f07e-3d44-4cd5-bbce-dbddf69c7c55",
+          "enabled": true,
+          "note": "Accept Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 956"
+          }
+        },
+        {
+          "id": "bec4a52f-f27c-4612-8633-9a9a167156b2",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 955"
+          }
+        }
+      ]
+    },
+    {
+      "id": "086fa2e5-90a8-4173-9369-bca6c1dc99e4",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "05f153d2-7841-458f-aba1-bb198aa646aa",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e725e2c2-17b6-4a7e-86b7-4c64744f87cf",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "39caced3-a2e3-4348-b1c8-ca2a694d02fe",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "07240699-e644-4371-b443-a81ab72ca835",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0fd769b9-885c-4879-aae2-01079c4369af",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "84802cf1-558e-41e4-8e86-2ac9eee037bb",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "60cbcb14-d5a3-471c-91cf-f9a29420c733",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "72017f39-bf32-41e0-b3f3-066f1e9ff78d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ad31a111-a066-4537-8b61-24c159942657",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a774b6d5-6696-4c3e-b0d1-cb33dbc184b5",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "811190f5-0bab-4aa3-a5b7-622086aa5e33",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "931f06de-5b4a-4caf-b1f4-b9436ddd0b0e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 956"
+          }
+        },
+        {
+          "id": "5e9c3c65-080d-4ddc-8705-3c88f36aecca",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "f3376050-4fc5-44e1-ac7a-4ffd6e344b40",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 956"
+          }
+        }
+      ]
+    },
+    {
+      "id": "93943ee8-45c5-4d67-a096-b97d060ecb0b",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "0329a4bc-de08-4fa3-a6c2-22941f79dfc0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a33c8c64-be92-4998-b0ed-d5f2f85defe8",
+          "enabled": true,
+          "note": "Turn in Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 956"
+          }
+        },
+        {
+          "id": "b45b085d-f467-4e44-8662-8272144d0899",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 956"
+          }
+        }
+      ]
+    },
+    {
+      "id": "05ddd520-179e-4293-97ff-6adf8a84a393",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "3b7cd9f1-9b29-45bd-92a1-da57717e8d7b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "fbb436bb-efbb-446a-acbb-7d3128fabbbe",
+          "enabled": true,
+          "note": "Turn in Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 956"
+          }
+        },
+        {
+          "id": "15ea83a3-cb5f-47bb-83ae-701cdb0492ab",
+          "enabled": true,
+          "note": "Accept Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 957"
+          }
+        },
+        {
+          "id": "7ce50eca-afac-45d0-82ba-c23cb75876f6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 956"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8b6db742-0f5a-477c-a0c1-d385e7d5b2cf",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "13023ff3-c2f9-4611-a87f-0021cc3d1320",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "dc05837a-4062-41a6-8826-e38cafaafb56",
+          "enabled": true,
+          "note": "Accept Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 957"
+          }
+        },
+        {
+          "id": "362121f4-779a-47c1-af35-84a1e98ae4a4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 956"
+          }
+        }
+      ]
+    },
+    {
+      "id": "44f5ce6c-5d2c-49bf-a257-941637bcfffb",
+      "name": "Step 62",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "75ed6bb6-e2d6-48d6-98f3-639afa13c909",
+          "enabled": true,
+          "note": "Abandon Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".abandon 956"
+          }
+        }
+      ]
+    },
+    {
+      "id": "6ae4367b-7237-484f-8097-e28ef03cf92c",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "!Draenei"
+      ],
+      "actions": [
+        {
+          "id": "4f4c1ab2-4e90-4cb9-a4b6-eb509a35ecda",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "06179cb4-cd3f-4e54-bc3b-c1cc467376c5",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e8c69577-6749-4544-bdbc-6f1eeaba8d95",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e9239ee2-feb0-4ac0-8419-32b4480ed5c4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "598fe141-7d76-4b8a-bfbf-4b37cc41f443",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 2138"
+          }
+        },
+        {
+          "id": "cb1a0c70-a1ff-4b8b-9695-7418e180b01c",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "301f1524-8a86-4322-91f6-281f226e37fd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darkshore,1 << Druid"
+          }
+        }
+      ]
+    },
+    {
+      "id": "c1cbb6d3-a1b6-456d-a4f6-cd3c5d435b4a",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [
+        "!Draenei"
+      ],
+      "actions": [
+        {
+          "id": "b8df4fb6-dd17-4df5-bcee-12e7d2e13870",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c0c23364-2c1d-461e-b26e-cdfa35dbec9d",
+          "enabled": true,
+          "note": "|cRXP_WARN_Use the|r |T134865:0|t[Empty Sampling Tube] |cRXP_WARN_at the base of the Cliffspring River|r",
+          "type": "UseItem",
+          "payload": {
+            "item": 12350
+          }
+        },
+        {
+          "id": "7811260b-8384-4485-9a7b-c779317f9ca1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 4762"
+          }
+        }
+      ]
+    },
+    {
+      "id": "49a542db-95a3-416e-8c29-531fb990355a",
+      "name": "Step 65",
+      "enabled": true,
+      "conditions": [
+        "Druid"
+      ],
+      "actions": [
+        {
+          "id": "ec2c38f5-174f-445f-8803-fe106a2e1742",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Cast|r |T135758:0|t[Teleport: Moonglade]"
+          }
+        },
+        {
+          "id": "a7bbfddb-696b-4924-b79a-dd3156328054",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".usespell 18960"
+          }
+        },
+        {
+          "id": "0b02e35a-2d62-4031-b99f-ee8f2f421be0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Moonglade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "93e261ee-dbd7-4c1c-bc84-ba23b6b743b6",
+      "name": "Moonglade",
+      "enabled": true,
+      "conditions": [
+        "Druid"
+      ],
+      "actions": [
+        {
+          "id": "101c0393-2a01-4d75-80d7-0870faa7a581",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 6001"
+          }
+        },
+        {
+          "id": "a1abb3d3-f35b-45eb-b7ae-c4538b185c46",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Moonglade",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "69a231b8-23c1-45d9-88ce-f9eaaf38b48f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skipgossip "
+          }
+        },
+        {
+          "id": "70713bdb-225c-4eb1-8c3f-ef4b236235df",
+          "enabled": true,
+          "note": "Fly to Rut'theran Village",
+          "type": "Comment",
+          "payload": {
+            "text": ".fly Teldrassil"
+          }
+        },
+        {
+          "id": "42b84a3a-3559-4157-aeb3-1e3cc67b60a8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Darnassus"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f68ac487-fa44-40f4-acf1-9540b6d29978",
+      "name": "Teldrassil",
+      "enabled": true,
+      "conditions": [
+        "Druid"
+      ],
+      "actions": [
+        {
+          "id": "4c0fce1c-fcb9-44d4-a669-33191701fcc4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Teldrassil",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "24a03b95-83cd-4395-aea5-3ee611f9a01a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the purple portal into Darnassus"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e080c6be-e46c-41e3-8212-e32b370f35fb",
+      "name": "Darnassus",
+      "enabled": true,
+      "conditions": [
+        "Druid"
+      ],
+      "actions": [
+        {
+          "id": "be52740d-85a4-4062-9e0a-74cad54dd918",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 6001"
+          }
+        },
+        {
+          "id": "88ff1a81-6f52-45f2-b1b7-b9de8cf49c80",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darnassus",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "41b2d50c-1e36-414c-8764-e24dffa125bd",
+          "enabled": true,
+          "note": "Turn in Body and Heart",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 6001"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cf351dd0-0a0d-4e02-80c8-fa0cec8a864d",
+      "name": "label:HSAuber",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "99642d94-134e-4889-8f99-01c58509ee72",
+          "enabled": true,
+          "note": "Hearth to Auberdine",
+          "type": "Hearth",
+          "payload": {}
+        },
+        {
+          "id": "f65ad2df-463a-43f5-836d-927b4026291d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".cooldown item,6948,>2,1"
+          }
+        },
+        {
+          "id": "b30ab66a-be0f-4a61-bca1-61d0aebdb6cd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bindlocation 442,1"
+          }
+        },
+        {
+          "id": "b3ea0db0-faf6-4ec5-985a-cceed1ec2b12",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 442"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7abd2fb1-57f4-44f3-b06d-99578ab78552",
+      "name": "Step 70",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f49ea457-5f06-4eac-9e04-651d6f9d51d7",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Return to Auberdine"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8f6ab0b7-d383-46d8-b898-f70dbefef2e4",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Hunter"
+      ],
+      "actions": [
+        {
+          "id": "8546d477-d0b5-4948-ad0e-32dd602c123a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d4c3d691-8bd9-49d8-95b0-875325f4eff7",
+          "enabled": true,
+          "note": "Accept The Red Crystal",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4811"
+          }
+        }
+      ]
+    },
+    {
+      "id": "81dd826c-7b56-44a1-8391-e3d6cf7ec55c",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "!Dwarf",
+        "!Hunter"
+      ],
+      "actions": [
+        {
+          "id": "82a323bc-c243-457b-8faa-e07a45036eff",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c8ebaedd-1b47-4f06-848a-65f3ac6fcd73",
+          "enabled": true,
+          "note": "Turn in The Red Crystal",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4811"
+          }
+        },
+        {
+          "id": "3dabbc90-b0b6-46c4-a00a-e7d1a881ab7d",
+          "enabled": true,
+          "note": "Accept As Water Cascades",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4812"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b3413082-65f9-400a-8c68-66442d266495",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "a1818509-4d0d-4715-9fc3-1e0eea4a037f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0765f81d-421d-473b-913b-36cc10e6e7df",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "6ed8e3ed-bd6c-4c9f-8703-801a6702cc75",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".collect item=2678,count=50"
+          }
+        },
+        {
+          "id": "2c2da584-fdaa-4b6e-bcee-6142aba5456f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".disablecheckbox "
+          }
+        },
+        {
+          "id": "5d50e0b5-779c-42af-b93e-67bbd2b0eb08",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".collect item=6889,count=50"
+          }
+        },
+        {
+          "id": "41090684-c561-461c-a0e5-7727f5266d8e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".disablecheckbox "
+          }
+        },
+        {
+          "id": "39114b0a-d57a-4377-9f18-823dd1f1c681",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 6889,1 -- Small Egg (1+)"
+          }
+        },
+        {
+          "id": "d190b5fd-87af-44c2-8df7-f9b21cfbab50",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,10,1 --XX Shows if cooking skill is <10"
+          }
+        },
+        {
+          "id": "e4f5072b-14dd-4aa0-9c31-1f6cb6c85f5c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1 -- shows if cooking is >1"
+          }
+        },
+        {
+          "id": "b829a8f5-6b3d-4492-b696-872579b071a3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 2178"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e40b8950-ec12-49f8-921e-44d03a668669",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "b6b41488-db5d-4b99-828a-575a2dab3235",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "66d2ae79-d121-4f29-b6a1-312d3ec38eb3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,50,1"
+          }
+        },
+        {
+          "id": "9a7a33b5-1331-45a4-b1f5-d36c4590b798",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<1,1 -- shows if cooking is >1"
+          }
+        },
+        {
+          "id": "355d9b2d-285a-465e-a834-8921faaa4747",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 6889,1 -- Small Egg (1+)"
+          }
+        },
+        {
+          "id": "d31fcb4b-90b8-4a83-9544-896adbf98cc0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 2178"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ffb987a8-3af7-4ca2-9be5-029f93bda685",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "fd260635-ccd0-4ab2-9718-c9f06d5e348d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7198d32d-307f-40b4-9f01-821983e48de2",
+          "enabled": true,
+          "note": "Accept Easy Strider Living",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 2178"
+          }
+        },
+        {
+          "id": "8f263c15-4d26-40b0-98ac-316f346019f1",
+          "enabled": true,
+          "note": "Turn in Easy Strider Living",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2178"
+          }
+        },
+        {
+          "id": "9b1a0a1c-c447-4baf-aebe-b75b35e74aec",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 5469,5 -- Strider Meat (5)"
+          }
+        },
+        {
+          "id": "e7d5734b-9d85-4616-946e-34e93c756006",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<10,1 -- step only displays if skill is 10 or higher"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7e368fae-ccfa-4422-868a-5a98b96cfd72",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "e3e52229-4521-4603-a628-d3869504988a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "63d30664-4ae5-4d3e-a1e3-35bed74508df",
+          "enabled": true,
+          "note": "Turn in The Cliffspring River",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4762"
+          }
+        },
+        {
+          "id": "82d2c6bd-277b-4711-9809-0c6382aa5e9b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 4762"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e2f29579-6f42-4063-9485-bd53999d3ce5",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "319d34ef-66f7-4172-95a1-bf04a565c6a8",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a773e379-ea77-4fc2-844b-7077ee56b5ad",
+          "enabled": true,
+          "note": "Turn in Cleansing of the Infected",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2138"
+          }
+        },
+        {
+          "id": "89867b21-2bc3-40a7-bc1b-6e71a158ea71",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 2138"
+          }
+        }
+      ]
+    },
+    {
+      "id": "40a1cb05-c22d-40bc-9c30-802891785cc1",
+      "name": "Step 78",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "b8b59e65-8161-466c-83ce-fa4844b02eaf",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".collect item=5469,count=5"
+          }
+        },
+        {
+          "id": "f96c1bbb-67d8-4967-a7c9-98fa5539152d",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "10611d10-e76c-4570-80ba-4a464073479e",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "c54d7bf5-08bf-4d94-b5b1-375396ec4041",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<10,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "53686d07-436f-45ce-afa7-f22d60dad945",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Hunter"
+      ],
+      "actions": [
+        {
+          "id": "4ec756f2-3af5-4c17-8cb8-b72c826767df",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d6f57ce5-fb72-4a2d-b433-21fcd60db007",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 4811"
+          }
+        }
+      ]
+    },
+    {
+      "id": "41d1e3e6-c9ea-4883-b17c-b8f009431cd2",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "!Dwarf",
+        "!Hunter"
+      ],
+      "actions": [
+        {
+          "id": "f63249e1-7b63-4a59-9880-7c61efadf6bc",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "82d5bf90-cee1-456b-84b4-b1e554f65266",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 4812"
+          }
+        },
+        {
+          "id": "61a09d07-3e3c-464a-a70f-ee7a91bfa8b8",
+          "enabled": true,
+          "type": "UseItem",
+          "payload": {
+            "item": 14338
+          }
+        }
+      ]
+    },
+    {
+      "id": "a0ce9f06-59e7-457c-8009-293f0361377b",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "!Dwarf",
+        "!Hunter"
+      ],
+      "actions": [
+        {
+          "id": "d4e173b9-cafa-4e0d-b761-e8b233a9aaa5",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f7fc70ea-00f0-4307-9d9e-99966e3d50d3",
+          "enabled": true,
+          "note": "Turn in As Water Cascades",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4812"
+          }
+        },
+        {
+          "id": "812d24a3-d79d-4c30-b4b0-c1325dc5b456",
+          "enabled": true,
+          "note": "Accept The Fragments Within",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4813"
+          }
+        }
+      ]
+    },
+    {
+      "id": "987fddf1-989f-44b6-b64a-1ebd920fc8c4",
+      "name": "label:Anaya",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "5989fa04-a298-4470-9565-25e8e526cdc8",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "08e9d10d-9cf2-45ba-8c88-9b505564079d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "43f8a969-f46b-4c28-8cbc-a5b5fe10c247",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3ce0aa26-8721-4459-b3ae-9b0c7fd6120e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d77e77b3-b2b5-480a-8510-0c4759727a1a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,42.017,58.866,50,0 --NE spawn"
+          }
+        },
+        {
+          "id": "c9c2b906-b574-4c03-94d9-091f3fdaa774",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,42.311,58.645,50,0"
+          }
+        },
+        {
+          "id": "bc79763d-e522-4d94-908c-c59a72dd88a7",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,42.448,58.236,50,0"
+          }
+        },
+        {
+          "id": "07bcae0f-fd78-43c7-a44d-db4cf32478f3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.222,59.693,50,0 --NE spawn"
+          }
+        },
+        {
+          "id": "3b34ee54-07ef-411d-87a5-7fb741cb52be",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.447,60.131,50,0"
+          }
+        },
+        {
+          "id": "3c741638-3a60-4574-af0f-4223d68ebf52",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.780,60.275,50,0"
+          }
+        },
+        {
+          "id": "adc15b04-d39c-4d78-8d6b-96e4e6017955",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.069,62.448,50,0 --SE spawn"
+          }
+        },
+        {
+          "id": "87282533-9d18-425d-b009-201204019728",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.104,62.563,50,0"
+          }
+        },
+        {
+          "id": "b4d44e4f-4cbb-4a50-8ca6-431b767d8987",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,42.794,62.166,50,0"
+          }
+        },
+        {
+          "id": "8ff80091-1b43-4fb1-a549-ee6e91b7dcad",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,42.489,60.677,50,0 --Middle spawn"
+          }
+        },
+        {
+          "id": "293c294c-0483-4f53-b84c-68513f9ff2cd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 963"
+          }
+        },
+        {
+          "id": "bd1a7647-127d-4cf0-86fa-adebe56af07c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".unitscan Anaya Dawnrunner"
+          }
+        },
+        {
+          "id": "6458af7a-671b-4884-b6d3-fc1322d7e5af",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 963"
+          }
+        }
+      ]
+    },
+    {
+      "id": "78b24dc5-e91d-4f2e-9daa-9ee98bc12c5b",
+      "name": "label:Relics",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9f9bf17a-5533-4991-acc7-fe2a4528f46c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "23dadaca-9af1-4459-a871-5d49d8b818fe",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a26a6504-2744-4970-af0e-09f9ae0cd890",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d5b1892a-e8ab-4874-be62-6f8baf7ba102",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,42.670,57.390,55,0"
+          }
+        },
+        {
+          "id": "066340f2-eeb4-4422-8db8-8aa23bcd3e61",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,41.708,57.888,55,0"
+          }
+        },
+        {
+          "id": "52384985-30ec-4f31-aaf3-9d304b1da24d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,41.597,59.765,55,0"
+          }
+        },
+        {
+          "id": "dd55fc48-f20c-4a85-9fc5-4b9031c2b3d1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,42.058,61.199,55,0"
+          }
+        },
+        {
+          "id": "747fb5fa-8689-4df0-94ea-500320075f3f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,41.986,62.462,55,0"
+          }
+        },
+        {
+          "id": "02b69ff3-a512-4ba8-b279-5f92735337ea",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,42.773,63.420,55,0"
+          }
+        },
+        {
+          "id": "5256feee-1c6f-441b-9a1b-2653aae40ee5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.253,63.287,55,0"
+          }
+        },
+        {
+          "id": "8b2142d8-e487-4a39-8d4d-a748c3dee5f1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.945,62.188,55,0"
+          }
+        },
+        {
+          "id": "898fff1d-51e3-4559-a0f4-430b7dfd53fe",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,44.072,60.507,55,0"
+          }
+        },
+        {
+          "id": "354ea458-91e8-402c-a7e7-ad157daefdc2",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.410,59.784,55,0"
+          }
+        },
+        {
+          "id": "35745314-0e9d-49ba-bbb3-e787a851be8a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".waypoint 1439,43.787,58.959,55,0"
+          }
+        },
+        {
+          "id": "f9a93c54-6574-4820-9045-b94dc1d6d656",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 958"
+          }
+        },
+        {
+          "id": "85ca4281-2635-4563-8251-d13042b8b50b",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "ceae3a5b-2a09-45d7-9615-2706936690ea",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "7fd2d4f5-5239-4b27-867e-f89936db0f2a",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "3610494c-6292-44fd-84fc-d8a7a8ad9049",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 958"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7e82a1fe-fb51-4867-97bc-eba74054e0cd",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "6bf0f08e-d0a5-45fd-a3be-b0758ebbabeb",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f6723534-2a59-42ee-8ff0-861c78a27e7f",
+          "enabled": true,
+          "note": "Accept The Fall of Ameth'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 953"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7146c37c-f4c9-46ad-a0b8-0280c9fb2672",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "fadcc418-7448-4e35-9777-e8a267643764",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a30c0fe6-2e1d-4169-899e-71949aa15b23",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 953"
+          }
+        },
+        {
+          "id": "25ffb9fe-e6f9-4d40-ae34-b64879da7bb8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 953"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cfb54fa9-aa04-48af-9ad8-b4fea2a4f196",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9df33624-9c31-4bf0-91c9-95af142495e1",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4892e4d2-458c-42a9-989b-e24b82148574",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 957"
+          }
+        },
+        {
+          "id": "c33f86c9-8095-4f36-901e-a8b0cae35bfe",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 957"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0157b0e3-5a29-4df6-a8af-186d1d2679d9",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9d9fa553-06ff-43e2-9854-ca67dc7dcf66",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0f32cfc4-677b-41f3-8a9e-fe8158f00756",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 953"
+          }
+        },
+        {
+          "id": "0409d9e4-7db6-4268-8ab8-1a8ce830f99f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 953"
+          }
+        }
+      ]
+    },
+    {
+      "id": "55fea62c-ff30-40ee-9eac-42aba5cacff0",
+      "name": "Step 88",
+      "enabled": true,
+      "conditions": [],
+      "actions": []
+    },
+    {
+      "id": "4a83af49-6e94-4ed9-9646-27456cae332c",
+      "name": "Step 89",
+      "enabled": true,
+      "conditions": [],
+      "actions": []
+    },
+    {
+      "id": "82689fb0-16fa-48e3-8f50-d92bd07ad054",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "d130363d-0777-4f7c-a680-08b3995852e2",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c7af85e1-dd46-42fa-96ec-99d08546b1d9",
+          "enabled": true,
+          "note": "Turn in The Fall of Ameth'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 953"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a9b65c9b-e6e7-48ea-aaf7-d9b5e2b65f18",
+      "name": "label:bears1A",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "627c5c35-b456-4268-a309-4fd53913468b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d2a0b17f-45bf-4a6e-ab94-1de23d07bb64",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "423d0ac9-bba0-4b5f-8ccc-a4f3dcbfbd6a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ec64415d-8e60-41fe-bba8-377803db61c0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b6d5ad72-aec9-4b87-8c3f-c469cfcd056f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "491302d9-1a86-4604-8f28-bee224e3eae3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3b755c98-4c13-4375-921b-f8c32b044ffe",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 2138"
+          }
+        },
+        {
+          "id": "3055294e-47d6-4869-86ce-8522f62dba33",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "36a73580-10dc-44f5-9383-b3bb892f46a3",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "3a039bbc-908c-435f-acdb-a40be0027339",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7d3974c7-2916-4533-a3dc-7a4dd33165a6",
+          "enabled": true,
+          "note": "Accept Beached Sea Turtle",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4722"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7be76e94-74d4-4b08-b67e-c7745c715742",
+      "name": "1439/1",
+      "enabled": true,
+      "conditions": [
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "189232f3-14ba-42e1-a2f1-2d0bc2f2ddeb",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "1439/1",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "766d4540-ac8e-4e16-b492-546434f54e40",
+          "enabled": true,
+          "note": "Accept Beached Sea Creature",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 4728"
+          }
+        }
+      ]
+    },
+    {
+      "id": "3bebd963-a51c-412b-8255-d34442c91698",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "d8bcabac-01ba-48e9-ad70-06c7e15faaa3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "fc4ce2aa-5105-4f30-af7d-cd2be7b0967e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b9c88513-fb80-4ce3-9418-3046863a784b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ea2effaf-cb4e-4ffb-ba6e-93130a944f77",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6c5d1c7d-8004-472c-96cc-ca38799ac53a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9a3f8d30-7dc2-44ff-ad8b-7bd5a78137b5",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f65eca37-f77e-4441-9869-90a60f272233",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2d089218-50be-4069-91f1-8cc2514280a8",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e5a902af-d299-4ea5-a7c5-28d26525a86f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "09b86565-da7c-4d07-890c-2eb88ccf18f4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "675d7411-7131-4663-be45-761228c1285f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9ad8fb6d-fb65-4680-8dd6-1c9434ba1de4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 985"
+          }
+        },
+        {
+          "id": "70ae6da0-9337-4621-a9f2-3775d68b7eec",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "6e1d1993-be02-4d9d-b0d7-e706d03cc407",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 985"
+          }
+        },
+        {
+          "id": "afc7be92-34cb-4421-82bd-7c24b30ab020",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "fe1dcf6f-9619-4393-976d-3c868c74789e",
+      "name": "Step 95",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "ad590a7b-264c-4c1b-b269-f18039ed3f19",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Die and respawn at the |cRXP_FRIENDLY_Spirit Healer|r"
+          }
+        },
+        {
+          "id": "cd9b75bb-dafd-47a4-868b-0eee19ca41fa",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 442 -- auberdine"
+          }
+        },
+        {
+          "id": "bb4b6f79-8f01-4263-9163-2b3909674595",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 446 -- bashal'aran"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a3168f4f-f5d2-403a-a491-c8b52b54bb8e",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "!Draenei"
+      ],
+      "actions": [
+        {
+          "id": "0f575967-04b7-4d59-bac5-94457ea006a3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 957"
+          }
+        },
+        {
+          "id": "ccf8320f-d1ff-4f10-b6d0-848c789e9270",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "08cb882f-9d8f-4b5d-84bb-114941dde253",
+          "enabled": true,
+          "note": "Turn in Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 957"
+          }
+        }
+      ]
+    },
+    {
+      "id": "1845048e-046a-4935-bbad-8d063d34953b",
+      "name": "label:FinalAuber",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "af3e2934-d621-4d25-94a8-2f492e04108d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Travel to Auberdine"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2b4e653d-2957-425c-975a-514fa6f7cfcb",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "917814c4-626b-4234-be17-6822b02e7720",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ef7bad80-5d29-4c4b-a145-f3d9a78d5e60",
+          "enabled": true,
+          "note": "Turn in Cleansing of the Infected",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2138"
+          }
+        },
+        {
+          "id": "e259e2f8-9c83-4330-9782-c7b74247c097",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 2138"
+          }
+        }
+      ]
+    },
+    {
+      "id": "4b68dd50-06c4-4bd5-b343-784d5beff697",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "8b9fb84c-81ef-4e43-9486-d5fa1cdcc947",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "8523368f-3a4c-4036-9422-af6d948794a4",
+          "enabled": true,
+          "note": "Turn in How Big a Threat?",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 985"
+          }
+        }
+      ]
+    },
+    {
+      "id": "35457f7f-f6f9-4005-b7df-f2c3aed09230",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "bb11dab0-c970-407d-8873-d250eb5a3360",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "883d22c4-b760-4c39-897e-e532776e22b7",
+          "enabled": true,
+          "note": "Accept Easy Strider Living",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 2178"
+          }
+        },
+        {
+          "id": "a791b131-c4f7-4ad6-bc68-b480678e2266",
+          "enabled": true,
+          "note": "Turn in Easy Strider Living",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2178"
+          }
+        },
+        {
+          "id": "2a0d1d5b-f573-448c-8497-68333950ee48",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 5469,5 -- Strider Meat (5)"
+          }
+        },
+        {
+          "id": "e8fb0fa6-b04e-4a82-86c7-830cd8d1c80c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill cooking,<10,1 -- step only displays if skill is 10 or higher"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b84332a0-a666-4e76-a632-c59b76705610",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "1daae93b-13f7-40fa-b20d-dbd170ef1f93",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "98707e31-a3bc-4d6b-86bd-ee8934122ab5",
+          "enabled": true,
+          "note": "Turn in Tools of the Highborne",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 958"
+          }
+        }
+      ]
+    },
+    {
+      "id": "da0f16a9-8cbf-4e6d-8cfc-cc8d4b051f25",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "!Dwarf",
+        "!Hunter"
+      ],
+      "actions": [
+        {
+          "id": "33f15d24-11ae-4ba6-837e-ff46b9fda73e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7c346f0e-c73c-43d8-9446-9de7fe55c3a4",
+          "enabled": true,
+          "note": "Turn in The Fragments Within",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4813"
+          }
+        }
+      ]
+    },
+    {
+      "id": "4cfa0eed-a441-401c-9e31-cf72330efbc9",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Hunter"
+      ],
+      "actions": [
+        {
+          "id": "9a9cc87e-2a18-472d-a6ae-a6b75c9cd927",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "207737d6-d422-4756-b2c0-eb53d36b5381",
+          "enabled": true,
+          "note": "Turn in The Red Crystal",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4811"
+          }
+        }
+      ]
+    },
+    {
+      "id": "55eb3d5d-a51e-45a7-aab7-d88dbe321943",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f51c0a50-193a-4fe7-837e-95cbce7e43a0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0c15c076-d41a-43c5-bcfd-20e8c130f324",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "85612abb-fbbe-422f-b76d-53d65f2a1f32",
+          "enabled": true,
+          "note": "Turn in Beached Sea Turtle",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 4722"
+          }
+        },
+        {
+          "id": "50641d38-48fc-4c6f-9afa-0ae8a8673f84",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 4722"
+          }
+        }
+      ]
+    },
+    {
+      "id": "624608c3-402a-445b-92a3-dc5323085beb",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "99a2edc0-7698-4b5b-8104-85b0c0086fc7",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d50cec6f-e7b5-4679-8f47-7e9623239f73",
+          "enabled": true,
+          "note": "Turn in For Love Eternal",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 963"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a7150531-9f74-44b5-819b-36696d6bd713",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [
+        "!Draenei"
+      ],
+      "actions": [
+        {
+          "id": "d9b34f8a-6c54-47d1-b08d-9965c5e84a63",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0d20c499-eb9f-4b93-93b5-c1de6c4d89bd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the boat to Azuremyst Isle"
+          }
+        },
+        {
+          "id": "3ac6fcac-fb57-41ca-8566-f4e9128e9d1a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill firstaid,75,1 -- shows if firstaid is <75"
+          }
+        },
+        {
+          "id": "8bf81831-6f5b-4bb8-a70a-c6aa2c1f9135",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skill firstaid,<1,1 -- shows if firstaid is >1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8b9fed32-1296-4292-b037-64c580260d40",
+      "name": "label:DarkshoreEnd",
+      "enabled": true,
+      "conditions": [
+        "!Draenei"
+      ],
+      "actions": [
+        {
+          "id": "63e588cd-12a1-412f-a2ba-d8cb1545d344",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "8385db07-b0cd-46c1-9118-b62911c0314c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the boat to Azuremyst Isle"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fa102141-50ec-4172-a490-2b161629c10b",
+      "name": "1439",
+      "enabled": true,
+      "conditions": [
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "e252669c-ca53-40f7-8289-8ee77268fb78",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 957"
+          }
+        },
+        {
+          "id": "30f6c5ab-7584-42bb-a5cb-de48ac340670",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Map 1439",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ceb7e7ba-1775-40fb-9aea-71dd0d753286",
+          "enabled": true,
+          "note": "Turn in Bashal'Aran",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 957"
+          }
+        }
+      ]
+    },
+    {
+      "id": "de6aa08d-40c5-4ad8-a03b-1bc806d74fa6",
+      "name": "Darkshore",
+      "enabled": true,
+      "conditions": [
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "5ed11ba5-7324-4c05-ae13-f237a479f0e9",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Darkshore",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "52281043-d596-41ac-bef0-c1da5eb8542c",
+          "enabled": true,
+          "note": "|cRXP_WARN_Use the|r |T134865:0|t[Empty Sampling Tube] |cRXP_WARN_at the base of the Cliffspring River|r",
+          "type": "UseItem",
+          "payload": {
+            "item": 12350
+          }
+        },
+        {
+          "id": "58bba8b6-fffc-46e6-912e-a8dbf0f4eba4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 4762"
+          }
+        }
+      ]
+    },
+    {
+      "id": "5c59000a-f8da-4554-a964-a3b328366b3d",
+      "name": "Step 110",
+      "enabled": true,
+      "conditions": [
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "f0dacb01-21ab-4465-a79f-89a623d369b2",
+          "enabled": true,
+          "note": "Hearth to Bloodmyst Isle",
+          "type": "Hearth",
+          "payload": {}
+        },
+        {
+          "id": "a662198e-1fe8-4b70-b543-7231ffabb6ee",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Bloodmyst Isle"
+          }
+        }
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neal Allen' not found in world database",
+      "entity": "Neal Allen"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neal Allen' not found in world database",
+      "entity": "Neal Allen"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Dewin Shimmerdawn' not found in world database",
+      "entity": "Dewin Shimmerdawn"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Dewin Shimmerdawn' not found in world database",
+      "entity": "Dewin Shimmerdawn"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1141 not found in world database",
+      "entity": "1141"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1141 not found in world database",
+      "entity": "1141"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gubber Blump' not found in world database",
+      "entity": "Gubber Blump"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 6342 not found in world database",
+      "entity": "6342"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Laird' not found in world database",
+      "entity": "Laird"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 983 not found in world database",
+      "entity": "983"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Wizbang Cranktoggle' not found in world database",
+      "entity": "Wizbang Cranktoggle"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Innkeeper Shaussiy' not found in world database",
+      "entity": "Innkeeper Shaussiy"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2118 not found in world database",
+      "entity": "2118"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tharnariun Treetender' not found in world database",
+      "entity": "Tharnariun Treetender"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 984 not found in world database",
+      "entity": "984"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Terenthis' not found in world database",
+      "entity": "Terenthis"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2178 not found in world database",
+      "entity": "2178"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2178 not found in world database",
+      "entity": "2178"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Alanndarian Nightsong' not found in world database",
+      "entity": "Alanndarian Nightsong"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 3524 not found in world database",
+      "entity": "3524"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gwennyth Bly'Leggonde' not found in world database",
+      "entity": "Gwennyth Bly'Leggonde"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Caylais Moonfeather' not found in world database",
+      "entity": "Caylais Moonfeather"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thistle Bear' not found in world database",
+      "entity": "Thistle Bear"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thistle Bear' not found in world database",
+      "entity": "Thistle Bear"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thistle Bear' not found in world database",
+      "entity": "Thistle Bear"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 983 not found in world database",
+      "entity": "983"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 3524 not found in world database",
+      "entity": "3524"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gwennyth Bly'Leggonde' not found in world database",
+      "entity": "Gwennyth Bly'Leggonde"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 3524 not found in world database",
+      "entity": "3524"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4681 not found in world database",
+      "entity": "4681"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gwennyth Bly'Leggonde' not found in world database",
+      "entity": "Gwennyth Bly'Leggonde"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 963 not found in world database",
+      "entity": "963"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Cerellean Whiteclaw' not found in world database",
+      "entity": "Cerellean Whiteclaw"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4681 not found in world database",
+      "entity": "4681"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gwennyth Bly'Leggonde' not found in world database",
+      "entity": "Gwennyth Bly'Leggonde"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4811 not found in world database",
+      "entity": "4811"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sentinel Glynda Nal'Shea' not found in world database",
+      "entity": "Sentinel Glynda Nal'Shea"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2118 not found in world database",
+      "entity": "2118"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2138 not found in world database",
+      "entity": "2138"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tharnariun Treetender' not found in world database",
+      "entity": "Tharnariun Treetender"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2118 not found in world database",
+      "entity": "2118"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tharnariun Treetender' not found in world database",
+      "entity": "Tharnariun Treetender"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 984 not found in world database",
+      "entity": "984"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Terenthis' not found in world database",
+      "entity": "Terenthis"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 984 not found in world database",
+      "entity": "984"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 985 not found in world database",
+      "entity": "985"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4761 not found in world database",
+      "entity": "4761"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Terenthis' not found in world database",
+      "entity": "Terenthis"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 984 not found in world database",
+      "entity": "984"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4761 not found in world database",
+      "entity": "4761"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Terenthis' not found in world database",
+      "entity": "Terenthis"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2178 not found in world database",
+      "entity": "2178"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2178 not found in world database",
+      "entity": "2178"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Alanndarian Nightsong' not found in world database",
+      "entity": "Alanndarian Nightsong"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4761 not found in world database",
+      "entity": "4761"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4762 not found in world database",
+      "entity": "4762"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 954 not found in world database",
+      "entity": "954"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 958 not found in world database",
+      "entity": "958"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thundris Windweaver' not found in world database",
+      "entity": "Thundris Windweaver"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4761 not found in world database",
+      "entity": "4761"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4762 not found in world database",
+      "entity": "4762"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 954 not found in world database",
+      "entity": "954"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thundris Windweaver' not found in world database",
+      "entity": "Thundris Windweaver"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Lunaclaw Spirit' not found in world database",
+      "entity": "Lunaclaw Spirit"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 954 not found in world database",
+      "entity": "954"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 955 not found in world database",
+      "entity": "955"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Asterion' not found in world database",
+      "entity": "Asterion"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 955 not found in world database",
+      "entity": "955"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 956 not found in world database",
+      "entity": "956"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Asterion' not found in world database",
+      "entity": "Asterion"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 956 not found in world database",
+      "entity": "956"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Asterion' not found in world database",
+      "entity": "Asterion"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 956 not found in world database",
+      "entity": "956"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Asterion' not found in world database",
+      "entity": "Asterion"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 956 not found in world database",
+      "entity": "956"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 957 not found in world database",
+      "entity": "957"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Asterion' not found in world database",
+      "entity": "Asterion"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 957 not found in world database",
+      "entity": "957"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Asterion' not found in world database",
+      "entity": "Asterion"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Silva Fil'naveth' not found in world database",
+      "entity": "Silva Fil'naveth"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Silva Fil'naveth' not found in world database",
+      "entity": "Silva Fil'naveth"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 6001 not found in world database",
+      "entity": "6001"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Mathrengyl Bearwalker' not found in world database",
+      "entity": "Mathrengyl Bearwalker"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4811 not found in world database",
+      "entity": "4811"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sentinel Glynda Nal'Shea' not found in world database",
+      "entity": "Sentinel Glynda Nal'Shea"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4811 not found in world database",
+      "entity": "4811"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4812 not found in world database",
+      "entity": "4812"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sentinel Glynda Nal'Shea' not found in world database",
+      "entity": "Sentinel Glynda Nal'Shea"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gorbold Steelhand' not found in world database",
+      "entity": "Gorbold Steelhand"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gorbold Steelhand' not found in world database",
+      "entity": "Gorbold Steelhand"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2178 not found in world database",
+      "entity": "2178"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2178 not found in world database",
+      "entity": "2178"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Alanndarian Nightsong' not found in world database",
+      "entity": "Alanndarian Nightsong"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4762 not found in world database",
+      "entity": "4762"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thundris Windweaver' not found in world database",
+      "entity": "Thundris Windweaver"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2138 not found in world database",
+      "entity": "2138"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tharnariun Treetender' not found in world database",
+      "entity": "Tharnariun Treetender"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4812 not found in world database",
+      "entity": "4812"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4813 not found in world database",
+      "entity": "4813"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 953 not found in world database",
+      "entity": "953"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sentinel Tysha Moonblade' not found in world database",
+      "entity": "Sentinel Tysha Moonblade"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 953 not found in world database",
+      "entity": "953"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sentinel Tysha Moonblade' not found in world database",
+      "entity": "Sentinel Tysha Moonblade"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4722 not found in world database",
+      "entity": "4722"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4728 not found in world database",
+      "entity": "4728"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 957 not found in world database",
+      "entity": "957"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Asterion' not found in world database",
+      "entity": "Asterion"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2138 not found in world database",
+      "entity": "2138"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tharnariun Treetender' not found in world database",
+      "entity": "Tharnariun Treetender"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 985 not found in world database",
+      "entity": "985"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Terenthis' not found in world database",
+      "entity": "Terenthis"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2178 not found in world database",
+      "entity": "2178"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2178 not found in world database",
+      "entity": "2178"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Alanndarian Nightsong' not found in world database",
+      "entity": "Alanndarian Nightsong"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 958 not found in world database",
+      "entity": "958"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thundris Windweaver' not found in world database",
+      "entity": "Thundris Windweaver"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4813 not found in world database",
+      "entity": "4813"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sentinel Glynda Nal'Shea' not found in world database",
+      "entity": "Sentinel Glynda Nal'Shea"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4811 not found in world database",
+      "entity": "4811"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sentinel Glynda Nal'Shea' not found in world database",
+      "entity": "Sentinel Glynda Nal'Shea"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 4722 not found in world database",
+      "entity": "4722"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gwennyth Bly'Leggonde' not found in world database",
+      "entity": "Gwennyth Bly'Leggonde"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 963 not found in world database",
+      "entity": "963"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Cerellean Whiteclaw' not found in world database",
+      "entity": "Cerellean Whiteclaw"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 957 not found in world database",
+      "entity": "957"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Asterion' not found in world database",
+      "entity": "Asterion"
+    }
+  ],
+  "import_metadata": {
+    "importer": "sentinel-importer",
+    "imported_at": "2026-07-21T06:15:23.443736760+00:00",
+    "source_file": "../sentinel/docs/adr/restedxp guides/A-11-23.lua",
+    "checksum": "",
+    "guide_version": "7"
+  }
+}

@@ -1,0 +1,5713 @@
+{
+  "metadata": {
+    "id": "07b0419a-c100-45ee-a1ed-0baad13e38bc",
+    "name": "23-24 Wetlands",
+    "author": "",
+    "description": "",
+    "version": "0.1.0",
+    "schema_version": "1.0.0",
+    "game_version": "2.4.3",
+    "faction": "Alliance",
+    "created_at": "2026-07-21T06:15:23.809686861+00:00",
+    "updated_at": "2026-07-21T06:15:23.809686861+00:00"
+  },
+  "settings": {
+    "auto_repair": false,
+    "auto_vendor": false,
+    "auto_train": false,
+    "learn_flight_paths": false,
+    "auto_hearth": false,
+    "skip_optional": false,
+    "stop_on_death": false,
+    "stop_on_validation_errors": false,
+    "compile_optimization": false,
+    "coordinate_mode": "World"
+  },
+  "variables": [],
+  "npc_library": [],
+  "quest_library": [],
+  "object_library": [],
+  "areas": [],
+  "operations": [
+    {
+      "id": "3830f5e5-256a-4c7c-9811-192fbc8d9e26",
+      "name": "Step 0",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "29c2f507-5a7c-4d54-872d-b5417c0bff49",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".dungeon SFK"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d0ec2156-17da-4c93-a199-3f7826a9578b",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "55dc3887-e146-48a6-9ddf-f5d37af27c0a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b8944006-9a37-4a43-b1fb-cb11b275e509",
+          "enabled": true,
+          "note": "Accept Young Crocolisk Skins",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 484"
+          }
+        }
+      ]
+    },
+    {
+      "id": "1b3d32c9-86f8-4d47-97d1-8560836aff97",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "d3dbbb80-70b0-4afa-b0e2-cbab567fe064",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "36ae5f99-c449-4d9b-abe1-76f2cee8f1e8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "b0b37c29-c8b1-45e3-a3f5-23ca2180e035",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a22549a1-1dcb-4da6-a1bf-aea536aedd52",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9bb16a5d-3dcd-4678-bfb8-4e0e7549a209",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4b6b2858-dcab-4731-bd2e-4db53eaffe35",
+          "enabled": true,
+          "note": "Accept Claws from the Deep",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 279"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d669a3ff-6b85-4e09-8298-b222016dc846",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Draenei",
+        "NightElf"
+      ],
+      "actions": [
+        {
+          "id": "2798a2af-12e3-4089-912f-5691e5619fbd",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f00e19c7-5078-4d16-905f-48ee397c27bc",
+          "enabled": true,
+          "note": "Get the Menethil Harbor flight path",
+          "type": "Comment",
+          "payload": {
+            "text": ".fp (unresolved NPC)"
+          }
+        },
+        {
+          "id": "eca8aa81-a6e7-4765-b799-b2e383cf3346",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fe9af07c-4532-49e4-bb8a-87a52ecad34b",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "264bb7be-9278-4552-86e1-c6e957068b64",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "db8a67bd-320f-4513-a349-4949d18fc69a",
+          "enabled": true,
+          "note": "Accept The Third Fleet",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 288"
+          }
+        },
+        {
+          "id": "a5f472b6-0c3e-427d-9046-10ace771c81e",
+          "enabled": true,
+          "note": "Accept The Greenwarden",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 463"
+          }
+        }
+      ]
+    },
+    {
+      "id": "17327f49-6295-4a73-b470-859a6dea67fb",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "dcc55951-8eff-40d8-a6e4-7ac8f8bb6523",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7fd1a640-6218-4fca-8dd0-a3f2d8c822ae",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Set your Hearthstone to Menethil Harbor"
+          }
+        },
+        {
+          "id": "ef0dd331-75e4-4bbc-a60c-6e59790166e9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bindlocation 2104"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e18f1a75-39c1-436d-ad73-2a7c90acf925",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "2f732a57-33c5-4ccb-9666-120251ff099f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "07596a2e-19e0-44e6-932d-9d2a33fa4b9a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 288"
+          }
+        }
+      ]
+    },
+    {
+      "id": "54bea43a-957a-4527-aed0-f9523c3149fe",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "2f6f58ed-f95b-4843-bfe8-9b0e93d4722c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 942"
+          }
+        },
+        {
+          "id": "1d7cb3cc-0e8b-463d-9b30-ed224b8ebdd3",
+          "enabled": true,
+          "note": "Travel upstairs towards |cRXP_FRIENDLY_Archaeologist Flagongut|r",
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "4a703d5e-76b8-4481-a212-4581462cb5bf",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "2a56bd76-942b-4195-83c0-5e67e6553ff4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 942"
+          }
+        },
+        {
+          "id": "2ccf30a3-90b0-4c45-aae1-ee373c58d5b4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f25bb48a-0eba-405e-9372-f1e41adc3d52",
+          "enabled": true,
+          "note": "Turn in The Absent Minded Prospector",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 942"
+          }
+        },
+        {
+          "id": "73a6a9a7-91b6-4c73-abd9-3a174b497352",
+          "enabled": true,
+          "note": "Accept The Absent Minded Prospector",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 943"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8d623516-8afc-4366-8e24-5368427294f9",
+      "name": "label:AMP",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "bb1689d9-62aa-4fa5-a57a-86b23ad4184c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 942"
+          }
+        },
+        {
+          "id": "3f84fc3f-513d-4a2f-b539-af8ba01916fa",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "04156ab3-6330-40ab-928f-dc6f34a136b5",
+          "enabled": true,
+          "note": "Accept The Absent Minded Prospector",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 943"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f1ec1313-2196-4f2f-8582-f8e09ab156a6",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "c32ab8d9-230e-41ee-ab45-91b0ad5f91fa",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9a8d3a8e-210b-4f42-97ad-3977d2fa80b2",
+          "enabled": true,
+          "note": "Turn in The Third Fleet",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 288"
+          }
+        }
+      ]
+    },
+    {
+      "id": "923d03af-1357-43bc-94e3-d571fc2b02fd",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "97e4d011-9e9e-4f12-bfb2-64baafd1eac2",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "462f887e-42c9-49b7-8c80-2e1e33c6ccf8",
+          "enabled": true,
+          "note": "Accept Digging Through the Ooze",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 470"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e01c77b1-dddb-4ff1-90ab-d27bc8bd68ef",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Hunter"
+      ],
+      "actions": [
+        {
+          "id": "8627347a-4461-4f59-a181-12e462210931",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3b53a3bd-032f-4021-994f-35f6b3ee45ec",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "83fefa24-4f98-448e-92b3-7cde8bbdfcee",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".collect item=2515"
+          }
+        },
+        {
+          "id": "273ac568-1ab7-4143-bafb-200dfc040f98",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b5bc2df2-d7f1-4a6d-b78b-651259a1a278",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "0fb70323-6da8-4115-a781-5761c3b02c07",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e2f4ced5-9eb6-4faa-90ba-064c1794f9bc",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "99a7a804-7251-44d6-992f-a62ae94df247",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5c9ec423-5646-4f81-ab1e-047675027c32",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1af0f57d-a219-4e95-93f2-002a2996e5ac",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "20477a91-1b70-4aa4-93a0-aa77e0e158db",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bronzetube "
+          }
+        }
+      ]
+    },
+    {
+      "id": "f974227b-9469-42c7-a25c-bcd73bfa305a",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "4bd96aa7-b9c2-44b4-9fba-33d29dff2172",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1c11da62-9f7f-4df3-8e63-d8223ad78b0f",
+          "enabled": true,
+          "note": "Accept War Banners",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 464"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2b807600-1060-4c35-a60b-ef8cebc97839",
+      "name": "label:FinalAccept",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9b176efe-1760-49d6-8e56-15a4b0049612",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7b99563b-348c-4620-9788-090edd42e050",
+          "enabled": true,
+          "note": "Accept In Search of The Excavation Team",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 305"
+          }
+        }
+      ]
+    },
+    {
+      "id": "c2261ce0-ee21-49fe-ae5a-2eaa7522d1e9",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "d49881fc-db68-4f3b-ac33-db2009528808",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".dungeon SFK"
+          }
+        },
+        {
+          "id": "faa85418-c877-419c-9f93-b28fe692c473",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "583935a2-28ca-439f-8875-27ff239f3c4d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9b102b88-9522-4452-8c62-f02ae6c7e9b2",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b7a016b1-2629-41e4-a255-519c2db0a062",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Grind |cRXP_ENEMY_Mosshides Gnolls|r while looking for a group for Shadowfang Keep"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f9439323-8dbe-4ac7-a8c7-36eded7e31eb",
+      "name": "Arathi Highlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f406624f-9b30-46fb-9e44-0b9b52f174c1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".dungeon SFK"
+          }
+        },
+        {
+          "id": "1f41f99a-5a18-45f6-b20e-8ce7b4bafead",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Arathi Highlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d36fa5a2-f91a-4095-83b6-b9219d57c960",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Arathi Highlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "11f89239-98e7-4f5a-b289-2e8711d6818c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Arathi Highlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9ab59eb9-c8fe-44c3-b539-03b1346e2fae",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Hillsbrad Foothills",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1e4f1291-d1ee-4339-8987-d59d2dee9d04",
+          "enabled": true,
+          "note": "Get the Southshore Flight Path",
+          "type": "Comment",
+          "payload": {
+            "text": ".fp (unresolved NPC)"
+          }
+        },
+        {
+          "id": "e2fba529-c829-4cee-84e4-5a08644e1d44",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".unitscan Forsaken Courier"
+          }
+        }
+      ]
+    },
+    {
+      "id": "df866138-6ca3-4fd5-973b-5491c4d85303",
+      "name": "Hillsbrad Foothills",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "55f744be-53ba-45f0-89a7-d908a5dccfd0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".dungeon SFK"
+          }
+        },
+        {
+          "id": "ad95d653-9d89-4c6e-a327-deaa35d8e241",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Hillsbrad Foothills",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "cbfefd55-b2b8-442c-a283-d34fe076f53c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Silverpine Forest",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "04ca069a-c795-4027-9479-8f7cd16a406c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Hillsbrad Foothills",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b568aa19-b9ce-4e1d-b6c5-70219aa85d30",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Silverpine Forest",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2163d310-f002-4a79-8ad4-e70eb41d69a4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Silverpine Forest",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "85af2cf4-327a-40f9-8baf-ae37d96268b8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Enter Shadowfang Keep"
+          }
+        }
+      ]
+    },
+    {
+      "id": "835af3be-ad47-4070-a39b-7c4397060a57",
+      "name": "Step 20",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "3227601e-b2f5-4976-9b67-6858db709b86",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".dungeon SFK"
+          }
+        },
+        {
+          "id": "cecdf5ee-a540-4ec2-a83d-f563526f8590",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip 209,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f88d9091-3dcb-4d9e-87e0-5f49a32c4463",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "0613919c-c7d1-4fd7-bb30-66bde239d7e6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".dungeon SFK"
+          }
+        },
+        {
+          "id": "47d07159-9738-48d3-8c27-bb73be79db1a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c91f1940-20da-430a-bc30-2803cb191b32",
+          "enabled": true,
+          "note": "Hearth to Menethil Harbor",
+          "type": "Hearth",
+          "payload": {}
+        },
+        {
+          "id": "dcc93a16-4ca4-4228-a6a1-26180b289d8d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150"
+          }
+        },
+        {
+          "id": "3cf3e254-d20a-4415-b5b7-2262c31a1823",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 2103"
+          }
+        },
+        {
+          "id": "e83eac9e-abda-4781-9f35-3916b1ef2ee8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 2104"
+          }
+        },
+        {
+          "id": "83d2b3e4-ccbf-4238-b724-fc961574e32c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Loch Modan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "785baf78-ebcf-4875-a31e-4729d4bed0a6",
+      "name": "Step 22",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "1a10554f-90ce-4f5b-bf04-efabdcd286f2",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 484"
+          }
+        },
+        {
+          "id": "5515b6b3-4019-4f09-89f2-592288aabcef",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "6da7afcb-6daf-4bcc-835d-f88b9263538c",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "e6a9aeb1-4c76-4191-9fbd-b7d8cf1f7112",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "96bbfe4f-da36-4f33-a9e4-cbe602baf18b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "67b33bd8-e853-43cf-9353-9c3b78c7c8e6",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "327ea489-1cca-45eb-ab5b-81e9243add83",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "88ba3455-b97d-4f4a-8735-1a1e88abea72",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 279"
+          }
+        },
+        {
+          "id": "5564f937-cbe3-4655-87c8-5b423c52576b",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "cafcd658-f7bc-4816-aaf0-b3c16e1fcbb9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 279"
+          }
+        },
+        {
+          "id": "7a4235d7-66fb-4587-b69e-2673ffda9484",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".unitscan +Gobbler"
+          }
+        }
+      ]
+    },
+    {
+      "id": "5a94db59-52e7-4a1a-bd07-d06b69460f04",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "ad8d7416-8dc1-4861-8b0e-e220b85c405c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f329f67d-7d52-466f-9434-421e219801b4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "4d2eb8af-a766-4d48-9371-9a6951d404bd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bronzetube "
+          }
+        }
+      ]
+    },
+    {
+      "id": "346b1e83-a94d-48d2-94e0-c498dfa0cc8c",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "4ea092ee-3e4b-419f-8898-7f2528f9e74a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a7ab9d25-f621-4916-b8c0-e6bc06873ac4",
+          "enabled": true,
+          "note": "Accept Ormer's Revenge",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 294"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d646efc4-0b6b-4ac3-9b70-a40d546d5653",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "489ea051-0f6c-4beb-933f-238a0633f4e0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3bc1452e-6911-457a-ad2c-dfe0ffc49569",
+          "enabled": true,
+          "note": "Turn in In Search of The Excavation Team",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 305"
+          }
+        },
+        {
+          "id": "46b4b7ec-35ce-443e-95c4-458abb920df0",
+          "enabled": true,
+          "note": "Accept In Search of The Excavation Team",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 306"
+          }
+        }
+      ]
+    },
+    {
+      "id": "81bf37b3-a0b8-4a13-b3c5-baaf7f0d3669",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "6e21f4b0-0950-4361-b903-60538b15352b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 943"
+          }
+        },
+        {
+          "id": "c2fbd781-b80d-4884-99e7-51c973037a2b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "51fbeeab-3bba-4011-9dbd-51a000493fe5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 943"
+          }
+        }
+      ]
+    },
+    {
+      "id": "c12488e1-64f6-4f52-bcce-84ebfb658f08",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "11706444-b273-4e74-ade2-75bcfa446e8b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 943"
+          }
+        },
+        {
+          "id": "fc603b82-8c48-4bc9-8f7f-843695755efa",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d3c3c9fd-beb5-4e9e-816a-f4c304c2984e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "11037796-79ad-4906-9a42-42a972758771",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0c03e27a-3f33-43c9-acb1-43200ca2b937",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0f0f1863-f03f-420d-a994-ef0e59d86522",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3c453230-6c06-4e34-99f8-d59abad195d7",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "58982e72-d1b5-4cf4-9a1d-1b74abf39fb6",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "cc3febcb-d2a3-4504-a1f9-86c5288b1919",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d5a36942-1566-45d5-bd00-1f952349d4d0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "01e3f09a-39bc-4b58-91e1-6c7e124fb9fa",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "aeeb0893-46b5-4de6-b845-aafeecb3f13c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5c475cdd-e242-4622-b914-de3c5232d326",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 294"
+          }
+        },
+        {
+          "id": "787b3795-b4e1-4bc4-943b-e2ca7a09a4e1",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "d1689513-7917-4412-b8fd-1b8e3220faf2",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 294"
+          }
+        },
+        {
+          "id": "ef1db5b8-d0c0-4463-8ffe-3c2399a1c6e1",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "2222b764-1f6a-4704-a06e-c724436962ae",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 943"
+          }
+        },
+        {
+          "id": "2fc0f5f3-9974-44b0-9da0-e29246f88b86",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".disablecheckbox "
+          }
+        },
+        {
+          "id": "aeaed187-9e7a-4303-b828-3900739b4db2",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "e005da79-0aef-4ea9-873d-e1f24302cebc",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "b145c8b3-71af-46ed-998c-b3d53aacba92",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "ed1ffc33-6c16-436a-9ef8-a5ac07336959",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5fc40586-bfe5-40d4-a9e5-63cbfc407cbb",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d2914155-879d-4c47-80f6-78c4cd689575",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2ebecccd-c003-4c15-b27e-757811a9433e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "893987c3-983e-44be-a072-c0060e351bae",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b6481351-04b4-414b-ad1d-dc792a32bf07",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "83844dd9-b04d-4573-8e04-87bd2b8f7d6c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3ae7c0f3-9ac5-4950-99b2-367d0aef0a25",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "61afa5e1-90bb-468c-981c-616965a572a7",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "41086edb-0dd6-403c-9825-18a4e5815b9c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "15f30a7f-5eec-47e5-87ed-502e349cfe78",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9e7c8391-ebf6-44fa-b1c7-404bdfacda8f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 294"
+          }
+        },
+        {
+          "id": "2c525a54-96e1-4d2e-9376-65b1b94c9c2a",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "18e6af65-558f-4da3-8461-546c148a47cc",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 294"
+          }
+        },
+        {
+          "id": "82c73213-d98a-4f7f-b97e-eddfd6e2aaa7",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "75923bd8-7246-41f2-933d-5436229d35d9",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Hunter",
+        "Warlock",
+        "Priest"
+      ],
+      "actions": [
+        {
+          "id": "66c66115-ee0d-444a-9d3e-149ae73919c4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "71efe77d-009c-4b06-9242-ed6392bf3509",
+          "enabled": true,
+          "note": "Turn in Ormer's Revenge",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 294"
+          }
+        },
+        {
+          "id": "62296ae2-f81c-43cd-ae23-401a1764b0f0",
+          "enabled": true,
+          "note": "Accept Ormer's Revenge",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 295"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bc923b24-abb5-47fd-b7b8-ac2a7fc9a0f1",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Hunter",
+        "Warlock",
+        "Priest"
+      ],
+      "actions": [
+        {
+          "id": "226d05e0-21eb-480a-8cfb-8c0e7ff72383",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "69497816-e6b6-4e6d-96ca-707d22a924b1",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a2753aa9-c30a-48a5-a869-36414ea19856",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "45ca8ca7-1e4d-49a1-b9af-3fbbf750ed37",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "361652d7-d8ea-4f6f-bbed-c1920ff481cd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Click here for a reference video"
+          }
+        },
+        {
+          "id": "a1d2cae6-1536-4b53-89d0-8115ce0eefd6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 295"
+          }
+        },
+        {
+          "id": "949e6e06-0337-4df3-885e-f8d620f0b2bf",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "406b1425-492d-4e42-8d87-e399d53b925b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 295"
+          }
+        },
+        {
+          "id": "9926bbac-9379-4842-9786-5aad87e25295",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "65add8d1-5723-4b64-b1c1-d76c7c36c21b",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Hunter",
+        "Warlock",
+        "Priest"
+      ],
+      "actions": [
+        {
+          "id": "6eab6b04-6577-4b5d-872e-d7315eed5d3c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 295"
+          }
+        },
+        {
+          "id": "1ff18ba8-f621-44a6-8948-0b93a160add6",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ffc7ebe5-df6b-43f5-b0ee-2cdf1a6fa733",
+          "enabled": true,
+          "note": "Turn in Ormer's Revenge",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 295"
+          }
+        },
+        {
+          "id": "4683e94f-c6b2-4ff5-937a-d056b6fcd092",
+          "enabled": true,
+          "note": "Accept Ormer's Revenge",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 296"
+          }
+        }
+      ]
+    },
+    {
+      "id": "067e77f3-7b0b-488d-97b0-5ae06a14349a",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Hunter",
+        "Warlock",
+        "Priest"
+      ],
+      "actions": [
+        {
+          "id": "da578aa2-5fda-49c9-97cb-7806c7b102f5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 295"
+          }
+        },
+        {
+          "id": "2e36d497-0d24-4427-8635-320e84ace425",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "8e05b6a7-6b7a-4caf-904d-fa8d8ada09bf",
+          "enabled": true,
+          "note": "Accept Ormer's Revenge",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 296"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f63f3b57-e20c-455f-9a19-09436c9d80b2",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Hunter",
+        "Warlock",
+        "Priest"
+      ],
+      "actions": [
+        {
+          "id": "3eae563d-4296-40f2-ae4e-9e8cb95a1665",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f13bf02d-e38e-4bb4-aba9-cec15554a791",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b15a0e89-b0f3-48a9-96ef-b33b729c5134",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Click here for a reference video"
+          }
+        },
+        {
+          "id": "1a6adcfc-6805-45b1-9630-6370665b3fef",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 296"
+          }
+        },
+        {
+          "id": "874c6464-e259-4e58-adc5-c5c253264a25",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".unitscan Sarltooth"
+          }
+        }
+      ]
+    },
+    {
+      "id": "882f2903-175c-4b99-82ea-108d6cfd953e",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Hunter",
+        "Warlock",
+        "Priest"
+      ],
+      "actions": [
+        {
+          "id": "1244e97f-08f4-4193-8ff9-5dda2ab08272",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 296"
+          }
+        },
+        {
+          "id": "72d8e952-4b61-42ee-85ed-f1091ef95bcc",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "081a4e11-a26c-4927-a6e8-812aed67b47e",
+          "enabled": true,
+          "note": "Turn in Ormer's Revenge",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 296"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2de87328-25c9-4205-a006-94736dec87eb",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9f3ade41-86bc-466b-b966-c98eb14b1069",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1e951d4c-b992-4da6-8fb4-cef941e5700d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "aff57c97-aef9-4d11-8d19-3ae717c16907",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f74790a5-0ee0-48e2-8143-1841a3e3808d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "52751ce4-cc40-49fa-83a8-c9c0130dfb6b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "34a06d94-5600-4937-a882-824501b8a20a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 464"
+          }
+        },
+        {
+          "id": "8b4e29ef-7a49-4b87-953b-4cc2908bfacf",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "df4f75d1-4eda-42b9-b178-d2e5448d0d4b",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "2c78d89e-2f5f-42b7-b49d-1ebc4f9a18af",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "a048a9aa-6b0c-4cc8-8307-9431b751edf1",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "04020b39-e0c3-46c3-8165-40e4afab71c0",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "23b1f09c-89f0-4b51-8559-991b3bd18f1c",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "023a1fbf-a92d-42fc-97be-21b4dccb6a3d",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "7a95d8a1-2b03-499a-94ba-3984ae4a4886",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5bf7425c-e5c7-40b4-a646-8d5ce6800aa2",
+          "enabled": true,
+          "note": "Accept Daily Delivery",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 469"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fb5e4c53-a1df-41c2-ad46-536adb5e19a3",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "a2449643-5249-460a-9f79-dd683e22b810",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "38ea6e22-d0a7-4874-9e1d-20204689c379",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "6217e225-25cb-4cfc-a32a-407feac3784c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e102cdbd-9d6f-44f2-8796-5e605196c99d",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "94c383b5-2d51-4d7a-b7e8-fc48690e9b37",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1d652150-9701-4ccc-bb09-b812bf3381bd",
+          "enabled": true,
+          "note": "Turn in The Greenwarden",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 463"
+          }
+        },
+        {
+          "id": "ef7f06c9-6951-4b60-b230-557c5404131a",
+          "enabled": true,
+          "note": "Accept Tramping Paws",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 276"
+          }
+        }
+      ]
+    },
+    {
+      "id": "10000175-8055-406f-908a-837402da5bc1",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "c3db041f-79fd-47b9-9a87-e8f6aacd3ae9",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a20bcb79-1f8f-4314-ae0e-692825f752d4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "50a838aa-4c8f-4561-84bb-ad3b3babce5b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "689b5524-f756-4401-9177-362f72ef2936",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "26400850-597a-4a22-b339-35d841a1cad5",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "335df74b-9949-4e5b-a830-be1bb27a6e43",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0974a5e1-b4d8-4272-abb5-5eafeecf91bf",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 276"
+          }
+        },
+        {
+          "id": "81ddf2c2-a44c-468e-875f-09506bab0a49",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "9804edb9-516a-42fc-a711-5fd609f9bcbc",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 276"
+          }
+        },
+        {
+          "id": "b4a2046e-1e06-438b-9ebd-fd182d8fe457",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "45d41391-89db-4c83-938f-e13cb856e883",
+      "name": "label:FinishGnolls",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "a4c18910-2e2b-4e82-b9d0-16ab0695af62",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4e7a1498-8440-417f-b9c5-455c59b4765a",
+          "enabled": true,
+          "note": "Turn in Tramping Paws",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 276"
+          }
+        },
+        {
+          "id": "92037d1e-3073-4a94-aea2-90fa912fed5c",
+          "enabled": true,
+          "note": "Accept Fire Taboo",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 277"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2e36cada-ff92-47fd-b201-94edf163bfd5",
+      "name": "Step 42",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "a68aa235-7d2a-4be0-bfe1-fdc61553d646",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Click here for video reference"
+          }
+        },
+        {
+          "id": "787f0f56-cab7-4bb0-bb02-389b8aaa9151",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Click here for the unstuck link for US servers"
+          }
+        },
+        {
+          "id": "caece8b6-1bd7-4523-8c20-bbe5b0846f80",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Click here for the unstuck link for EU servers"
+          }
+        },
+        {
+          "id": "eee9f022-6174-464f-9282-4f2f44236e05",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Ironforge"
+          }
+        },
+        {
+          "id": "37775b71-b3a4-459f-981c-a2109c7b393b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Stormwind City"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a20f67e2-c039-4f05-899b-34f178132a8f",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "432f55d9-b052-45e4-a42b-a0abe635fc9d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "baf75dee-6f95-46db-84f6-d84edcca6844",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4906ed44-f5b0-43a2-a006-9c0894cc9ad3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7d37b9cf-e0fa-4cf2-9d57-641b313171bd",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "332472d2-7a4a-42ba-983e-81de49ea3cdc",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "df15f70a-efaf-4e09-bf94-2e71af11dfa4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3b8f65d7-e7e9-48d8-a32a-0e04d6e63328",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d644f218-6525-454c-82cc-48411cab33ba",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "66ad82ae-07c2-4b94-a845-8851e87adc3b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "bcc62b9c-a66f-4b8a-adef-3a97679d2059",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5101e8b8-36d8-44f8-8a8d-bc5e628ac3c3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "bdb4fe25-bb47-46e1-8fce-e7e532a3471d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "dfaff97c-ffc6-44e5-9a82-c364c07a3102",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "60de1522-0aa0-47b2-ae56-5b58d64c4e9e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "867efa57-1017-4958-ad9b-6e3d3bc1dddc",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "03869d8a-cc3b-4e14-b562-9fedda17d9a5",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "284d29fb-20c7-4f1a-84dd-ea7b382bf32a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "564abc43-9f71-4adf-9308-c9c5942db096",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "150ba0e8-2152-43c6-8bff-a0c4f9411b7b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 484"
+          }
+        },
+        {
+          "id": "a0965a3d-bd91-40fb-b7a7-26b593d5fb1e",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "9953ce95-8ab2-4d84-a0f2-772c563e08ea",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "f33122b1-13b0-4a81-aa87-03bfa0e678bf",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "da9e5b6d-5a98-4608-97d1-f1895e92ec8d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 1785 -- Dwarf Paladin Redemption quest"
+          }
+        },
+        {
+          "id": "842c1acb-074a-46ab-8b87-d8cbb484af14",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 277,464,294,279,484"
+          }
+        },
+        {
+          "id": "79ba6b24-186c-4c19-add3-76617f5c5144",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Run back to Menethil Harbor. Grind en-route. Do NOT Hearth as you will need it very shortly|r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "41f97419-cfa7-4291-be6c-902fa9507696",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "51573061-4c16-4be4-8bd7-5973568d4d39",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4d5d0e5e-8df7-4854-bec2-d76f2a81a91f",
+          "enabled": true,
+          "note": "Turn in In Search of The Excavation Team",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 306"
+          }
+        },
+        {
+          "id": "709c204a-06ce-4731-aa25-de9df4c66f75",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fb969d4d-3c71-4e99-8897-218f24b5233b",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "f4518696-2881-400b-b979-b57544d06cc8",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "55b00271-0603-499f-90b2-6bb0fa45f328",
+          "enabled": true,
+          "note": "Turn in War Banners",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 464"
+          }
+        },
+        {
+          "id": "8558b721-13d3-400c-bb36-f637ead95efc",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "58e1a3e0-8728-4365-bb8a-1088890b8bd8",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "8f72b4b7-0a65-47b0-9d5e-044998f907c9",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b2804a9a-ad45-4cca-91fc-887b6b6e12be",
+          "enabled": true,
+          "note": "Turn in Daily Delivery",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 469"
+          }
+        },
+        {
+          "id": "0cffa1fb-00fa-4965-8401-6189c4d88bd6",
+          "enabled": true,
+          "note": "Turn in Young Crocolisk Skins",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 484"
+          }
+        },
+        {
+          "id": "208a6f36-f1c4-4d7c-803c-a54592b11784",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e6ec9eca-7ae6-4270-b542-adee0b81193b",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "1ed81554-52df-4826-8d2c-d62c5eb5f9d4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "98ab8508-29b9-4ac9-af4b-f944129cb474",
+          "enabled": true,
+          "note": "Turn in Claws from the Deep",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 279"
+          }
+        },
+        {
+          "id": "5e4a2c94-0d94-493d-8c80-595fcd0a9763",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "298c2500-52dc-495e-8d86-c47a691121c6",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "840840f2-7553-4245-9934-2f876125fa85",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 470"
+          }
+        },
+        {
+          "id": "b6160946-316f-4286-b270-e7a0655fbeb3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "32d9dc37-9083-4c5e-a2c5-7291cf8389fc",
+          "enabled": true,
+          "note": "Turn in Digging Through the Ooze",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 470"
+          }
+        },
+        {
+          "id": "412a428e-2640-4c14-8949-1192040f3058",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7e93fa6d-bb6d-46c4-9450-d79a103a4d90",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "8efc2db2-885a-489e-928b-a8a145d4697e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 943"
+          }
+        },
+        {
+          "id": "6c70adaa-139f-4f1a-becb-0020a708154e",
+          "enabled": true,
+          "note": "Travel upstairs towards |cRXP_FRIENDLY_Archaeologist Flagongut|r",
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1419bb8c-b50d-4701-a4cc-e927e8258529",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2eab5bd3-16c6-42ce-aede-8bb62fef1081",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "eff659e5-74db-4565-bce2-8aadf9e68346",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 943"
+          }
+        },
+        {
+          "id": "158e761e-2e46-43a0-a329-bb0723cfcbbf",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "52c29bbc-4049-467c-8998-0ecb7ae2ec1f",
+          "enabled": true,
+          "note": "Turn in The Absent Minded Prospector",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 943"
+          }
+        },
+        {
+          "id": "23237a5a-12fe-49f7-bc55-dcde02d92831",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dcdde3d4-f683-4745-bb78-1888cfbc909a",
+      "name": "Step 52",
+      "enabled": true,
+      "conditions": [
+        "!NightElf !Draenei"
+      ],
+      "actions": [
+        {
+          "id": "5c8ac777-d7f5-45b4-b09f-13992add45e8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 277,464,294,279,484"
+          }
+        },
+        {
+          "id": "d9d14b76-2b2a-4da9-a340-6fc3fdc3deaf",
+          "enabled": true,
+          "note": "Hearth to Menethil Harbor",
+          "type": "Hearth",
+          "payload": {}
+        },
+        {
+          "id": "e4d464a0-cfa6-4f91-8f75-e6111bedc09c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".cooldown item,6948,>2,1"
+          }
+        },
+        {
+          "id": "4ddf56e6-2081-429a-b62c-5977a0bca851",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150"
+          }
+        },
+        {
+          "id": "b21973de-981c-4b63-8bf4-215e8b709197",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bindlocation 2104,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f5197dfa-767b-430f-96ca-c099dfa00ad6",
+      "name": "Loch Modan",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "498d8ed1-d466-4fe0-bd35-62dca292bd4d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Loch Modan",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "fc112bba-c2f6-45b6-9ef1-038b983bf11f",
+          "enabled": true,
+          "note": "|cRXP_WARN_Hearthstone back to Menethil or run there if you wish to travel to Ironforge via the website unstuck method|r",
+          "type": "Hearth",
+          "payload": {}
+        },
+        {
+          "id": "f6c9c4d6-f0b5-46e6-993a-a0e23c5b7b71",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Loch Modan --Completes if you run to Loch"
+          }
+        },
+        {
+          "id": "ea9f0b2b-aa6e-4935-a065-f6c95bd52f10",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150 --Completes if u hearth to Menethil"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f6303d08-b7b1-4fb3-820f-7ed794151bd6",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "skip --logout skip NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "4e234d33-c700-43f3-bb01-25a7f5766f28",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "8284a2b2-51dc-4716-b62d-a655c8caa6e0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Logout on top of the mushrooms at the back of the cave."
+          }
+        },
+        {
+          "id": "3f14ff02-87bb-4f7e-a6b8-02233e9ea5f5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_CLICK HERE for a reference|r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "50655d6c-ff5b-4886-a04e-fad8012e4c91",
+      "name": "Loch Modan",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "bb608a15-bcb3-4057-97e2-7aa8768a595a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Loch Modan",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "586dd4fb-9842-4ecf-82e0-bcad027ea327",
+          "enabled": true,
+          "note": "Get the Thelsamar flight path",
+          "type": "Comment",
+          "payload": {
+            "text": ".fp (unresolved NPC)"
+          }
+        },
+        {
+          "id": "6fa1dc13-6841-43d8-b963-f32a8b8e6336",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150 --Completes if u hearth to Menethil"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8f3aa93a-dc9f-46c0-af87-f80f8912d00f",
+      "name": "Loch Modan",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "99969e2b-55c7-429b-9c3e-0a5ec3f81240",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Loch Modan",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6732e5d3-da92-4fa7-ad16-c94faa1e70c3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Loch Modan",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6da19496-a234-4ef7-807a-64247a7c9bba",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "8c154075-f646-44b1-bfc7-7cd09abedd51",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Agro the |cRXP_ENEMY_Scarred Crag Boars|r to die and respawn at the |cRXP_FRIENDLY_Spirit Healer|r once you are in Dun Morogh"
+          }
+        },
+        {
+          "id": "4e20e601-4e7c-48ff-bf54-985dbb31e0ea",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "dd03331a-3df9-411a-9773-50464a8f38da",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150 --Completes if u hearth to Menethil"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ccd6cd82-7725-4d9d-8376-0d4187c52d5f",
+      "name": "Dun Morogh",
+      "enabled": true,
+      "conditions": [
+        "skip --logout skip NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "55d09922-779b-4a8c-a897-3058957ee8eb",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ed2d7b62-b0aa-43ac-9d46-1794e9411533",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "c67531ea-421f-4923-9243-36105f39c1bd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_CLICK HERE for a reference|r"
+          }
+        },
+        {
+          "id": "5f5f5ff9-9fb6-4e74-bbdd-8de93e451ca9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Logout Skip or travel to Ironforge"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8078f175-8d32-40f3-96f2-3dae16c3a45a",
+      "name": "Dun Morogh",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "450accb5-f0d9-48f6-8628-1f4266b825fa",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "15badb2e-6d27-4106-9df2-df1d13960861",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "2ec8793b-9b4b-423b-bfd1-287c4f18d56f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bronzetube "
+          }
+        },
+        {
+          "id": "072e0281-0001-40da-a445-10b507d72c7e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150 --Completes if u hearth to Menethil"
+          }
+        }
+      ]
+    },
+    {
+      "id": "9e0da0bb-3262-4ca1-b82e-3b39ffb27e17",
+      "name": "Dun Morogh",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "7f85630b-fc57-4305-920c-2b0487020b05",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "42e5143b-f9da-4067-a189-f6da281b2e12",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "77fccf89-2279-44da-837a-9f99f4692159",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d80520d8-b2ec-4192-ba0c-fe7a51413a58",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Travel to Ironforge"
+          }
+        },
+        {
+          "id": "3c65723c-71c5-43c7-8f83-a6a2ca111ab1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 150 --Completes if u hearth to Menethil"
+          }
+        }
+      ]
+    },
+    {
+      "id": "792e72ba-fd22-47bc-a50c-d5771440239a",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "8025b86c-017d-4b91-9724-0abfa47b4528",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 943"
+          }
+        },
+        {
+          "id": "514a718b-1df8-4aaf-a07d-2bb16e004e3a",
+          "enabled": true,
+          "note": "Travel upstairs towards |cRXP_FRIENDLY_Archaeologist Flagongut|r",
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7111c1e4-9734-4655-8dd3-ed99fcbb8ff5",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d870ea8c-358d-472e-89ce-d0007f4ad871",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "497c287e-bda7-4ab6-beca-6b4f0e7c808a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 943"
+          }
+        },
+        {
+          "id": "1b43d16c-e2af-46fa-b78a-c808f9db854f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1e9eaeb0-88e9-4772-b12a-1441903cdb7e",
+          "enabled": true,
+          "note": "Turn in The Absent Minded Prospector",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 943"
+          }
+        },
+        {
+          "id": "7518c390-b59b-4dca-8bd4-ea0c8376d1f9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f69522a8-d158-4ded-865f-dfac2d8f535a",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "e119c151-c1b6-40f3-9687-e455b201dec2",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 470"
+          }
+        },
+        {
+          "id": "df269dd6-c113-44e5-b69d-92ba74e5d257",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "490a007c-878d-4dbd-82f1-a43901fa52e9",
+          "enabled": true,
+          "note": "Turn in Digging Through the Ooze",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 470"
+          }
+        },
+        {
+          "id": "ed97cf3c-81ac-41a7-9238-80fbf76a313f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e26143ec-a8d5-401c-8f56-2d3f2d648502",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "bd64abeb-b4fe-4000-b6e5-81ad7419dc24",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "568a6f39-ba78-42ff-a6c2-e724f1b3d1e6",
+          "enabled": true,
+          "note": "Turn in In Search of The Excavation Team",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 306"
+          }
+        },
+        {
+          "id": "bdddb9d2-253f-449c-85de-61bdf858db6e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "1b48fad2-c31b-459b-b302-693932dff6d1",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "0077c604-1946-4783-9288-f23c28076f5b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a8d4d96e-f789-4826-96df-b7f7c199002d",
+          "enabled": true,
+          "note": "Turn in War Banners",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 464"
+          }
+        },
+        {
+          "id": "bf6986ec-0592-4ae2-9e00-103659a4e5bc",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f0684bc6-38b5-4213-afe0-a358c374b92f",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "1eea298f-433c-46e9-90c6-8b19000f58c0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "82ddca47-6a2f-44ca-b001-4494a5bfbc20",
+          "enabled": true,
+          "note": "Turn in Daily Delivery",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 469"
+          }
+        },
+        {
+          "id": "e7821019-0314-4b97-a163-fe7b49d0ecf1",
+          "enabled": true,
+          "note": "Turn in Young Crocolisk Skins",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 484"
+          }
+        },
+        {
+          "id": "2ed0dba7-ec26-46c8-9a17-9220e7432487",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "3bddaf9d-386d-41d8-8083-fde443bd966f",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "235fb158-ab6d-426e-963a-19a42a14f3d8",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "69ef5417-3245-444f-8379-55ecf0aaa74d",
+          "enabled": true,
+          "note": "Turn in Claws from the Deep",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 279"
+          }
+        },
+        {
+          "id": "811ce7a9-ccc5-4566-8524-e9acf1b6b2e4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ee72fb30-0cc2-40a8-80b1-a4605d7b055e",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "8ecf3eb1-9561-476c-b1eb-b0f6409e6712",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".dungeon DM"
+          }
+        },
+        {
+          "id": "3af39579-1532-46c4-b115-df4d525cd65b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e66aaadf-4ce1-42f8-8ad4-7d51fbd549d3",
+          "enabled": true,
+          "note": "Fly to Ironforge",
+          "type": "Comment",
+          "payload": {
+            "text": ".fly Ironforge"
+          }
+        }
+      ]
+    },
+    {
+      "id": "062d1c72-f6e0-4493-9b56-48a2db43fb1a",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "!NightElf !Draenei"
+      ],
+      "actions": [
+        {
+          "id": "d7670089-a7e2-4a88-a522-27b2255b2c7c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f9c29261-8f96-42b2-b878-6b86685397e5",
+          "enabled": true,
+          "note": "Fly to Ironforge",
+          "type": "Comment",
+          "payload": {
+            "text": ".fly Ironforge"
+          }
+        }
+      ]
+    },
+    {
+      "id": "84685457-9bac-4016-86f6-ad7107114f87",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "4efe508a-f77b-40aa-9824-1b1ddb8a679f",
+          "enabled": true,
+          "note": "Jump off the end of the dock and swim to the waypoint",
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "96a95a28-5d46-4b91-8b7e-1896c8b96562",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Elwynn Forest"
+          }
+        },
+        {
+          "id": "6ec704e4-0394-4cad-9c04-306139d21e4e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Dun Morogh"
+          }
+        },
+        {
+          "id": "d4f2e3e3-a058-46ef-b6b9-307972c163ad",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Loch Modan"
+          }
+        },
+        {
+          "id": "b143049a-43c3-4d1d-b982-9d314e6481f1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Stormwind City"
+          }
+        },
+        {
+          "id": "929f611c-6cd2-4d4a-a03c-7594db6a93e8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Ironforge"
+          }
+        },
+        {
+          "id": "8ee52490-13f2-43a7-8f57-cfc262f5fafd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Westfall"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a5bf0a78-33b0-4b51-98e2-faf721296d8b",
+      "name": "Wetlands",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "73c1be3d-785f-4d7d-aa52-fae9cc97423b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Wetlands",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4854f18b-fbdb-46c8-a872-fec2c3f9ee09",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e9cc3d49-1143-4f23-8fb6-53468524e13a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Use the character unstuck self service feature to skip to Ironforge. You will have to log off at the spot, then navigate to the help menu on another character (alternatively, paste the unstuck link below into your browser), then scroll down to self service. Click on your character and move. If you can't unstuck then skip this step and swim along the mountains to Westfall"
+          }
+        },
+        {
+          "id": "babd7f82-c602-4a59-837e-8349c32f1a54",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Click here for video reference"
+          }
+        },
+        {
+          "id": "10874cbb-a9fc-4ec3-bc5d-bd53b9cebc19",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Click here for the unstuck link for US servers"
+          }
+        },
+        {
+          "id": "05111a0a-c9e8-47e0-935b-14e2b28324fe",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Click here for the unstuck link for EU servers"
+          }
+        },
+        {
+          "id": "d3b78a0a-d1f5-4a83-9a0b-7b7eca803835",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 809 --IF Gates"
+          }
+        },
+        {
+          "id": "346f6088-d80b-4040-b16d-b1abbbaac334",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".subzoneskip 2257 --Deeprun Tram"
+          }
+        },
+        {
+          "id": "8cd3ffdf-2eb5-4a89-9393-9a727fecfb28",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Loch Modan"
+          }
+        },
+        {
+          "id": "3eaea4c3-ffb0-4253-a44f-770a4ece831e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Elwynn Forest"
+          }
+        },
+        {
+          "id": "87b3f96f-8749-46a6-9c2f-ed0a2209ea19",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Dun Morogh"
+          }
+        },
+        {
+          "id": "d408b66e-c24b-49ac-80a0-1e10a8f8e8ee",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Stormwind City"
+          }
+        },
+        {
+          "id": "ad87f4d1-b357-4dc1-bcad-1c5142e9cb9c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Ironforge"
+          }
+        },
+        {
+          "id": "fa6b057f-df55-4e68-9788-c0bd5492089c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Westfall"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8870bcc4-ce92-45c7-84c7-f1442db13e6c",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Mage"
+      ],
+      "actions": [
+        {
+          "id": "39fcc224-4ad5-4e56-9c66-356fedae6045",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "d9faa37b-fc92-4ee7-9545-f8f4a8aeeca0",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Mage"
+      ],
+      "actions": [
+        {
+          "id": "ff42ee7f-173c-4612-b071-4cfa8768dcf8",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "5aa49f00-4132-4824-82da-98ee68218049",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Priest"
+      ],
+      "actions": [
+        {
+          "id": "0dcbc383-6594-40ea-a1a3-3b6d32ffb137",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "ea5989bd-9e7b-48e2-9d2c-c68701f93a95",
+      "name": "Step 74",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "7c1c9ea0-d699-414c-af71-0e16e8a91c2f",
+          "enabled": true,
+          "note": "Accept The Powers Below",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 968"
+          }
+        },
+        {
+          "id": "e22e24c2-4f68-434d-8d3e-69ce725b96fe",
+          "enabled": true,
+          "type": "UseItem",
+          "payload": {
+            "item": 5352
+          }
+        },
+        {
+          "id": "93746928-b204-4921-942c-f59c850ebead",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".itemcount 5352,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f2d0f103-1e87-4b83-85e6-f878b2d84373",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "66cf15fd-fd79-4298-87f9-9d137f7a7b8e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "cb83b102-1057-46a7-942b-7f06b56a74c9",
+          "enabled": true,
+          "note": "Turn in The Powers Below",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 968"
+          }
+        },
+        {
+          "id": "db8ef835-28dd-41c3-82c7-112a4f49fe45",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 968"
+          }
+        }
+      ]
+    },
+    {
+      "id": "50ea606f-bb51-44d4-9c70-d50aa5ae8ef6",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "bf1c8ac3-0095-4181-a420-b646b133fca9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".dungeon BFD"
+          }
+        },
+        {
+          "id": "753c8c44-9035-433e-bbb7-586fa48041d4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f5721727-aa6c-4a11-a3fd-99c17de9f55c",
+          "enabled": true,
+          "note": "Turn in Knowledge in the Deeps",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 971"
+          }
+        },
+        {
+          "id": "53d2c822-0447-4615-929a-72b6087a62ee",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 971"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7a0f73db-9c83-4734-a78b-a2ae024612a0",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Shaman"
+      ],
+      "actions": [
+        {
+          "id": "ccd42271-081b-4b77-b4b3-abf83009e7d3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "a0e256f1-2218-4094-b3b9-084320e8b0a5",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "91630dbc-b8fe-4b83-8377-818188dec19f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d2978501-8757-41bc-8f7a-ce300f2dd59d",
+          "enabled": true,
+          "note": "Accept Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 2999"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d05bb64c-d419-4135-98a1-3b0bd1df2d5e",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "982a618f-520e-420f-9a4b-34d5bcfef019",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3c8d474c-8e38-42c5-a457-e48ddfae8541",
+          "enabled": true,
+          "note": "Travel toward |cRXP_FRIENDLY_Tiza Battleforge|r upstairs",
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "0b249d19-c542-483f-9701-4da2740b43c0",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "14b4c89f-fa8b-49a3-879f-4a3969e785b0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "14568a05-0fe1-4d76-bc72-9e0339299819",
+          "enabled": true,
+          "note": "Turn in Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 2999"
+          }
+        },
+        {
+          "id": "958e8b2f-5ab8-41ba-90e7-bf119dc8a936",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1645"
+          }
+        },
+        {
+          "id": "469251b7-5775-4025-aa06-cda3efc4863d",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1645"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0636e325-0049-45b7-b2f1-c6c00b7d389a",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "24381456-bcff-4804-a77a-817567fb9793",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b5b10188-c38a-4381-ae1c-57a34941eeca",
+          "enabled": true,
+          "note": "|cRXP_WARN_Use the |T133739:0|t[|cRXP_LOOT_The Tome of Divinity|r] to start the quest|r",
+          "type": "UseItem",
+          "payload": {
+            "item": 6916
+          }
+        },
+        {
+          "id": "9e57b20f-6d5b-45ac-8089-011eab8e39f9",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1646"
+          }
+        }
+      ]
+    },
+    {
+      "id": "9903d492-5d71-4a1f-ae4e-41eb3429d579",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "781c8c40-8d35-4edf-85e4-63bcf4099c02",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "fecea3c3-fded-4b2c-a5a5-41f1cc8073ab",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1646"
+          }
+        },
+        {
+          "id": "09accf8b-7daf-42ea-95e0-7dc813c8530c",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1647"
+          }
+        }
+      ]
+    },
+    {
+      "id": "c9c79875-d64b-4928-bd77-9ced695de8e0",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "c43976d6-40b1-4797-a445-da46dc538a9b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f370982e-47d3-4980-82ef-7069f99bcd4a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "35bb1bfe-c041-4ce6-b572-88daa7719cbd",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3c9ccdce-a26a-421b-9d69-83173af913ee",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4de08435-be9a-45f0-b422-0d768881d8e2",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2cce5359-f707-4513-b4c9-c12b384f5343",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1647"
+          }
+        },
+        {
+          "id": "23536471-6f02-4fc8-9b74-a236f37f0c05",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1648"
+          }
+        },
+        {
+          "id": "7baebefa-b751-4d6a-af96-476b3c781b65",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1648"
+          }
+        },
+        {
+          "id": "7b93c57d-5314-44ab-b516-6598a46ead5b",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1778"
+          }
+        },
+        {
+          "id": "fa8d9cdb-785e-4653-8f57-6ac53aef5f0f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".unitscan John Turner"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7eda021c-2b57-41cf-8937-dcfebe8f70ba",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "d20114b3-035e-48cd-a104-47974488fc0b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5898471b-f54c-4106-a790-8ca3656d7f38",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5b15f71c-2eac-4314-806e-704168cf2325",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "64f46bf4-0ff9-4f6c-95c1-d0a3c16b7cef",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1778"
+          }
+        },
+        {
+          "id": "c70daef7-7b6e-4abf-adb7-e99d90df074d",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1779"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0ef68aed-7315-4b39-8640-201a32b8d11a",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "74833de7-6a23-4ab2-a601-e61777c4f67a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "bfab6281-8af6-471c-ae5a-6e7c40b3a1b4",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1779"
+          }
+        },
+        {
+          "id": "68497063-cea6-4c76-8603-d9d6ab1f664b",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1783"
+          }
+        }
+      ]
+    },
+    {
+      "id": "4530c94b-720d-4799-9b99-0b4cc06cd5d7",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "08b1720a-298e-4ddb-8c37-213f4a895ac9",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "63674a72-08a0-4029-baa6-66a18e2caa2a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 1785"
+          }
+        },
+        {
+          "id": "7507776f-1dba-4610-ac6d-f83352efa7c4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Set your Hearthstone to Ironforge"
+          }
+        },
+        {
+          "id": "bb94d438-4560-42b7-978a-8d985059e873",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bindlocation 1537"
+          }
+        }
+      ]
+    },
+    {
+      "id": "172b38fd-37c1-4192-8835-ee78a4a2e205",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "8e75f7e9-6dbb-4898-97c6-aa458ab92d0f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "01899dc9-be89-4222-a528-07bc99d04e69",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "abce147f-e952-4d8b-a33b-48dd926dfd4c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Exit Ironforge"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b51893e4-c2cc-4d27-a29f-f823bcb7f481",
+      "name": "Dun Morogh",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "fb21c237-027c-4a2c-839c-e14de1bccf93",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "51e522fa-fa07-4b69-af72-f171ab56df9d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Use the|r |T133439:0|t[Symbol of Life] |cRXP_WARN_on|r |cRXP_FRIENDLY_Narm Faulk|r"
+          }
+        },
+        {
+          "id": "e5bda33e-b2ec-4d79-8b3e-d9793fc87626",
+          "enabled": true,
+          "type": "UseItem",
+          "payload": {
+            "item": 6866
+          }
+        }
+      ]
+    },
+    {
+      "id": "e870698b-50b9-4744-beb3-102dac32f6fa",
+      "name": "label:SymbolofLife",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "78fae213-5e0d-48d5-b07c-90697231b9c4",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "bacb55fb-2de4-4b6e-af36-63ed8edc3665",
+          "enabled": true,
+          "type": "UseItem",
+          "payload": {
+            "item": 6866
+          }
+        },
+        {
+          "id": "ca389d4e-3f23-48bd-8131-0e9e54ab8f1b",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1783"
+          }
+        },
+        {
+          "id": "aa2d7a67-2d25-48e8-9554-db405d36db6d",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1784"
+          }
+        }
+      ]
+    },
+    {
+      "id": "3a1c5618-fa26-49be-b377-5797546e7655",
+      "name": "Dun Morogh",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "13438c59-3fbd-4f60-81c6-fdc79c1ab893",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5d9cf051-62fe-46cb-9ab8-f95b5a377831",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Dun Morogh",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9d7bbbff-42bb-45d2-869e-c2986555cc30",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 1784"
+          }
+        },
+        {
+          "id": "5bfa3e8b-07a1-4d5f-a7f6-79d1ee4e751e",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "d1adb04d-3ffb-4cdd-9651-35cd802eefea",
+      "name": "Step 91",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "680135e8-8d77-4c89-aa05-5c4c1b0481bd",
+          "enabled": true,
+          "note": "Hearth to Ironforge",
+          "type": "Hearth",
+          "payload": {}
+        },
+        {
+          "id": "6c242d8e-195e-4f7b-858a-5b84c1daf84d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Ironforge"
+          }
+        },
+        {
+          "id": "ad60a237-bbe3-4b54-b652-0f5fc9705393",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bindlocation 1537,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ef4b37fb-326e-4834-a3ba-6cb9d88320de",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "25dfffd6-adb2-4f85-b074-6c6fadcf65dd",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "bd654662-28f7-4bef-b75d-ba73d07dd1bb",
+          "enabled": true,
+          "note": "Travel toward |cRXP_FRIENDLY_Muiredon|r upstairs",
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "89229141-deeb-4495-8cd7-88178180d7d3",
+      "name": "label:TurnInScript",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "d74179a3-991d-4e9e-8c88-4e22169cec55",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3bec3138-d26e-4bc5-bdb2-d0e96b18912d",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1784"
+          }
+        },
+        {
+          "id": "c7724a91-028a-4f31-965f-cced9e27cab1",
+          "enabled": true,
+          "note": "Accept The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 1785"
+          }
+        }
+      ]
+    },
+    {
+      "id": "329d107d-32ea-4f75-ad2d-46a7eaf2a7f6",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Dwarf Paladin"
+      ],
+      "actions": [
+        {
+          "id": "cb3c51ad-cbdf-43c9-a4b1-313409b57cf8",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6287aff9-6597-4bff-bbc2-2c31243a6f44",
+          "enabled": true,
+          "note": "Turn in The Tome of Divinity",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 1785"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e763bed5-21e3-4480-9fcd-d4ba45c4beab",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "NightElf",
+        "Draenei"
+      ],
+      "actions": [
+        {
+          "id": "7bbbf86c-7db5-4e05-bf59-99ec065e527e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "f93ed58a-a7f0-4e13-aacb-72fb8d0404c0",
+          "enabled": true,
+          "note": "Get the Ironforge flight path",
+          "type": "Comment",
+          "payload": {
+            "text": ".fp (unresolved NPC)"
+          }
+        },
+        {
+          "id": "7e6cdecc-c05f-4e40-bac2-c6d0b857af06",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Wetlands"
+          }
+        },
+        {
+          "id": "a1a0b77a-501b-40a1-b18e-9a9019ecf9b1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Elwynn Forest"
+          }
+        },
+        {
+          "id": "bc412e61-47ec-4e12-a43d-49e550c4ef4c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Stormwind City"
+          }
+        },
+        {
+          "id": "0ca5f781-3530-4b4d-ac21-4667cb559cb3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Westfall"
+          }
+        }
+      ]
+    },
+    {
+      "id": "221cc374-3463-4539-a9e9-e30d40363b2e",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "NightElf Hunter",
+        "Draenei Hunter"
+      ],
+      "actions": [
+        {
+          "id": "39a0e98c-4011-4785-9837-232de6472acf",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ea81d45c-1dee-4297-a065-3b7abe1ff6f3",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".train 266"
+          }
+        }
+      ]
+    },
+    {
+      "id": "1fe0454d-208b-4382-a3cd-532579bcb45f",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Hunter"
+      ],
+      "actions": [
+        {
+          "id": "a6692fc4-3065-490d-9ae3-b18c78a2967f",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "3ae4c2bd-a7de-4fe0-bb2b-640447c73b0a",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Hunter"
+      ],
+      "actions": [
+        {
+          "id": "762cf7fc-462b-4e35-ab61-9433ce422ab6",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "1efd5dc9-9d31-4f92-bf9e-546d17380805",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [
+        "Warrior"
+      ],
+      "actions": [
+        {
+          "id": "a964f97e-2857-4033-8958-660b33e5f873",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "23366e2c-cdb6-45ee-b4b7-bec727a645ef",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "ea66c012-1465-4e8c-886d-514fb5eb47be",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "38804d4e-0d91-4a16-851c-b245b883c32c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".vendor (unresolved NPC)"
+          }
+        },
+        {
+          "id": "4bff0987-23ef-4d4a-87d3-23c1a54b8263",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bronzetube "
+          }
+        }
+      ]
+    },
+    {
+      "id": "b09901a0-1c04-45de-b67d-88cab690ecc9",
+      "name": "Ironforge",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "ddbed4bb-7669-46a6-84d9-c1acf3f9add0",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "89e567ac-f687-4109-b174-b217c96af12a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9ce1637d-4fd0-4fc3-bf2f-32a8335f63cf",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the tram to Stormwind"
+          }
+        }
+      ]
+    },
+    {
+      "id": "6ae73341-bb34-479a-9a04-c8ff901dfd5f",
+      "name": "label:exit2",
+      "enabled": true,
+      "conditions": [
+        "skip"
+      ],
+      "actions": [
+        {
+          "id": "430c3233-2272-4ac7-a889-9ec1ab100294",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2f46b0ff-95a3-4cd4-b687-95448861d1f3",
+          "enabled": true,
+          "note": "Hop ontop of the gryphon's head then logout and back in to logout skip to the tram.",
+          "type": "Travel",
+          "payload": {
+            "destination": "Ironforge",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "eb1de3e5-5016-4802-a03a-64e11e1be944",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the tram to Stormwind"
+          }
+        }
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'James Halloran' not found in world database",
+      "entity": "James Halloran"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 484 not found in world database",
+      "entity": "484"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Dewin Shimmerdawn' not found in world database",
+      "entity": "Dewin Shimmerdawn"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Dewin Shimmerdawn' not found in world database",
+      "entity": "Dewin Shimmerdawn"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Dewin Shimmerdawn' not found in world database",
+      "entity": "Dewin Shimmerdawn"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Karl Boran' not found in world database",
+      "entity": "Karl Boran"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 279 not found in world database",
+      "entity": "279"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Shellei Brondir' not found in world database",
+      "entity": "Shellei Brondir"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'First Mate Fitzsimmons' not found in world database",
+      "entity": "First Mate Fitzsimmons"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 288 not found in world database",
+      "entity": "288"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 463 not found in world database",
+      "entity": "463"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Innkeeper Helbrek' not found in world database",
+      "entity": "Innkeeper Helbrek"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Innkeeper Helbrek' not found in world database",
+      "entity": "Innkeeper Helbrek"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Archaeologist Flagongut' not found in world database",
+      "entity": "Archaeologist Flagongut"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 942 not found in world database",
+      "entity": "942"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 943 not found in world database",
+      "entity": "943"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Archaeologist Flagongut' not found in world database",
+      "entity": "Archaeologist Flagongut"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 943 not found in world database",
+      "entity": "943"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'First Mate Fitzsimmons' not found in world database",
+      "entity": "First Mate Fitzsimmons"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 288 not found in world database",
+      "entity": "288"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 470 not found in world database",
+      "entity": "470"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sida' not found in world database",
+      "entity": "Sida"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Edwina Monzor' not found in world database",
+      "entity": "Edwina Monzor"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Edwina Monzor' not found in world database",
+      "entity": "Edwina Monzor"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neal Allen' not found in world database",
+      "entity": "Neal Allen"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neal Allen' not found in world database",
+      "entity": "Neal Allen"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neal Allen' not found in world database",
+      "entity": "Neal Allen"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Captain Stoutfist' not found in world database",
+      "entity": "Captain Stoutfist"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 464 not found in world database",
+      "entity": "464"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tarrel Rockweaver' not found in world database",
+      "entity": "Tarrel Rockweaver"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 305 not found in world database",
+      "entity": "305"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Cedrik Prose' not found in world database",
+      "entity": "Cedrik Prose"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Darla Harris' not found in world database",
+      "entity": "Darla Harris"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Fradd Swiftgear' not found in world database",
+      "entity": "Fradd Swiftgear"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Fradd Swiftgear' not found in world database",
+      "entity": "Fradd Swiftgear"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Fradd Swiftgear' not found in world database",
+      "entity": "Fradd Swiftgear"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 294 not found in world database",
+      "entity": "294"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Ormer Ironbraid' not found in world database",
+      "entity": "Ormer Ironbraid"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 305 not found in world database",
+      "entity": "305"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 306 not found in world database",
+      "entity": "306"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Merrin Rockweaver' not found in world database",
+      "entity": "Merrin Rockweaver"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 294 not found in world database",
+      "entity": "294"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 295 not found in world database",
+      "entity": "295"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Ormer Ironbraid' not found in world database",
+      "entity": "Ormer Ironbraid"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 295 not found in world database",
+      "entity": "295"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 296 not found in world database",
+      "entity": "296"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Ormer Ironbraid' not found in world database",
+      "entity": "Ormer Ironbraid"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 296 not found in world database",
+      "entity": "296"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Ormer Ironbraid' not found in world database",
+      "entity": "Ormer Ironbraid"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 296 not found in world database",
+      "entity": "296"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Ormer Ironbraid' not found in world database",
+      "entity": "Ormer Ironbraid"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Einar Stonegrip' not found in world database",
+      "entity": "Einar Stonegrip"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 469 not found in world database",
+      "entity": "469"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Kixxle' not found in world database",
+      "entity": "Kixxle"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Kixxle' not found in world database",
+      "entity": "Kixxle"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Kixxle' not found in world database",
+      "entity": "Kixxle"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Kixxle' not found in world database",
+      "entity": "Kixxle"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Kixxle' not found in world database",
+      "entity": "Kixxle"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 463 not found in world database",
+      "entity": "463"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 276 not found in world database",
+      "entity": "276"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Rethiel the Greenwarden' not found in world database",
+      "entity": "Rethiel the Greenwarden"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 276 not found in world database",
+      "entity": "276"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 277 not found in world database",
+      "entity": "277"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Rethiel the Greenwarden' not found in world database",
+      "entity": "Rethiel the Greenwarden"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tarrel Rockweaver' not found in world database",
+      "entity": "Tarrel Rockweaver"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 306 not found in world database",
+      "entity": "306"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 464 not found in world database",
+      "entity": "464"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Captain Stoutfist' not found in world database",
+      "entity": "Captain Stoutfist"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 469 not found in world database",
+      "entity": "469"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 484 not found in world database",
+      "entity": "484"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'James Halloran' not found in world database",
+      "entity": "James Halloran"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 279 not found in world database",
+      "entity": "279"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Karl Boran' not found in world database",
+      "entity": "Karl Boran"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 470 not found in world database",
+      "entity": "470"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sida' not found in world database",
+      "entity": "Sida"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 943 not found in world database",
+      "entity": "943"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Archaeologist Flagongut' not found in world database",
+      "entity": "Archaeologist Flagongut"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thorgrum Borrelson' not found in world database",
+      "entity": "Thorgrum Borrelson"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Loslor Rudge' not found in world database",
+      "entity": "Loslor Rudge"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Loslor Rudge' not found in world database",
+      "entity": "Loslor Rudge"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Loslor Rudge' not found in world database",
+      "entity": "Loslor Rudge"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 943 not found in world database",
+      "entity": "943"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Archaeologist Flagongut' not found in world database",
+      "entity": "Archaeologist Flagongut"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 470 not found in world database",
+      "entity": "470"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Sida' not found in world database",
+      "entity": "Sida"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tarrel Rockweaver' not found in world database",
+      "entity": "Tarrel Rockweaver"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 306 not found in world database",
+      "entity": "306"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 464 not found in world database",
+      "entity": "464"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Captain Stoutfist' not found in world database",
+      "entity": "Captain Stoutfist"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 469 not found in world database",
+      "entity": "469"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 484 not found in world database",
+      "entity": "484"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'James Halloran' not found in world database",
+      "entity": "James Halloran"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 279 not found in world database",
+      "entity": "279"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Karl Boran' not found in world database",
+      "entity": "Karl Boran"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Shellei Brondir' not found in world database",
+      "entity": "Shellei Brondir"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Shellei Brondir' not found in world database",
+      "entity": "Shellei Brondir"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Shellei Brondir' not found in world database",
+      "entity": "Shellei Brondir"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Shellei Brondir' not found in world database",
+      "entity": "Shellei Brondir"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Dink' not found in world database",
+      "entity": "Dink"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Milstaff Stormeye' not found in world database",
+      "entity": "Milstaff Stormeye"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Toldren Deepiron' not found in world database",
+      "entity": "Toldren Deepiron"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 968 not found in world database",
+      "entity": "968"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 968 not found in world database",
+      "entity": "968"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gerrig Bonegrip' not found in world database",
+      "entity": "Gerrig Bonegrip"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 971 not found in world database",
+      "entity": "971"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gerrig Bonegrip' not found in world database",
+      "entity": "Gerrig Bonegrip"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Farseer Javad' not found in world database",
+      "entity": "Farseer Javad"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Brandur Ironhammer' not found in world database",
+      "entity": "Brandur Ironhammer"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2999 not found in world database",
+      "entity": "2999"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 2999 not found in world database",
+      "entity": "2999"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1645 not found in world database",
+      "entity": "1645"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1645 not found in world database",
+      "entity": "1645"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tiza Battleforge' not found in world database",
+      "entity": "Tiza Battleforge"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1646 not found in world database",
+      "entity": "1646"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1646 not found in world database",
+      "entity": "1646"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1647 not found in world database",
+      "entity": "1647"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1647 not found in world database",
+      "entity": "1647"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1648 not found in world database",
+      "entity": "1648"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1648 not found in world database",
+      "entity": "1648"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1778 not found in world database",
+      "entity": "1778"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tiza Battleforge' not found in world database",
+      "entity": "Tiza Battleforge"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1778 not found in world database",
+      "entity": "1778"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1779 not found in world database",
+      "entity": "1779"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Muiredon Battleforge' not found in world database",
+      "entity": "Muiredon Battleforge"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1779 not found in world database",
+      "entity": "1779"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1783 not found in world database",
+      "entity": "1783"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Innkeeper Firebrew' not found in world database",
+      "entity": "Innkeeper Firebrew"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Narm Faulk' not found in world database",
+      "entity": "Narm Faulk"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1783 not found in world database",
+      "entity": "1783"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1784 not found in world database",
+      "entity": "1784"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Narm Faulk' not found in world database",
+      "entity": "Narm Faulk"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1784 not found in world database",
+      "entity": "1784"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1785 not found in world database",
+      "entity": "1785"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Muiredon Battleforge' not found in world database",
+      "entity": "Muiredon Battleforge"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 1785 not found in world database",
+      "entity": "1785"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Tiza Battleforge' not found in world database",
+      "entity": "Tiza Battleforge"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gryth Thurden' not found in world database",
+      "entity": "Gryth Thurden"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Buliwyf Stonehand' not found in world database",
+      "entity": "Buliwyf Stonehand"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Buliwyf Stonehand' not found in world database",
+      "entity": "Buliwyf Stonehand"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Regnus Thundergranite' not found in world database",
+      "entity": "Regnus Thundergranite"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Belia Thundergranite' not found in world database",
+      "entity": "Belia Thundergranite"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Bilban Tosslespanner' not found in world database",
+      "entity": "Bilban Tosslespanner"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gearcutter Cogspinner' not found in world database",
+      "entity": "Gearcutter Cogspinner"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gearcutter Cogspinner' not found in world database",
+      "entity": "Gearcutter Cogspinner"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Gearcutter Cogspinner' not found in world database",
+      "entity": "Gearcutter Cogspinner"
+    }
+  ],
+  "import_metadata": {
+    "importer": "sentinel-importer",
+    "imported_at": "2026-07-21T06:15:23.810069518+00:00",
+    "source_file": "../sentinel/docs/adr/restedxp guides/A-23-30.lua",
+    "checksum": "",
+    "guide_version": "7"
+  }
+}

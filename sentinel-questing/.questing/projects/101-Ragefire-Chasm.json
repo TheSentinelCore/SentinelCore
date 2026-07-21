@@ -1,0 +1,2198 @@
+{
+  "metadata": {
+    "id": "63988f62-61bf-4e8c-b5a0-9aba04d4fe25",
+    "name": "101 Ragefire Chasm",
+    "author": "",
+    "description": "",
+    "version": "0.1.0",
+    "schema_version": "1.0.0",
+    "game_version": "2.4.3",
+    "faction": "Horde",
+    "created_at": "2026-07-21T06:15:23.856667069+00:00",
+    "updated_at": "2026-07-21T06:15:23.856667069+00:00"
+  },
+  "settings": {
+    "auto_repair": false,
+    "auto_vendor": false,
+    "auto_train": false,
+    "learn_flight_paths": false,
+    "auto_hearth": false,
+    "skip_optional": false,
+    "stop_on_death": false,
+    "stop_on_validation_errors": false,
+    "compile_optimization": false,
+    "coordinate_mode": "World"
+  },
+  "variables": [],
+  "npc_library": [],
+  "quest_library": [],
+  "object_library": [],
+  "areas": [],
+  "operations": [
+    {
+      "id": "e147bdf6-127c-4587-8c5a-8e3508387e45",
+      "name": "Step 0",
+      "enabled": true,
+      "conditions": [],
+      "actions": []
+    },
+    {
+      "id": "9c388476-4c96-4b09-bea0-37a1a0a7ec30",
+      "name": "Step 1",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "180175a2-e290-467a-945b-3431144a322c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Travel to |cFFfa9602Thunder Bluff|r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f8a81892-0e21-4fb5-8714-995654a22b3d",
+      "name": "label:TBPickups",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "0fcd45dc-27d5-42a6-8876-e4b4d34f6c8d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Thunder Bluff",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ea53f17b-dbc4-4407-8b0e-7a6fa00cd597",
+          "enabled": true,
+          "note": "Accept Searching for the Lost Satchel",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5722"
+          }
+        },
+        {
+          "id": "a27ad137-e197-4f68-8bac-90d8b00f5cb9",
+          "enabled": true,
+          "note": "Accept Testing an Enemy's Strength",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5723"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d05bb473-2823-4624-a33d-f695c7356c26",
+      "name": "Step 3",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "8b38d325-0678-4617-b8f9-2e849b643641",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Travel to |cFFfa9602Orgrimmar|r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "eae30a27-f827-41f2-ad05-8fbce8de2ed8",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "27d8a011-8552-4c78-8d3e-4054738b6d79",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0d4b4e2f-20b0-43cf-a346-4f37202c5795",
+          "enabled": true,
+          "note": "Accept Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5726"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7d7b2678-fd72-4f2f-9b9c-609a3d6b0837",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "c17804c6-8bc4-4b05-ab8f-96ffb2876c91",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a81c0b28-39de-47f9-abb5-8f2ce8726b82",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Set your Hearthstone to Orgrimmar"
+          }
+        },
+        {
+          "id": "d4a696b6-520d-449a-b930-327cdd009171",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Orgrimmar,1"
+          }
+        },
+        {
+          "id": "646f9168-cf6a-45a5-be16-4b019b5e6c90",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bindlocation 1637"
+          }
+        },
+        {
+          "id": "155e8469-a753-4365-aa4f-519a441a7593",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8dcc8e32-8de3-4112-9d2e-a08d42f8b5f2",
+      "name": "Step 6",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "c38a954b-1f60-4ea9-9800-fe6099939404",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Leave Orgrimmar"
+          }
+        },
+        {
+          "id": "3b61b852-7db2-4025-b757-4762ddb7d775",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Undercity"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b58cc74e-07c9-4686-8643-31d0cca30abc",
+      "name": "Durotar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "522e0d96-9aaa-4785-acfa-f21aae35f310",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Durotar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "82fad964-dd21-4d47-8279-f4398705a89c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5726"
+          }
+        },
+        {
+          "id": "011f554a-e58f-44d0-9cf0-cd9acf824624",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5726"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f30509ee-67d2-4388-bb89-0c01f6a2ea63",
+      "name": "label:UCZep1",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9e2f8676-0255-4625-8c15-e5734fb40692",
+          "enabled": true,
+          "note": "Go up the Zeppelin Tower",
+          "type": "Travel",
+          "payload": {
+            "destination": "Durotar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e8b5fe74-4c31-4212-ab7b-fc09700d10c8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the Zeppelin to Tirisfal Glades"
+          }
+        },
+        {
+          "id": "404a1151-407e-4680-88af-28410c08eda0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Tirisfal Glades"
+          }
+        },
+        {
+          "id": "08ac0e2b-439a-41e5-abbd-b3234ce1901b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Undercity"
+          }
+        },
+        {
+          "id": "9e34e79b-3803-4d27-b2be-b2842270fbfd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7a1c48f5-40ed-406a-8b2b-b4304f92e29a",
+      "name": "label:Undercity1",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "b3c74413-4c71-43c1-bbb1-9fe5c25f7ac7",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Tirisfal Glades",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "ac8f6a56-cbc7-499c-a691-878cadc4cd0f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Enter |cFFfa9602Undercity|r"
+          }
+        },
+        {
+          "id": "722eca8f-54d6-4c83-bb06-e454ddc0947f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Undercity"
+          }
+        },
+        {
+          "id": "ac1ea20e-4f67-4703-a788-44708038513c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d95cc633-047e-45ba-81a0-708a313aceb1",
+      "name": "Undercity",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "46a38479-b49a-471d-a3eb-5400d65aa635",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e6b7e0bf-f029-4690-8346-def5978fba84",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d0eb7123-c587-40d0-9f86-8be0fc336a8a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "fcdfb313-66b9-4359-843d-8308bf1f311c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3a891fb7-06b2-45c8-95c0-4ec0e9102901",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "de7c3bb2-a49c-406c-b028-1b2ef3821a2a",
+          "enabled": true,
+          "note": "Take the lift down to the Undercity",
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9047bda0-509e-4920-b4bd-777ff29aad3d",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0dcb60cd-9a51-4f1c-9c1d-36e539cbb88c",
+      "name": "Undercity",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "8c39b97f-a2c6-4131-b9a3-d05eaa62cedd",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7c6903ce-e27b-433c-be9a-cad5d142233d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a3a5b085-a049-4109-85b7-3c19efcffa22",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "9659432c-f303-47d9-9b77-4ca41ce2b498",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1badb1ea-3ad8-4843-b271-51598d02de35",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4e0141a0-d927-4135-8f77-6bea0535e58b",
+          "enabled": true,
+          "note": "Enter the Royal Quarter",
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "d3deaf5b-02fb-4a1f-abf8-e9523f4b0a57",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestAvailable 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "6cc04290-a860-4fe7-8100-cadfe6dfc6d3",
+      "name": "label:UCPickup",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "c92211d4-66ee-4359-952a-f5d2f72e26a1",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "8898d54d-952a-4dd8-bf37-865ff5630244",
+          "enabled": true,
+          "note": "Accept The Power to Destroy...",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d26d5c07-a9be-43a3-be29-4d6c6a370191",
+      "name": "Step 13",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "9b6045ef-3145-4d36-b627-653e51e82fb4",
+          "enabled": true,
+          "note": "Hearth to Orgrimmar",
+          "type": "Hearth",
+          "payload": {}
+        },
+        {
+          "id": "244c77a2-fa4d-4b0d-999c-f8a5d4b963c4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".cooldown item,6948,>0,1"
+          }
+        },
+        {
+          "id": "09300199-e58f-49e9-8514-5616f2dbef1a",
+          "enabled": true,
+          "type": "UseItem",
+          "payload": {
+            "item": 6948
+          }
+        },
+        {
+          "id": "13e5d67d-ff26-42e3-8512-65d5858d9b54",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Orgrimmar"
+          }
+        },
+        {
+          "id": "2b010e93-410b-4ea5-b3c0-aea9f828d96e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".bindlocation 1637,1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "76f1f6fa-3f9d-4168-9128-7fb45047c1c5",
+      "name": "Step 14",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "70d89e64-b17f-4b49-8ede-935ed803fbb4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Travel to |cFFfa9602Orgrimmar|r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ac37141a-469a-4070-be0c-0cd943882bfb",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "2101685a-61cf-4eac-88a2-5214f86f1468",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "4553a9b5-6994-4a52-9627-d8fd23abb3d6",
+          "enabled": true,
+          "note": "Turn in Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5726"
+          }
+        },
+        {
+          "id": "456becb7-5247-4780-a18e-12a680e6146d",
+          "enabled": true,
+          "note": "Accept Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5727"
+          }
+        },
+        {
+          "id": "7593f440-f6c1-435c-8e66-3839a250be93",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5726"
+          }
+        }
+      ]
+    },
+    {
+      "id": "864d2cc1-b4a4-430b-9da3-cdc61793c3fd",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "4486285f-d0da-406d-9556-f2f8fca4191c",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a8883e3a-dae5-4327-a6f8-737ffc48c6e3",
+          "enabled": true,
+          "note": "Accept Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5727"
+          }
+        },
+        {
+          "id": "1d9939d1-d39e-4ecd-8052-3084d7aec7f8",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 5726"
+          }
+        }
+      ]
+    },
+    {
+      "id": "8b909bda-734f-4985-865f-07c818e48efe",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "d24101fa-e2b7-418e-a0f8-1cd87af57ad7",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "99dd9ce5-9129-46df-bd3a-272d9f532272",
+          "enabled": true,
+          "note": "Accept Slaying the Beast",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5761"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f3b9a1bc-6690-474c-afb1-58c95f4e499b",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "79113f3b-7e5a-4d59-8f81-0cb71bf6f72b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7c9e833b-efee-4d7d-9166-ec93c31e8e83",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5727"
+          }
+        },
+        {
+          "id": "6c8a86ce-d54b-49b4-89e5-deabb1498963",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".skipgossip "
+          }
+        },
+        {
+          "id": "87e96b91-3645-4149-ac25-84ce481da027",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5727"
+          }
+        }
+      ]
+    },
+    {
+      "id": "739bf390-0e10-4983-99f7-3433b4f788ce",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "a27e44bd-c441-44bb-97ca-d0f65fe98a5d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e76d0adf-5fb6-4d67-87a6-0495d51cc96a",
+          "enabled": true,
+          "note": "Turn in Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5727"
+          }
+        },
+        {
+          "id": "52afa2ff-fd88-494e-809e-108647c1e459",
+          "enabled": true,
+          "note": "Accept Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5728"
+          }
+        },
+        {
+          "id": "0ecc59db-9b44-4905-81b8-393f17e9327f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5727"
+          }
+        }
+      ]
+    },
+    {
+      "id": "788e3b82-84ef-4390-83cd-0906f7a3b19a",
+      "name": "label:OrgPickups",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "aa7c629f-034a-4307-b330-db5e65621626",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "54f94f58-4584-427f-b7f3-eb6106075e2d",
+          "enabled": true,
+          "note": "Accept Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5728"
+          }
+        },
+        {
+          "id": "d315eb80-a383-44a1-a1d2-b522be93317f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 5727"
+          }
+        }
+      ]
+    },
+    {
+      "id": "269c916f-51cb-435d-9671-6078ba4e78dd",
+      "name": "Step 21",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "702e8e9b-593a-4569-9b22-1c034aff2d4c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "|cRXP_WARN_Destroy|r |T134417:0|t[Lieutenant's Insignia] |cRXP_WARN_as you no longer need it|r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fdc29ebb-cf37-4e42-9562-b76a414e8020",
+      "name": "label:EnterRFC",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "b3c3a388-d02d-4fc0-96f6-bffbdcb874ec",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "bada45fb-b6c4-43b1-b21f-57b9b671ab90",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Enter the Ragefire Chasm Instance portal. Zone in"
+          }
+        }
+      ]
+    },
+    {
+      "id": "6b79eb1c-16dd-4866-bc3d-8e4c9331f54f",
+      "name": "Step 23",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "f18cfed9-21d9-4125-833e-b50b5a389c97",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5723"
+          }
+        },
+        {
+          "id": "1f3547fa-c1bf-4383-bcbb-72632fa9882c",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "9d6430ee-d387-4223-869c-d1166b4b9c17",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5723"
+          }
+        },
+        {
+          "id": "f3313842-6379-4986-99de-fc3e47b2ad42",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "18a6a547-d09c-4167-bdcf-8e2ac35aa5b2",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5723"
+          }
+        }
+      ]
+    },
+    {
+      "id": "35e19bda-e437-4ca1-b372-a7d69bd383a9",
+      "name": "Step 24",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "fd6e030e-36ea-4e27-94e7-c77777605270",
+          "enabled": true,
+          "note": "Turn in Searching for the Lost Satchel",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5722"
+          }
+        },
+        {
+          "id": "21c9d6ee-820c-4d1b-aef9-323648ab6a76",
+          "enabled": true,
+          "note": "Accept Returning the Lost Satchel",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5724"
+          }
+        },
+        {
+          "id": "08a37c92-f6e8-4c85-b0fe-8742996be29c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5722"
+          }
+        }
+      ]
+    },
+    {
+      "id": "530ddc11-f712-4fdb-9084-a63de9f52379",
+      "name": "Step 25",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "23e7296e-83cd-4bc3-8a1b-b89aa241bf3b",
+          "enabled": true,
+          "note": "Accept Returning the Lost Satchel",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5724"
+          }
+        },
+        {
+          "id": "7c264f55-689d-460a-aedf-39b042c2769e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 5722"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d584880c-f828-429a-83bc-9bbb068202bd",
+      "name": "label:TroggsShamans",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "04e37101-53f6-40dd-8d79-025d03f36cc9",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5723"
+          }
+        },
+        {
+          "id": "690fa5ad-4753-406c-8ad0-690411e0b420",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "3978e8a4-bbaa-47b8-8a0c-46a6deb3ebb0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5723"
+          }
+        },
+        {
+          "id": "c96b53c6-e6c1-45d1-80b7-2d29f4f45f2e",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "c28e23f2-8d01-4d11-a503-db155aa4b344",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5723"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2e083309-ea41-4a8b-9469-85fab31cf70f",
+      "name": "Step 27",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "60658f1c-590d-4002-8ea3-ab47ff720b36",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5725"
+          }
+        },
+        {
+          "id": "d1098f32-993c-4c49-b081-bba4409050e4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5725"
+          }
+        },
+        {
+          "id": "d9d2cfc5-b258-4674-8855-348b8c7deabd",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "20f1d164-d30a-4edf-aa0d-e00e377eacc6",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "bf942c19-c3f7-4dc2-b389-18fae9769331",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f07d510e-2089-4394-b472-6e6effbc65a5",
+      "name": "Step 28",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "8d96335e-a748-4c96-ae5d-628597ee8387",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5761"
+          }
+        },
+        {
+          "id": "2a914e95-4173-40a3-ad82-bcee641121dc",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "36de0a52-cfe2-424a-a465-313e60baac44",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5761"
+          }
+        }
+      ]
+    },
+    {
+      "id": "edcbdb5e-8ce1-4804-b872-fb688e9aadf0",
+      "name": "label:BazzalanandJergosh",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "59ec0bb4-1bcd-476a-8a2e-ed88699cbfa6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5728"
+          }
+        },
+        {
+          "id": "132697c2-63d8-4ba9-b9e4-b5d6452c58dc",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "e3532294-ccfc-4795-9613-5d90eb283b2c",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5728"
+          }
+        },
+        {
+          "id": "69e17ed5-074b-4009-8624-893f05216e0d",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "73c0bdbb-dc2a-4bb5-ba8a-b9e3ff10f116",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5728"
+          }
+        }
+      ]
+    },
+    {
+      "id": "3354e86d-dcd7-4c55-9050-6aa23e8367de",
+      "name": "Step 30",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "074e4e82-8022-4bd6-b009-651192fef38f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5725"
+          }
+        },
+        {
+          "id": "11c9df01-6647-4188-b4ca-9ac27a79d6ff",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".complete 5725"
+          }
+        },
+        {
+          "id": "b8d12b37-db92-431e-813f-d75fcb6f1924",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "48834fe7-4fee-4bdf-94f5-d9367089d528",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [],
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "42eb086c-943c-4d6d-aeb9-efeb4c37f7ce",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "23b7e9e3-0a5a-4412-93c6-2551496dd699",
+      "name": "Step 31",
+      "enabled": true,
+      "conditions": [],
+      "actions": []
+    },
+    {
+      "id": "590efb84-e3c2-4db6-8b74-34da8ae1fa0b",
+      "name": "Step 32",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "c1d0bf82-a87d-4f5e-b816-529fdbc54f5a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Exit Ragefire Chasm"
+          }
+        },
+        {
+          "id": "cb96754c-bb0e-482c-8e3c-a89221445037",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Durotar"
+          }
+        },
+        {
+          "id": "685a5689-4a69-42bb-9335-83ca93495c21",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Undercity"
+          }
+        },
+        {
+          "id": "509d3e9f-b297-459c-9b94-732ef32aae30",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Thunder Bluff"
+          }
+        },
+        {
+          "id": "3e7b3585-2cc0-492f-b56d-e54543e7a9d0",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip The Barrens"
+          }
+        },
+        {
+          "id": "5d6846a7-0161-410b-bb5f-f6755608bda6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Tirisfal Glades"
+          }
+        },
+        {
+          "id": "3070a8e4-b880-47a1-89ef-098a82a102a7",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Mulgore"
+          }
+        }
+      ]
+    },
+    {
+      "id": "df540e44-115e-43c4-9878-7a5a0f678d88",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "734cfbc7-daa4-4502-85ce-ee4fa47615d3",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a47ba1a9-177a-4a00-a895-9734cbb924ab",
+          "enabled": true,
+          "note": "Turn in Slaying the Beast",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5761"
+          }
+        },
+        {
+          "id": "2bbf422b-03f4-454e-9e4d-66f895451060",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5761"
+          }
+        }
+      ]
+    },
+    {
+      "id": "417bd99e-351c-4684-b747-b2ed43b07036",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "5fc0a8dc-429c-400b-b6c7-23310491c346",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "5aee55da-479a-4b03-b6da-fabd1ee98381",
+          "enabled": true,
+          "note": "Turn in Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5728"
+          }
+        },
+        {
+          "id": "69a31e51-0a1d-4a65-917c-a58682d56c53",
+          "enabled": true,
+          "note": "Accept Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5729"
+          }
+        },
+        {
+          "id": "9c8b199c-38bc-443f-942c-5ac0ab31b7bd",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5728"
+          }
+        }
+      ]
+    },
+    {
+      "id": "5830f359-ede3-4805-a37f-8a021947208a",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "5b434c5a-6fa2-4db7-b083-8b36965a7f9e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "b7639c9c-f13d-4ae7-8f60-43ff344acb63",
+          "enabled": true,
+          "note": "Accept Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5729"
+          }
+        },
+        {
+          "id": "b660f348-151e-45a8-8bae-79fa2e10d6db",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 5728"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7af8bc25-5848-47dd-80c0-d6b28a1bab7f",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "069676c0-4d03-4af8-aff6-b3d4501d6090",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "a31b55e8-ce4f-45cf-951c-58973bdad7fe",
+          "enabled": true,
+          "note": "Turn in Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5729"
+          }
+        },
+        {
+          "id": "e1d26ef7-8305-499a-b3bc-004de24c9f73",
+          "enabled": true,
+          "note": "Accept Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".accept 5730"
+          }
+        },
+        {
+          "id": "cb319ad5-05a6-4871-beee-761a6b7c9cf2",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 5728"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ba8aed30-944f-4033-8f7d-7a330683b02e",
+      "name": "Orgrimmar",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "daedeb4b-0497-4bb6-adf5-3b123712d9d9",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Orgrimmar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "45135505-aa35-45ca-bb1a-18e55f347bee",
+          "enabled": true,
+          "note": "Turn in Hidden Enemies",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5730"
+          }
+        },
+        {
+          "id": "32bdab6b-594f-4bbc-bacf-0082c1bcb1f4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestTurnedIn 5728"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f988af7a-d39f-4d41-9e0e-2a7770a99a8e",
+      "name": "Step 38",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "5bad6c06-b091-4dbf-8974-93b9e0cd26e6",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Leave Orgrimmar"
+          }
+        },
+        {
+          "id": "e7170477-f4fd-416f-be5d-471bce97243b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Undercity"
+          }
+        }
+      ]
+    },
+    {
+      "id": "21570e24-eb46-486f-ac58-929a948277ae",
+      "name": "label:UCZep2",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "176edca6-cafb-43e3-826f-6b7a212a5b1b",
+          "enabled": true,
+          "note": "Go up the Zeppelin Tower",
+          "type": "Travel",
+          "payload": {
+            "destination": "Durotar",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "cf1b84ad-3a54-454b-afa6-d40c7e0ccf2e",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Take the Zeppelin to Tirisfal Glades"
+          }
+        },
+        {
+          "id": "d74f1e16-2008-4f4c-befe-9d949462fc25",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Tirisfal Glades"
+          }
+        },
+        {
+          "id": "952f2549-3cbc-4605-b28d-a0a6339113fe",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Undercity"
+          }
+        },
+        {
+          "id": "669c60e8-cb83-41e0-80da-2011029221d1",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "f05ff05c-0f51-47dd-a009-4da7624a9b4c",
+      "name": "label:Undercity2",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "b806bee8-049d-4556-b0bb-1a113c639b1d",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Tirisfal Glades",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "dd390558-828a-4c1d-96a2-8e0645a9d706",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Enter |cFFfa9602Undercity|r"
+          }
+        },
+        {
+          "id": "52e9c051-9cbf-4a85-9c65-ea33364b5de7",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".zoneskip Undercity"
+          }
+        },
+        {
+          "id": "b7387fac-8177-4135-a93f-cd75267586a4",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "20bfd14c-6d9d-4f3d-90ac-741e2e67161c",
+      "name": "Undercity",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "7d3d5b8b-8e86-4734-84e6-265073e259e5",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "46387b23-b36e-4398-943a-e185da67b26e",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2d144711-cf53-4717-9b28-2da2e52114bc",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "300c90ad-e4a6-4034-b07f-1cabe56b4c3b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6d3bae7b-f552-4612-a4a3-be773e35aa11",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6c839842-c8cd-4bcd-89ff-8661017b4c74",
+          "enabled": true,
+          "note": "Take the lift down to the Undercity",
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "7dc166ca-5bc8-4b76-a77e-5be75d6a7626",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "3e5b92b2-801c-4608-ad9c-65b5ec867c59",
+      "name": "Undercity",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "df7b1044-7cd6-4633-972e-d3068ec1bb92",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3e5eca67-9f2d-48d8-a3b6-ab7010c8e534",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "6bedbdf9-9fe1-4b8b-af20-88922f786880",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3af75d79-4cfa-480d-add7-ad13dd018e57",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "0d05fb74-9e3a-4aa8-9322-a4a94be5829b",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "3cdd7ae0-6ff8-40c0-bc72-6690c82cb49d",
+          "enabled": true,
+          "note": "Enter the Royal Quarter",
+          "type": "Travel",
+          "payload": {
+            "destination": "Undercity",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "30ff3dc5-0b22-402f-8ec9-d7bb0b58ce12",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a006ca9f-890a-498b-ab5f-4304f55dfce6",
+      "name": "label:UCTurnin",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "4fe6f070-bd83-462a-be87-7cf7e9fce05d",
+          "enabled": true,
+          "note": "Turn in The Power to Destroy...",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5725"
+          }
+        },
+        {
+          "id": "7dfc1f57-f1e7-4ece-b18e-811afd2c9970",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5725"
+          }
+        }
+      ]
+    },
+    {
+      "id": "5aab4d7c-5e21-47ea-97dd-5a7606229a0e",
+      "name": "Step 44",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "3eb09f27-518d-4dce-9602-827ccf00831f",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": "Travel to |cFFfa9602Thunder Bluff|r"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b4d6ee10-b260-43fc-acbb-c59d86a59060",
+      "name": "Thunder Bluff",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "24047f64-deb3-41e7-94c3-962803234fdb",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Thunder Bluff",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "e900afac-7552-4253-be98-e74874bfe26d",
+          "enabled": true,
+          "note": "Turn in Returning the Lost Satchel",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5724"
+          }
+        },
+        {
+          "id": "4e610e56-2625-4325-a54d-05a42808d6a5",
+          "enabled": true,
+          "note": "Turn in Testing an Enemy's Strength",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5723"
+          }
+        },
+        {
+          "id": "23eb7ae9-b324-46d6-95cd-8ec21b23a34b",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5724"
+          }
+        },
+        {
+          "id": "5c49e6c0-1106-48f0-9937-2aaf3c07f102",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5723"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fc16d5f2-245e-491e-9148-da75de818c76",
+      "name": "Thunder Bluff",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "db36b13e-5b71-4cb5-b8e2-ceb27dfd5b5a",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Thunder Bluff",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "1620b130-14d7-4a89-8c90-b70bd63610ef",
+          "enabled": true,
+          "note": "Turn in Returning the Lost Satchel",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5724"
+          }
+        },
+        {
+          "id": "66b43a28-9fcb-426b-b7c9-c99e74e82c61",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isOnQuest 5724"
+          }
+        }
+      ]
+    },
+    {
+      "id": "4746fb6e-18d2-4ff4-8bc2-64adee986adc",
+      "name": "label:TBTurnins",
+      "enabled": true,
+      "conditions": [],
+      "actions": [
+        {
+          "id": "509c0c75-0ac3-4d2b-a8d8-1e78f600ed17",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Thunder Bluff",
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "2d049f97-e605-41d0-bdc0-5e2ae190352b",
+          "enabled": true,
+          "note": "Turn in Testing an Enemy's Strength",
+          "type": "Comment",
+          "payload": {
+            "text": ".turnin 5723"
+          }
+        },
+        {
+          "id": "c376105d-30f4-437b-89f3-0564fc10001a",
+          "enabled": true,
+          "type": "Comment",
+          "payload": {
+            "text": ".isQuestComplete 5723"
+          }
+        }
+      ]
+    },
+    {
+      "id": "0d79922b-7d6f-43d0-86c9-c66083a4b363",
+      "name": "Step 48",
+      "enabled": true,
+      "conditions": [],
+      "actions": []
+    }
+  ],
+  "diagnostics": [
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5722 not found in world database",
+      "entity": "5722"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5723 not found in world database",
+      "entity": "5723"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Rahauro' not found in world database",
+      "entity": "Rahauro"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5726 not found in world database",
+      "entity": "5726"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thrall' not found in world database",
+      "entity": "Thrall"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Innkeeper Gryshka' not found in world database",
+      "entity": "Innkeeper Gryshka"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5725 not found in world database",
+      "entity": "5725"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Varimathras' not found in world database",
+      "entity": "Varimathras"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5726 not found in world database",
+      "entity": "5726"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5727 not found in world database",
+      "entity": "5727"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thrall' not found in world database",
+      "entity": "Thrall"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5727 not found in world database",
+      "entity": "5727"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thrall' not found in world database",
+      "entity": "Thrall"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5761 not found in world database",
+      "entity": "5761"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neeru Fireblade' not found in world database",
+      "entity": "Neeru Fireblade"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neeru Fireblade' not found in world database",
+      "entity": "Neeru Fireblade"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5727 not found in world database",
+      "entity": "5727"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5728 not found in world database",
+      "entity": "5728"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thrall' not found in world database",
+      "entity": "Thrall"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5728 not found in world database",
+      "entity": "5728"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thrall' not found in world database",
+      "entity": "Thrall"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5722 not found in world database",
+      "entity": "5722"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5724 not found in world database",
+      "entity": "5724"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Maur Grimtotem' not found in world database",
+      "entity": "Maur Grimtotem"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5724 not found in world database",
+      "entity": "5724"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Maur Grimtotem' not found in world database",
+      "entity": "Maur Grimtotem"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5761 not found in world database",
+      "entity": "5761"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neeru Fireblade' not found in world database",
+      "entity": "Neeru Fireblade"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5728 not found in world database",
+      "entity": "5728"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5729 not found in world database",
+      "entity": "5729"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thrall' not found in world database",
+      "entity": "Thrall"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5729 not found in world database",
+      "entity": "5729"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thrall' not found in world database",
+      "entity": "Thrall"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5729 not found in world database",
+      "entity": "5729"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5730 not found in world database",
+      "entity": "5730"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Neeru Fireblade' not found in world database",
+      "entity": "Neeru Fireblade"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5730 not found in world database",
+      "entity": "5730"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Thrall' not found in world database",
+      "entity": "Thrall"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5725 not found in world database",
+      "entity": "5725"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Varimathras' not found in world database",
+      "entity": "Varimathras"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5724 not found in world database",
+      "entity": "5724"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5723 not found in world database",
+      "entity": "5723"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Rahauro' not found in world database",
+      "entity": "Rahauro"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5724 not found in world database",
+      "entity": "5724"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Rahauro' not found in world database",
+      "entity": "Rahauro"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_QUEST",
+      "message": "Quest 5723 not found in world database",
+      "entity": "5723"
+    },
+    {
+      "severity": "Warning",
+      "code": "UNRESOLVED_NPC",
+      "message": "NPC 'Rahauro' not found in world database",
+      "entity": "Rahauro"
+    }
+  ],
+  "import_metadata": {
+    "importer": "sentinel-importer",
+    "imported_at": "2026-07-21T06:15:23.856818767+00:00",
+    "source_file": "../sentinel/docs/adr/restedxp guides/The Burning Crusade.lua",
+    "checksum": "",
+    "guide_version": "1"
+  }
+}

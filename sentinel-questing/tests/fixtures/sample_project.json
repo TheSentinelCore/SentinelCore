@@ -1,0 +1,169 @@
+{
+  "metadata": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "name": "Integration Test Profile",
+    "author": "Test Suite",
+    "description": "A sample project for integration testing the full pipeline",
+    "version": "0.1.0",
+    "schema_version": "1.0.0",
+    "game_version": "2.4.3",
+    "faction": "Alliance",
+    "race": "Human",
+    "class": "Warrior",
+    "minimum_level": 1,
+    "maximum_level": 5,
+    "created_at": "2025-01-01T00:00:00+00:00",
+    "updated_at": "2025-01-01T00:00:00+00:00"
+  },
+  "settings": {
+    "auto_repair": true,
+    "auto_vendor": false,
+    "auto_train": false,
+    "learn_flight_paths": false,
+    "auto_hearth": false,
+    "skip_optional": true,
+    "stop_on_death": true,
+    "stop_on_validation_errors": false,
+    "compile_optimization": false,
+    "coordinate_mode": "World"
+  },
+  "variables": [
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01",
+      "name": "quest_counter",
+      "type_": "Int",
+      "default_value": { "Int": 0 },
+      "description": "Tracks how many quests we've completed"
+    }
+  ],
+  "npc_library": [
+    {
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01",
+      "entry": 197,
+      "name": "Marshal McBride",
+      "roles": ["QuestGiver"]
+    },
+    {
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb02",
+      "entry": 523,
+      "name": "Thurman Mullby",
+      "roles": ["Vendor"]
+    },
+    {
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb03",
+      "entry": 928,
+      "name": "Graveyard",
+      "roles": ["Generic"]
+    }
+  ],
+  "quest_library": [
+    {
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb04",
+      "quest_id": 33,
+      "title": "Wolves Across the Border",
+      "level": 1,
+      "giver_npc": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01",
+      "finisher_npc": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01"
+    },
+    {
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb05",
+      "quest_id": 34,
+      "title": "A Threat Within",
+      "level": 2,
+      "giver_npc": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01",
+      "finisher_npc": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01"
+    }
+  ],
+  "areas": [],
+  "operations": [
+    {
+      "id": "cccccccc-cccc-4ccc-8ccc-cccccccccc01",
+      "name": "Northshire Start",
+      "description": "Starting area quests",
+      "minimum_level": 1,
+      "maximum_level": 3,
+      "enabled": true,
+      "conditions": ["quest_counter == 0"],
+      "actions": [
+        {
+          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd01",
+          "enabled": true,
+          "type": "AcceptQuest",
+          "payload": {
+            "quest": 33,
+            "npc": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01",
+            "auto_complete_dialog": true,
+            "optional": false
+          }
+        },
+        {
+          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd02",
+          "enabled": true,
+          "type": "Kill",
+          "payload": {
+            "creature_entries": [38, 97],
+            "quantity": 10,
+            "loot": true,
+            "ignore_elites": false
+          }
+        },
+        {
+          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd03",
+          "enabled": true,
+          "type": "SetVariable",
+          "payload": {
+            "name": "quest_counter",
+            "value": { "Int": 1 }
+          }
+        }
+      ]
+    },
+    {
+      "id": "cccccccc-cccc-4ccc-8ccc-cccccccccc02",
+      "name": "Goldshire Delivery",
+      "description": "Travel and turn in",
+      "minimum_level": 2,
+      "maximum_level": 5,
+      "enabled": true,
+      "conditions": ["quest_counter > 0"],
+      "actions": [
+        {
+          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd04",
+          "enabled": true,
+          "type": "Travel",
+          "payload": {
+            "destination": "Goldshire",
+            "position": {
+              "map": 0,
+              "world_x": -9460.0,
+              "world_y": 62.0,
+              "world_z": 56.0
+            },
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd05",
+          "enabled": true,
+          "type": "TurnInQuest",
+          "payload": {
+            "quest": 33,
+            "npc": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01",
+            "optional": false
+          }
+        },
+        {
+          "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd06",
+          "enabled": true,
+          "type": "SetVariable",
+          "payload": {
+            "name": "quest_counter",
+            "value": { "Int": 2 }
+          }
+        }
+      ]
+    }
+  ],
+  "diagnostics": []
+}

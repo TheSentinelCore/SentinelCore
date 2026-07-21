@@ -1,0 +1,14 @@
+[package]
+name = "sentinel-tests"
+description = "Integration tests for the full Sentinel Questing pipeline (Phase 9)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sentinel-models = { path = "../shared" }
+sentinel-validator = { path = "../validator" }
+sentinel-compiler = { path = "../compiler" }
+serde_json = { workspace = true }
+uuid = { workspace = true }
