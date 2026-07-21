@@ -469,14 +469,20 @@ async fn build_step_actions(
                 });
             }
             "collect" => {
-                // .collect <item_id> - loot object for items (preserved as comment for now)
+                // .collect <item_id>[,<count>] — loot N of item from world objects.
+                // Preserved as structured comment until item→object resolution via
+                // QueryServer is available. The count field is parsed for display.
+                let item_id = cmd.args.first().cloned().unwrap_or_default();
+                let count: Option<u32> = cmd.args.get(1)
+                    .and_then(|s| s.parse::<u32>().ok());
+                let count_str = count.map(|c| format!(",count={}", c)).unwrap_or_default();
                 actions.push(Action {
                     id: Uuid::new_v4(),
                     enabled: true,
                     condition: None,
                     note: cmd.note.clone(),
                     payload: ActionPayload::Comment(CommentAction {
-                        text: format!(".collect {}", cmd.args.join(",")),
+                        text: format!(".collect item={}{}", item_id, count_str),
                     }),
                 });
             }

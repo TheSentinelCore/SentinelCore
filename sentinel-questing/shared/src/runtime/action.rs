@@ -11,7 +11,12 @@ use uuid::Uuid;
 use super::{condition::RuntimeCondition, waypoint::RuntimeWaypoint};
 use crate::authoring::VariableValue;
 
-/// All 24 runtime action variants enumerated in ADR `05` Part 4.
+/// All 22 runtime action variants (see ADR `05` Part 4).
+///
+/// DeathSkip and DungeonMarker were removed from the enum because no authoring
+/// ActionPayload path existed to produce them — they were always lowered to
+/// Comment by the compiler's catch-all. Re-add when the importer supports
+/// the underlying RestedXP directives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum RuntimeAction {
@@ -37,8 +42,6 @@ pub enum RuntimeAction {
     Flight(RuntimeFlight),
     Hearth(RuntimeHearth),
     LearnFlightPath(RuntimeLearnFlightPath),
-    DeathSkip(RuntimeDeathSkip),
-    DungeonMarker(RuntimeDungeonMarker),
 }
 
 fn default_tolerance() -> f32 {
@@ -224,16 +227,4 @@ pub struct RuntimeLearnFlightPath {
     pub npc_entry: u32,
 }
 
-/// Compiler-inserted recovery action when the bot dies mid-operation (ADR `05` Part 4).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RuntimeDeathSkip {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
 
-/// Marks a dungeon location for navigation/objective tracking (ADR `05` Part 4).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RuntimeDungeonMarker {
-    pub marker: String,
-    pub position: RuntimeWaypoint,
-}

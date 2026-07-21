@@ -80,9 +80,13 @@ fn resolve_action(
             })
         }
         ActionPayload::Travel(tr) => {
+            // Pass through .goto coordinates from importer as waypoint
+            let position = tr.position
+                .map(|p| RuntimeWaypoint::new(p.map, p.world_x, p.world_y, p.world_z))
+                .unwrap_or_else(|| RuntimeWaypoint::new(0, 0.0, 0.0, 0.0));
             RuntimeAction::Travel(RuntimeTravel {
                 destination: tr.destination.clone(),
-                position: RuntimeWaypoint::new(0, 0.0, 0.0, 0.0),
+                position,
                 tolerance: tr.tolerance,
                 allow_flight: tr.allow_flight,
                 timeout: tr.timeout,
@@ -186,10 +190,10 @@ fn resolve_action(
                 stop_condition: g.stop_condition.clone(),
             })
         }
-        ActionPayload::LootObject(_l) => {
+        ActionPayload::LootObject(l) => {
             RuntimeAction::Loot(RuntimeLoot {
-                object_entry: 0, // Would need object resolution
-                count: None,
+                object_entry: 0, // Would need object resolution via QueryServer
+                count: l.count,
             })
         }
         ActionPayload::Bank(b) => {
@@ -210,8 +214,11 @@ fn resolve_action(
         ActionPayload::Wait(w) => {
             RuntimeAction::Wait(RuntimeWait { duration: w.duration })
         }
-        _ => RuntimeAction::Comment(RuntimeComment {
-            text: "[Unhandled action type]".to_string(),
-        }),
+        ActionPayload::SetHearth(sh) => {
+            RuntimeAction::Hearth(RuntimeHearth {
+                innkeeper_entry: sh.npc.and_then(|u| npc_uuid_to_entry.get(&u).copied()),
+                destination: None,
+            })
+        }
     })
 }
