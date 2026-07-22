@@ -271,9 +271,10 @@ function RuntimeAction.execute_turnin_quest(payload, ctx)
     -- Complete quest using Sylvannas API
     if core.quests.complete_quest then
         core.quests.complete_quest()
-        -- Select reward if specified
-        if payload.reward_choice and core.quests.get_quest_reward then
-            core.quests.get_quest_reward(payload.reward_choice)
+        -- Select reward if specified (RuntimeTurnInQuest.choose_reward, see
+        -- SentinelQuesting/shared/src/runtime/action.rs)
+        if payload.choose_reward and core.quests.get_quest_reward then
+            core.quests.get_quest_reward(payload.choose_reward)
         end
         return "success"
     end
@@ -381,20 +382,10 @@ function RuntimeAction.execute_kill(payload, ctx)
         return "blocked" -- In range, let combat loop handle the kill
     end
 
-    -- No targets found — check if we should navigate to a known spawn area
-    local dest = payload.destination
-    if dest and ctx.nav and not ctx.nav:is_active() then
-        local target_pos = nil
-        if type(dest) == "table" and dest.x then
-            target_pos = dest
-        elseif type(dest) == "string" then
-            target_pos = ctx:get_zone_waypoint(dest)
-        end
-        if target_pos then
-            ctx.nav:move_to(target_pos)
-            return "blocked" -- Navigating to spawn area
-        end
-    end
+    -- No targets found nearby. RuntimeKill has no destination field (see
+    -- SentinelQuesting/shared/src/runtime/action.rs) — there is no spawn-area
+    -- to navigate to; the outer recovery state machine handles this "blocked"
+    -- by falling back to whatever nav target it can resolve from the action.
     return "blocked" -- No targets nearby or no API
 end
 
@@ -437,13 +428,23 @@ function RuntimeAction.execute_vendor(payload, ctx)
         attempted = true
     end
 
-    -- Buy items from vendor
-    if payload.buy_items then
-        if core and core.input and core.input.buy_item then
-            for _, item in ipairs(payload.buy_items) do
-                local index = item.index or item.slot
-                local quantity = item.quantity or 1
-                core.input.buy_item(index, quantity)
+    -- Buy items from vendor. RuntimeVendor.buy_items is Vec<u32> of item
+    -- entry ids (see SentinelQuesting/shared/src/runtime/action.rs) — the
+    -- runtime must resolve each entry to its current vendor window slot
+    -- index (core.game_ui.get_vendor_item_info) before calling buy_item.
+    if payload.buy_items and #payload.buy_items > 0 then
+        if core and core.input and core.input.buy_item
+            and core.game_ui and core.game_ui.get_vendor_item_count
+            and core.game_ui.get_vendor_item_info then
+            local vendor_count = core.game_ui.get_vendor_item_count()
+            for _, item_entry in ipairs(payload.buy_items) do
+                for slot = 1, vendor_count do
+                    local ok, info = pcall(core.game_ui.get_vendor_item_info, slot)
+                    if ok and info and info.item_id == item_entry then
+                        core.input.buy_item(slot, 1)
+                        break
+                    end
+                end
             end
         end
         attempted = true
@@ -484,10 +485,11 @@ function RuntimeAction.execute_flight(payload, ctx)
     end
 
     -- Flight path taking requires interacting with flight master
-    -- then using taxi frame - this is complex and may need UI interaction
+    -- then using taxi frame - this is complex and may need UI interaction.
+    -- RuntimeFlight.destination is a String (see
+    -- SentinelQuesting/shared/src/runtime/action.rs) — pass it through as-is.
     if core and core.input and core.input.take_taxi then
-        local dest_idx = destination.index or destination.id or 1
-        core.input.take_taxi(dest_idx)
+        core.input.take_taxi(destination)
         return "success"
     end
     return "retry"

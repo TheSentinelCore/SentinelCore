@@ -28,22 +28,37 @@ local MAX_RETRIES_PER_ACTION = 5        -- Max retry attempts for one action
 local MAX_CONSECUTIVE_FAILURES = 3      -- Max failures before profile stops
 local NAV_TIMEOUT = 30.0                -- Seconds before navigation is considered timed out
 local GHOST_TIMEOUT = 120.0             -- Seconds before ghost recovery is abandoned
-local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks
+local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks (RE6)
+local MAX_EXECUTION_LOG = 200           -- Cap on _execution_log entries (RE5, drop-oldest ring)
+
+-- RE10: Sylvannas get_local_player():get_class() returns a numeric class_id.
+-- The compiler emits RuntimeCondition::ClassIs(<UPPERCASE class name>), e.g.
+-- ClassIs("PALADIN"). This is the same id→name contract combat/module.lua
+-- already uses for player.class_name — keep both tables in sync.
+local CLASS_ID_TO_NAME = {
+    [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE",
+    [5] = "PRIEST", [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE",
+    [9] = "WARLOCK", [11] = "DRUID",
+}
 
 local RuntimeProfile = {}
 RuntimeProfile.__index = RuntimeProfile
 
-function RuntimeProfile:new(json_path, dry_run)
+-- RE3: accept the app's shared Blackboard/EventBus so `questing:log` events
+-- reach real subscribers instead of a private bus nobody listens to. Falls
+-- back to private instances for direct/standalone construction (tests,
+-- dry-run tooling) so existing single-arg call sites keep working.
+function RuntimeProfile:new(json_path, dry_run, blackboard, event_bus)
     local o = setmetatable({}, RuntimeProfile)
     o._json_path = json_path
     o._dry_run = dry_run == true
     o._profile = nil
-    o._blackboard = Blackboard:new()
+    o._blackboard = blackboard or Blackboard:new()
     o._query = QueryClient:new("127.0.0.1", 3030)
     o._current_operation_idx = 1
     o._current_op_id = nil              -- Tracks identity for retry reset
     o._variables = {}
-    o._event_bus = EventBus:new()       -- W3.3
+    o._event_bus = event_bus or EventBus:new() -- W3.3 / RE3
     o._nav = NavAdapter:new(o._event_bus) -- W3.3
 
     -- Recovery state machine (W4.1–W4.5)
@@ -54,7 +69,13 @@ function RuntimeProfile:new(json_path, dry_run)
     o._nav_start_time = nil             -- When navigation began (W4.2)
     o._ghost_start_time = nil           -- When death was detected (W4.3)
     o._last_blocked_action = nil        -- Copy of the action that triggered blocked
-    o._execution_log = {}               -- Structured log entries (W4.5)
+    o._execution_log = {}               -- Structured log entries (W4.5), capped at MAX_EXECUTION_LOG (RE5)
+    o._last_ghost_attempt = nil         -- core.time() of last release/resurrect attempt (RE6)
+
+    -- Cached per-tick context (RE4) — built once by create_context(), reused
+    -- across "running" ticks instead of rebuilding ~20 closures every tick.
+    -- Invalidated on hot reload and reset().
+    o._ctx = nil
 
     -- Hot reload (T16)
     o._json_mtime = nil                  -- Last known mtime for hot reload polling
@@ -516,15 +537,22 @@ function RuntimeProfile:create_context()
     end
 
     function ctx:get_player_class()
-        -- Use get_local_player():get_class() (Sylvannas API)
+        -- Use get_local_player():get_class() (Sylvannas API). get_class()
+        -- returns a numeric class_id; map it to the uppercase class name the
+        -- compiler emits in RuntimeCondition::ClassIs (RE10).
         local player = UnitHelper.get_local_player()
         if player and player.get_class then
             local ok, class = pcall(player.get_class, player)
             if ok and class then
-                return class
+                local class_id = tonumber(class)
+                if class_id then
+                    return CLASS_ID_TO_NAME[class_id] or "UNKNOWN"
+                end
+                -- Already a string (mocks / alternate API surfaces)
+                return tostring(class):upper()
             end
         end
-        return "Unknown"
+        return "UNKNOWN"
     end
 
     function ctx:get_player_race()
@@ -631,6 +659,32 @@ function RuntimeProfile:create_context()
     return ctx
 end
 
+--- RE4: cached accessor for the running-state context. create_context()
+--- builds a fresh table plus ~20 closures — too expensive to redo every
+--- tick. Build once and reuse; only the fields that legitimately change
+--- between ticks (variables table reference, nav adapter) are refreshed on
+--- the cached table. Invalidated by _check_hot_reload() and reset().
+function RuntimeProfile:_get_context()
+    if not self._ctx then
+        self._ctx = self:create_context()
+    end
+    self._ctx.variables = self._variables
+    self._ctx.nav = self._nav
+    -- CRITICAL fix: reusing the ctx table must not also freeze the quest
+    -- log. _quest_log_dirty is only seeded true at construction and cleared
+    -- after the first _refresh_quest_log(); without resetting it here every
+    -- tick, QuestAccepted/QuestCompleted/QuestRewarded/ObjectiveComplete
+    -- would keep returning the tick-1 snapshot forever, so a quest
+    -- completing mid-run would never be observed and route progression
+    -- would stall. Forcing a re-sync each tick matches the pre-caching
+    -- baseline (create_context() rebuilt fresh, and thus quest-log-dirty,
+    -- every tick) — no perf regression vs. baseline. Event-driven
+    -- invalidation (only re-sync on a quest-log-changed signal) is a
+    -- possible future optimization, out of scope here.
+    self._ctx._quest_log_dirty = true
+    return self._ctx
+end
+
 -- ============================================================================
 -- Hot reload (T16)
 -- ============================================================================
@@ -718,6 +772,7 @@ function RuntimeProfile:_check_hot_reload()
     end
 
     self._json_mtime = mtime
+    self._ctx = nil -- RE4: invalidate the cached context — closures captured the old profile
     self:_log_event("hot_reload", { hash = decoded.content_hash })
 end
 
@@ -885,6 +940,11 @@ function RuntimeProfile:_log_event(event_type, data)
         for k, v in pairs(data) do entry[k] = v end
     end
     table.insert(self._execution_log, entry)
+    -- RE5: unbounded log grows forever and is serialized into every save —
+    -- cap it to a drop-oldest ring so saves stay bounded in size.
+    if #self._execution_log > MAX_EXECUTION_LOG then
+        table.remove(self._execution_log, 1)
+    end
 
     -- Also publish to event bus for external listeners (editor UI, etc.)
     if self._event_bus then
@@ -931,7 +991,7 @@ function RuntimeProfile:_execute_running()
         self._current_action_idx = 1  -- Reset to first action if out of bounds
     end
     local action = op.actions[self._current_action_idx]
-    local ctx = self:create_context()
+    local ctx = self:_get_context() -- RE4: cached, not rebuilt every tick
 
     local status, msg = RuntimeAction.execute(action, ctx)
 
@@ -1108,6 +1168,7 @@ function RuntimeProfile:_execute_ghost()
         self:_log_event("ghost_rezzed", {})
         self._state = "running"
         self._ghost_start_time = nil
+        self._last_ghost_attempt = nil
         return "running", "resurrected, retry"
     end
 
@@ -1123,21 +1184,23 @@ function RuntimeProfile:_execute_ghost()
         return "running", "ghost recovery timed out, skipping operation"
     end
 
-    -- Release spirit using core.input.release_spirit() (Sylvannas API)
-    if core and core.input and core.input.release_spirit then
-        core.input.release_spirit()
-        self:_log_event("ghost_release_spirit", {})
-    end
+    -- RE6: throttle release/resurrect attempts to once per GHOST_RETRY_INTERVAL.
+    -- Previously this fired unconditionally every tick (the `elapsed %
+    -- GHOST_RETRY_INTERVAL` check below had an empty body and did nothing).
+    if not self._last_ghost_attempt or (now - self._last_ghost_attempt) >= GHOST_RETRY_INTERVAL then
+        self._last_ghost_attempt = now
 
-    -- Resurrect corpse using core.input.resurrect_corpse() (Sylvannas API)
-    if core and core.input and core.input.resurrect_corpse then
-        core.input.resurrect_corpse()
-        self:_log_event("ghost_resurrect_attempt", {})
-    end
+        -- Release spirit using core.input.release_spirit() (Sylvannas API)
+        if core and core.input and core.input.release_spirit then
+            core.input.release_spirit()
+            self:_log_event("ghost_release_spirit", {})
+        end
 
-    -- Check every GHOST_RETRY_INTERVAL seconds
-    if elapsed % GHOST_RETRY_INTERVAL < 1.0 then
-        -- Just polled; return running to tick again
+        -- Resurrect corpse using core.input.resurrect_corpse() (Sylvannas API)
+        if core and core.input and core.input.resurrect_corpse then
+            core.input.resurrect_corpse()
+            self:_log_event("ghost_resurrect_attempt", {})
+        end
     end
 
     return "running", "ghost recovery (" .. tostring(math.floor(elapsed)) .. "s)"
@@ -1325,8 +1388,10 @@ function RuntimeProfile:reset()
     self._current_action_idx = 1
     self._nav_start_time = nil
     self._ghost_start_time = nil
+    self._last_ghost_attempt = nil
     self._last_blocked_action = nil
     self._execution_log = {}
+    self._ctx = nil
     self._json_mtime = nil
     self._completed_quests = {}
     self._temporary_variables = {}

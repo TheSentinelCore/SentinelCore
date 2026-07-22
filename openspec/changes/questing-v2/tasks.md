@@ -102,20 +102,21 @@ Rationale: PR1 (7 reqs, 6 importer files + new `coverage.rs`) and PR2 (new DSL p
 
 ## PR4a: Runtime — Wiring, Payload, Perf, Recovery Mechanics
 
-- [ ] 6.1 RED `sentinel/tests/modules/questing/test_runtime_action.lua`: `TurnInQuest` reads `choose_reward`; `Kill` never reads `destination`; `Flight/Hearth.destination` string; `Vendor.buy_items` `Vec<u32>` (RE1)
-- [ ] 6.2 GREEN `sentinel/modules/questing/runtime_action.lua`: fix 4 payload field mismatches vs `runtime/action.rs` (RE1)
-- [ ] 6.3 RED `sentinel/tests/modules/questing/test_runtime_profile.lua`: registry init reaches `QuestingModule:initialize`, module hits ACTIVE (RE2)
-- [ ] 6.4 GREEN `sentinel/runtime/module_registry.lua:172-191` + `sentinel/modules/questing/init.lua`: call `QuestingModule:initialize(blackboard, event_bus)` from the init thunk instead of only setting `_initialized` (RE2)
-- [ ] 6.5 RED `sentinel/tests/modules/questing/test_runtime_profile.lua`: `questing:log` on shared `EventBus` observed by external subscriber (RE3)
-- [ ] 6.6 GREEN `sentinel/modules/questing/module.lua:20-21` + `runtime_profile.lua:41,46`: drop private `Blackboard:new()`/`EventBus:new()`, thread shared instances from `SentinelApp` → registry → `QuestingModule` → `RuntimeProfile` ctor (RE3)
-- [ ] 6.7 RED `sentinel/tests/modules/questing/test_runtime_persistence.lua`: execution log beyond cap saves at most `MAX_EXECUTION_LOG` entries (RE4)
-- [ ] 6.8 GREEN `sentinel/modules/questing/runtime_profile.lua:108,887`: add `MAX_EXECUTION_LOG = 200` constant, drop-oldest ring on append (RE4)
-- [ ] 6.9 RED `sentinel/tests/modules/questing/test_runtime_arch_polish.lua`: repeated ticks on one action reuse the same cached context instance (RE5)
-- [ ] 6.10 GREEN `sentinel/modules/questing/runtime_profile.lua:705`: build `create_context` once, cache on instance, invalidate only on profile swap (RE5)
-- [ ] 6.11 RED `sentinel/tests/modules/questing/test_runtime_nav.lua`: rapid re-detected ghosting before timeout suppresses 2nd recovery attempt (RE6)
-- [ ] 6.12 GREEN `sentinel/modules/questing/runtime_profile.lua:1127-1141`: `_last_ghost_attempt` timestamp gate, replace no-op modulo (RE6)
-- [ ] 6.13 RED `sentinel/tests/modules/questing/test_runtime_profile.lua`: unresolvable condition on optional gate AND on main line both proceed + log diagnostic (RE10)
-- [ ] 6.14 GREEN `sentinel/modules/questing/runtime_profile.lua`: unknown-condition evaluator returns satisfied (fail-open), logs diagnostic unconditionally (RE10)
+- [x] 6.1 RED `sentinel/tests/modules/questing/test_runtime_nav.lua`: `TurnInQuest` reads `choose_reward`; `Kill` never reads `destination`; `Flight.destination` string; `Vendor.buy_items` `Vec<u32>` (RE1)
+- [x] 6.2 GREEN `sentinel/modules/questing/runtime_action.lua`: fix 4 payload field mismatches vs `SentinelQuesting/shared/src/runtime/action.rs` (RE1)
+- [x] 6.3 RED `sentinel/tests/modules/questing/test_runtime_arch_polish.lua`: registry init reaches `QuestingModule:initialize`, module hits ACTIVE (RE2)
+- [x] 6.4 GREEN `sentinel/modules/questing/init.lua`: `QuestingModuleInit:init()` now calls `self._questing:initialize(DEFAULT_PROFILE_PATH)` instead of only setting `_initialized` (RE2)
+- [x] 6.5 RED `sentinel/tests/modules/questing/test_runtime_arch_polish.lua`: `questing:log` on shared `EventBus` observed by external subscriber (RE3)
+- [x] 6.6 GREEN `sentinel/modules/questing/module.lua` + `runtime_profile.lua:new()`: `RuntimeProfile:new()` accepts injected blackboard/event_bus, `QuestingModule:initialize()` threads its own (registry-shared) instances through (RE3)
+- [x] 6.7 RED `sentinel/tests/modules/questing/test_runtime_arch_polish.lua`: execution log beyond cap keeps at most `MAX_EXECUTION_LOG` entries (RE4, tasks.md numbering — "Bounded Execution Log")
+- [x] 6.8 GREEN `sentinel/modules/questing/runtime_profile.lua`: `MAX_EXECUTION_LOG = 200` constant, drop-oldest ring in `_log_event` (RE4)
+- [x] 6.9 RED `sentinel/tests/modules/questing/test_runtime_arch_polish.lua`: repeated ticks on one action reuse the same cached context instance; hot reload invalidates it (RE5, tasks.md numbering — "Cached Per-Tick Execution Context")
+- [x] 6.10 GREEN `sentinel/modules/questing/runtime_profile.lua`: `_get_context()` builds `create_context()` once, caches on `self._ctx`, invalidated in `_check_hot_reload()`/`reset()`; `_execute_running()` uses it (RE5)
+- [x] 6.11 RED `sentinel/tests/modules/questing/test_runtime_arch_polish.lua`: repeated `_execute_ghost()` ticks within the throttle window call release/resurrect once, not every tick (RE6)
+- [x] 6.12 GREEN `sentinel/modules/questing/runtime_profile.lua`: `_last_ghost_attempt` timestamp gate replaces the no-op modulo check (RE6)
+- [ ] 6.13 RED `sentinel/tests/modules/questing/test_runtime_profile.lua`: unresolvable condition on optional gate AND on main line both proceed + log diagnostic (RE10 — **NOT started this batch**, see PR4a apply-progress note below)
+- [ ] 6.14 GREEN `sentinel/modules/questing/runtime_profile.lua`: unknown-condition evaluator returns satisfied (fail-open), logs diagnostic unconditionally (RE10 — **NOT started this batch**)
+- [x] 6.15 (added, not in original plan) RED+GREEN `sentinel/tests/modules/questing/test_runtime_arch_polish.lua` + `sentinel/modules/questing/runtime_profile.lua`: `ctx:get_player_class()` mapped Sylvannas numeric `class_id` → uppercase class-name string (`CLASS_ID_TO_NAME`) to match the compiler's `RuntimeCondition::ClassIs("PALADIN")` emission from the 2026-07-22 design amendment — runtime half of class filtering. Not itemized under an RE id in this table; flagged for reconciliation.
 
 ## PR4b: Runtime — JSON Mock + Action-Type/FSM Verification
 
