@@ -680,6 +680,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![
                 sentinel_models::authoring::Action {
                     id: uuid::Uuid::new_v4(),
@@ -742,6 +744,8 @@ mod tests {
             maximum_level: Some(5),
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![
                 sentinel_models::authoring::Action {
                     id: uuid::Uuid::new_v4(),
@@ -765,6 +769,8 @@ mod tests {
             maximum_level: None,
             enabled: false,
             conditions: vec!["done_northshire".to_string()],
+            sticky: false,
+            looping: false,
             actions: vec![],
             notes: Some("Need to finish".to_string()),
         };
@@ -840,6 +846,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![],
             notes: None,
         });

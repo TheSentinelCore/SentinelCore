@@ -832,6 +832,8 @@ mod tests {
                 maximum_level: None,
                 enabled: true,
                 conditions: vec![],
+                sticky: false,
+                looping: false,
                 actions: vec![make_action(
                     "00000000000000000000000000000001",
                     ActionPayload::SetVariable(SetVariableAction {
@@ -849,6 +851,8 @@ mod tests {
                 maximum_level: None,
                 enabled: true,
                 conditions: vec!["counter > 0".to_string()],
+                sticky: false,
+                looping: false,
                 actions: vec![],
                 notes: None,
             },
@@ -873,6 +877,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec!["counter > 0".to_string()],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "00000000000000000000000000000001",
                 ActionPayload::SetVariable(SetVariableAction {
@@ -907,6 +913,8 @@ mod tests {
                 maximum_level: None,
                 enabled: true,
                 conditions: vec!["var_a > 0".to_string()],
+                sticky: false,
+                looping: false,
                 actions: vec![make_action(
                     "10000000000000000000000000000001",
                     ActionPayload::SetVariable(SetVariableAction {
@@ -924,6 +932,8 @@ mod tests {
                 maximum_level: None,
                 enabled: true,
                 conditions: vec!["var_b > 5".to_string()],
+                sticky: false,
+                looping: false,
                 actions: vec![make_action(
                     "20000000000000000000000000000001",
                     ActionPayload::SetVariable(SetVariableAction {
@@ -958,6 +968,8 @@ mod tests {
                 maximum_level: None,
                 enabled: true,
                 conditions: vec!["counter1 < 3".to_string()],
+                sticky: false,
+                looping: false,
                 actions: vec![make_action(
                     "10000000000000000000000000000001",
                     ActionPayload::SetVariable(SetVariableAction {
@@ -975,6 +987,8 @@ mod tests {
                 maximum_level: None,
                 enabled: true,
                 conditions: vec!["counter2 == 0".to_string()],
+                sticky: false,
+                looping: false,
                 actions: vec![make_action(
                     "20000000000000000000000000000001",
                     ActionPayload::SetVariable(SetVariableAction {
@@ -1023,6 +1037,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec!["my_var > 0".to_string()],
+            sticky: false,
+            looping: false,
             actions: vec![],
             notes: None,
         });
@@ -1044,6 +1060,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::SetVariable(SetVariableAction {
@@ -1073,6 +1091,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::SetVariable(SetVariableAction {
@@ -1104,6 +1124,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec!["counter < 5".to_string()],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::SetVariable(SetVariableAction {
@@ -1199,6 +1221,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::Travel(TravelAction {
@@ -1235,6 +1259,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::TurnInQuest(TurnInQuestAction {
@@ -1265,6 +1291,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::AcceptQuest(AcceptQuestAction {
@@ -1284,6 +1312,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "20000000000000000000000000000001",
                 ActionPayload::TurnInQuest(TurnInQuestAction {
@@ -1346,6 +1376,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::AcceptQuest(AcceptQuestAction {
@@ -1365,6 +1397,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "20000000000000000000000000000001",
                 ActionPayload::AcceptQuest(AcceptQuestAction {
@@ -1411,6 +1445,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::AcceptQuest(AcceptQuestAction {
@@ -1430,6 +1466,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "20000000000000000000000000000001",
                 ActionPayload::AcceptQuest(AcceptQuestAction {
@@ -1494,6 +1532,8 @@ mod tests {
             maximum_level: None,
             enabled: true,
             conditions: vec![],
+            sticky: false,
+            looping: false,
             actions: vec![make_action(
                 "10000000000000000000000000000001",
                 ActionPayload::Vendor(VendorAction {

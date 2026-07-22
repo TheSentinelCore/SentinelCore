@@ -127,6 +127,8 @@ fn pipeline_validate_detects_broken_npc_ref() {
         maximum_level: None,
         enabled: true,
         conditions: vec![],
+        sticky: false,
+        looping: false,
         actions: vec![sentinel_models::authoring::Action {
             id: uuid::Uuid::new_v4(),
             enabled: true,
@@ -165,6 +167,8 @@ fn pipeline_compile_fails_with_unresolved_npc() {
         maximum_level: None,
         enabled: true,
         conditions: vec![],
+        sticky: false,
+        looping: false,
         actions: vec![sentinel_models::authoring::Action {
             id: uuid::Uuid::new_v4(),
             enabled: true,

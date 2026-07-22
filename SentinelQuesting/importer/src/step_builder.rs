@@ -29,12 +29,13 @@ impl StepBuilder {
                         npc_name_hints: Vec::new(),
                     });
                 }
-                Token::StepDirective { name, value, line } => {
+                Token::StepDirective { name, value, line, original } => {
                     if let Some(s) = current.as_mut() {
                         s.directives.push(Directive {
                             name: name.clone(),
                             value: value.clone(),
                             line: *line,
+                            original: original.clone(),
                         });
                     }
                 }

@@ -52,6 +52,9 @@ pub struct Directive {
     pub name: String,
     pub value: Option<String>,
     pub line: SourceLineNo,
+    /// The raw directive name as written, when tolerated as a typo of `name` (IF5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<String>,
 }
 
 /// A `.command` inside a step (e.g. `.accept 1598 >> Accept ...`, `.goto Zone,x,y`).

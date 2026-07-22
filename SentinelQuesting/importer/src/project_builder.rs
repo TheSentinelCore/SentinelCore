@@ -198,18 +198,6 @@ impl<'a> MapperState<'a> {
     }
 }
 
-/// Truncate an arg at its first inline `--` dev comment (RestedXP guides routinely append
-/// these after numeric args, e.g. `.complete 1598,1 --Collect Powers of the Void (x1)`; the
-/// lexer's comma-split does not strip them — see comma-split in `lexer.rs::lex_command`).
-/// Root-cause fix (stripping at lex time) is deferred to PR1b; this keeps numeric parsing
-/// correct in the meantime.
-fn strip_inline_comment(s: &str) -> &str {
-    match s.find("--") {
-        Some(idx) => s[..idx].trim_end(),
-        None => s,
-    }
-}
-
 /// Static zone-name -> continent map-id lookup used to build a `.goto` [`Position`]
 /// (design Decision 4: no QueryServer zone/map table exists, so this stays a static table).
 fn zone_to_map_id(zone: &str) -> Option<u32> {
@@ -242,29 +230,44 @@ fn zone_to_map_id(zone: &str) -> Option<u32> {
     }
 }
 
-/// Build a `.goto` [`Position`] from its comma-split args (`[dest, x, y, z?]`, IF1).
+/// Build a `.goto` [`Position`] from its comma-split args (`[dest, x, y, z?]`, IF1). Trailing
+/// `--` dev comments are already stripped at lex time (`lexer.rs::strip_inline_dev_comment`).
 /// Returns `None` when no numeric x/y pair is present (zone-only goto) — the destination
 /// name alone is preserved with no error, per the "zone name only" scenario.
-fn build_travel_position(args: &[String]) -> Option<Position> {
-    let x = strip_inline_comment(args.get(1)?).parse::<f32>().ok()?;
-    let y = strip_inline_comment(args.get(2)?).parse::<f32>().ok()?;
-    let z = args.get(3)
-        .and_then(|s| strip_inline_comment(s).parse::<f32>().ok())
-        .unwrap_or(0.0);
-    let map = args.first()
-        .map(|a| strip_inline_comment(a))
-        .and_then(|a| a.parse::<u32>().ok().or_else(|| zone_to_map_id(a)))
-        .unwrap_or(0);
+///
+/// Pushes an `UNMAPPED_GOTO_ZONE` diagnostic (rather than silently defaulting to map 0) when the
+/// zone name is not a bare map id and is absent from [`zone_to_map_id`]'s static table.
+fn build_travel_position(state: &mut MapperState, step: &Step, args: &[String]) -> Option<Position> {
+    let x = args.get(1)?.parse::<f32>().ok()?;
+    let y = args.get(2)?.parse::<f32>().ok()?;
+    let z = args.get(3).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+    let map = match args.first() {
+        Some(a) => match a.parse::<u32>() {
+            Ok(m) => m,
+            Err(_) => zone_to_map_id(a).unwrap_or_else(|| {
+                state.diagnostics.push(Diagnostic {
+                    severity: Severity::Info,
+                    code: "UNMAPPED_GOTO_ZONE".to_string(),
+                    message: format!("Zone '{a}' has no known map id; defaulting to map 0"),
+                    entity: Some(format!("step:{}", step.index)),
+                    action: None,
+                });
+                0
+            }),
+        },
+        None => 0,
+    };
     Some(Position::new(map, x, y, z))
 }
 
 /// Encode a `.collect`/`.itemcount` count argument as a §23 DSL fragment. The grammar only
-/// provides an "at least" primitive (`ItemCountAtLeast`, DSL `ItemCount(item,n)`), so `<`/`<=`
-/// lower via `NOT` and `>`/`>=` lower via arithmetic against that same primitive — no new
-/// syntax is invented; PR2a's parser only ever needs to recognize `ItemCount`/`NOT`.
+/// provides an "at least" primitive (`ItemCountAtLeast`, DSL `ItemCount(item,n)`). `>=` and `<`
+/// map directly onto that primitive (`ItemCount`/`NOT ItemCount`); `>` and `<=` need arithmetic
+/// (`checked_add(1)`) to shift their boundary onto the same "at least" primitive — no new syntax
+/// is invented; PR2a's parser only ever needs to recognize `ItemCount`/`NOT`.
+/// Tolerates whitespace between the operator and the digits (e.g. `< 5`).
 /// Returns `None` on unparseable input (caller falls back to a diagnostic).
 fn item_count_dsl(item: u32, raw: &str) -> Option<String> {
-    let raw = strip_inline_comment(raw);
     let (op, digits) = if let Some(rest) = raw.strip_prefix(">=") {
         (">=", rest)
     } else if let Some(rest) = raw.strip_prefix("<=") {
@@ -276,7 +279,7 @@ fn item_count_dsl(item: u32, raw: &str) -> Option<String> {
     } else {
         (">=", raw)
     };
-    let n = digits.parse::<u32>().ok()?;
+    let n = digits.trim().parse::<u32>().ok()?;
     match op {
         ">=" => Some(format!("ItemCount({item},{n})")),
         // Guard against overflow instead of panicking (debug builds trap on `+1` at u32::MAX).
@@ -287,13 +290,23 @@ fn item_count_dsl(item: u32, raw: &str) -> Option<String> {
     }
 }
 
+/// The seven gating/completion command names lowered to typed §23 DSL conditions (IF2) — single
+/// source of truth shared between `build_step_actions`'s command routing and
+/// `gating_condition_dsl`'s dispatch (previously duplicated as two separate literal lists).
+const GATING_COMMANDS: [&str; 7] = [
+    "complete", "collect", "itemcount", "isOnQuest",
+    "isQuestComplete", "isQuestTurnedIn", "isQuestAvailable",
+];
+
 /// Build the `02_DATA_MODEL.md §23` DSL expression for a gating/completion command per the
 /// design's command -> DSL mapping table (IF2). Returns `None` on unparseable arguments so the
-/// caller can fall back to a diagnostic-carrying inert action.
+/// caller can fall back to a diagnostic-carrying inert action. Trailing `--` dev comments are
+/// already stripped at lex time (`lexer.rs::strip_inline_dev_comment`).
 fn gating_condition_dsl(cmd_name: &str, args: &[String]) -> Option<String> {
-    // Strip trailing `--` dev comments before parsing (REL-1: they routinely trail the last
-    // arg on gating commands and are not removed by the lexer's comma-split).
-    let arg = |i: usize| args.get(i).map(|s| strip_inline_comment(s));
+    if !GATING_COMMANDS.contains(&cmd_name) {
+        return None;
+    }
+    let arg = |i: usize| args.get(i).map(|s| s.as_str());
     match cmd_name {
         "complete" => {
             let quest = arg(0)?.parse::<u32>().ok()?;
@@ -311,18 +324,18 @@ fn gating_condition_dsl(cmd_name: &str, args: &[String]) -> Option<String> {
         "isQuestComplete" => quest_ids_dsl(args, |q| format!("QuestCompleted({q})")),
         "isQuestTurnedIn" => quest_ids_dsl(args, |q| format!("QuestRewarded({q})")),
         "isQuestAvailable" => quest_ids_dsl(args, |q| format!("NOT QuestRewarded({q})")),
-        _ => None,
+        _ => unreachable!("cmd_name checked against GATING_COMMANDS above"),
     }
 }
 
-/// Parse every comma-separated arg as a quest ID (after inline-comment stripping), lowering
-/// through `predicate` into a §23 infix-`||` chain: RestedXP quest gates commonly list several
-/// IDs read as "any of these" (round-3 finding); one ID yields the unchanged single string.
-/// `||` is the grammar's OR form (design: `||` -> `Any`); PR2a's parser consumes it, and
-/// fail-open covers residual ambiguity. `None` if the list is empty or any ID fails to parse.
+/// Parse every comma-separated arg as a quest ID, lowering through `predicate` into a §23
+/// infix-`||` chain: RestedXP quest gates commonly list several IDs read as "any of these"
+/// (round-3 finding); one ID yields the unchanged single string. `||` is the grammar's OR form
+/// (design: `||` -> `Any`); PR2a's parser consumes it, and fail-open covers residual ambiguity.
+/// `None` if the list is empty or any ID fails to parse.
 fn quest_ids_dsl(args: &[String], predicate: impl Fn(u32) -> String) -> Option<String> {
     let ids: Vec<u32> = args.iter()
-        .map(|a| strip_inline_comment(a).parse::<u32>().ok())
+        .map(|a| a.parse::<u32>().ok())
         .collect::<Option<_>>()?;
     if ids.is_empty() {
         return None;
@@ -460,7 +473,7 @@ async fn build_step_actions(
                 let dest = cmd.args.first()
                     .map(|a| if a.parse::<u32>().is_ok() { format!("Map {}", a) } else { a.clone() })
                     .unwrap_or_else(|| "Unknown".to_string());
-                let position = build_travel_position(&cmd.args);
+                let position = build_travel_position(state, step, &cmd.args);
                 actions.push(Action {
                     id: Uuid::new_v4(),
                     enabled: true,
@@ -600,8 +613,7 @@ async fn build_step_actions(
                     }),
                 });
             }
-            "collect" | "itemcount" | "complete" | "isOnQuest" | "isQuestComplete"
-            | "isQuestTurnedIn" | "isQuestAvailable" => {
+            name if GATING_COMMANDS.contains(&name) => {
                 // Gating/completion command (IF2): lower to a typed §23 DSL condition per
                 // the design's mapping table. Malformed args fall back to a diagnostic-carrying
                 // inert Comment — never a bare Comment with no diagnostic.
@@ -616,6 +628,7 @@ async fn build_step_actions(
                         });
                     }
                     None => {
+                        let action_id = Uuid::new_v4();
                         state.diagnostics.push(Diagnostic {
                             severity: Severity::Warning,
                             code: "MALFORMED_GATING_ARGS".to_string(),
@@ -623,11 +636,11 @@ async fn build_step_actions(
                                 "Gating command '.{}' has unparseable arguments: {:?}",
                                 cmd.name, cmd.args
                             ),
-                            entity: None,
-                            action: None,
+                            entity: Some(format!("step:{}", step.index)),
+                            action: Some(action_id.to_string()),
                         });
                         actions.push(Action {
-                            id: Uuid::new_v4(),
+                            id: action_id,
                             enabled: true,
                             condition: None,
                             note: cmd.note.clone(),
@@ -820,6 +833,22 @@ impl ProjectBuilder {
             let name = operation_name(step);
             let mut op = Operation::new(name);
             op.conditions = step.conditions.clone();
+            op.sticky = step.directives.iter().any(|d| d.name.eq_ignore_ascii_case("sticky"));
+            op.looping = step.directives.iter().any(|d| d.name.eq_ignore_ascii_case("loop"));
+            // IF5: surface every tolerated directive typo as an info diagnostic.
+            for d in &step.directives {
+                if let Some(original) = &d.original {
+                    state.diagnostics.push(Diagnostic {
+                        severity: Severity::Info,
+                        code: "DIRECTIVE_TYPO_TOLERATED".to_string(),
+                        message: format!(
+                            "Directive '#{original}' tolerated as canonical '#{}'", d.name
+                        ),
+                        entity: Some(format!("step:{}", step.index)),
+                        action: None,
+                    });
+                }
+            }
             op.actions = build_step_actions(&mut state, step).await?;
             operations.push(op);
         }
