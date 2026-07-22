@@ -1,0 +1,56 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: Lua (primary, runtime-loaded by Sylvannas injector) + Rust (sentinel-questing workspace, SentinelNavServer, SentinelQueryServer)
+  Architecture: Combat engine with Behavior Trees, Blackboard, EventBus. Questing runtime with profile/action modules. Navigation via SentinelNavClient -> SentinelNavServer.
+  Testing: In-game via _G.SentinelCore.run_tests(). Offline runner: lua sentinel/tests/run_offline.lua with mocked Sylvannas APIs.
+  API constraint: Sylvannas API only (core.*, core.input.*, core.object_manager.*). No WoW Lua APIs.
+  Style: Snake_case for Sylvannas game_object methods. Lua modules use require with relative paths.
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing Sylvannas API conventions (core.*, core.input.*, core.object_manager.*)
+      - Use snake_case for Sylvannas game_object methods
+      - Use require with relative paths for Lua modules
+      - Never use WoW Lua APIs (GetItemInfo, etc.)
+    tdd: false
+    test_command: "lua sentinel/tests/run_offline.lua"
+  verify:
+    test_command: "lua sentinel/tests/run_offline.lua"
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
+
+testing:
+  strict_tdd: false
+  runner: custom_lua
+  command: "lua sentinel/tests/run_offline.lua"
+  in_game_command: "_G.SentinelCore.run_tests()"
+  framework: custom (pcall + assertion functions)
+  layers:
+    unit: true
+    integration: true
+    e2e: false
+  coverage: false
+  quality:
+    linter: false
+    type_checker: false
+    formatter: false
+  mock_framework: custom (sentinel/tests/harness/mocks/sylvannas_api.lua)
+  test_count:
+    offline: 30+ (across core, combat, questing, shared, integration)
+    in_game: available via _G.SentinelCore.run_tests()

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "i-have-adhd": {
+      "source": "ayghri/i-have-adhd",
+      "sourceType": "github",
+      "skillPath": "skills/i-have-adhd/SKILL.md",
+      "computedHash": "b6588e2164feefb5b2e413e1898412c304dc32fdf6e10ae456122751d71e34d6"
+    }
+  }
+}
