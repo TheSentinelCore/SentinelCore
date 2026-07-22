@@ -33,3 +33,17 @@ Database/
 
 # Local scratch / verification working dir (exclude from commits)
 .scratch/
+
+# Local tooling state — machine-specific, never committed
+.codegraph/
+.atl/
+
+# Runtime profile progress files written by the questing runtime / test runs
+*.save.json
+.codegraph
+.kilo
+.atl
+.agents
+.scratch
+.superpowers
+skill-obvervations
