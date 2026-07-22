@@ -5,7 +5,9 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use sentinel_models::authoring::{Action, ActionPayload, Project};
+mod condition;
+
+use sentinel_models::authoring::{Action, ActionPayload, Diagnostic, Project, Severity};
 use sentinel_models::runtime::{
     compute_content_hash, RuntimeAction, RuntimeOperation, RuntimeProfile, RuntimeAcceptQuest,
     RuntimeFlight, RuntimeHearth, RuntimeKill, RuntimeVendor, RuntimeTrain, RuntimeUseItem,
@@ -24,34 +26,44 @@ pub enum CompilerError {
     UnresolvedQuest,
 }
 
+/// Non-fatal compile-time findings, kept out of `RuntimeProfile` (clean runtime artifact).
+/// `unmapped_conditions` populated here (CL1); PR2b adds `class_excluded`/`unresolved`.
+#[derive(Debug, Clone, Default)]
+pub struct CompileReport {
+    pub unmapped_conditions: Vec<Diagnostic>,
+}
+
 pub struct Compiler;
 
 impl Compiler {
-    /// Compile a Project into a RuntimeProfile.
-    pub fn compile(project: &Project) -> Result<RuntimeProfile, CompilerError> {
+    /// Compile a Project into a RuntimeProfile plus a report of non-fatal findings.
+    pub fn compile(project: &Project) -> Result<(RuntimeProfile, CompileReport), CompilerError> {
         let npc_uuid_to_entry: HashMap<Uuid, u32> = project.npc_library
             .iter()
             .filter_map(|n| n.entry.map(|e| (n.id, e)))
             .collect();
 
+        let mut diagnostics: Vec<Diagnostic> = Vec::new();
         let runtime_operations: Vec<RuntimeOperation> = project.operations
             .iter()
-            .map(|op| resolve_operation(op, &npc_uuid_to_entry))
+            .map(|op| resolve_operation(op, &npc_uuid_to_entry, &mut diagnostics))
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut profile = RuntimeProfile::new(project.metadata.name.clone(), runtime_operations);
         profile.content_hash = compute_content_hash(&profile);
-        Ok(profile)
+        let report = CompileReport { unmapped_conditions: diagnostics };
+        Ok((profile, report))
     }
 }
 
 fn resolve_operation(
     op: &sentinel_models::authoring::Operation,
     npc_uuid_to_entry: &HashMap<Uuid, u32>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<RuntimeOperation, CompilerError> {
     let runtime_actions: Vec<RuntimeAction> = op.actions
         .iter()
-        .map(|a| resolve_action(a, npc_uuid_to_entry))
+        .map(|a| resolve_action(a, npc_uuid_to_entry, diagnostics))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(RuntimeOperation::new(op.id, op.name.clone(), runtime_actions))
@@ -60,6 +72,7 @@ fn resolve_operation(
 fn resolve_action(
     action: &Action,
     npc_uuid_to_entry: &HashMap<Uuid, u32>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<RuntimeAction, CompilerError> {
     Ok(match &action.payload {
         ActionPayload::AcceptQuest(a) => {
@@ -154,11 +167,23 @@ fn resolve_action(
             let npc_entry = *npc_uuid_to_entry.get(&fp.npc).ok_or(CompilerError::UnresolvedNpc)?;
             RuntimeAction::LearnFlightPath(RuntimeLearnFlightPath { npc_entry })
         }
-        ActionPayload::Condition(_cond) => {
-            // Parse condition expression - simplified for now
-            RuntimeAction::Condition(RuntimeConditionAction {
-                condition: RuntimeCondition::AlwaysTrue,
-            })
+        ActionPayload::Condition(cond) => {
+            // §23 DSL -> typed RuntimeCondition; unmappable: diagnostic first, THEN fail open to
+            // AlwaysTrue (design Decision 7) — never silently substituted.
+            let condition = condition::parse_condition(&cond.expression).unwrap_or_else(|err| {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "UNMAPPED_CONDITION".to_string(),
+                    message: format!(
+                        "condition expression '{}' could not be mapped to a RuntimeCondition: {err}",
+                        cond.expression
+                    ),
+                    entity: Some(cond.expression.clone()),
+                    action: Some(action.id.to_string()),
+                });
+                RuntimeCondition::AlwaysTrue
+            });
+            RuntimeAction::Condition(RuntimeConditionAction { condition })
         }
         ActionPayload::SetVariable(sv) => {
             RuntimeAction::SetVariable(RuntimeSetVariable {

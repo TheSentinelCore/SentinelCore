@@ -37,7 +37,7 @@ mod tests {
 #[test]
 fn pipeline_compiles_to_valid_profile() {
     let project = load_sample_project();
-    let profile = sentinel_compiler::Compiler::compile(&project)
+    let (profile, _report) = sentinel_compiler::Compiler::compile(&project)
         .expect("Compiler should succeed for valid project");
 
     // Verify profile structure
@@ -101,7 +101,7 @@ fn pipeline_validate_detects_duplicate_npc() {
 #[test]
 fn pipeline_serialize_roundtrip() {
     let project = load_sample_project();
-    let profile = sentinel_compiler::Compiler::compile(&project)
+    let (profile, _report) = sentinel_compiler::Compiler::compile(&project)
         .expect("Compile should succeed");
 
     // Serialize to JSON and back
@@ -213,7 +213,7 @@ fn pipeline_end_to_end_success() {
     );
 
     // 2. Compile
-    let profile = sentinel_compiler::Compiler::compile(&project)
+    let (profile, _report) = sentinel_compiler::Compiler::compile(&project)
         .expect("Compilation should succeed");
 
     // 3. Serialize
@@ -231,7 +231,7 @@ fn pipeline_end_to_end_success() {
     assert_eq!(profile.content_hash, deserialized.content_hash);
 
     // 6. Verify the content hash is deterministic
-    let profile2 = sentinel_compiler::Compiler::compile(&project)
+    let (profile2, _report2) = sentinel_compiler::Compiler::compile(&project)
         .expect("Second compilation should succeed");
     assert_eq!(
         profile.content_hash, profile2.content_hash,
