@@ -1,9 +1,10 @@
 //! Integration tests for the Wave 1 core parser.
 
-use sentinel_importer::{parse_guide, ImportError, GuideSplitter};
+use sentinel_importer::{parse_guide, parse_guide_bundle, ImportError, GuideSplitter};
 
 const BASIC: &str = include_str!("fixtures/guide_basic.lua");
 const DANGLING: &str = include_str!("fixtures/guide_dangling.lua");
+const BUNDLE_SLICE: &str = include_str!("fixtures/guide_bundle_tbc_slice.lua");
 
 #[test]
 fn extracts_body_and_splits_headers_from_steps() {
@@ -111,6 +112,31 @@ fn reserved_next_keyword_is_not_a_label() {
     let src = "RXPGuides.RegisterGuide([[\n#name x\nstep\n.completewith next\n.accept 1\n]])";
     let guide = parse_guide(src).expect("parse ok");
     assert!(guide.labels.references.is_empty(), "next must be skipped");
+}
+
+#[test]
+fn command_line_class_suffix_is_parsed_into_class_restriction() {
+    // IF3: `.collect 7972,1 << Warrior` (corpus-proven form, no note).
+    let src = "RXPGuides.RegisterGuide([[\n#name x\nstep\n.collect 7972,1 << Warrior\n]])";
+    let guide = parse_guide(src).expect("parse ok");
+    let collect = guide.steps[0].commands.iter().find(|c| c.name == "collect").expect("collect");
+    assert_eq!(collect.args, vec!["7972".to_string(), "1".to_string()]);
+    assert_eq!(collect.class_restriction.as_deref(), Some("Warrior"));
+}
+
+#[test]
+fn multi_registerguide_bundle_yields_one_project_per_guide() {
+    // IF6: real 2-block excerpt from The Burning Crusade.lua (253 blocks in the full file).
+    let results = parse_guide_bundle(BUNDLE_SLICE);
+    assert_eq!(results.len(), 2, "bundle has 2 RegisterGuide blocks");
+    let guides: Vec<_> = results.into_iter().map(|r| r.expect("each block parses")).collect();
+    let name_of = |g: &sentinel_importer::ParsedGuide| {
+        g.headers.iter().find(|h| h.key == "name").map(|h| h.value.clone())
+    };
+    assert_eq!(name_of(&guides[0]), Some("Prep-Silithus Start".to_string()));
+    assert_eq!(name_of(&guides[1]), Some("DM East".to_string()));
+    assert!(guides[0].steps.iter().any(|s| s.commands.iter().any(|c| c.name == "fp")));
+    assert!(guides[1].steps.iter().any(|s| s.commands.iter().any(|c| c.name == "collect")));
 }
 
 #[test]

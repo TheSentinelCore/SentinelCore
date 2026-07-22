@@ -39,13 +39,14 @@ impl StepBuilder {
                         });
                     }
                 }
-                Token::Command { name, args, note, line } => {
+                Token::Command { name, args, note, line, class_restriction } => {
                     if let Some(s) = current.as_mut() {
                         s.commands.push(Command {
                             name: name.clone(),
                             args: args.clone(),
                             note: note.clone(),
                             line: *line,
+                            class_restriction: class_restriction.clone(),
                         });
                         // Extract NPC name hints from command notes
                         if let Some(note_text) = note {

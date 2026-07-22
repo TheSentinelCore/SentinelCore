@@ -748,6 +748,7 @@ mod tests {
             enabled: true,
             payload,
             condition: None,
+            class_restriction: None,
             note: None,
         }
     }

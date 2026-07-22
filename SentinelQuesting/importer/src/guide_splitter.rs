@@ -98,3 +98,44 @@ struct ExtractedBody {
     body: String,
     body_start_line: SourceLineNo,
 }
+
+/// Extract every `RegisterGuide([[ ... ]])` block from a bundle source file as self-contained
+/// guide source strings, each independently valid input to [`crate::parse_guide`] (IF6). Corpus
+/// reality: `The Burning Crusade.lua` is 253 separate blocks concatenated in one file, not
+/// multiple `#name` headers inside a single block — an outer scan over block boundaries, before
+/// the per-guide header/step parsing [`GuideSplitter::split`] already handles unchanged.
+pub fn extract_guide_blocks(source: &str) -> Vec<String> {
+    const OPEN: &str = "RegisterGuide([[";
+    const CLOSE: &str = "]])";
+    let mut blocks = Vec::new();
+    let mut cursor = 0;
+    while let Some(open_rel) = source[cursor..].find(OPEN) {
+        let open_idx = cursor + open_rel;
+        let after_open = open_idx + OPEN.len();
+        let Some(close_rel) = source[after_open..].find(CLOSE) else {
+            break; // unterminated trailing block: stop rather than panic on a truncated tail
+        };
+        let close_idx = after_open + close_rel + CLOSE.len();
+        blocks.push(source[open_idx..close_idx].to_string());
+        cursor = close_idx;
+    }
+    blocks
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::extract_guide_blocks;
+
+    #[test]
+    fn bundle_source_yields_one_block_per_registerguide_header() {
+        // Corpus shape: N `RegisterGuide([[ ... ]]);` blocks concatenated in one file (IF6).
+        let src = "RXPGuides.RegisterGuide([[\n#name First\nstep\n.accept 1\n]]);\n\
+                   RXPGuides.RegisterGuide([[\n#name Second\nstep\n.accept 2\n]]);\n\
+                   RXPGuides.RegisterGuide([[\n#name Third\nstep\n.accept 3\n]]);";
+        let blocks = extract_guide_blocks(src);
+        assert_eq!(blocks.len(), 3);
+        assert!(blocks[0].contains("#name First"));
+        assert!(blocks[1].contains("#name Second"));
+        assert!(blocks[2].contains("#name Third"));
+    }
+}

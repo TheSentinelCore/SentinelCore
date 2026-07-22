@@ -725,6 +725,76 @@ step
 }
 
 #[tokio::test]
+async fn noted_equip_keeps_command_template_as_text_and_note_in_note_field() {
+    // WARNING fix: real corpus line (human_1-11.lua:338). Old per-arm behavior: `text` is
+    // always the `.command args` template, `note` carries the human-readable note separately —
+    // never note-as-text (that shape is reserved for the catch-all `_` arm only).
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .equip 16,5579 >> Equip the Militia Warhammer
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+    let action = &project.operations[0].actions[0];
+    match &action.payload {
+        ActionPayload::Comment(c) => assert_eq!(c.text, ".equip 16,5579"),
+        other => panic!("expected Comment, got {other:?}"),
+    }
+    assert_eq!(action.note.as_deref(), Some("Equip the Militia Warhammer"));
+}
+
+#[tokio::test]
+async fn non_core_commands_are_preserved_inert_with_diagnostic() {
+    // IF7: `.equip`/`.skill` are outside leveling-core lowering but MUST NOT collapse into a
+    // bare Comment with no diagnostic trail.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .equip 12345
+step
+    .skill 171,300
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    for op_idx in 0..2 {
+        let action = &project.operations[op_idx].actions[0];
+        assert!(matches!(action.payload, ActionPayload::Comment(_)));
+        let diag = project.diagnostics.iter()
+            .find(|d| d.code == "COMMAND_PRESERVED_INERT" && d.action.as_deref() == Some(action.id.to_string().as_str()))
+            .unwrap_or_else(|| panic!("operation {op_idx} action must carry a COMMAND_PRESERVED_INERT diagnostic (IF7)"));
+        assert!(diag.message.contains(if op_idx == 0 { "equip" } else { "skill" }));
+    }
+}
+
+#[tokio::test]
+async fn class_suffix_line_sets_action_class_restriction() {
+    // IF3
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .collect 7972,1 << Warrior
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+    assert_eq!(
+        project.operations[0].actions[0].class_restriction.as_deref(),
+        Some("Warrior"),
+        "line ending in '<< Warrior' must set Action.class_restriction (IF3)"
+    );
+}
+
+#[tokio::test]
 async fn known_directive_typo_is_canonicalized_with_diagnostic() {
     // IF5: `#compltewith` must resolve as `#completewith` AND record a tolerated-typo diagnostic.
     let client = MemoryQueryClient::new();

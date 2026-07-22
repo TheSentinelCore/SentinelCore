@@ -66,17 +66,17 @@ Rationale: PR1 (7 reqs, 6 importer files + new `coverage.rs`) and PR2 (new DSL p
 
 ## PR1b: Import Fidelity — Class/Metadata/Typo/Split/Never-Drop
 
-- [ ] 2.1 RED `SentinelQuesting/importer/tests/importer.rs`: line ending `<< Warrior` → `class_restriction = "Warrior"` (IF3) — **deferred to PR1b-ii, budget guard**
-- [ ] 2.2 GREEN `SentinelQuesting/importer/src/lexer.rs` + `SentinelQuesting/shared/src/authoring/action.rs`: add `class_restriction: Option<String>` (serde default), parse suffix (IF3) — **deferred to PR1b-ii, budget guard**
+- [x] 2.1 RED `SentinelQuesting/importer/tests/importer.rs` + `tests/mapper.rs` + `src/lexer.rs` unit tests: line ending `<< Warrior` (and `Class1/Class2`, `!Class` forms) → `class_restriction = "Warrior"` (IF3) — done in PR1b-ii
+- [x] 2.2 GREEN `SentinelQuesting/importer/src/lexer.rs` + `step_builder.rs` + `project_builder.rs` + `SentinelQuesting/shared/src/authoring/action.rs`: add `class_restriction: Option<String>` (serde default), parse `<<` suffix off note/args tail, propagate to actions per-command (IF3) — done in PR1b-ii
 - [x] 2.3 RED `SentinelQuesting/importer/tests/mapper.rs`: `#sticky` step → `Operation.sticky = true` (IF4)
 - [x] 2.4 GREEN `SentinelQuesting/importer/src/project_builder.rs` + `SentinelQuesting/shared/src/authoring/operation.rs`: add `sticky`/`looping` flags, parse directives (IF4)
 - [x] 2.5 RED `SentinelQuesting/importer/tests/mapper.rs`: `#compltewith` → canonical `#completewith` + info diagnostic (IF5)
 - [x] 2.6 GREEN `SentinelQuesting/importer/src/lexer.rs`: typo canonicalization table (IF5)
-- [ ] 2.7 RED `SentinelQuesting/importer/tests/mapper.rs` w/ `fixtures/guide_basic.lua` variant: N-header bundle → N `Project` outputs (IF6) — **deferred to PR1b-ii, budget guard**
-- [ ] 2.8 GREEN `SentinelQuesting/importer/src/guide_splitter.rs`: split on multiple headers preserving per-guide metadata (IF6) — **deferred to PR1b-ii, budget guard**
-- [ ] 2.9 RED `SentinelQuesting/importer/tests/importer.rs`: `.equip`/`.skill` → typed inert action + diagnostic naming command/args (IF7) — **implemented then reverted to stay under the 400-line budget after follow-up costs ran higher than forecast; deferred to PR1b-ii**
-- [ ] 2.10 GREEN `SentinelQuesting/importer/src/label_graph.rs` + `project_builder.rs`: never-drop fallback to typed inert annotation (IF7) — **deferred to PR1b-ii, budget guard**
-- [ ] 2.11 GREEN `SentinelQuesting/importer/src/coverage.rs` (new): `CoverageReport` — per-command typed/inert/unresolved tally (IF7, feeds CL5) — **deferred to PR1b-ii, budget guard**
+- [x] 2.7 RED `SentinelQuesting/importer/tests/importer.rs` w/ `fixtures/guide_bundle_tbc_slice.lua` (real 2-block excerpt of `The Burning Crusade.lua`) + `src/guide_splitter.rs` unit test: N-header bundle → N `Project` outputs (IF6) — done in PR1b-ii
+- [x] 2.8 GREEN `SentinelQuesting/importer/src/guide_splitter.rs` (`extract_guide_blocks`) + `lib.rs` (`parse_guide_bundle`): outer scan for `RegisterGuide([[...]])` blocks, split before per-guide parsing, one `Project` per guide (IF6) — done in PR1b-ii. Not yet wired into the `import-guides` bin (still single-Project-per-file there) — follow-up for PR3
+- [x] 2.9 RED `SentinelQuesting/importer/tests/mapper.rs`: `.equip`/`.skill` → typed inert action + diagnostic naming command/args (IF7) — done in PR1b-ii
+- [x] 2.10 GREEN `SentinelQuesting/importer/src/project_builder.rs` (`inert_preserved_action` helper, wired into `waypoint`/`skill`/`equip`/catch-all arms): never-drop fallback to typed inert annotation with `COMMAND_PRESERVED_INERT` diagnostic (IF7) — done in PR1b-ii. `label_graph.rs` needed no change (already per-guide, unaffected by never-drop). `abandon`/`fp` malformed-arg edge cases still silently drop (pre-existing gap, out of this slice's RED scope)
+- [ ] 2.11 GREEN `SentinelQuesting/importer/src/coverage.rs` (new): `CoverageReport` — per-command typed/inert/unresolved tally (IF7, feeds CL5) — **deferred to PR1b-iii, budget guard (PR1b-ii hit ~400 authored lines with 2.1-2.10 + mandatory cross-crate `Action` field fixes before coverage.rs could start)**
 
 ### PR1a Review Follow-ups (all completed in PR1b)
 
@@ -87,6 +87,7 @@ Rationale: PR1 (7 reqs, 6 importer files + new `coverage.rs`) and PR2 (new DSL p
 - [x] F5 Single source of truth for the seven gating command names (`GATING_COMMANDS` const, shared by `build_step_actions`'s routing and `gating_condition_dsl`'s dispatch)
 - [x] F6 Removed the double `strip_inline_comment` (dead defensive layer) — subsumed by F1
 - [x] F7 Operator-whitespace tolerance: `.itemcount 100,< 5` (space between operator and digits) now parses correctly, + test
+- [x] F8 (PR1b-ii) Regression test pinning current early mid-line `--` behavior (`.goto Zone--Name,1.0,2.0 -- note` truncates at the first `--`, dropping subsequent comma args too) — zero corpus matches for this shape; test documents intent explicitly so a future corpus hit is a conscious decision
 
 ## PR2a: Compiler — Condition DSL Parser
 
