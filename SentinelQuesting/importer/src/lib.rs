@@ -22,6 +22,7 @@
 //! RestedXP color-coded text (e.g., `|cRXP_FRIENDLY_Name|r`).
 
 mod guide_splitter;
+mod coverage;
 mod label_graph;
 mod lexer;
 mod name_hints;
@@ -29,6 +30,7 @@ mod project_builder;
 mod step_builder;
 
 pub use guide_splitter::{extract_guide_blocks, GuideSplitter, SplitGuide};
+pub use coverage::{CommandTally, CoverageReport};
 pub use label_graph::{LabelGraph, LabelGraphBuilder, LabelRef};
 pub use lexer::{Lexer, Token};
 pub use project_builder::ProjectBuilder;
