@@ -2,7 +2,8 @@
 
 use sentinel_compiler::Compiler;
 use sentinel_models::authoring::{
-    Action, ActionPayload, ConditionAction, NPCReference, Operation, VendorAction,
+    Action, ActionPayload, ConditionAction, GameObjectReference, LootObjectAction, NPCReference,
+    Operation, Position, VendorAction,
 };
 use sentinel_models::authoring::new_project;
 use sentinel_models::runtime::{RuntimeAction, RuntimeCondition};
@@ -16,6 +17,17 @@ fn condition_action(expression: &str) -> Action {
         class_restriction: None,
         note: None,
         payload: ActionPayload::Condition(ConditionAction { expression: expression.to_string() }),
+    }
+}
+
+fn loot_action(object: Uuid) -> Action {
+    Action {
+        id: Uuid::new_v4(),
+        enabled: true,
+        condition: None,
+        class_restriction: None,
+        note: None,
+        payload: ActionPayload::LootObject(LootObjectAction { object, count: None }),
     }
 }
 
@@ -113,6 +125,55 @@ fn unmappable_condition_expression_records_diagnostic_and_fails_open() {
             d.code == "UNMAPPED_CONDITION"
                 && d.entity.as_deref() == Some("NotARealPredicate(1)")
                 && d.action.as_deref() == Some(&action_id.to_string())
+        }),
+        "got: {:?}", report.unmapped_conditions
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CL2 — LootObject entry resolution.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn resolvable_loot_object_gets_real_entry() {
+    let mut project = new_project("test");
+    let obj_id = Uuid::new_v4();
+    project.object_library.push(GameObjectReference::new(
+        4444,
+        "Test Chest",
+        Position { map: 0, world_x: 1.0, world_y: 2.0, world_z: 3.0, orientation: None },
+        "Chest",
+    ));
+    project.object_library[0].id = obj_id;
+
+    let mut op = Operation::new("test-op".to_string());
+    op.actions.push(loot_action(obj_id));
+    project.operations.push(op);
+
+    let (profile, report) = Compiler::compile(&project).expect("compile ok");
+    let RuntimeAction::Loot(l) = &profile.operations[0].actions[0] else { panic!("expected Loot") };
+    assert_eq!(l.object_entry, 4444);
+    assert_eq!(report.unresolved, 0);
+}
+
+#[test]
+fn unresolvable_loot_object_records_diagnostic_and_unresolved_count() {
+    let mut project = new_project("test");
+    let missing_id = Uuid::new_v4();
+
+    let mut op = Operation::new("test-op".to_string());
+    let action = loot_action(missing_id);
+    let action_id = action.id;
+    op.actions.push(action);
+    project.operations.push(op);
+
+    let (profile, report) = Compiler::compile(&project).expect("compile ok");
+    let RuntimeAction::Loot(l) = &profile.operations[0].actions[0] else { panic!("expected Loot") };
+    assert_eq!(l.object_entry, 0, "unresolved object falls back to 0, never a guessed entry");
+    assert_eq!(report.unresolved, 1);
+    assert!(
+        report.unmapped_conditions.iter().any(|d| {
+            d.code == "UNRESOLVED_OBJECT" && d.action.as_deref() == Some(&action_id.to_string())
         }),
         "got: {:?}", report.unmapped_conditions
     );
