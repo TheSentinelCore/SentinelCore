@@ -52,7 +52,7 @@ local function make_profile_ops(action_type, payload)
         operations = {
             {
                 id = 1,
-                action = { type = action_type or "Comment", payload = payload or { text = "test" } },
+                actions = { { type = action_type or "Comment", payload = payload or { text = "test" } } },
                 next_condition = "auto",
             },
         },
@@ -128,7 +128,7 @@ function M.test_fingerprint_mismatch_rejects_save()
     local profile2 = create_profile({
         content_hash = "differentHash",
         operations = {
-            { id = 1, action = { type = "Comment", payload = { text = "v2" } }, next_condition = "auto" },
+            { id = 1, actions = { { type = "Comment", payload = { text = "v2" } } }, next_condition = "auto" },
         },
     })
 
@@ -143,7 +143,7 @@ function M.test_empty_fingerprint_starts_fresh()
     -- Create profile without content_hash
     local profile = create_profile({
         operations = {
-            { id = 1, action = { type = "Comment", payload = { text = "test" } }, next_condition = "auto" },
+            { id = 1, actions = { { type = "Comment", payload = { text = "test" } } }, next_condition = "auto" },
         },
     })
     -- profile._profile.content_hash should be nil
@@ -155,7 +155,7 @@ function M.test_empty_fingerprint_starts_fresh()
     -- Try to load on a fresh profile
     local profile2 = create_profile({
         operations = {
-            { id = 1, action = { type = "Comment", payload = { text = "test" } }, next_condition = "auto" },
+            { id = 1, actions = { { type = "Comment", payload = { text = "test" } } }, next_condition = "auto" },
         },
     })
     local restored = profile2:_load_save()
@@ -179,7 +179,7 @@ function M.test_serialize_state_includes_all_fields()
     profile._variables = { key = "val" }
 
     local state = profile:_serialize_state()
-    T.assert_equal(state.version, 1, "Version should be 1")
+    T.assert_equal(state.version, 2, "Version should be 2 (v2 schema)")
     T.assert_equal(state.profile_fingerprint, "abc123hash", "Fingerprint should match profile")
     T.assert_equal(state.current_operation_idx, 4, "Operation index should match")
     T.assert_equal(state.variables.key, "val", "Variables should match")
@@ -212,7 +212,7 @@ function M.test_auto_save_on_skipped_advance()
         operations = {
             {
                 id = 1,
-                action = { type = "Condition", payload = { condition = { type = "LevelAtLeast", payload = 100 } } },
+                actions = { { type = "Condition", payload = { condition = { type = "LevelAtLeast", payload = 100 } } } },
                 next_condition = "auto",
             },
         },

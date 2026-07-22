@@ -12,8 +12,8 @@ QuestingRuntimeContext.__index = QuestingRuntimeContext
 function QuestingRuntimeContext:new()
     local blackboard = Blackboard:new()
     local event_bus = EventBus:new(function(msg)
-        if core and core.print then
-            core.print("[QuestingRuntime] " .. tostring(msg))
+        if core and core.log then
+            core.log("[QuestingRuntime] " .. tostring(msg))
         end
     end)
     local o = setmetatable({}, QuestingRuntimeContext)
@@ -64,8 +64,8 @@ function QuestingRuntimeContext:enable_questing(profile_path)
     -- Get the questing module
     local questing_module = self._registry:get("questing")
     if not questing_module then
-        if core and core.print then
-            core.print("[QuestingRuntime] ERROR: questing module not found")
+        if core and core.log then
+            core.log("[QuestingRuntime] ERROR: questing module not found")
         end
         return false
     end

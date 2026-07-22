@@ -2,79 +2,73 @@
 -- Offline test harness with mock Sylvannas APIs (combat-only)
 -- Usage: lua sentinel/tests/run_offline.lua
 
--- Mock Sylvannas global API
+-- Mock Sylvannas global API (placeholder - Sylvannas uses core.* not _G.SentinelCore)
+-- These are no longer used by runtime_action.lua which now uses core.quests.* and core.input.*
 _G.SentinelCore = {
-    AcceptQuest = function(quest_id) return true end,
-    SelectQuestEntry = function(quest_id) return true end,
-    HasQuest = function(quest_id) return false end,
-    TurnInQuest = function(quest_id) return true end,
-    AutoAcceptQuest = function(quest_id) return true end,
-    UseItem = function(item_id) return true end,
-    Repair = function() return true end,
-    Train = function() return true end,
-    TakeFlight = function(dest) return true end,
-    UseHearthstone = function() return true end,
-    LearnFlightPath = function() return true end,
-    OpenMailbox = function() return true end,
-    OpenBank = function() return true end,
-    InteractNpc = function(entry, gossip) return true end,
-    SellGreys = function() return true end,
-    BuyItems = function(items) return true end,
+    -- Deprecated APIs - kept as stubs for backward compatibility
 }
 
--- Mock core namespace
+-- Mock core namespace (Sylvannas API compliant)
 _G.core = {
+    -- Sylvannas core.object_manager APIs
     object_manager = {
-        GetTarget = function() return nil end,
-        GetTargetInfo = function() return {} end,
-        GetFriends = function() return {} end,
-        GetEnemies = function() return {} end,
-        GetObjects = function() return {} end,
+        get_local_player = function()
+            return {
+                is_valid = function() return true end,
+                is_unit = function() return true end,
+                is_dead = function() return false end,
+                is_game_object = function() return false end,
+                get_position = function() return { x = 0, y = 0, z = 0 } end,
+                get_npc_id = function() return nil end,
+                get_entry_id = function() return nil end,
+                get_level = function() return 1 end,
+                get_class = function() return "Warrior" end,
+                get_race = function() return "Human" end,
+                get_health = function() return 100 end,
+            }
+        end,
+        get_all_objects = function() return {} end,
+        get_object_from_guid = function(guid) return nil end,
         GetUnits = function() return {} end,
-        GetUnitById = function(id) return nil end,
-        GetPlayer = function() return nil end,
-        GetPlayerInfo = function() return { guid = "player-guid", name = "TestPlayer", race = "Human", class = "Warrior", level = 1, map = 0, x = 0, y = 0, z = 0 } end,
     },
+    -- Sylvannas core.input APIs
     input = {
-        interact = function() return true end,
-        interact_unit = function(guid) return true end,
-        move = function(x, y, z) return true end,
-        stop_movement = function() return true end,
-        face = function(x, y) return true end,
+        interact_with_object = function(obj) return true end,
+        use_item = function(item_id) return true end,
+        release_spirit = function() return true end,
+        resurrect_corpse = function() return true end,
+        move_forward_start = function() return true end,
+        move_forward_stop = function() return true end,
+        strafe_left_start = function() return true end,
+        strafe_left_stop = function() return true end,
         jump = function() return true end,
     },
+    -- Sylvannas core.quests APIs
     quests = {
         is_quest_flagged_completed = function(quest_id) return false end,
+        is_on_quest = function(quest_id) return false end,
+        accept_quest = function() return true end,
+        complete_quest = function() return true end,
+        get_quest_reward = function(choice) return true end,
+        get_num_quest_log_entries = function() return 0 end,
+        get_quest_log_title = function(idx) return nil end,
+        select_gossip_option = function(id) return true end,
     },
-    flight_paths = {
-        is_known = function(node_id) return false end,
+    -- Sylvannas core.inventory APIs
+    inventory = {
+        get_gold = function() return 0 end,
+        get_items_in_bag = function(bag_id) return {} end,
+        sell_greys = function() return true end,
+        repair_all_items = function(use_guild) return true end,
     },
-    player = {
-        get_level = function() return 1 end,
-    },
-    spell = {
-        cast = function(id, target) return true end,
-        stop_casting = function() return true end,
-        is_casting = function() return false end,
-        get_cooldown = function(id) return 0 end,
-        is_usable = function(id) return true end,
-        get_spell_info = function(id) return { name = "Test Spell", rank = 1, cast_time = 0, range = 30 } end,
-    },
-    unit = {
-        get_health = function(guid) return 100 end,
-        get_max_health = function(guid) return 100 end,
-        get_power = function(guid) return 50 end,
-        get_max_power = function(guid) return 100 end,
-        get_position = function(guid) return 0, 0, 0 end,
-        get_facing = function(guid) return 0 end,
-        is_in_combat = function(guid) return false end,
-        is_dead = function(guid) return false end,
-        is_in_range = function(guid, range) return true end,
-        get_target = function(guid) return nil end,
-    },
+    -- Sylvannas core.time API (replaces forbidden GetTime)
+    time = function() return os.clock() end,
+    game_time = function() return os.clock() * 1000 end,
     geometry = {
-        distance = function(x1, y1, z1, x2, y2, z2) return math.sqrt((x2-x1)^2 + (y2-y1)^2 + (z2-z1)^2) end,
-        distance_2d = function(x1, y1, x2, y2) return math.sqrt((x2-x1)^2 + (y2-y1)^2) end,
+        distance = function(p1, p2)
+            if not p1 or not p2 then return math.huge end
+            return math.sqrt((p2.x-p1.x)^2 + (p2.y-p1.y)^2 + (p2.z-p1.z)^2)
+        end,
     },
     http_get = function(url)
         -- Mock HTTP responses
@@ -98,9 +92,6 @@ _G.core = {
         send = function(event, ...) end,
         publish = function(event, ...) end,
     },
-    -- Sylvannas utility
-    GetTime = function() return os.clock() end,
-    print = function(...) print(...) end,
 }
 
 -- Mock JSON module
@@ -203,6 +194,10 @@ local test_modules = {
 
     -- Questing module
     "tests/modules/questing/test_runtime_action",
+    "tests/modules/questing/test_runtime_profile",
+    "tests/modules/questing/test_runtime_persistence",
+    "tests/modules/questing/test_runtime_nav",
+    "tests/modules/questing/test_runtime_arch_polish",
 
     -- Shared libs
     "tests/shared/test_compat",

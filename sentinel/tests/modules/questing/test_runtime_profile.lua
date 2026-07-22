@@ -13,15 +13,18 @@ local M = {}
 -- ============================================================================
 
 --- Create a mock profile with a single operation of the given action type.
+--- Now uses op.actions[] array per W1.1.
 local function make_profile_ops(action_type, payload, overrides)
     overrides = overrides or {}
     return {
         operations = {
             {
                 id = overrides.op_id or 1,
-                action = {
-                    type = action_type,
-                    payload = payload or {},
+                actions = { -- W1.1: Use actions array instead of single action
+                    {
+                        type = action_type,
+                        payload = payload or {},
+                    },
                 },
                 next_condition = "auto",
             },
@@ -35,14 +38,18 @@ local function mock_globals()
     _G.core.object_manager = _G.core.object_manager or {}
     _G.core.unit = _G.core.unit or {}
     _G.core.input = _G.core.input or {}
+    _G.core.quests = _G.core.quests or {}
+    _G.core.inventory = _G.core.inventory or {}
 
     -- Reset global state
     _G.core.unit.is_dead = nil
     _G.core.unit.get_health = nil
     _G.core.object_manager.get_local_player = nil
-    _G.core.object_manager.GetNearestCreature = nil
-    _G.core.object_manager.GetNearestGameObject = nil
-    _G.core.object_manager.GetNearestObject = nil
+    _G.core.object_manager.get_all_objects = nil
+    _G.core.quests.is_on_quest = nil
+    _G.core.quests.is_quest_flagged_completed = nil
+    _G.core.quests.get_num_quest_log_entries = nil
+    _G.core.quests.get_quest_log_title = nil
 
     _G.SentinelNavClient = {
         client = {
@@ -86,7 +93,7 @@ end
 
 function M.test_retry_counter_increments()
     local profile = create_profile(make_profile_ops("Hearth", {}))
-    -- Hearth returns "retry" because _G.SentinelCore.UseHearthstone is nil
+    -- Hearth returns "retry" because core.input.use_item is nil (hearthstone API)
 
     -- Each tick increments retry counter
     for i = 1, 4 do
@@ -168,9 +175,13 @@ end
 function M.test_death_detection_enters_ghost()
     local profile = create_profile(make_profile_ops("Comment", { text = "test" }))
 
-    -- Mock player as dead
-    _G.core.unit.is_dead = function()
-        return true
+    -- Mock player as dead via object_manager (Sylvannas API)
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return true end,
+            get_health = function() return 0 end,
+        }
     end
 
     local status, msg = profile:execute()
@@ -182,12 +193,24 @@ function M.test_ghost_to_running_on_rez()
     local profile = create_profile(make_profile_ops("Comment", { text = "test" }))
 
     -- Start dead
-    _G.core.unit.is_dead = function() return true end
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return true end,
+            get_health = function() return 0 end,
+        }
+    end
     profile:execute()
     T.assert_equal(profile._state, "ghost", "Should be in ghost state")
 
     -- Now alive
-    _G.core.unit.is_dead = function() return false end
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return false end,
+            get_health = function() return 100 end,
+        }
+    end
     local status, msg = profile:execute()
     T.assert_equal(status, "running", "After rez, should return running")
     T.assert_equal(profile._state, "running", "After rez, should transition to running")
@@ -201,9 +224,9 @@ function M.test_consecutive_failures_stops_profile()
     -- Create a profile with 3 ops that all fail, to accumulate consecutive failures
     local profile = create_profile({
         operations = {
-            { id = 1, action = { type = "NonExistentType", payload = {} }, next_condition = "auto" },
-            { id = 2, action = { type = "NonExistentType", payload = {} }, next_condition = "auto" },
-            { id = 3, action = { type = "NonExistentType", payload = {} }, next_condition = "auto" },
+            { id = 1, actions = { { type = "NonExistentType", payload = {} } }, next_condition = "auto" },
+            { id = 2, actions = { { type = "NonExistentType", payload = {} } }, next_condition = "auto" },
+            { id = 3, actions = { { type = "NonExistentType", payload = {} } }, next_condition = "auto" },
         },
     })
 
@@ -226,12 +249,12 @@ function M.test_success_resets_consecutive_failures()
         operations = {
             {
                 id = 1,
-                action = { type = "NonExistentType", payload = {} },
+                actions = { { type = "NonExistentType", payload = {} } },
                 next_condition = "auto",
             },
             {
                 id = 2,
-                action = { type = "Comment", payload = { text = "reset" } },
+                actions = { { type = "Comment", payload = { text = "reset" } } },
                 next_condition = "auto",
             },
         },
@@ -271,7 +294,13 @@ end
 
 function M.test_logging_on_death()
     local profile = create_profile(make_profile_ops("Comment", { text = "test" }))
-    _G.core.unit.is_dead = function() return true end
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return true end,
+            get_health = function() return 0 end,
+        }
+    end
     profile:execute()
 
     local death_events = get_log_events(profile, "death_detected")
@@ -286,9 +315,9 @@ function M.test_reset_clears_state()
     -- Use 3 failing ops to accumulate consecutive failures
     local profile = create_profile({
         operations = {
-            { id = 1, action = { type = "NonExistentType", payload = {} }, next_condition = "auto" },
-            { id = 2, action = { type = "NonExistentType", payload = {} }, next_condition = "auto" },
-            { id = 3, action = { type = "NonExistentType", payload = {} }, next_condition = "auto" },
+            { id = 1, actions = { { type = "NonExistentType", payload = {} } }, next_condition = "auto" },
+            { id = 2, actions = { { type = "NonExistentType", payload = {} } }, next_condition = "auto" },
+            { id = 3, actions = { { type = "NonExistentType", payload = {} } }, next_condition = "auto" },
         },
     })
 

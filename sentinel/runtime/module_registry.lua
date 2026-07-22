@@ -41,7 +41,7 @@ ModuleRegistry.modules = {
 		namespace = "questing",
 		capabilities = { "quest_execution", "route_navigation" },
 		configuration = {
-			enabled = false, -- Questing enabled on-demand
+			enabled = true, -- Enabled for editor access (can run empty rotations)
 			priority = 50,
 		},
 		init = function(blackboard, event_bus)

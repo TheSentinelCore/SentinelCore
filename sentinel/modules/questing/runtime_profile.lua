@@ -10,6 +10,9 @@ local Geometry = require("core/geometry")
 local EventBus = require("core/event_bus")
 local NavAdapter = require("integrations/nav_client/adapter")
 
+-- UnitHelper is exposed from RuntimeAction for object lookup (Sylvannas API compliant)
+local UnitHelper = RuntimeAction.UnitHelper
+
 -- ============================================================================
 -- Named constants for proximity checks (W3.1, W3.2, W3.6)
 -- ============================================================================
@@ -30,9 +33,10 @@ local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks
 local RuntimeProfile = {}
 RuntimeProfile.__index = RuntimeProfile
 
-function RuntimeProfile:new(json_path)
+function RuntimeProfile:new(json_path, dry_run)
     local o = setmetatable({}, RuntimeProfile)
     o._json_path = json_path
+    o._dry_run = dry_run == true
     o._profile = nil
     o._blackboard = Blackboard:new()
     o._query = QueryClient:new("127.0.0.1", 3030)
@@ -46,14 +50,29 @@ function RuntimeProfile:new(json_path)
     o._state = "running"                -- "running" | "navigating" | "ghost" | "failed" | "finished"
     o._current_action_retries = 0       -- Per-action retry count (W4.1)
     o._consecutive_failures = 0         -- Across-action failure count (W4.4)
+    o._current_action_idx = 1           -- Current action index within operation (W1.1)
     o._nav_start_time = nil             -- When navigation began (W4.2)
     o._ghost_start_time = nil           -- When death was detected (W4.3)
     o._last_blocked_action = nil        -- Copy of the action that triggered blocked
     o._execution_log = {}               -- Structured log entries (W4.5)
 
+    -- Hot reload (T16)
+    o._json_mtime = nil                  -- Last known mtime for hot reload polling
+
     -- Persistence (W5.2, W5.3)
     o._save_path = o:_compute_save_path()
     o._dirty = false                    -- Track unsaved changes
+
+    -- Extended state for v2 persistence (T18)
+    o._completed_quests = {}            -- { [quest_entry] = true }
+    o._temporary_variables = {}         -- Runtime-only variables
+    o._visited_vendors = {}             -- Vendor entries visited
+    o._known_flight_paths = {}          -- Flight path nodes discovered
+    o._known_hearth_location = nil      -- Last known hearth position
+
+    -- Dry-run simulation tracking
+    o._sim_result = nil
+
     return o
 end
 
@@ -74,17 +93,26 @@ end
 --- Serialize current execution state for persistence.
 function RuntimeProfile:_serialize_state()
     return {
-        version = 1,
+        version = 2,
         profile_fingerprint = (self._profile and self._profile.content_hash) or "",
         current_operation_idx = self._current_operation_idx,
         variables = self._variables,
-        saved_at = (_G.GetTime and _G.GetTime()) or 0,
+        saved_at = (core and core.time and core.time()) or 0,
+        -- v2 additions (T18): full execution state
+        current_action_idx = self._current_action_idx,
+        completed_quests = self._completed_quests or {},
+        temporary_variables = self._temporary_variables or {},
+        visited_vendors = self._visited_vendors or {},
+        known_flight_paths = self._known_flight_paths or {},
+        known_hearth_location = self._known_hearth_location,
+        execution_history = self._execution_log or {},
     }
 end
 
 --- Persist execution state to disk.
 --- Called on operation advance, variable change, stop, and reset.
 function RuntimeProfile:_save()
+    if self._dry_run then return false end
     local data = self:_serialize_state()
     local json = nil
     if JSON and JSON.stringify then
@@ -155,10 +183,37 @@ function RuntimeProfile:_load_save()
     if type(decoded.variables) == "table" then
         self._variables = decoded.variables
     end
+
+    -- v2 fields (T18) — restore with nil-safe defaults for v1 saves
+    if decoded.version == 2 then
+        if type(decoded.current_action_idx) == "number" then
+            self._current_action_idx = decoded.current_action_idx
+        end
+        if type(decoded.completed_quests) == "table" then
+            self._completed_quests = decoded.completed_quests
+        end
+        if type(decoded.temporary_variables) == "table" then
+            self._temporary_variables = decoded.temporary_variables
+        end
+        if type(decoded.visited_vendors) == "table" then
+            self._visited_vendors = decoded.visited_vendors
+        end
+        if type(decoded.known_flight_paths) == "table" then
+            self._known_flight_paths = decoded.known_flight_paths
+        end
+        if decoded.known_hearth_location ~= nil then
+            self._known_hearth_location = decoded.known_hearth_location
+        end
+        if type(decoded.execution_history) == "table" then
+            self._execution_log = decoded.execution_history
+        end
+    end
+
     self._dirty = false
     self:_log_event("save_restored", {
         operation = self._current_operation_idx,
-        variable_count = self._variables and #self._variables or 0,
+        variable_count = 0, -- table len unreliable for dict
+        save_version = decoded.version or 1,
     })
     return true
 end
@@ -213,7 +268,16 @@ function RuntimeProfile:load()
         end
         self._profile = decoded
 
+        -- T17 — Initialize variables from profile defaults
+        self._variables = {}
+        if self._profile.variables then
+            for _, v in ipairs(self._profile.variables) do
+                self._variables[v.name] = v.default_value or 0
+            end
+        end
+
         -- W5.2 — Attempt to restore execution state from save file
+        -- (restored values override default initializations)
         local restored = self:_load_save()
         if restored then
             self:_log_event("load_with_save", {
@@ -266,19 +330,18 @@ function RuntimeProfile:create_context()
     --- @return boolean
     function ctx:is_at_npc(entry, range)
         range = range or INTERACT_RANGE
-        if core and core.object_manager and core.object_manager.GetNearestCreature then
-            local npc = core.object_manager.GetNearestCreature({ entry })
-            if npc and npc.IsValid and npc:IsValid() then
-                -- Try precise distance check
-                local player_pos = self:_get_player_pos()
-                if player_pos and npc.get_position then
-                    local ok, npc_pos = pcall(npc.get_position, npc)
-                    if ok and npc_pos then
-                        return Geometry.distance(player_pos, npc_pos) <= range
-                    end
+        -- Use UnitHelper to find creature (Sylvannas API compliant)
+        local npc = UnitHelper.get_nearest_creature({ entry })
+        if npc and npc:is_valid() then
+            -- Try precise distance check
+            local player_pos = self:_get_player_pos()
+            if player_pos and npc.get_position then
+                local ok, npc_pos = pcall(npc.get_position, npc)
+                if ok and npc_pos then
+                    return Geometry.distance(player_pos, npc_pos) <= range
                 end
-                return true -- NPC exists nearby; best-effort
             end
+            return true -- NPC exists nearby; best-effort
         end
         return false
     end
@@ -289,23 +352,17 @@ function RuntimeProfile:create_context()
     --- @return boolean
     function ctx:is_at_object(entry, range)
         range = range or LOOT_RANGE
-        if core and core.object_manager then
-            local nearest_obj = nil
-            if core.object_manager.GetNearestGameObject then
-                nearest_obj = core.object_manager.GetNearestGameObject({ entry })
-            elseif core.object_manager.GetNearestObject then
-                nearest_obj = core.object_manager.GetNearestObject({ entry })
-            end
-            if nearest_obj and nearest_obj.IsValid and nearest_obj:IsValid() then
-                local player_pos = self:_get_player_pos()
-                if player_pos and nearest_obj.get_position then
-                    local ok, obj_pos = pcall(nearest_obj.get_position, nearest_obj)
-                    if ok and obj_pos then
-                        return Geometry.distance(player_pos, obj_pos) <= range
-                    end
+        -- Use UnitHelper to find game object (Sylvannas API compliant)
+        local obj = UnitHelper.get_nearest_game_object({ entry })
+        if obj and obj:is_valid() then
+            local player_pos = self:_get_player_pos()
+            if player_pos and obj.get_position then
+                local ok, obj_pos = pcall(obj.get_position, obj)
+                if ok and obj_pos then
+                    return Geometry.distance(player_pos, obj_pos) <= range
                 end
-                return true
             end
+            return true
         end
         return false
     end
@@ -365,29 +422,22 @@ function RuntimeProfile:create_context()
     -- Quest log tracking (W2.3, W2.4)
     -- ====================================================================
 
-    --- Refresh the quest log caches from Sylvanas APIs.
+    --- Refresh the quest log caches from Sylvannas APIs.
     --- Called automatically on first access; can be called manually to force.
     function ctx:_refresh_quest_log()
         self._completed_quests = {}
         self._active_quests = {}
 
-        if core and core.object_manager then
-            -- Query completed quests
-            if core.object_manager.GetCompletedQuests then
-                local completed = core.object_manager.GetCompletedQuests()
-                if type(completed) == "table" then
-                    for _, entry in ipairs(completed) do
-                        self._completed_quests[tostring(entry)] = true
-                    end
-                end
-            end
-
-            -- Query active quests
-            if core.object_manager.GetActiveQuests then
-                local active = core.object_manager.GetActiveQuests()
-                if type(active) == "table" then
-                    for _, entry in ipairs(active) do
-                        self._active_quests[tostring(entry)] = true
+        -- Use core.quests.is_quest_flagged_completed for completed quests (Sylvannas API)
+        if core and core.quests and core.quests.get_num_quest_log_entries then
+            local num_entries = core.quests.get_num_quest_log_entries()
+            for i = 1, num_entries do
+                local info = core.quests.get_quest_log_title(i)
+                if info and not info.is_header then
+                    if info.is_complete then
+                        self._completed_quests[tostring(info.quest_id)] = true
+                    else
+                        self._active_quests[tostring(info.quest_id)] = true
                     end
                 end
             end
@@ -407,62 +457,89 @@ function RuntimeProfile:create_context()
         if self._quest_log_dirty then
             self:_refresh_quest_log()
         end
+        -- Also directly check Sylvannas API for active quests
+        if core and core.quests and core.quests.is_on_quest then
+            local ok, is_on = pcall(core.quests.is_on_quest, quest_entry)
+            if ok and is_on then
+                return true
+            end
+        end
         return self._active_quests[tostring(quest_entry)] == true
     end
 
     function ctx:is_objective_complete(quest_entry, objective_idx)
-        if core and core.object_manager and core.object_manager.GetQuestObjectiveInfo then
-            local completed, _ = core.object_manager.GetQuestObjectiveInfo(quest_entry, objective_idx)
-            return completed == true
+        -- Use core.quests.get_num_quest_leader_boards and get_quest_log_leader_board (Sylvannas API)
+        if core and core.quests and core.quests.get_num_quest_leader_boards then
+            -- Find quest log index for this quest
+            if self._quest_log_dirty then
+                self:_refresh_quest_log()
+            end
+            -- Try to find quest by ID in our cached log
+            local num_entries = core.quests.get_num_quest_log_entries()
+            for i = 1, num_entries do
+                local info = core.quests.get_quest_log_title(i)
+                if info and info.quest_id == quest_entry then
+                    local num_obj = core.quests.get_num_quest_leader_boards(i)
+                    if objective_idx <= num_obj then
+                        local text = core.quests.get_quest_log_leader_board(objective_idx, i)
+                        -- Parse "Wolves slain: 3/10" format - check if complete
+                        if text and string.match(text, "%((%d+)/(%d+)%)") then
+                            local cur, max = string.match(text, "%((%d+)/(%d+)%)")
+                            if tonumber(cur) >= tonumber(max) then
+                                return true
+                            end
+                        end
+                        return false
+                    end
+                    break
+                end
+            end
         end
         -- Fallback: check if quest is completed
         return self:is_quest_completed(quest_entry)
     end
 
     -- ====================================================================
-    -- Player stats facade (W2.5)
+    -- Player stats facade (W2.5) - Sylvannas API compliant
     -- ====================================================================
 
     function ctx:get_player_level()
-        if core and core.unit and core.unit.get_level then
-            return core.unit.get_level("player") or 1
+        -- Use get_local_player():get_level() (Sylvannas API)
+        local player = UnitHelper.get_local_player()
+        if player and player.get_level then
+            local ok, level = pcall(player.get_level, player)
+            if ok and tonumber(level) then
+                return level
+            end
         end
         return 1
     end
 
     function ctx:get_player_class()
-        if core and core.object_manager and core.object_manager.GetPlayerInfo then
-            local info = core.object_manager.GetPlayerInfo()
-            if info and info.class_name then
-                return info.class_name
+        -- Use get_local_player():get_class() (Sylvannas API)
+        local player = UnitHelper.get_local_player()
+        if player and player.get_class then
+            local ok, class = pcall(player.get_class, player)
+            if ok and class then
+                return class
             end
-        end
-        if core and core.unit and core.unit.get_class then
-            return core.unit.get_class("player") or "Unknown"
         end
         return "Unknown"
     end
 
     function ctx:get_player_race()
-        if core and core.object_manager and core.object_manager.GetPlayerInfo then
-            local info = core.object_manager.GetPlayerInfo()
-            if info and info.race_name then
-                return info.race_name
+        -- Use get_local_player():get_race() (Sylvannas API)
+        local player = UnitHelper.get_local_player()
+        if player and player.get_race then
+            local ok, race = pcall(player.get_race, player)
+            if ok and race then
+                return race
             end
-        end
-        if core and core.unit and core.unit.get_race then
-            return core.unit.get_race("player") or "Unknown"
         end
         return "Unknown"
     end
 
     function ctx:get_player_faction()
-        if core and core.object_manager and core.object_manager.GetPlayerInfo then
-            local info = core.object_manager.GetPlayerInfo()
-            if info and info.faction then
-                return info.faction
-            end
-        end
         -- Fallback: derive from race
         local race = ctx:get_player_race()
         local alliance_races = { Human = true, Dwarf = true, NightElf = true, Gnome = true, Draenei = true }
@@ -473,53 +550,175 @@ function RuntimeProfile:create_context()
     end
 
     -- ====================================================================
-    -- Inventory facade (W2.5)
+    -- Inventory facade (W2.5) - Sylvannas API compliant
     -- ====================================================================
 
     function ctx:get_item_count(item_entry)
-        if core and core.object_manager and core.object_manager.GetItemCount then
-            return core.object_manager.GetItemCount(item_entry) or 0
+        -- Check player's equipped items for item count (Sylvannas API)
+        local player = UnitHelper.get_local_player()
+        if player and player.get_equipped_items then
+            local ok, items = pcall(player.get_equipped_items, player)
+            if ok and items then
+                local count = 0
+                for _, slot_info in ipairs(items) do
+                    if slot_info.object and slot_info.object.get_item_id then
+                        local ok2, id = pcall(slot_info.object.get_item_id, slot_info.object)
+                        if ok2 and tostring(id) == tostring(item_entry) then
+                            count = count + 1
+                        end
+                    end
+                end
+                return count
+            end
         end
-        return 0
-    end
-
-    function ctx:get_money()
-        if core and core.unit and core.unit.get_money then
-            return core.unit.get_money() or 0
-        end
-        return 0
-    end
-
-    -- ====================================================================
-    -- Skill / Reputation / Cooldown facade (W2.5)
-    -- ====================================================================
-
-    function ctx:get_skill_level(skill_name)
-        if core and core.unit and core.unit.get_skill then
-            local skill = core.unit.get_skill(skill_name)
-            if skill then
-                return skill.current or 0
+        -- Check bags for item count
+        if core and core.inventory and core.inventory.get_items_in_bag then
+            for bag_id = 0, 4 do
+                local ok, items = pcall(core.inventory.get_items_in_bag, core.inventory, bag_id)
+                if ok and items then
+                    for _, slot_info in ipairs(items) do
+                        if slot_info.object and slot_info.object.get_item_id then
+                            local ok2, id = pcall(slot_info.object.get_item_id, slot_info.object)
+                            if ok2 and tostring(id) == tostring(item_entry) then
+                                return 1
+                            end
+                        end
+                    end
+                end
             end
         end
         return 0
     end
 
-    function ctx:is_item_ready(item_entry)
-        if core and core.spell and core.spell.get_item_cooldown then
-            local cd = core.spell.get_item_cooldown(item_entry)
-            return cd == nil or cd == 0
-        end
-        return true -- Assume ready if no API
-    end
-
-    function ctx:get_reputation(faction_id)
-        if core and core.unit and core.unit.get_reputation then
-            return core.unit.get_reputation(faction_id) or 0
+    function ctx:get_money()
+        -- Use core.inventory.get_gold() (Sylvannas API)
+        if core and core.inventory and core.inventory.get_gold then
+            local ok, copper = pcall(core.inventory.get_gold, core.inventory)
+            if ok and tonumber(copper) then
+                return copper
+            end
         end
         return 0
     end
 
+    -- ====================================================================
+    -- Skill / Reputation / Cooldown facade (W2.5) - Sylvannas API compliant
+    -- ====================================================================
+
+    function ctx:get_skill_level(skill_name)
+        -- Sylvannas doesn't have a direct skill level API, return 0
+        return 0
+    end
+
+    function ctx:is_item_ready(item_entry)
+        -- Use object's get_item_cooldown method (Sylvannas API)
+        local player = UnitHelper.get_local_player()
+        if player and player.get_item_cooldown then
+            local ok, cd = pcall(player.get_item_cooldown, player, item_entry)
+            if ok and cd and tonumber(cd) and cd > 0 then
+                return false
+            end
+        end
+        return true -- Assume ready if no API or no cooldown
+    end
+
+    function ctx:get_reputation(faction_id)
+        -- Sylvannas doesn't have a direct reputation getter in core.quests
+        -- Would need to use quest APIs or return 0
+        return 0
+    end
+
     return ctx
+end
+
+-- ============================================================================
+-- Hot reload (T16)
+-- ============================================================================
+
+--- Get the last modification time of the profile JSON file.
+--- Returns a number (timestamp) or nil.
+function RuntimeProfile:_get_file_mtime()
+    if core and core.get_file_info then
+        local ok, info = pcall(core.get_file_info, self._json_path)
+        if ok and info and info.mtime then
+            return info.mtime
+        end
+    end
+    -- Fallback: LuaFileSystem if available
+    local ok, lfs = pcall(require, "lfs")
+    if ok and lfs and lfs.attributes then
+        local attr = lfs.attributes(self._json_path)
+        if attr and attr.modification then
+            return attr.modification
+        end
+    end
+    return nil
+end
+
+--- Check profile JSON for changes and hot-reload if detected.
+--- Guard: only when state is "running".
+--- On change: validate content_hash, swap profile preserving _variables.
+function RuntimeProfile:_check_hot_reload()
+    if self._dry_run then return end
+    if self._state ~= "running" then return end
+
+    local mtime = self:_get_file_mtime()
+    if not mtime then return end
+
+    -- First check or mtime unchanged?
+    if self._json_mtime and mtime <= self._json_mtime then return end
+
+    -- Read file
+    local json, err = core.read_data_file and core.read_data_file(self._json_path)
+    if not json then
+        self._json_mtime = mtime -- Update so we don't retry every tick
+        return
+    end
+
+    local decoded = JSON and JSON.parse(json)
+    if not decoded then
+        local fn = load("return " .. json)
+        decoded = fn and fn()
+    end
+    if not decoded or type(decoded) ~= "table" then
+        self._json_mtime = mtime
+        return
+    end
+
+    -- Must have a content_hash to validate
+    if not decoded.content_hash then
+        self:_log_event("hot_reload_skip", { reason = "no content_hash" })
+        self._json_mtime = mtime
+        return
+    end
+
+    -- Same hash as already running? Update mtime cache only, skip
+    if self._profile and self._profile.content_hash == decoded.content_hash then
+        self._json_mtime = mtime
+        return
+    end
+
+    -- Preserve current variables, swap profile, re-init with defaults
+    local saved_variables = self._variables
+    self._profile = decoded
+
+    -- Re-initialize variables from new profile defaults
+    self._variables = {}
+    if self._profile.variables then
+        for _, v in ipairs(self._profile.variables) do
+            self._variables[v.name] = v.default_value or 0
+        end
+    end
+
+    -- Restore preserved variable values where the key still exists
+    for name, value in pairs(saved_variables) do
+        if self._variables[name] ~= nil then
+            self._variables[name] = value
+        end
+    end
+
+    self._json_mtime = mtime
+    self:_log_event("hot_reload", { hash = decoded.content_hash })
 end
 
 -- ============================================================================
@@ -528,17 +727,29 @@ end
 
 --- Main entry point, called each tick.
 --- Dispatches to the current state machine state.
-function RuntimeProfile:execute()
+--- When dry_run is true, simulates execution without calling real APIs.
+function RuntimeProfile:execute(dry_run)
+    if dry_run == true then
+        self._dry_run = true
+    end
+
     if not self._profile then
         return "error", "profile not loaded"
     end
+
+    if self._dry_run then
+        return self:_execute_dry_run()
+    end
+
+    -- T16 — Check for hot reload at start of each tick
+    self:_check_hot_reload()
 
     -- Death detection runs before every state (W4.3)
     local dead = self:_is_player_dead()
     if dead and self._state ~= "ghost" then
         self:_log_event("death_detected", { state = self._state })
         self._state = "ghost"
-        self._ghost_start_time = (_G.GetTime and _G.GetTime()) or 0
+        self._ghost_start_time = (core and core.time and core.time()) or 0
         return "running", "player dead, entering ghost recovery"
     end
 
@@ -557,6 +768,108 @@ function RuntimeProfile:execute()
 end
 
 -- ====================================================================
+-- Dry-run simulation (no real API calls, no navigation, no persistence)
+-- ====================================================================
+
+--- Execute the entire profile in dry-run mode.
+--- Walks all operations and actions sequentially. Conditions are evaluated
+--- normally (read-only ctx methods are safe). All other actions are
+--- simulated as "success". Navigation, saves, and hot reload are skipped.
+--- @return string, string "finished" status and summary message.
+function RuntimeProfile:_execute_dry_run()
+    local operations = self._profile.operations or {}
+    local results = {
+        operations_count = #operations,
+        estimated_duration_seconds = 0,
+        blocked_operations = 0,
+        failed_actions = 0,
+        skipped_conditions = 0,
+    }
+
+    local ctx = self:create_context()
+
+    for op_idx, op in ipairs(operations) do
+        local op_actions = op.actions or {}
+        local op_actions_duration = 0
+
+        for _, action in ipairs(op_actions) do
+            local action_type = action.type or "unknown"
+
+            if action_type == "Condition" then
+                local cond = action.payload and action.payload.condition
+                local ok = cond and RuntimeAction.evaluate_condition(ctx, cond) or false
+                if not ok then
+                    results.skipped_conditions = results.skipped_conditions + 1
+                end
+            elseif action_type == "Comment" then
+                -- No-op, zero cost
+            elseif action_type == "SetVariable" then
+                -- Safe to execute; doesn't call external APIs
+                RuntimeAction.execute_set_variable(action.payload, ctx)
+            else
+                -- All real actions: simulate success (the action itself
+                -- would trigger Sylvannas APIs, navigation, etc.)
+                -- Estimate a nominal per-action cost for duration.
+                op_actions_duration = op_actions_duration + 3.0
+            end
+        end
+
+        results.estimated_duration_seconds = results.estimated_duration_seconds + op_actions_duration
+    end
+
+    self._sim_result = results
+    self._state = "finished"
+    self._current_operation_idx = #operations + 1
+    return "finished", "dry-run simulation complete: " .. #operations .. " operations"
+end
+
+--- Run the full profile simulation in dry-run mode.
+--- Resets state, runs through all operations, and returns a summary table.
+--- @return table Summary with operations_count, estimated_duration_seconds,
+---         blocked_operations, failed_actions, skipped_conditions.
+function RuntimeProfile:simulate()
+    local saved_state = self._state
+    local saved_op_idx = self._current_operation_idx
+    local saved_action_idx = self._current_action_idx
+    local saved_variables = self._variables
+
+    self:reset()
+    self._dry_run = true
+
+    local ok, err = pcall(function()
+        if not self._profile then
+            error("profile not loaded")
+        end
+        self:_execute_dry_run()
+    end)
+
+    if not ok then
+        self._state = saved_state
+        self._current_operation_idx = saved_op_idx
+        self._current_action_idx = saved_action_idx
+        self._variables = saved_variables
+        self._dry_run = false
+        return { error = tostring(err) }
+    end
+
+    local result = self._sim_result or {
+        operations_count = 0,
+        estimated_duration_seconds = 0,
+        blocked_operations = 0,
+        failed_actions = 0,
+        skipped_conditions = 0,
+    }
+
+    self._state = saved_state
+    self._current_operation_idx = saved_op_idx
+    self._current_action_idx = saved_action_idx
+    self._variables = saved_variables
+    self._dry_run = false
+
+    return result
+end
+
+-- ====================================================================
 -- W4.5 — Structured logging
 -- ====================================================================
 
@@ -564,7 +877,7 @@ end
 function RuntimeProfile:_log_event(event_type, data)
     local entry = {
         event = event_type,
-        timestamp = (_G.GetTime and _G.GetTime()) or 0,
+        timestamp = (core and core.time and core.time()) or 0,
         operation = self._current_operation_idx,
         state = self._state,
     }
@@ -609,7 +922,15 @@ function RuntimeProfile:_execute_running()
         end
     end
 
-    local action = op.action
+    -- W1.1: Get current action from operation's actions array
+    if not op.actions or #op.actions == 0 then
+        self._state = "finished"
+        return "finished", "operation has no actions"
+    end
+    if self._current_action_idx > #op.actions then
+        self._current_action_idx = 1  -- Reset to first action if out of bounds
+    end
+    local action = op.actions[self._current_action_idx]
     local ctx = self:create_context()
 
     local status, msg = RuntimeAction.execute(action, ctx)
@@ -622,16 +943,30 @@ function RuntimeProfile:_execute_running()
         self:_log_event("action_success", { action_type = action and action.type, msg = msg })
         self._current_action_retries = 0
         self._consecutive_failures = 0
-        self:_advance_operation(op)
-        return "running", "next operation"
+        
+        -- W1.1: Move to next action within current operation
+        self._current_action_idx = self._current_action_idx + 1
+        
+        -- If we've completed all actions in current operation, advance to next operation
+        if self._current_action_idx > #op.actions then
+            self:_advance_operation(op)
+            self._current_action_idx = 1  -- Reset for next operation
+        end
+        
+        return "running", "next action"
 
     elseif status == "skipped" then
         self:_log_event("action_skipped", { action_type = action and action.type, msg = msg })
-        -- Skipped conditions should advance per normal flow
-        if op.next_condition == "auto" or op.next_condition == "always" then
-            self._current_operation_idx = self._current_operation_idx + 1
-        else
-            self._current_operation_idx = self._current_operation_idx + 1
+        -- Skipped actions should advance to next action
+        self._current_action_idx = self._current_action_idx + 1
+        
+        -- If we've processed all actions in current operation, advance to next operation
+        if self._current_action_idx > #op.actions then
+            if op.next_condition == "auto" or op.next_condition == "always" then
+                self._current_operation_idx = self._current_operation_idx + 1
+            else
+                self._current_operation_idx = self._current_operation_idx + 1
+            end
         end
         self:_save()  -- W5.3 — Save on skipped advance
         return "running", "skipped, advancing"
@@ -649,8 +984,16 @@ function RuntimeProfile:_execute_running()
             self:_log_event("action_retry_exhausted", { action_type = action and action.type })
             self._consecutive_failures = self._consecutive_failures + 1
             self:_check_consecutive_failures()
-            self._current_operation_idx = self._current_operation_idx + 1
-            return "running", "retries exhausted, skipping operation"
+            
+            -- Move to next action after exhausting retries
+            self._current_action_idx = self._current_action_idx + 1
+            
+            -- If we've processed all actions, move to next operation
+            if self._current_action_idx > #op.actions then
+                self._current_operation_idx = self._current_operation_idx + 1
+                self._current_action_idx = 1  -- Reset for next operation
+            end
+            return "running", "retries exhausted, skipping action"
         end
         return "running", "retry"
 
@@ -664,7 +1007,15 @@ function RuntimeProfile:_execute_running()
         self:_log_event("action_failed", { action_type = action and action.type, msg = msg })
         self._consecutive_failures = self._consecutive_failures + 1
         self:_check_consecutive_failures()
-        self._current_operation_idx = self._current_operation_idx + 1
+        
+        -- Move to next action on failure
+        self._current_action_idx = self._current_action_idx + 1
+        
+        -- If we've processed all actions, move to next operation
+        if self._current_action_idx > #op.actions then
+            self._current_operation_idx = self._current_operation_idx + 1
+            self._current_action_idx = 1  -- Reset for next operation
+        end
         return "running", "action failed, skipping"
     end
 
@@ -712,7 +1063,7 @@ function RuntimeProfile:_execute_navigating()
 
     elseif state == "requesting_path" or state == "moving" then
         -- Check timeout
-        local now = (_G.GetTime and _G.GetTime()) or 0
+        local now = (core and core.time and core.time()) or 0
         if self._nav_start_time and (now - self._nav_start_time) > NAV_TIMEOUT then
             self:_log_event("nav_timeout", { duration = now - self._nav_start_time })
             self._current_action_retries = self._current_action_retries + 1
@@ -760,7 +1111,7 @@ function RuntimeProfile:_execute_ghost()
         return "running", "resurrected, retry"
     end
 
-    local now = (_G.GetTime and _G.GetTime()) or 0
+    local now = (core and core.time and core.time()) or 0
     local elapsed = self._ghost_start_time and (now - self._ghost_start_time) or 0
 
     -- Timeout: skip current operation
@@ -772,18 +1123,15 @@ function RuntimeProfile:_execute_ghost()
         return "running", "ghost recovery timed out, skipping operation"
     end
 
-    -- Release corpse if we have spirit
-    if core and core.unit and core.unit.has_spirit then
-        local has_spirit = core.unit.has_spirit("player")
-        if has_spirit and core.input and core.input.release_corpse then
-            core.input.release_corpse()
-            self:_log_event("ghost_release_corpse", {})
-        end
+    -- Release spirit using core.input.release_spirit() (Sylvannas API)
+    if core and core.input and core.input.release_spirit then
+        core.input.release_spirit()
+        self:_log_event("ghost_release_spirit", {})
     end
 
-    -- Attempt auto-resurrection if available
-    if core and core.unit and core.unit.resurrect then
-        core.unit.resurrect("player")
+    -- Resurrect corpse using core.input.resurrect_corpse() (Sylvannas API)
+    if core and core.input and core.input.resurrect_corpse then
+        core.input.resurrect_corpse()
         self:_log_event("ghost_resurrect_attempt", {})
     end
 
@@ -806,7 +1154,7 @@ function RuntimeProfile:_handle_blocked(action)
     -- If nav is already active (action handler started it), just poll
     if self._nav:is_active() then
         self._state = "navigating"
-        self._nav_start_time = (_G.GetTime and _G.GetTime()) or 0
+        self._nav_start_time = (core and core.time and core.time()) or 0
         self._last_blocked_action = action
         self:_log_event("nav_already_active", { action_type = action and action.type })
         return "running", "navigating"
@@ -817,6 +1165,19 @@ function RuntimeProfile:_handle_blocked(action)
     if not target_pos then
         -- Can't navigate: increment retries
         self._current_action_retries = self._current_action_retries + 1
+        if self._current_action_retries >= MAX_RETRIES_PER_ACTION then
+            -- Exhausted retries → advance to next action
+            self._consecutive_failures = self._consecutive_failures + 1
+            self:_check_consecutive_failures()
+            self._current_action_idx = self._current_action_idx + 1
+            local operations = self._profile.operations or {}
+            local op = operations[self._current_operation_idx]
+            if op and self._current_action_idx > #op.actions then
+                self._current_operation_idx = self._current_operation_idx + 1
+                self._current_action_idx = 1
+            end
+            return "running", "blocked (no nav target), retries exhausted, advancing"
+        end
         return "running", "blocked (no nav target)"
     end
 
@@ -828,9 +1189,9 @@ function RuntimeProfile:_handle_blocked(action)
         return "running", "blocked (nav dispatch failed)"
     end
 
-    self._state = "navigating"
-    self._nav_start_time = (_G.GetTime and _G.GetTime()) or 0
-    self._last_blocked_action = action
+self._state = "navigating"
+        self._nav_start_time = (core and core.time and core.time()) or 0
+        self._last_blocked_action = action
     self:_log_event("nav_started", {
         target = target_pos,
         action_type = action and action.type,
@@ -848,9 +1209,15 @@ function RuntimeProfile:_resolve_nav_target(action)
     if not action or not action.payload then return nil end
     local p = action.payload
 
-    -- 1. Explicit position coordinates
-    if p.position and type(p.position) == "table" and p.position.x then
-        return { x = p.position.x, y = p.position.y, z = p.position.z }
+    -- 1. Explicit position coordinates (handle both legacy {x,y,z} and new {world_x,world_y,world_z,map} formats)
+    if p.position and type(p.position) == "table" then
+        if p.position.x then
+            -- Legacy format: {x, y, z}
+            return { x = p.position.x, y = p.position.y, z = p.position.z }
+        elseif p.position.world_x then
+            -- New format from compiler: {world_x, world_y, world_z, map}
+            return { x = p.position.world_x, y = p.position.world_y, z = p.position.world_z }
+        end
     end
 
     -- 2. NPC entry → look up in object manager
@@ -878,11 +1245,11 @@ function RuntimeProfile:_resolve_nav_target(action)
     return nil
 end
 
---- Look up an NPC's position from the object manager.
+--- Look up an NPC's position from the object manager (Sylvannas API compliant).
 function RuntimeProfile:_get_npc_position(npc_entry)
-    if core and core.object_manager and core.object_manager.GetNearestCreature then
-        local npc = core.object_manager.GetNearestCreature({ npc_entry })
-        if npc and npc.get_position then
+    local npc = UnitHelper.get_nearest_creature({ npc_entry })
+    if npc and npc:is_valid() then
+        if npc.get_position then
             local ok, pos = pcall(npc.get_position, npc)
             if ok and pos then
                 return { x = pos.x, y = pos.y, z = pos.z }
@@ -892,16 +1259,11 @@ function RuntimeProfile:_get_npc_position(npc_entry)
     return nil
 end
 
---- Look up a game object's position from the object manager.
+--- Look up a game object's position from the object manager (Sylvannas API compliant).
 function RuntimeProfile:_get_object_position(object_entry)
-    if core and core.object_manager then
-        local obj = nil
-        if core.object_manager.GetNearestGameObject then
-            obj = core.object_manager.GetNearestGameObject({ object_entry })
-        elseif core.object_manager.GetNearestObject then
-            obj = core.object_manager.GetNearestObject({ object_entry })
-        end
-        if obj and obj.get_position then
+    local obj = UnitHelper.get_nearest_game_object({ object_entry })
+    if obj and obj:is_valid() then
+        if obj.get_position then
             local ok, pos = pcall(obj.get_position, obj)
             if ok and pos then
                 return { x = pos.x, y = pos.y, z = pos.z }
@@ -911,19 +1273,22 @@ function RuntimeProfile:_get_object_position(object_entry)
     return nil
 end
 
---- Check if the player is dead using Sylvanas unit API.
+--- Check if the player is dead using Sylvannas API (get_local_player:is_dead()).
 function RuntimeProfile:_is_player_dead()
-    if core and core.unit and core.unit.is_dead then
-        local ok, dead = pcall(core.unit.is_dead, core.unit, "player")
-        if ok then
-            return dead == true
+    local player = UnitHelper.get_local_player()
+    if player and player:is_valid() then
+        if player.is_dead then
+            local ok, dead = pcall(player.is_dead, player)
+            if ok then
+                return dead == true
+            end
         end
-    end
-    -- Fallback: check health
-    if core and core.unit and core.unit.get_health then
-        local ok, health = pcall(core.unit.get_health, core.unit, "player")
-        if ok and type(health) == "number" then
-            return health <= 0
+        -- Fallback: check health
+        if player.get_health then
+            local ok, health = pcall(player.get_health, player)
+            if ok and type(health) == "number" then
+                return health <= 0
+            end
         end
     end
     return false -- Assume alive if no API
@@ -957,10 +1322,19 @@ function RuntimeProfile:reset()
     self._state = "running"
     self._current_action_retries = 0
     self._consecutive_failures = 0
+    self._current_action_idx = 1
     self._nav_start_time = nil
     self._ghost_start_time = nil
     self._last_blocked_action = nil
     self._execution_log = {}
+    self._json_mtime = nil
+    self._completed_quests = {}
+    self._temporary_variables = {}
+    self._visited_vendors = {}
+    self._known_flight_paths = {}
+    self._known_hearth_location = nil
+    self._sim_result = nil
+    self._dry_run = false
     if self._nav then
         self._nav:stop("reset")
     end

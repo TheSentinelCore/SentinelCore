@@ -19,12 +19,10 @@ function QuestingModule:new(blackboard, event_bus)
     local o = setmetatable({}, QuestingModule)
     o._blackboard = blackboard or Blackboard:new()
     o._event_bus = event_bus or EventBus:new(function(msg)
-        if core and core.print then core.print(msg) end
+        if core and core.log then core.log(msg) end
     end)
     o._executor = nil
     o._enabled = false
-    -- Editor (lazy-loaded on first toggle)
-    o._editor = nil
     return o
 end
 
@@ -69,24 +67,10 @@ end
 -- Editor integration
 -- ======================================================================
 
---- Get or create the editor instance (lazy).
-function QuestingModule:_get_editor()
-    if not self._editor then
-        local QuestingEditor = require("modules/questing/editor_ui")
-        self._editor = QuestingEditor:new()
-    end
-    return self._editor
-end
-
 --- Toggle the in-game quest profile editor.
+--- Fires event for the editor subsystem to pick up.
 function QuestingModule:toggle_editor()
-    local editor = self:_get_editor()
-    editor:toggle()
-    if editor:is_visible() then
-        self._event_bus:publish("questing:editor_opened", {})
-    else
-        self._event_bus:publish("questing:editor_closed", {})
-    end
+    self._event_bus:publish("questing:toggle_editor", {})
 end
 
 --- Reload the current executor from a compiled profile.

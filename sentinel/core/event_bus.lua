@@ -63,16 +63,18 @@ function EventBus:publish(event_name, payload)
     for _, sub in ipairs(snapshot) do
         local ok, err = pcall(sub.handler, payload)
         if not ok then
+            local message = "[Sentinel] Event handler error (" .. tostring(event_name) .. "): " .. tostring(err)
+            if self._logger and type(self._logger) == "function" then
+                self._logger(message)
+            elseif core and core.log_error then
+                core.log_error(message)
+            end
             if event_name ~= "system:error" then
                 self:publish("system:error", {
                     module = "event_bus",
                     operation = event_name,
                     error = tostring(err),
                 })
-            elseif self._logger and type(self._logger) == "function" then
-                self._logger("[Sentinel] Event handler error: " .. tostring(err))
-            elseif core and core.log_error then
-                core.log_error("[Sentinel] Event handler error: " .. tostring(err))
             end
         end
     end

@@ -12,16 +12,21 @@ local M = {}
 -- Helpers
 -- ============================================================================
 
---- Create a mock player at a given position.
+--- Create a mock player at a given position (Sylvannas API compliant - get_local_player).
 local function set_player_pos(x, y, z)
     _G.core = _G.core or {}
     _G.core.object_manager = _G.core.object_manager or {}
     _G.core.object_manager.get_local_player = function()
         return {
+            is_valid = function() return true end,
             get_position = function()
                 return { x = x or 0, y = y or 0, z = z or 0 }
             end,
         }
+    end
+    -- Also expose get_all_objects for UnitHelper to use
+    _G.core.object_manager.get_all_objects = function()
+        return {}
     end
 end
 
@@ -36,12 +41,8 @@ local function mock_context(overrides)
         set_player_pos(0, 0, 0)
     end
 
-    -- Mock nearest creature
-    if not _G.core.object_manager.GetNearestCreature then
-        _G.core.object_manager.GetNearestCreature = function()
-            return nil
-        end
-    end
+    -- Note: GetNearestCreature mock removed - UnitHelper now uses get_all_objects
+    -- Tests that need creature/object mocking should set core.object_manager.get_all_objects
 
     -- Mock NavAdapter
     local nav_mock = {
@@ -270,27 +271,57 @@ function M.test_kill_npc_in_range()
     local ctx = mock_context({
         is_at_npc = function() return true end,
     })
-    -- Mocker GetNearestCreature to return a valid non-dead target
-    _G.core.object_manager.GetNearestCreature = function()
+    -- Mock get_all_objects to return a valid non-dead target (Sylvannas API compliant)
+    _G.core.object_manager.get_all_objects = function()
         return {
-            IsValid = true,
-            IsDead = function() return false end,
+            {
+                is_valid = function() return true end,
+                is_unit = function() return true end,
+                is_dead = function() return false end,
+                get_npc_id = function() return 1234 end,
+            },
         }
     end
     local action = { type = "Kill", payload = { creature_entries = { 1234 } } }
     local result = RuntimeAction.execute(action, ctx)
-    T.assert_equal(result, "success", "Kill should succeed when NPC in range")
+    -- Kill action in range with non-dead target should return "blocked" (combat handles kill)
+    T.assert_equal(result, "blocked", "Kill should return blocked when NPC in range and alive")
+end
+
+function M.test_kill_npc_dead_and_in_range()
+    local ctx = mock_context({
+        is_at_npc = function() return true end,
+    })
+    -- Mock get_all_objects to return a dead target
+    _G.core.object_manager.get_all_objects = function()
+        return {
+            {
+                is_valid = function() return true end,
+                is_unit = function() return true end,
+                is_dead = function() return true end,
+                get_npc_id = function() return 1234 end,
+                get_position = function() return { x = 0, y = 0, z = 0 } end,
+            },
+        }
+    end
+    local action = { type = "Kill", payload = { creature_entries = { 1234 }, quantity = 1 } }
+    local result = RuntimeAction.execute(action, ctx)
+    T.assert_equal(result, "success", "Kill should succeed when NPC dead and quantity met")
 end
 
 function M.test_kill_npc_out_of_range()
     local ctx = mock_context({
         is_at_npc = function() return false end, -- Out of range
     })
-    _G.core.object_manager.GetNearestCreature = function()
+    _G.core.object_manager.get_all_objects = function()
         return {
-            IsValid = true,
-            IsDead = function() return false end,
-            get_position = function() return { x = 50, y = 50, z = 0 } end,
+            {
+                is_valid = function() return true end,
+                is_unit = function() return true end,
+                is_dead = function() return false end,
+                get_npc_id = function() return 1234 end,
+                get_position = function() return { x = 50, y = 50, z = 0 } end,
+            },
         }
     end
     local action = { type = "Kill", payload = { creature_entries = { 1234 } } }
@@ -308,8 +339,8 @@ function M.test_kill_no_targets_found()
     local ctx = mock_context({
         is_at_npc = function() return false end,
     })
-    _G.core.object_manager.GetNearestCreature = function()
-        return nil -- No targets
+    _G.core.object_manager.get_all_objects = function()
+        return {} -- No targets
     end
     -- No destination in payload either
     local action = { type = "Kill", payload = { creature_entries = { 1234 } } }
@@ -357,10 +388,15 @@ function M.test_loot_object_out_of_range()
     local ctx = mock_context({
         is_at_object = function() return false end, -- Out of range
     })
-    _G.core.object_manager.GetNearestGameObject = function()
+    -- Mock get_all_objects for UnitHelper (Sylvannas API compliant)
+    _G.core.object_manager.get_all_objects = function()
         return {
-            IsValid = true,
-            get_position = function() return { x = 30, y = 30, z = 0 } end,
+            {
+                is_valid = function() return true end,
+                is_game_object = function() return true end,
+                get_entry_id = function() return 1234 end,
+                get_position = function() return { x = 30, y = 30, z = 0 } end,
+            },
         }
     end
     local action = { type = "Loot", payload = { object_entry = 1234 } }
@@ -399,6 +435,7 @@ local tests = {
     test_travel_polls_for_arrival = M.test_travel_polls_for_arrival,
 
     test_kill_npc_in_range = M.test_kill_npc_in_range,
+    test_kill_npc_dead_and_in_range = M.test_kill_npc_dead_and_in_range,
     test_kill_npc_out_of_range = M.test_kill_npc_out_of_range,
     test_kill_no_targets_found = M.test_kill_no_targets_found,
     test_kill_navigate_to_spawn_area = M.test_kill_navigate_to_spawn_area,
