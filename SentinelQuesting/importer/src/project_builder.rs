@@ -770,9 +770,10 @@ async fn build_step_actions(
                 actions.push(inert_preserved_action(state, step.index, cmd, false));
             }
             "abandon" => {
-                // .abandon <quest_id> - abandon quest
-                if let Some(id_str) = cmd.args.first() {
-                    if let Ok(id) = id_str.parse::<u32>() {
+                // .abandon <quest_id> - abandon quest. Missing/unparseable id (IF7 never-drop):
+                // fall back to a diagnostic-carrying inert Comment, never a silent drop.
+                match cmd.args.first().and_then(|id_str| id_str.parse::<u32>().ok()) {
+                    Some(id) => {
                         actions.push(Action {
                             id: Uuid::new_v4(),
                             enabled: true,
@@ -781,6 +782,29 @@ async fn build_step_actions(
                             note: cmd.note.clone(),
                             payload: ActionPayload::Comment(CommentAction {
                                 text: format!(".abandon {}", id),
+                            }),
+                        });
+                    }
+                    None => {
+                        let action_id = Uuid::new_v4();
+                        state.diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            code: "MALFORMED_ABANDON_ARGS".to_string(),
+                            message: format!(
+                                "Command '.abandon' has unparseable arguments: {:?}",
+                                cmd.args
+                            ),
+                            entity: Some(format!("step:{}", step.index)),
+                            action: Some(action_id.to_string()),
+                        });
+                        actions.push(Action {
+                            id: action_id,
+                            enabled: true,
+                            condition: None,
+                            class_restriction: None,
+                            note: cmd.note.clone(),
+                            payload: ActionPayload::Comment(CommentAction {
+                                text: format!(".abandon {}", cmd.args.join(",")),
                             }),
                         });
                     }

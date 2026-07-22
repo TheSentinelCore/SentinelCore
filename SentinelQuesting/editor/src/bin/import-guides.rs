@@ -48,18 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use empty MemoryQueryClient (offline mode - unresolved references will be diagnostics)
     let client = MemoryQueryClient::new();
 
-    // Tracked across the WHOLE run (not per guide file): header-less blocks from different
-    // files can collide on the same default name just as easily as two blocks in one bundle
-    // (CRITICAL 2 fix).
-    let mut used_filenames: HashSet<String> = HashSet::new();
-    let mut total_projects = 0usize;
-    let mut all_failures: Vec<String> = Vec::new();
-    for guide_path in &guide_files {
-        let (written, failures) =
-            import_guide(guide_path, &output_dir, &client, &mut used_filenames).await?;
-        total_projects += written;
-        all_failures.extend(failures);
-    }
+    let (total_projects, all_failures) = run_import(&guide_files, &output_dir, &client).await;
 
     if !all_failures.is_empty() {
         eprintln!("\n{} block(s) failed to import:", all_failures.len());
@@ -83,6 +72,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Runs the import loop across every guide file. A file-level failure (missing file, permission
+/// denied, unreadable for any other reason) is recorded as a failure and does NOT abort the
+/// remaining files in the batch — matching `import_guide`'s own per-block isolation contract, one
+/// level up (file level, not just block level). Also seeds filename disambiguation from any
+/// `.json` files already present in `output_dir`, so re-running the importer into the same
+/// directory disambiguates instead of silently overwriting prior output (F9).
+async fn run_import(
+    guide_files: &[PathBuf],
+    output_dir: &Path,
+    client: &MemoryQueryClient,
+) -> (usize, Vec<String>) {
+    // Tracked across the WHOLE run (not per guide file): header-less blocks from different
+    // files can collide on the same default name just as easily as two blocks in one bundle
+    // (CRITICAL 2 fix), and a re-run must not collide with a PRIOR run's output either.
+    let mut used_filenames = seed_used_filenames_from_existing_output(output_dir);
+    let mut total_projects = 0usize;
+    let mut all_failures: Vec<String> = Vec::new();
+    for guide_path in guide_files {
+        match import_guide(guide_path, output_dir, client, &mut used_filenames).await {
+            Ok((written, failures)) => {
+                total_projects += written;
+                all_failures.extend(failures);
+            }
+            Err(e) => {
+                let msg = format!("{}: {e}", guide_path.display());
+                eprintln!("✗ {msg}");
+                all_failures.push(msg);
+            }
+        }
+    }
+    (total_projects, all_failures)
+}
+
+/// Seeds `used_filenames` with the stem of every `.json` file already present in `output_dir`
+/// (F9): without this, re-running the importer against the same output directory would silently
+/// overwrite previous output instead of disambiguating with `-2`, `-3`, ... Best-effort: an
+/// unreadable/missing `output_dir` (shouldn't happen — `main` creates it first) just yields no
+/// seeded names rather than failing the run.
+fn seed_used_filenames_from_existing_output(output_dir: &Path) -> HashSet<String> {
+    let mut used = HashSet::new();
+    if let Ok(entries) = fs::read_dir(output_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "json") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    used.insert(stem.to_string());
+                }
+            }
+        }
+    }
+    used
+}
+
 fn find_guide_files(dir: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     let mut files = Vec::new();
     for entry in fs::read_dir(dir)? {
@@ -98,6 +140,25 @@ fn find_guide_files(dir: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
         }
     }
     Ok(files)
+}
+
+/// Sanitizes a candidate filename stem (typically derived from a guide's `#name` header) so it
+/// can never escape `output_dir` — a malicious/malformed header like `../../evil` or a bare `..`
+/// must not be able to write outside the intended directory. Replaces path separators (`/` and
+/// `\`, for cross-platform safety) and any residual `..` traversal sequences with `_`, then strips
+/// leading dots so the result can't resolve to a hidden file or a parent-directory reference.
+fn sanitize_filename_stem(stem: &str) -> String {
+    let no_separators: String = stem
+        .chars()
+        .map(|c| if c == '/' || c == '\\' { '_' } else { c })
+        .collect();
+    let no_traversal = no_separators.replace("..", "_");
+    let trimmed = no_traversal.trim_start_matches('.');
+    if trimmed.is_empty() {
+        "unnamed".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Disambiguate a candidate project filename stem against every name THIS FUNCTION HAS EVER
@@ -144,7 +205,9 @@ async fn import_guide(
                 client,
             ).await.map_err(|e| e.to_string())?;
 
-            let stem = dedupe_filename(used_filenames, &project.metadata.name.replace(' ', "-"));
+            let raw_stem = project.metadata.name.replace(' ', "-");
+            let safe_stem = sanitize_filename_stem(&raw_stem);
+            let stem = dedupe_filename(used_filenames, &safe_stem);
             let output_path = output_dir.join(format!("{stem}.json"));
             let json = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
             fs::write(&output_path, json).map_err(|e| e.to_string())?;
@@ -259,5 +322,96 @@ mod tests {
 
         let files_on_disk = fs::read_dir(&output_dir).unwrap().count();
         assert_eq!(files_on_disk, 3, "written count must equal actual files on disk, no silent overwrite");
+    }
+
+    #[tokio::test]
+    async fn path_traversal_name_is_sanitized_and_stays_inside_output_dir() {
+        // F9: a malicious/malformed `#name` header (e.g. from a hand-edited or untrusted guide
+        // file) must never let the written project escape `output_dir` via `..` or a path
+        // separator.
+        let dir = tempfile::tempdir().unwrap();
+        let guide_path = dir.path().join("bundle.lua");
+        fs::write(
+            &guide_path,
+            "RXPGuides.RegisterGuide([[\n#name ../evil\nstep\n.accept 1\n]]);",
+        ).unwrap();
+        let output_dir = dir.path().join("out");
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let client = MemoryQueryClient::new();
+        let mut used = HashSet::new();
+        let (written, failures) = import_guide(&guide_path, &output_dir, &client, &mut used)
+            .await
+            .unwrap();
+
+        assert_eq!(written, 1);
+        assert!(failures.is_empty());
+
+        // Nothing must have escaped into the tempdir root (one level above output_dir).
+        assert!(
+            !dir.path().join("evil.json").exists(),
+            "sanitized stem must not resolve to a path outside output_dir"
+        );
+        // Exactly one file must land INSIDE output_dir.
+        let entries: Vec<_> = fs::read_dir(&output_dir).unwrap().collect();
+        assert_eq!(entries.len(), 1, "the sanitized project must be written inside output_dir");
+    }
+
+    #[tokio::test]
+    async fn unreadable_file_is_recorded_as_a_failure_and_does_not_abort_remaining_files() {
+        // F9: a file-level read failure (missing file, permission denied, etc.) previously
+        // propagated via `?` straight out of `main`, aborting the WHOLE run — later guide files
+        // in the batch were never even attempted, and the final summary never printed.
+        let dir = tempfile::tempdir().unwrap();
+        let good_path = dir.path().join("good.lua");
+        fs::write(
+            &good_path,
+            "RXPGuides.RegisterGuide([[\n#name Good\nstep\n.accept 1\n]]);",
+        ).unwrap();
+        let missing_path = dir.path().join("missing.lua"); // deliberately never created
+
+        let output_dir = dir.path().join("out");
+        fs::create_dir_all(&output_dir).unwrap();
+        let client = MemoryQueryClient::new();
+
+        let (written, failures) = run_import(
+            &[missing_path.clone(), good_path.clone()],
+            &output_dir,
+            &client,
+        ).await;
+
+        assert_eq!(written, 1, "the readable file must still import despite an earlier unreadable one");
+        assert_eq!(failures.len(), 1, "the unreadable file must be recorded as a failure, not silently swallowed");
+        assert!(failures[0].contains(&missing_path.display().to_string()));
+        assert!(fs::read(output_dir.join("Good.json")).is_ok());
+    }
+
+    #[tokio::test]
+    async fn rerunning_into_the_same_output_dir_disambiguates_instead_of_overwriting() {
+        // F9: `used_filenames` was previously fresh (empty) on every invocation, so re-running
+        // the importer against an output directory that already holds a prior run's output would
+        // silently overwrite it instead of disambiguating like an in-run collision would.
+        let dir = tempfile::tempdir().unwrap();
+        let guide_path = dir.path().join("bundle.lua");
+        fs::write(
+            &guide_path,
+            "RXPGuides.RegisterGuide([[\n#name Foo\nstep\n.accept 1\n]]);",
+        ).unwrap();
+        let output_dir = dir.path().join("out");
+        fs::create_dir_all(&output_dir).unwrap();
+        let client = MemoryQueryClient::new();
+
+        // First invocation.
+        run_import(&[guide_path.clone()], &output_dir, &client).await;
+        assert!(fs::read(output_dir.join("Foo.json")).is_ok());
+
+        // Second invocation, simulating a re-run of the binary against the same output_dir.
+        run_import(&[guide_path.clone()], &output_dir, &client).await;
+
+        assert!(fs::read(output_dir.join("Foo.json")).is_ok(), "first run's output must survive a re-run");
+        assert!(
+            fs::read(output_dir.join("Foo-2.json")).is_ok(),
+            "a re-run must disambiguate as Foo-2, not silently overwrite Foo.json from the prior run"
+        );
     }
 }
