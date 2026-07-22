@@ -819,3 +819,58 @@ step
         .expect("a tolerated-typo diagnostic must be recorded (IF5)");
     assert!(diag.message.contains("compltewith") && diag.message.contains("completewith"));
 }
+
+#[tokio::test]
+async fn abandon_with_missing_or_malformed_id_never_drops_the_action() {
+    // F9: `.abandon` with no id, and `.abandon` with a non-numeric id, previously produced
+    // NO action at all (silent drop) — never-drop (IF7) requires a diagnostic-carrying
+    // fallback instead, matching the MALFORMED_GATING_ARGS convention.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .abandon
+step
+    .abandon notanumber
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    for op_idx in 0..2 {
+        assert_eq!(
+            project.operations[op_idx].actions.len(), 1,
+            "operation {op_idx}: malformed .abandon must still produce an action, not be dropped"
+        );
+        let action = &project.operations[op_idx].actions[0];
+        assert!(matches!(action.payload, ActionPayload::Comment(_)));
+        let diag = project.diagnostics.iter()
+            .find(|d| d.code == "MALFORMED_ABANDON_ARGS" && d.action.as_deref() == Some(action.id.to_string().as_str()))
+            .unwrap_or_else(|| panic!("operation {op_idx} must carry a MALFORMED_ABANDON_ARGS diagnostic"));
+        assert_eq!(diag.entity.as_deref(), Some(format!("step:{op_idx}").as_str()));
+    }
+}
+
+#[tokio::test]
+async fn fp_with_no_resolved_npc_never_drops_the_action() {
+    // F9 pinning test: `.fp` has no positional args (unlike `.abandon`), so it cannot hit a
+    // "malformed args" branch — confirm it already never drops when the NPC is unresolved
+    // (falls back to a Comment, not nothing), closing out the "abandon/fp" review item fully.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .fp
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    assert_eq!(project.operations[0].actions.len(), 1, ".fp with no resolvable NPC must still produce an action");
+    match &project.operations[0].actions[0].payload {
+        ActionPayload::Comment(c) => assert_eq!(c.text, ".fp (unresolved NPC)"),
+        other => panic!("expected Comment fallback, got {other:?}"),
+    }
+}

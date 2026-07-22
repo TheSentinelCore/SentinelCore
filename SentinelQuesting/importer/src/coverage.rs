@@ -132,20 +132,37 @@ fn command_name(diag: Option<&Diagnostic>, comment_text: &str) -> String {
     })
 }
 
+/// Maps every non-`Comment` `ActionPayload` variant to a distinct coverage bucket name.
+/// Exhaustive match (no catch-all): adding a new `ActionPayload` variant fails this function to
+/// compile until it is given its own bucket name, instead of silently falling into a shared
+/// `"typed"` bucket that hides per-command fidelity regressions.
 fn typed_command_name(payload: &ActionPayload) -> String {
     match payload {
         ActionPayload::AcceptQuest(_) => "accept",
         ActionPayload::TurnInQuest(_) => "turnin",
         ActionPayload::Travel(_) => "goto",
         ActionPayload::Kill(_) => "mob",
+        ActionPayload::GrindArea(_) => "grind_area",
+        ActionPayload::LootObject(_) => "loot_object",
+        ActionPayload::InteractNPC(_) => "interact_npc",
         ActionPayload::Vendor(_) => "vendor",
+        ActionPayload::Repair(_) => "repair",
         ActionPayload::Train(_) => "train",
         ActionPayload::LearnFlightPath(_) => "fp",
         ActionPayload::UseItem(_) => "item",
         ActionPayload::Flight(_) => "fly",
+        ActionPayload::SetHearth(_) => "set_hearth",
         ActionPayload::Hearth(_) => "hs",
+        ActionPayload::Wait(_) => "wait",
+        ActionPayload::Escort(_) => "escort",
+        ActionPayload::Patrol(_) => "patrol",
+        ActionPayload::Mailbox(_) => "mailbox",
+        ActionPayload::Bank(_) => "bank",
         ActionPayload::Condition(_) => "condition",
-        _ => "typed",
+        ActionPayload::SetVariable(_) => "set_variable",
+        ActionPayload::Comment(_) => unreachable!(
+            "classify() routes Comment payloads through its own arm before calling typed_command_name"
+        ),
     }
     .to_string()
 }
@@ -264,5 +281,76 @@ mod tests {
         let report = CoverageReport::from_projects([&a, &b]);
         assert_eq!(report.totals.typed, 1);
         assert_eq!(report.totals.unresolved, 1);
+    }
+
+    #[test]
+    fn from_projects_accumulates_the_same_command_name_across_projects() {
+        // F9: regression net for the `.entry(name).or_default()` accumulation in `absorb` — a
+        // command appearing in TWO projects of the same corpus must sum its counts, not have the
+        // second project's tally silently overwrite the first's (entry-vs-overwrite defect class).
+        let accept_action = |quest: u32| Action {
+            id: Uuid::new_v4(),
+            enabled: true,
+            condition: None,
+            class_restriction: None,
+            note: None,
+            payload: ActionPayload::AcceptQuest(AcceptQuestAction {
+                quest,
+                npc: None,
+                auto_complete_dialog: false,
+                optional: false,
+            }),
+        };
+        let a = project_with(vec![accept_action(1)], vec![]);
+        let b = project_with(vec![accept_action(2), accept_action(3)], vec![]);
+
+        let report = CoverageReport::from_projects([&a, &b]);
+
+        assert_eq!(
+            report.per_command.get("accept").unwrap().typed, 3,
+            "the 'accept' bucket must sum across both projects (1 + 2), not reset to the last project's count"
+        );
+        assert_eq!(report.totals.typed, 3);
+    }
+
+    #[test]
+    fn every_action_payload_variant_gets_its_own_bucket_not_a_shared_typed_catch_all() {
+        // F9: previously 11 of 22 `ActionPayload` variants (everything but the 11 named arms)
+        // fell into a single shared "typed" bucket, hiding per-command fidelity in the coverage
+        // report. Each variant must now bucket under its own distinct name.
+        use sentinel_models::authoring::{GrindAreaAction, LootObjectAction};
+
+        let grind = Action {
+            id: Uuid::new_v4(),
+            enabled: true,
+            condition: None,
+            class_restriction: None,
+            note: None,
+            payload: ActionPayload::GrindArea(GrindAreaAction {
+                polygon: None,
+                targets: vec![],
+                loot: false,
+                timeout: None,
+                minimum_kills: None,
+                maximum_kills: None,
+                stop_condition: None,
+            }),
+        };
+        let loot = Action {
+            id: Uuid::new_v4(),
+            enabled: true,
+            condition: None,
+            class_restriction: None,
+            note: None,
+            payload: ActionPayload::LootObject(LootObjectAction { object: Uuid::new_v4(), count: None }),
+        };
+
+        let report = CoverageReport::from_project(&project_with(vec![grind, loot], vec![]));
+
+        assert!(report.per_command.contains_key("grind_area"), "GrindArea must have its own bucket");
+        assert!(report.per_command.contains_key("loot_object"), "LootObject must have its own bucket");
+        assert!(!report.per_command.contains_key("typed"), "no ActionPayload variant may fall into a shared 'typed' catch-all bucket");
+        assert_eq!(report.per_command.get("grind_area").unwrap().typed, 1);
+        assert_eq!(report.per_command.get("loot_object").unwrap().typed, 1);
     }
 }
