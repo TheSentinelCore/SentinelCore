@@ -27,7 +27,9 @@ function QuestingModule:new(blackboard, event_bus)
 end
 
 function QuestingModule:initialize(profile_json_path)
-    self._executor = RuntimeProfile:new(profile_json_path)
+    -- RE3: inject the module's own (registry-shared) blackboard/event_bus so
+    -- `questing:log` events reach real subscribers instead of a private bus.
+    self._executor = RuntimeProfile:new(profile_json_path, false, self._blackboard, self._event_bus)
     local success, err = self._executor:load()
     if not success then
         self._event_bus:publish("questing:error", { error = err })

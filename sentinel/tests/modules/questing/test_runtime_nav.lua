@@ -348,7 +348,10 @@ function M.test_kill_no_targets_found()
     T.assert_equal(result, "blocked", "Kill should return blocked when no targets and no destination")
 end
 
-function M.test_kill_navigate_to_spawn_area()
+function M.test_kill_ignores_destination_field()
+    -- RE1: RuntimeKill (SentinelQuesting/shared/src/runtime/action.rs) has no
+    -- `destination` field — the compiler never emits one. A stray `destination`
+    -- in the payload must be ignored, not used to start navigation.
     local ctx = mock_context({
         is_at_npc = function() return false end,
         get_zone_waypoint = function() return { x = -8000, y = -100, z = 80 } end,
@@ -361,8 +364,56 @@ function M.test_kill_navigate_to_spawn_area()
         destination = "Elwynn Forest",
     } }
     local result = RuntimeAction.execute(action, ctx)
-    T.assert_equal(result, "blocked", "Kill should return blocked and start navigation to spawn area")
-    T.assert_not_nil(ctx.nav and ctx.nav._moved_to, "NavAdapter should navigate to spawn area")
+    T.assert_equal(result, "blocked", "Kill should return blocked when no targets are found")
+    T.assert_nil(ctx.nav and ctx.nav._moved_to, "Kill should not navigate using a nonexistent destination field")
+end
+
+-- ============================================================================
+-- RE1: payload field contract fixes (SentinelQuesting/shared/src/runtime/action.rs)
+-- ============================================================================
+
+function M.test_turnin_quest_uses_choose_reward()
+    local ctx = mock_context({ is_at_npc = function() return true end })
+    _G.core.quests = {
+        is_on_quest = function() return true end,
+        complete_quest = function() end,
+        get_quest_reward = function(idx) _G._last_reward_choice = idx end,
+    }
+    local action = { type = "TurnInQuest", payload = { quest_id = 1, npc_entry = 2, choose_reward = 3 } }
+    local result = RuntimeAction.execute(action, ctx)
+    T.assert_equal(result, "success", "TurnInQuest should succeed")
+    T.assert_equal(_G._last_reward_choice, 3, "RuntimeTurnInQuest.choose_reward should select the reward")
+end
+
+function M.test_flight_destination_is_a_string()
+    local ctx = mock_context({ is_at_npc = function() return true end })
+    _G.core.input = {
+        take_taxi = function(dest) _G._last_taxi_dest = dest end,
+    }
+    local action = { type = "Flight", payload = { npc_entry = 1, destination = "Ironforge" } }
+    local result = RuntimeAction.execute(action, ctx)
+    T.assert_equal(result, "success", "Flight should succeed")
+    T.assert_equal(_G._last_taxi_dest, "Ironforge", "RuntimeFlight.destination is a String, not an {index/id} table")
+end
+
+function M.test_vendor_buy_items_resolves_entry_to_vendor_slot()
+    local ctx = mock_context({ is_at_npc = function() return true end })
+    _G.core.input = {
+        interact_with_object = function() end,
+        buy_item = function(index, qty) _G._last_buy = { index = index, qty = qty } end,
+    }
+    _G.core.game_ui = {
+        get_vendor_item_count = function() return 2 end,
+        get_vendor_item_info = function(i)
+            if i == 1 then return { item_id = 100 } end
+            return { item_id = 200 }
+        end,
+    }
+    local action = { type = "Vendor", payload = { npc_entry = 1, buy_items = { 200 } } }
+    local result = RuntimeAction.execute(action, ctx)
+    T.assert_equal(result, "success", "Vendor should succeed")
+    T.assert_not_nil(_G._last_buy, "buy_item should have been called")
+    T.assert_equal(_G._last_buy.index, 2, "buy_items entries (Vec<u32> item ids) resolve to vendor slot index")
 end
 
 -- ============================================================================
@@ -438,7 +489,11 @@ local tests = {
     test_kill_npc_dead_and_in_range = M.test_kill_npc_dead_and_in_range,
     test_kill_npc_out_of_range = M.test_kill_npc_out_of_range,
     test_kill_no_targets_found = M.test_kill_no_targets_found,
-    test_kill_navigate_to_spawn_area = M.test_kill_navigate_to_spawn_area,
+    test_kill_ignores_destination_field = M.test_kill_ignores_destination_field,
+
+    test_turnin_quest_uses_choose_reward = M.test_turnin_quest_uses_choose_reward,
+    test_flight_destination_is_a_string = M.test_flight_destination_is_a_string,
+    test_vendor_buy_items_resolves_entry_to_vendor_slot = M.test_vendor_buy_items_resolves_entry_to_vendor_slot,
 
     test_loot_object_in_range = M.test_loot_object_in_range,
     test_loot_object_out_of_range = M.test_loot_object_out_of_range,

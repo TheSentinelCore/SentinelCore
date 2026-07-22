@@ -714,10 +714,213 @@ function M.test_setvariable_writes_to_ctx_variables_ref()
 end
 
 -- ============================================================================
+-- RE2/RE3: ModuleRegistry wiring — init() must actually load the boot-time
+-- profile through the module's own (registry-shared) blackboard/event_bus.
+-- ============================================================================
+
+function M.test_registry_init_loads_default_profile_with_shared_bus()
+    mock_globals()
+    reset_mocks()
+
+    local Blackboard = require("core/blackboard")
+    local EventBus = require("core/event_bus")
+    local QuestingModuleInit = require("modules/questing/init")
+
+    local bb = Blackboard:new()
+    local eb = EventBus:new()
+
+    local logged = {}
+    eb:subscribe("questing:log", function(entry) table.insert(logged, entry) end)
+
+    -- Seed a loadable profile at the fixed boot-time path.
+    local json_path = QuestingModuleInit.DEFAULT_PROFILE_PATH
+    file_contents[json_path] = _G.JSON.stringify(make_profile({ content_hash = "wired" }))
+    file_mtimes[json_path] = 1000
+
+    local instance = QuestingModuleInit:new(bb, eb)
+    instance:init({})
+
+    T.assert_true(instance._questing:is_enabled(),
+        "questing module should be enabled after registry init loads a profile")
+    T.assert_true(instance._questing._executor ~= nil, "registry init should create an executor")
+    T.assert_true(instance._questing._executor._blackboard == bb,
+        "executor should use the registry's shared blackboard, not a private one")
+    T.assert_true(instance._questing._executor._event_bus == eb,
+        "executor should use the registry's shared event bus, not a private one")
+    T.assert_true(#logged > 0,
+        "questing:log events should reach the shared event bus subscriber")
+end
+
+-- ============================================================================
+-- RE4: create_context() must be cached per-profile, not rebuilt every tick.
+-- ============================================================================
+
+function M.test_context_is_cached_across_running_ticks()
+    mock_globals()
+    reset_mocks()
+
+    local profile = create_profile(make_profile({
+        action_type = "Comment", action_payload = { text = "noop" },
+    }))
+
+    local ctx1 = profile:_get_context()
+    local ctx2 = profile:_get_context()
+    T.assert_true(ctx1 == ctx2, "create_context() should be cached, not rebuilt every tick")
+
+    -- Mutable per-tick fields must still be refreshed on the cached table.
+    profile._variables.foo = "bar"
+    T.assert_equal(ctx2.variables.foo, "bar",
+        "cached ctx.variables must stay in sync with profile._variables after mutation")
+end
+
+function M.test_context_cache_invalidated_on_hot_reload()
+    mock_globals()
+    reset_mocks()
+
+    local profile = create_profile(make_profile({ content_hash = "v1" }))
+    local ctx1 = profile:_get_context()
+
+    -- Simulate a hot-reload swap to a new profile with a different hash.
+    local json_path = profile._json_path
+    file_contents[json_path] = _G.JSON.stringify(make_profile({ content_hash = "v2" }))
+    file_mtimes[json_path] = 2000
+    profile._json_mtime = 1000
+    profile:_check_hot_reload()
+
+    local ctx2 = profile:_get_context()
+    T.assert_true(ctx1 ~= ctx2, "hot reload must invalidate the cached context")
+end
+
+-- ============================================================================
+-- RE5 CRITICAL fix: cached context must not freeze the quest log. Reusing
+-- the same ctx table across ticks must not also freeze _quest_log_dirty —
+-- a quest completing mid-run must be observed on the next tick, matching
+-- the pre-caching behavior where create_context() rebuilt fresh (and thus
+-- quest-log-dirty) every tick.
+-- ============================================================================
+
+function M.test_cached_context_resyncs_quest_log_each_tick()
+    mock_globals()
+    reset_mocks()
+
+    local profile = create_profile(make_profile())
+
+    local quest_complete = false
+    _G.core.quests = _G.core.quests or {}
+    _G.core.quests.get_num_quest_log_entries = function() return 1 end
+    _G.core.quests.get_quest_log_title = function(i)
+        return { quest_id = 42, is_header = false, is_complete = quest_complete }
+    end
+
+    -- Tick 1: quest incomplete. This is the first access, so it primes the
+    -- quest-log cache regardless of the fix.
+    local ctx1 = profile:_get_context()
+    T.assert_false(ctx1:is_quest_completed(42), "quest 42 should not be complete on tick 1")
+
+    -- Quest completes between ticks (e.g. player turns it in).
+    quest_complete = true
+
+    -- Tick 2: same cached ctx table (perf win preserved), but the quest log
+    -- must re-sync from the live Sylvannas API, not return the tick-1 snapshot.
+    local ctx2 = profile:_get_context()
+    T.assert_true(ctx1 == ctx2, "context identity must still be cached across ticks (perf win preserved)")
+    T.assert_true(ctx2:is_quest_completed(42),
+        "quest 42 completing mid-run must be observed on the next tick, not frozen at the tick-1 snapshot")
+end
+
+-- ============================================================================
+-- RE5: unbounded execution log must be capped (drop-oldest ring buffer).
+-- ============================================================================
+
+function M.test_execution_log_capped_at_max()
+    mock_globals()
+    reset_mocks()
+
+    local profile = create_profile(make_profile())
+    for i = 1, 250 do
+        profile:_log_event("test_event_" .. i, {})
+    end
+
+    T.assert_true(#profile._execution_log <= 200,
+        "_execution_log must be capped (MAX_EXECUTION_LOG), got " .. #profile._execution_log)
+    local last = profile._execution_log[#profile._execution_log]
+    T.assert_equal(last.event, "test_event_250",
+        "the newest event must be kept when the log is capped (drop-oldest)")
+end
+
+-- ============================================================================
+-- RE6: ghost throttle — release_spirit/resurrect_corpse must not fire every
+-- tick, only every GHOST_RETRY_INTERVAL seconds.
+-- ============================================================================
+
+function M.test_ghost_recovery_throttles_release_and_resurrect()
+    mock_globals()
+    reset_mocks()
+
+    local profile = create_profile(make_profile())
+    profile._state = "ghost"
+    profile._ghost_start_time = 0
+
+    local release_calls, resurrect_calls = 0, 0
+    local fake_now = 0
+    _G.core.time = function() return fake_now end
+    _G.core.unit.is_dead = function() return true end
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return true end,
+        }
+    end
+    _G.core.input.release_spirit = function() release_calls = release_calls + 1 end
+    _G.core.input.resurrect_corpse = function() resurrect_calls = resurrect_calls + 1 end
+
+    -- Three ticks within the same throttle window (< GHOST_RETRY_INTERVAL apart).
+    profile:_execute_ghost()
+    fake_now = 0.5
+    profile:_execute_ghost()
+    fake_now = 1.0
+    profile:_execute_ghost()
+
+    T.assert_equal(release_calls, 1, "release_spirit should fire once per throttle window, not every tick")
+    T.assert_equal(resurrect_calls, 1, "resurrect_corpse should fire once per throttle window, not every tick")
+end
+
+-- ============================================================================
+-- RE10: ClassIs — ctx:get_player_class() must map Sylvannas' numeric
+-- class_id to the uppercase class-name string the compiler emits
+-- (RuntimeCondition::ClassIs("PALADIN")).
+-- ============================================================================
+
+function M.test_get_player_class_maps_numeric_id_to_name()
+    mock_globals()
+    reset_mocks()
+
+    local profile = create_profile(make_profile())
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            get_class = function() return 2 end, -- Paladin (Sylvannas numeric class_id)
+        }
+    end
+
+    local ctx = profile:create_context()
+    T.assert_equal(ctx:get_player_class(), "PALADIN",
+        "get_player_class() must map numeric class_id 2 to 'PALADIN' to match ClassIs(\"PALADIN\")")
+end
+
+-- ============================================================================
 -- Run all tests
 -- ============================================================================
 
 local tests = {
+    test_registry_init_loads_default_profile_with_shared_bus =
+        M.test_registry_init_loads_default_profile_with_shared_bus,
+    test_context_is_cached_across_running_ticks = M.test_context_is_cached_across_running_ticks,
+    test_context_cache_invalidated_on_hot_reload = M.test_context_cache_invalidated_on_hot_reload,
+    test_cached_context_resyncs_quest_log_each_tick = M.test_cached_context_resyncs_quest_log_each_tick,
+    test_execution_log_capped_at_max = M.test_execution_log_capped_at_max,
+    test_ghost_recovery_throttles_release_and_resurrect = M.test_ghost_recovery_throttles_release_and_resurrect,
+    test_get_player_class_maps_numeric_id_to_name = M.test_get_player_class_maps_numeric_id_to_name,
     -- T15 — Editor extraction
     test_toggle_editor_does_not_load_editor_ui = M.test_toggle_editor_does_not_load_editor_ui,
 
