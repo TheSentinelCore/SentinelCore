@@ -1,10 +1,13 @@
 # AGENTS.md - SentinelCore Workspace
 
+> Root `CLAUDE.md` is the canonical repo guide (commands, architecture, service topology).
+> This file covers workspace conventions and the agent skills setup.
+
 ## Domain Constraints
 
-- **Sylvannas API only** — never use WoW Lua APIs. API reference in `Documentation - Project Sylvannas/dev/api/` (see especially `core.md`, `input.md`, `geometry.md`).
+- **Sylvannas API only** — never use WoW Lua APIs. API reference in `docs/SylvannasAPI/dev/api/` (see especially `core.md`, `input.md`, `geometry.md`).
 - **Lua scripts are NOT built** — loaded at runtime by Sylvannas injector. No compile step.
-- **Testing** — run `_G.SentinelCore.run_tests()` from Sylvannas console (in-game only). No `vitest` or external Lua test runners work due to Sylvannas environment.
+- **Testing** — primary loop is the offline suite: `luajit sentinel/tests/run_offline.lua`, run from the repo root. It mocks the `core.*` Sylvannas APIs, so no `vitest` or generic Lua test runner is needed. In-game validation via the Sylvannas console is the secondary path.
 
 ## Project Structure
 
@@ -16,7 +19,7 @@ sentinel/                     # Combat engine + runtime (Lua)
 ├── integrations/           # Adapters for external systems (izi_bridge, nav_client)
 ├── shared/                 # Cross-cutting libraries
 ├── runtime/                # Runtime infrastructure (sensors, module registry, app)
-├── tests/                  # Lua tests (run via _G.SentinelCore.run_tests())
+├── tests/                  # Lua tests (run via luajit sentinel/tests/run_offline.lua)
 └── CONTEXT.md              # Domain glossary
 ```
 
@@ -36,7 +39,7 @@ SentinelNavClient → SentinelNavServer # path, raycast, random-points endpoints
 ## Require Resolution
 
 - Paths are relative to script folder
-- `Documentation - Project Sylvannas/dev/api/*` provides Sylvannas SDK reference
+- `docs/SylvannasAPI/dev/api/*` provides Sylvannas SDK reference
 - Each sub-project may need its own `shared/` copy of libraries
 
 ## Key Anti-Patterns to Avoid
