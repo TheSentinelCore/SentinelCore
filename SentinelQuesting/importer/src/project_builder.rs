@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use sentinel_models::authoring::{
-    Action, ActionPayload, AcceptQuestAction, CommentAction, Faction, FlightAction, HearthAction,
-    ImportMetadata, KillTargetAction, LearnFlightPathAction, NpcRole, NPCReference, Operation,
-    Position, Project, QuestReference, Severity, TrainerAction, TravelAction, TurnInQuestAction,
-    UseItemAction, VendorAction, Diagnostic,
+    Action, ActionPayload, AcceptQuestAction, CommentAction, ConditionAction, Faction,
+    FlightAction, HearthAction, ImportMetadata, KillTargetAction, LearnFlightPathAction, NpcRole,
+    NPCReference, Operation, Position, Project, QuestReference, Severity, TrainerAction,
+    TravelAction, TurnInQuestAction, UseItemAction, VendorAction, Diagnostic,
 };
 use sentinel_queryclient::{NpcDetail, QuestDetail, QueryClient, QueryClientError, WorldPos};
 
@@ -198,6 +198,138 @@ impl<'a> MapperState<'a> {
     }
 }
 
+/// Truncate an arg at its first inline `--` dev comment (RestedXP guides routinely append
+/// these after numeric args, e.g. `.complete 1598,1 --Collect Powers of the Void (x1)`; the
+/// lexer's comma-split does not strip them — see comma-split in `lexer.rs::lex_command`).
+/// Root-cause fix (stripping at lex time) is deferred to PR1b; this keeps numeric parsing
+/// correct in the meantime.
+fn strip_inline_comment(s: &str) -> &str {
+    match s.find("--") {
+        Some(idx) => s[..idx].trim_end(),
+        None => s,
+    }
+}
+
+/// Static zone-name -> continent map-id lookup used to build a `.goto` [`Position`]
+/// (design Decision 4: no QueryServer zone/map table exists, so this stays a static table).
+fn zone_to_map_id(zone: &str) -> Option<u32> {
+    const EASTERN_KINGDOMS: &[&str] = &[
+        "Elwynn Forest", "Westfall", "Redridge Mountains", "Duskwood", "Wetlands",
+        "Loch Modan", "Dun Morogh", "Ironforge", "Stormwind City", "Stormwind",
+        "Silverpine Forest", "Tirisfal Glades", "Undercity", "Hillsbrad Foothills",
+        "Arathi Highlands", "Badlands", "Swamp of Sorrows", "Blasted Lands",
+        "Stranglethorn Vale", "Northern Stranglethorn", "Cape of Stranglethorn",
+    ];
+    const KALIMDOR: &[&str] = &[
+        "Durotar", "Mulgore", "The Barrens", "Teldrassil", "Shadowglen", "Darkshore",
+        "Ashenvale", "Stonetalon Mountains", "Desolace", "Feralas", "Dustwallow Marsh",
+        "Thousand Needles", "Tanaris", "Azshara", "Orgrimmar", "Thunder Bluff", "Darnassus",
+        "Azuremyst Isle", "Bloodmyst Isle", "The Exodar",
+    ];
+    const OUTLAND: &[&str] = &[
+        "Hellfire Peninsula", "Zangarmarsh", "Terokkar Forest", "Nagrand",
+        "Blade's Edge Mountains", "Netherstorm", "Shadowmoon Valley", "Shattrath City",
+    ];
+
+    if EASTERN_KINGDOMS.iter().any(|z| z.eq_ignore_ascii_case(zone)) {
+        Some(0)
+    } else if KALIMDOR.iter().any(|z| z.eq_ignore_ascii_case(zone)) {
+        Some(1)
+    } else if OUTLAND.iter().any(|z| z.eq_ignore_ascii_case(zone)) {
+        Some(530)
+    } else {
+        None
+    }
+}
+
+/// Build a `.goto` [`Position`] from its comma-split args (`[dest, x, y, z?]`, IF1).
+/// Returns `None` when no numeric x/y pair is present (zone-only goto) — the destination
+/// name alone is preserved with no error, per the "zone name only" scenario.
+fn build_travel_position(args: &[String]) -> Option<Position> {
+    let x = strip_inline_comment(args.get(1)?).parse::<f32>().ok()?;
+    let y = strip_inline_comment(args.get(2)?).parse::<f32>().ok()?;
+    let z = args.get(3)
+        .and_then(|s| strip_inline_comment(s).parse::<f32>().ok())
+        .unwrap_or(0.0);
+    let map = args.first()
+        .map(|a| strip_inline_comment(a))
+        .and_then(|a| a.parse::<u32>().ok().or_else(|| zone_to_map_id(a)))
+        .unwrap_or(0);
+    Some(Position::new(map, x, y, z))
+}
+
+/// Encode a `.collect`/`.itemcount` count argument as a §23 DSL fragment. The grammar only
+/// provides an "at least" primitive (`ItemCountAtLeast`, DSL `ItemCount(item,n)`), so `<`/`<=`
+/// lower via `NOT` and `>`/`>=` lower via arithmetic against that same primitive — no new
+/// syntax is invented; PR2a's parser only ever needs to recognize `ItemCount`/`NOT`.
+/// Returns `None` on unparseable input (caller falls back to a diagnostic).
+fn item_count_dsl(item: u32, raw: &str) -> Option<String> {
+    let raw = strip_inline_comment(raw);
+    let (op, digits) = if let Some(rest) = raw.strip_prefix(">=") {
+        (">=", rest)
+    } else if let Some(rest) = raw.strip_prefix("<=") {
+        ("<=", rest)
+    } else if let Some(rest) = raw.strip_prefix('>') {
+        (">", rest)
+    } else if let Some(rest) = raw.strip_prefix('<') {
+        ("<", rest)
+    } else {
+        (">=", raw)
+    };
+    let n = digits.parse::<u32>().ok()?;
+    match op {
+        ">=" => Some(format!("ItemCount({item},{n})")),
+        // Guard against overflow instead of panicking (debug builds trap on `+1` at u32::MAX).
+        ">" => Some(format!("ItemCount({item},{})", n.checked_add(1)?)),
+        "<=" => Some(format!("NOT ItemCount({item},{})", n.checked_add(1)?)),
+        "<" => Some(format!("NOT ItemCount({item},{n})")),
+        _ => unreachable!(),
+    }
+}
+
+/// Build the `02_DATA_MODEL.md §23` DSL expression for a gating/completion command per the
+/// design's command -> DSL mapping table (IF2). Returns `None` on unparseable arguments so the
+/// caller can fall back to a diagnostic-carrying inert action.
+fn gating_condition_dsl(cmd_name: &str, args: &[String]) -> Option<String> {
+    // Strip trailing `--` dev comments before parsing (REL-1: they routinely trail the last
+    // arg on gating commands and are not removed by the lexer's comma-split).
+    let arg = |i: usize| args.get(i).map(|s| strip_inline_comment(s));
+    match cmd_name {
+        "complete" => {
+            let quest = arg(0)?.parse::<u32>().ok()?;
+            let idx = arg(1)?.parse::<u32>().ok()?;
+            Some(format!("Objective({quest},{idx})"))
+        }
+        "collect" | "itemcount" => {
+            let item = arg(0)?.parse::<u32>().ok()?;
+            // Count arg is optional (implicit "at least 1") and may carry a RestedXP
+            // comparison prefix (`<`, `>`, `<=`, `>=`); bare numbers mean "at least N".
+            let raw_count = arg(1).unwrap_or("1");
+            item_count_dsl(item, raw_count)
+        }
+        "isOnQuest" => quest_ids_dsl(args, |q| format!("QuestAccepted({q})")),
+        "isQuestComplete" => quest_ids_dsl(args, |q| format!("QuestCompleted({q})")),
+        "isQuestTurnedIn" => quest_ids_dsl(args, |q| format!("QuestRewarded({q})")),
+        "isQuestAvailable" => quest_ids_dsl(args, |q| format!("NOT QuestRewarded({q})")),
+        _ => None,
+    }
+}
+
+/// Parse every comma-separated arg as a quest ID (after inline-comment stripping), lowering
+/// through `predicate` into a §23 infix-`||` chain: RestedXP quest gates commonly list several
+/// IDs read as "any of these" (round-3 finding); one ID yields the unchanged single string.
+/// `||` is the grammar's OR form (design: `||` -> `Any`); PR2a's parser consumes it, and
+/// fail-open covers residual ambiguity. `None` if the list is empty or any ID fails to parse.
+fn quest_ids_dsl(args: &[String], predicate: impl Fn(u32) -> String) -> Option<String> {
+    let ids: Vec<u32> = args.iter()
+        .map(|a| strip_inline_comment(a).parse::<u32>().ok())
+        .collect::<Option<_>>()?;
+    if ids.is_empty() {
+        return None;
+    }
+    Some(ids.into_iter().map(predicate).collect::<Vec<_>>().join(" || "))
+}
+
 /// Derives the operation name from a step.
 /// Priority: `#label` value, then first `.goto` zone name, then `Step {index}`.
 fn operation_name(step: &Step) -> String {
@@ -328,6 +460,7 @@ async fn build_step_actions(
                 let dest = cmd.args.first()
                     .map(|a| if a.parse::<u32>().is_ok() { format!("Map {}", a) } else { a.clone() })
                     .unwrap_or_else(|| "Unknown".to_string());
+                let position = build_travel_position(&cmd.args);
                 actions.push(Action {
                     id: Uuid::new_v4(),
                     enabled: true,
@@ -335,7 +468,7 @@ async fn build_step_actions(
                     note: cmd.note.clone(),
                     payload: ActionPayload::Travel(TravelAction {
                         destination: dest,
-                        position: None,
+                        position,
                         tolerance: 5.0,
                         mount: None,
                         allow_flight: false,
@@ -467,23 +600,43 @@ async fn build_step_actions(
                     }),
                 });
             }
-            "collect" => {
-                // .collect <item_id>[,<count>] — loot N of item from world objects.
-                // Preserved as structured comment until item→object resolution via
-                // QueryServer is available. The count field is parsed for display.
-                let item_id = cmd.args.first().cloned().unwrap_or_default();
-                let count: Option<u32> = cmd.args.get(1)
-                    .and_then(|s| s.parse::<u32>().ok());
-                let count_str = count.map(|c| format!(",count={}", c)).unwrap_or_default();
-                actions.push(Action {
-                    id: Uuid::new_v4(),
-                    enabled: true,
-                    condition: None,
-                    note: cmd.note.clone(),
-                    payload: ActionPayload::Comment(CommentAction {
-                        text: format!(".collect item={}{}", item_id, count_str),
-                    }),
-                });
+            "collect" | "itemcount" | "complete" | "isOnQuest" | "isQuestComplete"
+            | "isQuestTurnedIn" | "isQuestAvailable" => {
+                // Gating/completion command (IF2): lower to a typed §23 DSL condition per
+                // the design's mapping table. Malformed args fall back to a diagnostic-carrying
+                // inert Comment — never a bare Comment with no diagnostic.
+                match gating_condition_dsl(cmd.name.as_str(), &cmd.args) {
+                    Some(expression) => {
+                        actions.push(Action {
+                            id: Uuid::new_v4(),
+                            enabled: true,
+                            condition: None,
+                            note: cmd.note.clone(),
+                            payload: ActionPayload::Condition(ConditionAction { expression }),
+                        });
+                    }
+                    None => {
+                        state.diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            code: "MALFORMED_GATING_ARGS".to_string(),
+                            message: format!(
+                                "Gating command '.{}' has unparseable arguments: {:?}",
+                                cmd.name, cmd.args
+                            ),
+                            entity: None,
+                            action: None,
+                        });
+                        actions.push(Action {
+                            id: Uuid::new_v4(),
+                            enabled: true,
+                            condition: None,
+                            note: cmd.note.clone(),
+                            payload: ActionPayload::Comment(CommentAction {
+                                text: format!(".{} {}", cmd.name, cmd.args.join(",")),
+                            }),
+                        });
+                    }
+                }
             }
             "item" => {
                 // .item <item_id> - related to item usage
@@ -545,22 +698,6 @@ async fn build_step_actions(
                             minimum_level: None,
                         }),
                     });
-                }
-            }
-            "complete" => {
-                // .complete <quest_id> - mark quest complete without turnin NPC
-                if let Some(id_str) = cmd.args.first() {
-                    if let Ok(id) = id_str.parse::<u32>() {
-                        actions.push(Action {
-                            id: Uuid::new_v4(),
-                            enabled: true,
-                            condition: None,
-                            note: cmd.note.clone(),
-                            payload: ActionPayload::Comment(CommentAction {
-                                text: format!(".complete {}", id),
-                            }),
-                        });
-                    }
                 }
             }
             "skill" => {

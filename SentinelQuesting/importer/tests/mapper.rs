@@ -4,6 +4,14 @@ use sentinel_importer::{parse_guide, ProjectBuilder};
 use sentinel_models::authoring::{ActionPayload, Faction};
 use sentinel_queryclient::{MemoryQueryClient, QuestDetail, NpcDetail, WorldPos};
 
+/// Look up a `Condition` action's expression string, if the payload is that variant.
+fn condition_expression(payload: &ActionPayload) -> Option<&str> {
+    match payload {
+        ActionPayload::Condition(c) => Some(c.expression.as_str()),
+        _ => None,
+    }
+}
+
 async fn setup_test_client() -> MemoryQueryClient {
     let quest = QuestDetail {
         id: 1598,
@@ -89,7 +97,7 @@ step
 }
 
 #[tokio::test]
-async fn goto_creates_travel_action() {
+async fn goto_with_coordinates_populates_position() {
     let client = MemoryQueryClient::new();
     let guide = r#"
 RXPGuides.RegisterGuide([[
@@ -108,7 +116,31 @@ step
         _ => panic!("not travel"),
     };
     assert_eq!(travel.destination, "Elwynn Forest");
-    assert!(travel.position.is_none(), "world coordinates not stored from goto (per ADR-203)");
+    let position = travel.position.expect("goto with numeric coords must populate position (IF1)");
+    assert_eq!(position.world_x, 48.2);
+    assert_eq!(position.world_y, 42.9);
+}
+
+#[tokio::test]
+async fn goto_with_zone_name_only_leaves_position_none() {
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .goto Elwynn Forest
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let travel_action = project.operations[0].actions.iter().find(|a| matches!(a.payload, ActionPayload::Travel(_)));
+    let travel = match &travel_action.expect("should have Travel action").payload {
+        ActionPayload::Travel(t) => t,
+        _ => panic!("not travel"),
+    };
+    assert_eq!(travel.destination, "Elwynn Forest");
+    assert!(travel.position.is_none(), "zone-only goto has no numeric coords to populate position from");
 }
 
 #[tokio::test]
@@ -395,4 +427,200 @@ async fn tbc_alliance_corpus_validates() {
     eprintln!("Total guide steps parsed: {}", total_steps);
     eprintln!("Total diagnostics: {}", total_diagnostics);
     eprintln!("No hard failures - all guides parsed successfully");
+}
+
+#[tokio::test]
+async fn well_formed_gating_commands_lower_to_typed_conditions() {
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .complete 1234,1
+step
+    .collect 159,10
+step
+    .itemcount 2139,1
+step
+    .isOnQuest 5624
+step
+    .isQuestComplete 1234
+step
+    .isQuestTurnedIn 5624
+step
+    .isQuestAvailable 42
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let expr = |op_idx: usize| {
+        condition_expression(&project.operations[op_idx].actions[0].payload)
+            .unwrap_or_else(|| panic!("operation {op_idx} should have a Condition action, not Comment"))
+    };
+
+    assert_eq!(expr(0), "Objective(1234,1)");
+    assert_eq!(expr(1), "ItemCount(159,10)");
+    assert_eq!(expr(2), "ItemCount(2139,1)");
+    assert_eq!(expr(3), "QuestAccepted(5624)");
+    assert_eq!(expr(4), "QuestCompleted(1234)");
+    assert_eq!(expr(5), "QuestRewarded(5624)");
+    assert_eq!(expr(6), "NOT QuestRewarded(42)");
+}
+
+#[tokio::test]
+async fn itemcount_and_collect_support_comparison_operators_and_omitted_count() {
+    // REL-1 fix: corpus-proven patterns the plain-u32 parse misclassified as malformed.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .itemcount 2449,<5 --Earthroot (<5)
+step
+    .collect 19003
+step
+    .itemcount 100,>=3
+step
+    .itemcount 21377,>5
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let expr = |op_idx: usize| {
+        condition_expression(&project.operations[op_idx].actions[0].payload)
+            .unwrap_or_else(|| panic!("operation {op_idx} should have a Condition action, not Comment"))
+    };
+
+    // `.itemcount 2449,<5` (A-1-11-NightElf.lua:501) — count < 5 is NOT at-least-5.
+    assert_eq!(expr(0), "NOT ItemCount(2449,5)");
+    // `.collect 19003` (The Burning Crusade.lua:93674) — omitted count defaults to 1.
+    assert_eq!(expr(1), "ItemCount(19003,1)");
+    // Explicit `>=` form (generic RestedXP operator, not corpus-cited but same grammar).
+    assert_eq!(expr(2), "ItemCount(100,3)");
+    // `.itemcount 21377,>5` (The Burning Crusade.lua:23825) — count > 5 is at-least-6.
+    assert_eq!(expr(3), "ItemCount(21377,6)");
+}
+
+#[tokio::test]
+async fn gating_commands_tolerate_trailing_inline_dev_comments() {
+    // REL-1: RestedXP lines commonly carry trailing `--` dev comments the lexer does not
+    // strip (corpus-proven: 843/1391 `.complete <id>,<idx>` lines across six guides).
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .complete 1598,1 --Collect Powers of the Void (x1)
+step
+    .isQuestTurnedIn 418 -- Thelsamar Blood Sausages
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let expr = |op_idx: usize| {
+        condition_expression(&project.operations[op_idx].actions[0].payload)
+            .unwrap_or_else(|| panic!("operation {op_idx} should have a Condition action, not Comment"))
+    };
+    assert_eq!(expr(0), "Objective(1598,1)");
+    assert_eq!(expr(1), "QuestRewarded(418)");
+    assert!(
+        !project.diagnostics.iter().any(|d| d.code == "MALFORMED_GATING_ARGS"),
+        "trailing dev comments must not trigger a malformed diagnostic"
+    );
+}
+
+#[tokio::test]
+async fn goto_tolerates_trailing_inline_dev_comment() {
+    // REL-2: same root cause hitting `.goto` coordinate parsing (IF1 MUST-populate clause).
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .goto Darnassus,55.239,23.996 -- Argent Guard Manados
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let travel = match &project.operations[0].actions[0].payload {
+        ActionPayload::Travel(t) => t,
+        _ => panic!("not travel"),
+    };
+    let position = travel.position.expect("goto with a trailing dev comment must still populate position");
+    assert_eq!(position.world_x, 55.239);
+    assert_eq!(position.world_y, 23.996);
+}
+
+#[tokio::test]
+async fn multi_id_quest_gates_lower_to_any_of_the_predicates() {
+    // Round-3 finding: RestedXP quest-gating commands commonly list multiple quest IDs read
+    // as "any of these" — narrowing to only the first ID silently drops an OR-across-N gate.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .isOnQuest 9699,9584,9643,9580,10063
+step
+    .isQuestTurnedIn 3789,3790,10520,3763
+step
+    .isQuestAvailable 9717,9719,9738
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let expr = |op_idx: usize| {
+        condition_expression(&project.operations[op_idx].actions[0].payload)
+            .unwrap_or_else(|| panic!("operation {op_idx} should have a Condition action, not Comment"))
+    };
+
+    // `.isOnQuest 9699,9584,9643,9580,10063` (A-11-23.lua:1426)
+    assert_eq!(expr(0), "QuestAccepted(9699) || QuestAccepted(9584) || QuestAccepted(9643) || QuestAccepted(9580) || QuestAccepted(10063)");
+    // `.isQuestTurnedIn 3789,3790,10520,3763` (The Burning Crusade.lua:22371)
+    assert_eq!(expr(1), "QuestRewarded(3789) || QuestRewarded(3790) || QuestRewarded(10520) || QuestRewarded(3763)");
+    // `.isQuestAvailable 9717,9719,9738` (The Burning Crusade.lua:6434)
+    assert_eq!(expr(2), "NOT QuestRewarded(9717) || NOT QuestRewarded(9719) || NOT QuestRewarded(9738)");
+}
+
+#[tokio::test]
+async fn itemcount_overflow_falls_back_to_malformed_diagnostic() {
+    // REL-3: `>`/`<=` add 1 to the parsed count; must not panic at u32::MAX.
+    let client = MemoryQueryClient::new();
+    let guide = format!("\nRXPGuides.RegisterGuide([[\n#version 7\n#name Test\nstep\n    .itemcount 100,>{}\n]])", u32::MAX);
+    let parsed = parse_guide(&guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let action = &project.operations[0].actions[0];
+    assert!(matches!(action.payload, ActionPayload::Comment(_)), "overflow falls back to inert Comment");
+    assert!(
+        project.diagnostics.iter().any(|d| d.code == "MALFORMED_GATING_ARGS"),
+        "count overflow must carry a diagnostic, never a bare Comment"
+    );
+}
+
+#[tokio::test]
+async fn malformed_gating_command_becomes_typed_inert_action_with_diagnostic() {
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .isQuestComplete notanumber
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    // Never a bare Comment with no diagnostic trail (IF2 malformed scenario).
+    let action = &project.operations[0].actions[0];
+    assert!(matches!(action.payload, ActionPayload::Comment(_)), "malformed args fall back to inert Comment");
+    assert!(
+        project.diagnostics.iter().any(|d| d.code == "MALFORMED_GATING_ARGS"),
+        "malformed gating args must carry a diagnostic, never a bare Comment"
+    );
 }
