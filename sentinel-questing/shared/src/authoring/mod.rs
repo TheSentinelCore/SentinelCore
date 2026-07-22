@@ -31,7 +31,8 @@ pub use object::GameObjectReference;
 pub use operation::Operation;
 pub use position::Position;
 pub use project::{
-    new_project, Diagnostic, ImportMetadata, Project, ProjectMetadata, ProjectSettings,
+    new_project, AreaIndex, Diagnostic, ImportMetadata, OperationIndex, Project, ProjectDirIndex,
+    ProjectMetadata, ProjectSettings,
 };
 pub use quest::QuestReference;
 pub use variable::Variable;

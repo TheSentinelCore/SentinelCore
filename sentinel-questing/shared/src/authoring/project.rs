@@ -135,6 +135,100 @@ pub struct ImportMetadata {
     pub guide_version: String,
 }
 
+// ---------------------------------------------------------------------------
+// Directory-format index types (ADR `02_DATA_MODEL` §29)
+// ---------------------------------------------------------------------------
+
+/// Index entry for an operation in `project.json` (id + title only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OperationIndex {
+    pub id: uuid::Uuid,
+    pub title: String,
+}
+
+/// Index entry for an area in `project.json` (id + name only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AreaIndex {
+    pub id: uuid::Uuid,
+    pub name: String,
+}
+
+/// Top-level structure written to `project.json` inside a `.sproject/` directory.
+///
+/// Operations and areas are stored as lightweight indices; the full data lives
+/// in `operations/<id>.json` and `areas/<id>.json` respectively.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectDirIndex {
+    pub metadata: ProjectMetadata,
+    #[serde(default)]
+    pub settings: ProjectSettings,
+    #[serde(default)]
+    pub variables: Vec<Variable>,
+    #[serde(default)]
+    pub npc_library: Vec<NPCReference>,
+    #[serde(default)]
+    pub quest_library: Vec<QuestReference>,
+    #[serde(default)]
+    pub object_library: Vec<GameObjectReference>,
+    #[serde(default)]
+    pub operations: Vec<OperationIndex>,
+    #[serde(default)]
+    pub areas: Vec<AreaIndex>,
+    #[serde(default)]
+    pub diagnostics: Vec<Diagnostic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_metadata: Option<ImportMetadata>,
+}
+
+impl From<&Project> for ProjectDirIndex {
+    fn from(project: &Project) -> Self {
+        Self {
+            metadata: project.metadata.clone(),
+            settings: project.settings.clone(),
+            variables: project.variables.clone(),
+            npc_library: project.npc_library.clone(),
+            quest_library: project.quest_library.clone(),
+            object_library: project.object_library.clone(),
+            operations: project
+                .operations
+                .iter()
+                .map(|op| OperationIndex {
+                    id: op.id,
+                    title: op.name.clone(),
+                })
+                .collect(),
+            areas: project
+                .areas
+                .iter()
+                .map(|a| AreaIndex {
+                    id: a.id,
+                    name: a.name.clone(),
+                })
+                .collect(),
+            diagnostics: project.diagnostics.clone(),
+            import_metadata: project.import_metadata.clone(),
+        }
+    }
+}
+
+impl ProjectDirIndex {
+    /// Reassemble a full `Project` from the index + separately-read entity data.
+    pub fn into_project(self, operations: Vec<Operation>, areas: Vec<Area>) -> Project {
+        Project {
+            metadata: self.metadata,
+            settings: self.settings,
+            variables: self.variables,
+            npc_library: self.npc_library,
+            quest_library: self.quest_library,
+            object_library: self.object_library,
+            areas,
+            operations,
+            diagnostics: self.diagnostics,
+            import_metadata: self.import_metadata,
+        }
+    }
+}
+
 /// Convenience constructor for an empty project with fresh metadata.
 pub fn new_project(name: impl Into<String>) -> Project {
     let now = Utc::now().to_rfc3339();

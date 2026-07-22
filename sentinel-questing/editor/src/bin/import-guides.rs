@@ -56,7 +56,7 @@ fn find_guide_files(dir: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().map_or(false, |e| e == "lua") {
+        if path.extension().is_some_and(|e| e == "lua") {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 // Skip files that start with # (macOS resource forks)
                 if !name.starts_with('#') {

@@ -195,9 +195,16 @@ fn pipeline_end_to_end_success() {
     // Then verify all data integrity
     let project = load_sample_project();
 
-    // 1. Validate
+    // 1. Validate (allow warnings/info — only errors block the pipeline)
     let diags = sentinel_validator::Validator::validate(&project);
-    assert!(diags.is_empty(), "Validation should pass: {:?}", diags);
+    let errors: Vec<_> = diags.iter().filter(|d| {
+        matches!(d.severity, sentinel_models::authoring::Severity::Error)
+    }).collect();
+    assert!(
+        errors.is_empty(),
+        "Expected no validation errors, got: {:?}",
+        errors
+    );
 
     // 2. Compile
     let profile = sentinel_compiler::Compiler::compile(&project)

@@ -7,11 +7,17 @@
 //! - Unresolved quest references
 //! - Circular condition dependencies
 //! - Unused variables
+//! - Missing/incomplete coordinates
+//! - Quest chain consistency
+//! - Invalid operation order (prerequisite ordering)
+//! - Unused assets (NPCs and quests never referenced by any operation)
 //! - Broken references
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use sentinel_models::authoring::{ActionPayload, Diagnostic, Project, Severity};
+use sentinel_models::authoring::{
+    ActionPayload, Diagnostic, Position, Project, QuestReference, Severity,
+};
 
 pub struct Validator;
 
@@ -26,6 +32,10 @@ impl Validator {
         Self::check_unresolved_quests(project, &mut diagnostics);
         Self::check_circular_conditions(project, &mut diagnostics);
         Self::check_unused_variables(project, &mut diagnostics);
+        Self::check_missing_coordinates(project, &mut diagnostics);
+        Self::check_quest_chain_consistency(project, &mut diagnostics);
+        Self::check_invalid_operation_order(project, &mut diagnostics);
+        Self::check_unused_assets(project, &mut diagnostics);
 
         diagnostics
     }
@@ -414,6 +424,303 @@ impl Validator {
     }
 }
 
+impl Validator {
+    // ==================================================================
+    // Missing coordinates
+    // ==================================================================
+
+    fn check_missing_coordinates(project: &Project, diagnostics: &mut Vec<Diagnostic>) {
+        // Check NPC positions in the library.
+        for npc in &project.npc_library {
+            if Self::is_position_missing(&npc.position) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "MISSING_COORDS".to_string(),
+                    message: format!(
+                        "NPC '{}' has missing or zeroed coordinates (map:{}, x:{}, y:{}, z:{})",
+                        npc.name,
+                        npc.position.map_or(0, |p| p.map),
+                        npc.position.map_or(0.0, |p| p.world_x),
+                        npc.position.map_or(0.0, |p| p.world_y),
+                        npc.position.map_or(0.0, |p| p.world_z),
+                    ),
+                    entity: Some(npc.name.clone()),
+                    action: None,
+                });
+            }
+        }
+
+        // Check action positions.
+        for op in &project.operations {
+            for action in &op.actions {
+                Self::check_action_position(&action.payload, &op.name, action.id, diagnostics);
+            }
+        }
+    }
+
+    fn is_position_missing(pos: &Option<Position>) -> bool {
+        match pos {
+            None => true,
+            Some(p) => {
+                // Zeroed-out coordinates are suspicious — they usually mean
+                // the position was never filled in properly.
+                p.world_x == 0.0 && p.world_y == 0.0 && p.world_z == 0.0
+            }
+        }
+    }
+
+    fn check_action_position(
+        payload: &ActionPayload,
+        op_name: &str,
+        action_id: uuid::Uuid,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let position = match payload {
+            ActionPayload::Travel(t) => &t.position,
+            _ => return,
+        };
+
+        if Self::is_position_missing(position) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "MISSING_COORDS".to_string(),
+                message: format!(
+                    "Travel action in operation '{}' has missing or zeroed coordinates",
+                    op_name,
+                ),
+                entity: Some(format!("op:{}", op_name)),
+                action: Some(action_id.to_string()),
+            });
+        }
+    }
+
+    // ==================================================================
+    // Quest chain consistency
+    // ==================================================================
+    //
+    // Detects TurnInQuest actions for quests that were never picked up
+    // (no AcceptQuest) in any prior operation.
+
+    fn check_quest_chain_consistency(project: &Project, diagnostics: &mut Vec<Diagnostic>) {
+        // Collect all quest IDs accepted across all operations (in order).
+        let mut accepted_quests: HashSet<u32> = HashSet::new();
+        // Track first-encounter order for meaningful messages.
+        let mut accept_order: Vec<u32> = Vec::new();
+
+        for op in &project.operations {
+            for action in &op.actions {
+                if let ActionPayload::AcceptQuest(a) = &action.payload {
+                    if accepted_quests.insert(a.quest) {
+                        accept_order.push(a.quest);
+                    }
+                }
+            }
+        }
+
+        // Now check each TurnInQuest.
+        for op in &project.operations {
+            for action in &op.actions {
+                if let ActionPayload::TurnInQuest(t) = &action.payload {
+                    if !accepted_quests.contains(&t.quest) {
+                        diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            code: "QUEST_CHAIN_INCONSISTENCY".to_string(),
+                            message: format!(
+                                "TurnInQuest for quest {} in operation '{}' — \
+                                 quest was never picked up (no AcceptQuest) in any operation",
+                                t.quest, op.name,
+                            ),
+                            entity: Some(format!("op:{}", op.name)),
+                            action: Some(action.id.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // ==================================================================
+    // Invalid operation order (prerequisite ordering)
+    // ==================================================================
+    //
+    // Detects when an operation accepts a quest Q, but Q has
+    // prerequisites that are only accepted in operations after it.
+
+    fn check_invalid_operation_order(project: &Project, diagnostics: &mut Vec<Diagnostic>) {
+        // Build a map: quest_id -> quest metadata (for prerequisites).
+        let quest_map: HashMap<u32, &QuestReference> = project
+            .quest_library
+            .iter()
+            .map(|q| (q.quest_id, q))
+            .collect();
+
+        // Collect AcceptQuest events in order: (operation_index, quest_id).
+        let mut accept_events: Vec<(usize, u32)> = Vec::new();
+        for (op_idx, op) in project.operations.iter().enumerate() {
+            for action in &op.actions {
+                if let ActionPayload::AcceptQuest(a) = &action.payload {
+                    accept_events.push((op_idx, a.quest));
+                }
+            }
+        }
+
+        // For each AcceptQuest, check if its prerequisites come AFTER it.
+        for &(op_idx, quest_id) in &accept_events {
+            let prereqs: &[u32] = quest_map
+                .get(&quest_id)
+                .map(|q| q.prerequisites.as_slice())
+                .unwrap_or(&[]);
+
+            if prereqs.is_empty() {
+                continue;
+            }
+
+            for &prereq_id in prereqs {
+                // Find the operation index where the prerequisite is accepted.
+                let prereq_op_idx = accept_events
+                    .iter()
+                    .find(|&&(_, qid)| qid == prereq_id)
+                    .map(|&(idx, _)| idx);
+
+                if let Some(prereq_idx) = prereq_op_idx {
+                    if prereq_idx > op_idx {
+                        diagnostics.push(Diagnostic {
+                            severity: Severity::Error,
+                            code: "INVALID_OPERATION_ORDER".to_string(),
+                            message: format!(
+                                "Operation #{} accepts quest {} (prerequisite: {}) \
+                                 but prerequisite quest {} is accepted later in operation #{}",
+                                op_idx + 1,
+                                quest_id,
+                                prereq_id,
+                                prereq_id,
+                                prereq_idx + 1,
+                            ),
+                            entity: Some(format!(
+                                "op:{}",
+                                project.operations[op_idx].name
+                            )),
+                            action: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // ==================================================================
+    // Unused asset detection
+    // ==================================================================
+    //
+    // Info-level diagnostics for NPCs and quests in the library that are
+    // never referenced by any operation.
+
+    fn check_unused_assets(project: &Project, diagnostics: &mut Vec<Diagnostic>) {
+        // Collect all NPC UUIDs referenced by operations.
+        let mut referenced_npcs: HashSet<uuid::Uuid> = HashSet::new();
+        // Collect all quest IDs referenced by operations.
+        let mut referenced_quests: HashSet<u32> = HashSet::new();
+
+        for op in &project.operations {
+            for action in &op.actions {
+                Self::collect_references(&action.payload, &mut referenced_npcs, &mut referenced_quests);
+            }
+        }
+
+        // Check unused NPCs.
+        for npc in &project.npc_library {
+            if !referenced_npcs.contains(&npc.id) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Info,
+                    code: "UNUSED_ASSET".to_string(),
+                    message: format!(
+                        "NPC '{}' ({}) in npc_library is never referenced by any operation",
+                        npc.name, npc.id,
+                    ),
+                    entity: Some(npc.name.clone()),
+                    action: None,
+                });
+            }
+        }
+
+        // Check unused quests.
+        for quest in &project.quest_library {
+            if !referenced_quests.contains(&quest.quest_id) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Info,
+                    code: "UNUSED_ASSET".to_string(),
+                    message: format!(
+                        "Quest {} ('{}') in quest_library is never referenced by any operation",
+                        quest.quest_id,
+                        quest.title.as_deref().unwrap_or("untitled"),
+                    ),
+                    entity: Some(quest.title.clone().unwrap_or_default()),
+                    action: None,
+                });
+            }
+        }
+    }
+
+    fn collect_references(
+        payload: &ActionPayload,
+        npcs: &mut HashSet<uuid::Uuid>,
+        quests: &mut HashSet<u32>,
+    ) {
+        match payload {
+            ActionPayload::Vendor(v) => {
+                npcs.insert(v.npc);
+            }
+            ActionPayload::Train(tr) => {
+                npcs.insert(tr.npc);
+            }
+            ActionPayload::Flight(f) => {
+                npcs.insert(f.npc);
+            }
+            ActionPayload::LearnFlightPath(l) => {
+                npcs.insert(l.npc);
+            }
+            ActionPayload::InteractNPC(i) => {
+                npcs.insert(i.npc);
+            }
+            ActionPayload::AcceptQuest(a) => {
+                if let Some(npc_id) = a.npc {
+                    npcs.insert(npc_id);
+                }
+                quests.insert(a.quest);
+            }
+            ActionPayload::TurnInQuest(t) => {
+                if let Some(npc_id) = t.npc {
+                    npcs.insert(npc_id);
+                }
+                quests.insert(t.quest);
+            }
+            ActionPayload::Repair(r) => {
+                npcs.insert(r.npc);
+            }
+            ActionPayload::Mailbox(m) => {
+                npcs.insert(m.npc);
+            }
+            ActionPayload::Bank(b) => {
+                npcs.insert(b.npc);
+            }
+            ActionPayload::Escort(e) => {
+                npcs.insert(e.npc);
+            }
+            ActionPayload::SetHearth(sh) => {
+                if let Some(npc_id) = sh.npc {
+                    npcs.insert(npc_id);
+                }
+            }
+            ActionPayload::Hearth(h) => {
+                if let Some(npc_id) = h.innkeeper {
+                    npcs.insert(npc_id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 // ======================================================================
 // Tests
 // ======================================================================
@@ -422,7 +729,8 @@ impl Validator {
 mod tests {
     use super::*;
     use sentinel_models::authoring::{
-        self, Action, NPCReference, SetVariableAction, Variable, VariableType, VariableValue,
+        self, AcceptQuestAction, Action, NPCReference, Position, QuestReference, SetVariableAction,
+        TravelAction, TurnInQuestAction, Variable, VariableType, VariableValue, VendorAction,
     };
 
     fn make_project() -> Project {
@@ -812,5 +1120,393 @@ mod tests {
                 || c == "UNDECLARED_VARIABLE"
                 || c == "VARIABLE_WRITTEN_BUT_UNREAD"
         }));
+    }
+
+    // ==============================================================
+    // Missing coordinates tests
+    // ==============================================================
+
+    #[test]
+    fn detects_missing_npc_position() {
+        let mut project = make_project();
+        project.npc_library.push(NPCReference {
+            id: uuid::Uuid::nil(),
+            entry: Some(100),
+            guid: None,
+            name: "TestNPC".to_string(),
+            faction: None,
+            roles: vec![],
+            position: None,
+            source: None,
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(
+            diags.iter().any(|d| d.code == "MISSING_COORDS"),
+            "Expected MISSING_COORDS for NPC with no position, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn detects_zeroed_npc_position() {
+        let mut project = make_project();
+        project.npc_library.push(NPCReference {
+            id: uuid::Uuid::nil(),
+            entry: Some(100),
+            guid: None,
+            name: "TestNPC".to_string(),
+            faction: None,
+            roles: vec![],
+            position: Some(Position::new(0, 0.0, 0.0, 0.0)),
+            source: None,
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(
+            diags.iter().any(|d| d.code == "MISSING_COORDS"),
+            "Expected MISSING_COORDS for NPC with zeroed position, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn no_missing_coords_for_valid_position() {
+        let mut project = make_project();
+        project.npc_library.push(NPCReference {
+            id: uuid::Uuid::nil(),
+            entry: Some(100),
+            guid: None,
+            name: "TestNPC".to_string(),
+            faction: None,
+            roles: vec![],
+            position: Some(Position::new(1, -8345.0, 610.0, 94.0)),
+            source: None,
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(!diags.iter().any(|d| d.code == "MISSING_COORDS"));
+    }
+
+    #[test]
+    fn detects_missing_travel_position() {
+        let mut project = make_project();
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op1".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "10000000000000000000000000000001",
+                ActionPayload::Travel(TravelAction {
+                    destination: "Somewhere".to_string(),
+                    position: None,
+                    tolerance: 5.0,
+                    mount: None,
+                    allow_flight: false,
+                    timeout: None,
+                }),
+            )],
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(
+            diags.iter().any(|d| d.code == "MISSING_COORDS"),
+            "Expected MISSING_COORDS for Travel with no position, got: {:?}",
+            diags
+        );
+    }
+
+    // ==============================================================
+    // Quest chain consistency tests
+    // ==============================================================
+
+    #[test]
+    fn detects_turnin_without_accept() {
+        let mut project = make_project();
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op1".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "10000000000000000000000000000001",
+                ActionPayload::TurnInQuest(TurnInQuestAction {
+                    quest: 42,
+                    npc: None,
+                    choose_reward: None,
+                    optional: false,
+                }),
+            )],
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(
+            diags.iter().any(|d| d.code == "QUEST_CHAIN_INCONSISTENCY"),
+            "Expected QUEST_CHAIN_INCONSISTENCY, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn no_chain_inconsistency_when_accept_exists() {
+        let mut project = make_project();
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op1".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "10000000000000000000000000000001",
+                ActionPayload::AcceptQuest(AcceptQuestAction {
+                    quest: 42,
+                    npc: None,
+                    auto_complete_dialog: false,
+                    optional: false,
+                }),
+            )],
+            notes: None,
+        });
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op2".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "20000000000000000000000000000001",
+                ActionPayload::TurnInQuest(TurnInQuestAction {
+                    quest: 42,
+                    npc: None,
+                    choose_reward: None,
+                    optional: false,
+                }),
+            )],
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(!diags.iter().any(|d| d.code == "QUEST_CHAIN_INCONSISTENCY"));
+    }
+
+    // ==============================================================
+    // Invalid operation order tests
+    // ==============================================================
+
+    #[test]
+    fn detects_prerequisite_accepted_later() {
+        let mut project = make_project();
+        // Quest 200 has prerequisite 100.
+        project.quest_library.push(QuestReference {
+            id: uuid::Uuid::nil(),
+            quest_id: 200,
+            title: Some("Quest B".to_string()),
+            level: None,
+            minimum_level: None,
+            suggested_group: None,
+            giver_npc: None,
+            finisher_npc: None,
+            chain: None,
+            prerequisites: vec![100],
+            exclusive_with: vec![],
+            repeatable: false,
+            source: None,
+        });
+        project.quest_library.push(QuestReference {
+            id: uuid::Uuid::nil(),
+            quest_id: 100,
+            title: Some("Quest A".to_string()),
+            level: None,
+            minimum_level: None,
+            suggested_group: None,
+            giver_npc: None,
+            finisher_npc: None,
+            chain: None,
+            prerequisites: vec![],
+            exclusive_with: vec![],
+            repeatable: false,
+            source: None,
+        });
+        // Accept quest 200 BEFORE quest 100 — wrong order.
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op1".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "10000000000000000000000000000001",
+                ActionPayload::AcceptQuest(AcceptQuestAction {
+                    quest: 200,
+                    npc: None,
+                    auto_complete_dialog: false,
+                    optional: false,
+                }),
+            )],
+            notes: None,
+        });
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op2".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "20000000000000000000000000000001",
+                ActionPayload::AcceptQuest(AcceptQuestAction {
+                    quest: 100,
+                    npc: None,
+                    auto_complete_dialog: false,
+                    optional: false,
+                }),
+            )],
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(
+            diags.iter().any(|d| d.code == "INVALID_OPERATION_ORDER"),
+            "Expected INVALID_OPERATION_ORDER, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn no_order_issue_when_prerequisite_comes_first() {
+        let mut project = make_project();
+        project.quest_library.push(QuestReference {
+            id: uuid::Uuid::nil(),
+            quest_id: 200,
+            title: Some("Quest B".to_string()),
+            level: None,
+            minimum_level: None,
+            suggested_group: None,
+            giver_npc: None,
+            finisher_npc: None,
+            chain: None,
+            prerequisites: vec![100],
+            exclusive_with: vec![],
+            repeatable: false,
+            source: None,
+        });
+        // Accept quest 100 BEFORE quest 200 — correct order.
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op1".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "10000000000000000000000000000001",
+                ActionPayload::AcceptQuest(AcceptQuestAction {
+                    quest: 100,
+                    npc: None,
+                    auto_complete_dialog: false,
+                    optional: false,
+                }),
+            )],
+            notes: None,
+        });
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op2".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "20000000000000000000000000000001",
+                ActionPayload::AcceptQuest(AcceptQuestAction {
+                    quest: 200,
+                    npc: None,
+                    auto_complete_dialog: false,
+                    optional: false,
+                }),
+            )],
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(!diags.iter().any(|d| d.code == "INVALID_OPERATION_ORDER"));
+    }
+
+    // ==============================================================
+    // Unused asset tests
+    // ==============================================================
+
+    #[test]
+    fn detects_unused_npc() {
+        let mut project = make_project();
+        project.npc_library.push(NPCReference {
+            id: uuid::Uuid::nil(),
+            entry: Some(100),
+            guid: None,
+            name: "UnusedNPC".to_string(),
+            faction: None,
+            roles: vec![],
+            position: None,
+            source: None,
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(
+            diags.iter().any(|d| d.code == "UNUSED_ASSET"),
+            "Expected UNUSED_ASSET for unused NPC, got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn no_unused_asset_for_referenced_npc() {
+        let mut project = make_project();
+        let npc_id = uuid::Uuid::nil();
+        project.npc_library.push(NPCReference {
+            id: npc_id,
+            entry: Some(100),
+            guid: None,
+            name: "UsedNPC".to_string(),
+            faction: None,
+            roles: vec![],
+            position: None,
+            source: None,
+            notes: None,
+        });
+        project.operations.push(authoring::Operation {
+            id: uuid::Uuid::nil(),
+            name: "op1".to_string(),
+            description: None,
+            minimum_level: None,
+            maximum_level: None,
+            enabled: true,
+            conditions: vec![],
+            actions: vec![make_action(
+                "10000000000000000000000000000001",
+                ActionPayload::Vendor(VendorAction {
+                    npc: npc_id,
+                    sell_grey: false,
+                    repair: false,
+                    buy_items: vec![],
+                    minimum_free_slots: None,
+                }),
+            )],
+            notes: None,
+        });
+        let diags = Validator::validate(&project);
+        assert!(!diags.iter().any(|d| d.code == "UNUSED_ASSET"));
     }
 }

@@ -1,6 +1,6 @@
 //! Integration tests for the Wave 1 core parser.
 
-use sentinel_importer::{parse_guide, ImportError, Lexer, GuideSplitter, Token};
+use sentinel_importer::{parse_guide, ImportError, GuideSplitter};
 
 const BASIC: &str = include_str!("fixtures/guide_basic.lua");
 const DANGLING: &str = include_str!("fixtures/guide_dangling.lua");

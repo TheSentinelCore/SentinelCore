@@ -62,7 +62,7 @@ step
     assert_eq!(quest_ref.quest_id, 1598);
 
     // NPC in library (we have both giver and finisher from quest resolution + target)
-    assert!(project.npc_library.len() >= 1, "should have at least one npc");
+    assert!(!project.npc_library.is_empty(), "should have at least one npc");
     assert!(project.npc_library.iter().any(|n| n.name == "Marshal McBride"));
 }
 
@@ -322,7 +322,7 @@ async fn real_restedxp_guide_imports() {
 
     // Parser finds steps in the guide body
     let steps = parsed.steps.len();
-    assert!(steps >= 300 && steps <= 450, "got {} steps", steps);
+    assert!((300..=450).contains(&steps), "got {} steps", steps);
 
     // Build project - one operation per step
     let project = ProjectBuilder::build(&parsed, path, &client).await.expect("build ok");
@@ -350,7 +350,7 @@ async fn tbc_alliance_corpus_validates() {
     let mut total_steps = 0;
     let mut total_diagnostics = 0;
 
-    for (guide_file, min_level, max_level) in guides {
+    for (guide_file, min_level, _max_level) in guides {
         let path = format!("{}/{}", base_path, guide_file);
         if !std::path::Path::new(&path).exists() {
             eprintln!("skipping missing: {path}");
@@ -383,11 +383,11 @@ async fn tbc_alliance_corpus_validates() {
         
         // Verify the guide covers expected level range
         // (A-Human has #name 1-11, A-11-23 has #name 12-23, etc.)
-        let has_level_range = parsed.headers.iter()
+        let _has_level_range = parsed.headers.iter()
             .any(|h| h.key == "name" && h.value.contains(&format!("{}-", min_level)));
         
         // Basic sanity check
-        assert!(project.operations.len() > 0, "{} should have at least one operation", guide_file);
+        assert!(!project.operations.is_empty(), "{} should have at least one operation", guide_file);
     }
 
     // Summary output

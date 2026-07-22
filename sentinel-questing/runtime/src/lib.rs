@@ -15,6 +15,12 @@ pub struct RuntimeState {
     pub variables: std::collections::HashMap<String, serde_json::Value>,
 }
 
+impl Default for RuntimeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RuntimeState {
     pub fn new() -> Self {
         Self {

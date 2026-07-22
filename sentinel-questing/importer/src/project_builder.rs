@@ -37,9 +37,9 @@ fn role_from_str(s: &str) -> Option<NpcRole> {
 fn worldpos_to_position(p: &WorldPos) -> Position {
     Position::new(
         p.map,
-        p.x as f32,
-        p.y as f32,
-        p.z as f32,
+        p.x,
+        p.y,
+        p.z,
     )
 }
 
@@ -253,7 +253,7 @@ async fn build_step_actions(
     for cmd in &step.commands {
         match cmd.name.as_str() {
             "target" => {
-                last_target = resolve_npc_with_hints(state, step, cmd.args.first().map(|s| s)).await?;
+                last_target = resolve_npc_with_hints(state, step, cmd.args.first()).await?;
             }
             "accept" => {
                 if let Some(id_str) = cmd.args.first() {
@@ -406,8 +406,7 @@ async fn build_step_actions(
                 }
             }
             "fly" => {
-                let dest = cmd.args.first()
-                    .map(|s| s.clone())
+                let dest = cmd.args.first().cloned()
                     .unwrap_or_else(|| "Unknown".to_string());
                 let npc = if let Some(npc) = last_target {
                     Some(npc)
