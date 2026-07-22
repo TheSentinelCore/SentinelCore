@@ -99,32 +99,79 @@ struct ExtractedBody {
     body_start_line: SourceLineNo,
 }
 
+/// A single `RegisterGuide([[ ... ]])` block extracted from a bundle file (IF6), tagged with the
+/// number of newlines that precede its `RegisterGuide([[` marker in the ORIGINAL bundle source.
+/// Adding `line_offset` to every `SourceLineNo` produced by parsing `source` alone (which numbers
+/// from its own line 1) turns it into a bundle-file-absolute line number (PR1b-iii line-offset
+/// fix — `parse_guide_bundle`'s lines were previously block-relative and dormant).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuideBlock {
+    pub source: String,
+    pub line_offset: usize,
+}
+
+/// A malformed block boundary found while scanning a bundle (PR1b-iii hardening, IF6). The scan
+/// recovers past the offending boundary so a single bad block cannot silently swallow or merge
+/// with the rest of the file.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GuideBlockError {
+    #[error("RegisterGuide block starting at line {0} has no matching ]]) close")]
+    UnterminatedBlock(SourceLineNo),
+    #[error(
+        "RegisterGuide block starting at line {0} contains a nested RegisterGuide([[ at line {1} \
+         before its own ]]) close — the two blocks would otherwise merge"
+    )]
+    NestedOpenBeforeClose(SourceLineNo, SourceLineNo),
+}
+
 /// Extract every `RegisterGuide([[ ... ]])` block from a bundle source file as self-contained
 /// guide source strings, each independently valid input to [`crate::parse_guide`] (IF6). Corpus
 /// reality: `The Burning Crusade.lua` is 253 separate blocks concatenated in one file, not
 /// multiple `#name` headers inside a single block — an outer scan over block boundaries, before
 /// the per-guide header/step parsing [`GuideSplitter::split`] already handles unchanged.
-pub fn extract_guide_blocks(source: &str) -> Vec<String> {
+///
+/// A block whose close is missing, or whose captured span contains another `RegisterGuide([[`
+/// before its own close (meaning the naive scan would otherwise merge two blocks together), is
+/// reported as a [`GuideBlockError`] instead of being silently dropped or merged; the scan still
+/// recovers and continues past it (PR1b-iii hardening).
+pub fn extract_guide_blocks(source: &str) -> Vec<Result<GuideBlock, GuideBlockError>> {
     const OPEN: &str = "RegisterGuide([[";
     const CLOSE: &str = "]])";
-    let mut blocks = Vec::new();
+    let mut results = Vec::new();
     let mut cursor = 0;
     while let Some(open_rel) = source[cursor..].find(OPEN) {
         let open_idx = cursor + open_rel;
         let after_open = open_idx + OPEN.len();
+        let open_line = source[..open_idx].matches('\n').count() + 1;
+
         let Some(close_rel) = source[after_open..].find(CLOSE) else {
-            break; // unterminated trailing block: stop rather than panic on a truncated tail
+            results.push(Err(GuideBlockError::UnterminatedBlock(open_line)));
+            break; // no close exists anywhere in the remainder of the file either
         };
         let close_idx = after_open + close_rel + CLOSE.len();
-        blocks.push(source[open_idx..close_idx].to_string());
+
+        if let Some(nested_rel) = source[after_open..after_open + close_rel].find(OPEN) {
+            let nested_open_idx = after_open + nested_rel;
+            let nested_line = source[..nested_open_idx].matches('\n').count() + 1;
+            results.push(Err(GuideBlockError::NestedOpenBeforeClose(open_line, nested_line)));
+            // Resume scanning at the nested OPEN: the swallowed block still gets a chance to be
+            // extracted on its own, correctly-bounded terms.
+            cursor = nested_open_idx;
+            continue;
+        }
+
+        results.push(Ok(GuideBlock {
+            source: source[open_idx..close_idx].to_string(),
+            line_offset: open_line - 1,
+        }));
         cursor = close_idx;
     }
-    blocks
+    results
 }
 
 #[cfg(test)]
 mod bundle_tests {
-    use super::extract_guide_blocks;
+    use super::{extract_guide_blocks, GuideBlock, GuideBlockError};
 
     #[test]
     fn bundle_source_yields_one_block_per_registerguide_header() {
@@ -132,10 +179,48 @@ mod bundle_tests {
         let src = "RXPGuides.RegisterGuide([[\n#name First\nstep\n.accept 1\n]]);\n\
                    RXPGuides.RegisterGuide([[\n#name Second\nstep\n.accept 2\n]]);\n\
                    RXPGuides.RegisterGuide([[\n#name Third\nstep\n.accept 3\n]]);";
-        let blocks = extract_guide_blocks(src);
+        let blocks: Vec<GuideBlock> = extract_guide_blocks(src)
+            .into_iter()
+            .map(|r| r.expect("well-formed block"))
+            .collect();
         assert_eq!(blocks.len(), 3);
-        assert!(blocks[0].contains("#name First"));
-        assert!(blocks[1].contains("#name Second"));
-        assert!(blocks[2].contains("#name Third"));
+        assert!(blocks[0].source.contains("#name First"));
+        assert!(blocks[1].source.contains("#name Second"));
+        assert!(blocks[2].source.contains("#name Third"));
+        // Line-offset fix (PR1b-iii): each block's offset is the newline count before its own
+        // `RegisterGuide([[`, not 0 for every block.
+        assert_eq!(blocks[0].line_offset, 0);
+        assert_eq!(blocks[1].line_offset, 5);
+        assert_eq!(blocks[2].line_offset, 10);
+    }
+
+    #[test]
+    fn unterminated_trailing_block_is_reported_not_silently_dropped() {
+        // Hardening (PR1b-iii): a good leading block plus a trailing block that never closes.
+        let src = "RXPGuides.RegisterGuide([[\n#name First\nstep\n.accept 1\n]]);\n\
+                   RXPGuides.RegisterGuide([[\n#name Second\nstep\n.accept 2\n";
+        let results = extract_guide_blocks(src);
+        assert_eq!(results.len(), 2, "the good first block must still be extracted");
+        assert!(results[0].is_ok());
+        match &results[1] {
+            Err(GuideBlockError::UnterminatedBlock(line)) => assert_eq!(*line, 6),
+            other => panic!("expected UnterminatedBlock, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_open_before_close_is_reported_and_scan_recovers() {
+        // Simulates the missing-close/merge failure mode: block A's own `]])` is absent, so a
+        // naive scan finds block B's close first and would swallow B's header/body into A.
+        let src = "RXPGuides.RegisterGuide([[\n#name First\nstep\n.accept 1\n\
+                   RXPGuides.RegisterGuide([[\n#name Second\nstep\n.accept 2\n]]);";
+        let results = extract_guide_blocks(src);
+        assert_eq!(results.len(), 2);
+        assert!(
+            matches!(results[0], Err(GuideBlockError::NestedOpenBeforeClose(_, _))),
+            "must not silently merge, got {:?}", results[0]
+        );
+        let recovered = results[1].as_ref().expect("the swallowed block must still be recoverable on its own");
+        assert!(recovered.source.contains("#name Second"));
     }
 }

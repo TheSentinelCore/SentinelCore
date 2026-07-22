@@ -21,16 +21,16 @@
 //! When NPCs cannot be resolved via explicit `.target`, hints are extracted from the
 //! RestedXP color-coded text (e.g., `|cRXP_FRIENDLY_Name|r`).
 
-mod guide_splitter;
 mod coverage;
+mod guide_splitter;
 mod label_graph;
 mod lexer;
 mod name_hints;
 mod project_builder;
 mod step_builder;
 
-pub use guide_splitter::{extract_guide_blocks, GuideSplitter, SplitGuide};
 pub use coverage::{CommandTally, CoverageReport};
+pub use guide_splitter::{extract_guide_blocks, GuideBlock, GuideBlockError, GuideSplitter, SplitGuide};
 pub use label_graph::{LabelGraph, LabelGraphBuilder, LabelRef};
 pub use lexer::{Lexer, Token};
 pub use project_builder::ProjectBuilder;
@@ -143,11 +143,53 @@ pub fn parse_guide(source: &str) -> Result<ParsedGuide, ImportError> {
     })
 }
 
+/// Bundle-level error: either a malformed block boundary ([`GuideBlockError`], PR1b-iii
+/// hardening) found while scanning, or an error parsing an otherwise well-bounded block
+/// ([`ImportError`]).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GuideBundleError {
+    #[error(transparent)]
+    Block(#[from] GuideBlockError),
+    #[error(transparent)]
+    Parse(#[from] ImportError),
+}
+
 /// Bundle entry point (IF6): split a source containing N concatenated `RegisterGuide` blocks
 /// (`The Burning Crusade.lua`: 253) and parse each exactly as [`parse_guide`] parses a
-/// single-guide file — one [`ParsedGuide`] result per block, in source order. Each block is
-/// parsed as if it started at line 1, so `SourceLineNo` values are currently block-relative, not
-/// bundle-file-absolute — dormant until the PR1b-iii `import-guides` wiring corrects the offset.
-pub fn parse_guide_bundle(source: &str) -> Vec<Result<ParsedGuide, ImportError>> {
-    extract_guide_blocks(source).iter().map(|block| parse_guide(block)).collect()
+/// single-guide file — one [`ParsedGuide`] result per block, in source order. Each parsed
+/// guide's `Header.line` / `Step.line` / `Directive.line` / `Command.line` / `LabelRef.line`
+/// values are shifted by the block's `line_offset`, so they are bundle-file-absolute (PR1b-iii
+/// line-offset fix — previously block-relative and dormant). A malformed block boundary
+/// surfaces as `GuideBundleError::Block` without aborting the scan of subsequent blocks
+/// (PR1b-iii hardening, see [`extract_guide_blocks`]).
+pub fn parse_guide_bundle(source: &str) -> Vec<Result<ParsedGuide, GuideBundleError>> {
+    extract_guide_blocks(source)
+        .into_iter()
+        .map(|block| {
+            let block = block?;
+            let mut guide = parse_guide(&block.source)?;
+            shift_guide_lines(&mut guide, block.line_offset);
+            Ok(guide)
+        })
+        .collect()
+}
+
+/// Shift every `SourceLineNo` recorded in `guide` by `offset`, turning block-relative line
+/// numbers into bundle-file-absolute ones (PR1b-iii).
+fn shift_guide_lines(guide: &mut ParsedGuide, offset: usize) {
+    for header in &mut guide.headers {
+        header.line += offset;
+    }
+    for step in &mut guide.steps {
+        step.line += offset;
+        for directive in &mut step.directives {
+            directive.line += offset;
+        }
+        for command in &mut step.commands {
+            command.line += offset;
+        }
+    }
+    for label_ref in guide.labels.references.iter_mut().chain(guide.labels.unresolved.iter_mut()) {
+        label_ref.line += offset;
+    }
 }

@@ -1,6 +1,7 @@
 //! Integration tests for the Wave 1 core parser.
 
 use sentinel_importer::{parse_guide, parse_guide_bundle, ImportError, GuideSplitter};
+use sentinel_queryclient::MemoryQueryClient;
 
 const BASIC: &str = include_str!("fixtures/guide_basic.lua");
 const DANGLING: &str = include_str!("fixtures/guide_dangling.lua");
@@ -124,9 +125,11 @@ fn command_line_class_suffix_is_parsed_into_class_restriction() {
     assert_eq!(collect.class_restriction.as_deref(), Some("Warrior"));
 }
 
-#[test]
-fn multi_registerguide_bundle_yields_one_project_per_guide() {
-    // IF6: real 2-block excerpt from The Burning Crusade.lua (253 blocks in the full file).
+#[tokio::test]
+async fn multi_registerguide_bundle_yields_one_project_per_guide() {
+    // IF6 end-to-end: real 2-block excerpt from The Burning Crusade.lua (253 blocks in the full
+    // file) must split into N `ParsedGuide`s AND, once fed through `ProjectBuilder` (PR1b-iii
+    // wiring), N `Project`s — one per guide, not one per file.
     let results = parse_guide_bundle(BUNDLE_SLICE);
     assert_eq!(results.len(), 2, "bundle has 2 RegisterGuide blocks");
     let guides: Vec<_> = results.into_iter().map(|r| r.expect("each block parses")).collect();
@@ -137,6 +140,49 @@ fn multi_registerguide_bundle_yields_one_project_per_guide() {
     assert_eq!(name_of(&guides[1]), Some("DM East".to_string()));
     assert!(guides[0].steps.iter().any(|s| s.commands.iter().any(|c| c.name == "fp")));
     assert!(guides[1].steps.iter().any(|s| s.commands.iter().any(|c| c.name == "collect")));
+
+    let client = MemoryQueryClient::new();
+    let mut projects = Vec::new();
+    for guide in &guides {
+        projects.push(
+            sentinel_importer::ProjectBuilder::build(guide, "bundle.lua", &client)
+                .await
+                .expect("builds"),
+        );
+    }
+    assert_eq!(projects.len(), 2, "one Project per guide, not one per file (IF6)");
+    assert_eq!(projects[0].metadata.name, "Prep-Silithus Start");
+    assert_eq!(projects[1].metadata.name, "DM East");
+}
+
+#[test]
+fn standalone_and_bundled_parse_are_invariant_modulo_line_offset() {
+    // The same guide text, parsed standalone vs. embedded as the second block of a bundle, must
+    // produce identical structure — only line numbers should differ by a constant, non-zero
+    // offset once bundled (PR1b-iii line-offset fix).
+    let guide_src = "RXPGuides.RegisterGuide([[\n#name Solo\nstep\n.accept 42\n]]);";
+    let standalone = parse_guide(guide_src).expect("standalone parses");
+
+    let bundle_src = format!(
+        "-- leading comment\nRXPGuides.RegisterGuide([[\n#name Leader\nstep\n.accept 1\n]]);\n{guide_src}"
+    );
+    let bundled = parse_guide_bundle(&bundle_src);
+    assert_eq!(bundled.len(), 2);
+    let second = bundled[1].as_ref().expect("second block parses");
+
+    assert_eq!(
+        second.headers.iter().find(|h| h.key == "name").map(|h| &h.value),
+        standalone.headers.iter().find(|h| h.key == "name").map(|h| &h.value),
+    );
+    assert_eq!(second.steps.len(), standalone.steps.len());
+    assert_eq!(second.steps[0].commands[0].name, standalone.steps[0].commands[0].name);
+
+    let solo_accept_line = standalone.steps[0].commands[0].line;
+    let bundled_accept_line = second.steps[0].commands[0].line;
+    assert!(
+        bundled_accept_line > solo_accept_line,
+        "bundled block's lines must be file-absolute (shifted), not restarted at the block's own line 1"
+    );
 }
 
 #[test]
