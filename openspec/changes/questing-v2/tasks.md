@@ -100,16 +100,16 @@ Rationale: PR1 (7 reqs, 6 importer files + new `coverage.rs`) and PR2 (new DSL p
 
 ## PR2a: Compiler — Condition DSL Parser
 
-- [ ] 3.1 RED `SentinelQuesting/compiler/tests/compiler.rs`: `QuestCompleted(1234)` DSL → `RuntimeCondition::QuestCompleted(1234)`; unmappable expr → diagnostic, no `AlwaysTrue` (CL1)
-- [ ] 3.2 GREEN `SentinelQuesting/compiler/src/condition.rs` (new): parse `&&`/`||`/`NOT`/parens per design mapping table into `condition.rs:9-27` variants (CL1)
-- [ ] 3.3 GREEN `SentinelQuesting/compiler/src/lib.rs:160`: remove `RuntimeCondition::AlwaysTrue` shortcut, call new parser, wire unmapped-expr diagnostics (CL1)
+- [x] 3.1 RED `SentinelQuesting/compiler/tests/compiler.rs`: `QuestCompleted(1234)` DSL → `RuntimeCondition::QuestCompleted(1234)`; unmappable expr → diagnostic, no `AlwaysTrue` (CL1)
+- [x] 3.2 GREEN `SentinelQuesting/compiler/src/condition.rs` (new): parse `&&`/`||`/`NOT`/parens per design mapping table into `condition.rs:9-27` variants (CL1)
+- [x] 3.3 GREEN `SentinelQuesting/compiler/src/lib.rs:160`: remove `RuntimeCondition::AlwaysTrue` shortcut, call new parser, wire unmapped-expr diagnostics (CL1) — `Compiler::compile` now returns `(RuntimeProfile, CompileReport)`; `CompileReport.unmapped_conditions: Vec<Diagnostic>` is the diagnostics vehicle PR2b (task 4.4) extends with `class_excluded`/`unresolved`. Post-4R-review CRITICAL fixes (size:exception approved): (1) `condition.rs` recursive descent had no depth bound (network-reachable stack-overflow DoS via editor `/compile`) — added `MAX_CONDITION_DEPTH`/`MAX_CONDITION_TOKENS` guards; (2) `editor/src/lib.rs::compile_project_inner` now merges `CompileReport.unmapped_conditions` into `CompileResult.diagnostics` (appended to `project.diagnostics`, not replacing it) so `UNMAPPED_CONDITION` reaches the editor `/compile` response — this task's editor-side plumbing is now genuinely complete
 
 ## PR2b: Compiler — LootObject Resolution + Class Filtering
 
 - [ ] 4.1 RED `SentinelQuesting/compiler/tests/compiler.rs`: resolvable `LootObject` → real `object_entry`; unresolvable → diagnostic, not `0` (CL2)
 - [ ] 4.2 GREEN `SentinelQuesting/compiler/src/lib.rs:198`: resolve via object library/entry ref instead of `object_entry: 0` (CL2)
 - [ ] 4.3 RED `SentinelQuesting/compiler/tests/compiler.rs`: Paladin-restricted action + `--class Warrior` → excluded + counted class-excluded; `--class Paladin` → retained, no restriction metadata (CL4)
-- [ ] 4.4 GREEN `SentinelQuesting/compiler/src/lib.rs`: class-filter pass over actions/operations, populate `CompileReport{class_excluded, unresolved, unmapped_conditions}` (CL4)
+- [ ] 4.4 GREEN `SentinelQuesting/compiler/src/lib.rs`: class-filter pass over actions/operations, populate `CompileReport{class_excluded, unresolved, unmapped_conditions}` (CL4) — `unmapped_conditions` already flows to the editor via `compile_project_inner` (done in PR2a); this task only needs to add `class_excluded`/`unresolved` and confirm they flow through the same existing merge point
 - [ ] 4.5 GREEN `SentinelQuesting/compiler/src/main.rs`: add `--class <C>` CLI flag, name output `<project>.<class>.profile.json` (CL4)
 
 ## PR3: Re-import Golden Artifacts

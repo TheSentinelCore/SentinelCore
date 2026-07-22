@@ -41,7 +41,8 @@ pub struct CompileResult {
     pub profile_json: String,
     /// Number of runtime operations in the compiled profile.
     pub operation_count: usize,
-    /// Any diagnostics emitted during compilation.
+    /// Validator-time project diagnostics + the compiler's `CompileReport` diagnostics (e.g.
+    /// `UNMAPPED_CONDITION`) — both channels merged, never one dropped in favor of the other.
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -493,17 +494,17 @@ impl EditorApi {
 
     /// Compile an already-loaded project (useful when the editor has it in memory).
     pub fn compile_project_inner(project: &Project) -> Result<CompileResult, EditorError> {
-        let profile = sentinel_compiler::Compiler::compile(project)
+        let (profile, report) = sentinel_compiler::Compiler::compile(project)
             .map_err(|e| EditorError::Compile(e.to_string()))?;
 
         let profile_json = serde_json::to_string(&profile)?;
         let operation_count = profile.operations.len();
 
-        Ok(CompileResult {
-            profile_json,
-            operation_count,
-            diagnostics: project.diagnostics.clone(),
-        })
+        // Never drop the compiler's own diagnostics (e.g. UNMAPPED_CONDITION fail-open).
+        let mut diagnostics = project.diagnostics.clone();
+        diagnostics.extend(report.unmapped_conditions);
+
+        Ok(CompileResult { profile_json, operation_count, diagnostics })
     }
 
     // ---- Validate -----------------------------------------------------
@@ -708,6 +709,20 @@ mod tests {
             serde_json::from_str(&result.profile_json).unwrap();
         assert_eq!(profile.operations.len(), 1);
         assert!(!profile.content_hash.is_empty());
+    }
+
+    #[test]
+    fn compile_surfaces_unmapped_condition_diagnostic() {
+        use sentinel_models::authoring::{Action, ActionPayload, ConditionAction, Operation};
+        let mut project = sentinel_models::authoring::new_project("cond-test");
+        let mut op = Operation::new("op".to_string());
+        op.actions.push(Action {
+            id: uuid::Uuid::new_v4(), enabled: true, condition: None, class_restriction: None, note: None,
+            payload: ActionPayload::Condition(ConditionAction { expression: "NotARealPredicate(1)".to_string() }),
+        });
+        project.operations.push(op);
+        let result = EditorApi::compile_project_inner(&project).unwrap();
+        assert!(result.diagnostics.iter().any(|d| d.code == "UNMAPPED_CONDITION"), "got: {:?}", result.diagnostics);
     }
 
     #[test]

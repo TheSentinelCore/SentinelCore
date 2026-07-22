@@ -36,9 +36,9 @@ fn main() {
         }
     };
 
-    // Compile to runtime profile
-    let profile = match Compiler::compile(&project) {
-        Ok(p) => p,
+    // Compile to runtime profile (+ non-fatal diagnostics report; full CLI surfacing is PR2b)
+    let (profile, _report) = match Compiler::compile(&project) {
+        Ok(pair) => pair,
         Err(e) => {
             eprintln!("Compilation failed: {}", e);
             std::process::exit(1);
