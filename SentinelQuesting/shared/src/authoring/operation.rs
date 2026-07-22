@@ -23,6 +23,13 @@ pub struct Operation {
     /// Gate expressions evaluated before the operation is entered.
     #[serde(default)]
     pub conditions: Vec<String>,
+    /// `#sticky` directive (IF4): the operation should be revisited rather than treated as
+    /// one-shot.
+    #[serde(default)]
+    pub sticky: bool,
+    /// `#loop` directive (IF4): the operation should repeat rather than advance linearly.
+    #[serde(default)]
+    pub looping: bool,
     pub actions: Vec<Action>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
@@ -42,6 +49,8 @@ impl Operation {
             maximum_level: None,
             enabled: true,
             conditions: Vec::new(),
+            sticky: false,
+            looping: false,
             actions: Vec::new(),
             notes: None,
         }

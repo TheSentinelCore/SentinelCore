@@ -619,8 +619,133 @@ step
     // Never a bare Comment with no diagnostic trail (IF2 malformed scenario).
     let action = &project.operations[0].actions[0];
     assert!(matches!(action.payload, ActionPayload::Comment(_)), "malformed args fall back to inert Comment");
+    let diag = project.diagnostics.iter()
+        .find(|d| d.code == "MALFORMED_GATING_ARGS")
+        .expect("malformed gating args must carry a diagnostic, never a bare Comment");
+    // Round-3 follow-up: the diagnostic must locate the offending step/action, matching the
+    // UNRESOLVED_NPC/UNRESOLVED_QUEST convention (entity + action locators, not None/None).
+    assert_eq!(diag.entity.as_deref(), Some("step:0"));
+    assert_eq!(diag.action.as_deref(), Some(action.id.to_string().as_str()));
+}
+
+#[tokio::test]
+async fn itemcount_operator_tolerates_whitespace_before_digits() {
+    // Follow-up 7: `.itemcount 100,< 5` (space between operator and count) must parse, not
+    // fall back to a malformed diagnostic.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .itemcount 100,< 5
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let expr = condition_expression(&project.operations[0].actions[0].payload)
+        .expect("operator-whitespace tolerant .itemcount should lower to a Condition, not Comment");
+    assert_eq!(expr, "NOT ItemCount(100,5)");
+}
+
+#[tokio::test]
+async fn goto_with_unmapped_zone_name_pushes_diagnostic_and_defaults_to_map_zero() {
+    // Follow-up 2: zone_to_map_id returning None must not silently default to map 0.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .goto Neverland,1.0,2.0
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let travel = match &project.operations[0].actions[0].payload {
+        ActionPayload::Travel(t) => t,
+        _ => panic!("not travel"),
+    };
+    let position = travel.position.expect("numeric coords still populate position");
+    assert_eq!(position.map, 0, "unmapped zone still defaults to map 0");
     assert!(
-        project.diagnostics.iter().any(|d| d.code == "MALFORMED_GATING_ARGS"),
-        "malformed gating args must carry a diagnostic, never a bare Comment"
+        project.diagnostics.iter().any(|d| d.code == "UNMAPPED_GOTO_ZONE"),
+        "an unmapped zone name must not silently default to map 0 with no diagnostic trail"
     );
+}
+
+#[tokio::test]
+async fn sticky_directive_sets_operation_sticky_flag() {
+    // IF4
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    #sticky
+    .accept 1
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+    assert!(project.operations[0].sticky, "#sticky directive must set Operation.sticky (IF4)");
+}
+
+#[tokio::test]
+async fn loop_directive_sets_operation_looping_flag() {
+    // IF4
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    #loop
+    .accept 1
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+    assert!(project.operations[0].looping, "#loop directive must set Operation.looping (IF4)");
+}
+
+#[tokio::test]
+async fn steps_without_sticky_or_loop_directives_default_both_flags_false() {
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .accept 1
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+    assert!(!project.operations[0].sticky);
+    assert!(!project.operations[0].looping);
+}
+
+#[tokio::test]
+async fn known_directive_typo_is_canonicalized_with_diagnostic() {
+    // IF5: `#compltewith` must resolve as `#completewith` AND record a tolerated-typo diagnostic.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    #label TOME
+    .accept 1
+step
+    #compltewith TOME
+    .turnin 1
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    // The label graph must resolve the typo'd reference against the canonical `label` directive.
+    assert!(parsed.labels.unresolved.is_empty(), "typo'd #compltewith must resolve, not dangle");
+
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+    let diag = project.diagnostics.iter()
+        .find(|d| d.code == "DIRECTIVE_TYPO_TOLERATED")
+        .expect("a tolerated-typo diagnostic must be recorded (IF5)");
+    assert!(diag.message.contains("compltewith") && diag.message.contains("completewith"));
 }
