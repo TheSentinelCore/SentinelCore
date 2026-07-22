@@ -25,7 +25,8 @@ Rationale: PR1 (7 reqs, 6 importer files + new `coverage.rs`) and PR2 (new DSL p
 | PR1a | Goto coords + gating/completion condition lowering (IF1, IF2) | PR1a | `cargo test -p sentinel-importer` | N/A — Rust unit/integration only | `project_builder.rs` coord/condition changes revert independently |
 | PR1b | Class suffix, sticky/loop, typo tolerance, bundle split, never-drop, coverage report (IF3–IF7) | PR1b | `cargo test -p sentinel-importer` | N/A — Rust unit/integration only | `lexer.rs`/`guide_splitter.rs`/`step_builder.rs`/`label_graph.rs`/new `coverage.rs` revert independently of PR1a |
 | PR2a | Condition DSL → `RuntimeCondition` parser (CL1) | PR2a | `cargo test -p sentinel-compiler` | N/A | New `condition.rs` + call site removable without touching CL2/CL4 |
-| PR2b | LootObject resolution + class-restriction compile filter (CL2, CL4) | PR2b | `cargo test -p sentinel-compiler` | N/A | `lib.rs` LootObject/class-filter hunks revert independently |
+| PR2b | LootObject resolution (CL2 only) | PR2b | `cargo test -p sentinel-compiler` | N/A | `lib.rs` LootObject hunk reverts independently |
+| PR5 | Class restriction as an action-GUARD field (CL4, REVISED 2026-07-22) | PR5 | `cargo test -p sentinel-compiler` (+ `luajit sentinel/tests/run_offline.lua` if a Lua dispatch change is needed) | TBD — depends on design pass | Not yet designed; placeholder section |
 | PR3 | Live re-import + golden regeneration + coverage stats (CL3, CL5) | PR3 | `cargo test -p sentinel-tests` | Manual: run `import-guides` against live `SentinelQueryServer` (`SENTINEL_DB=tbcmangos.sqlite`), inspect regenerated Elwynn JSON | Regenerated `.questing/projects/*.json` revert via `git checkout` of prior goldens |
 | PR4a | Payload fixes, registry wiring, shared bus, perf, log bound, ghost throttle (RE1–RE6, RE10) | PR4a | `luajit sentinel/tests/run_offline.lua` | Manual: boot client, confirm `QuestingModule` reaches ACTIVE and ticks a loaded profile | Each Lua file's hunk revertable without affecting PR4b's JSON mock |
 | PR4b | JSON mock round-trip + FSM/action-type/chained verification (RE7–RE9) | PR4b | `luajit sentinel/tests/run_offline.lua` | Manual: per-action-type scenarios + accept→travel→kill→collect→turnin + forced death/stuck/reload on startable Human path | `run_offline.lua` mock decoder revertable independently |
@@ -43,7 +44,7 @@ Rationale: PR1 (7 reqs, 6 importer files + new `coverage.rs`) and PR2 (new DSL p
 | IF7 | Never-Drop Policy | import-fidelity | 2.9–2.11 |
 | CL1 | Condition Lowering Completeness | compiler-condition-lowering | 3.1–3.3 |
 | CL2 | LootObject Entry Resolution | compiler-condition-lowering | 4.1–4.2 |
-| CL4 | Compile-Time Class Restriction Filtering | compiler-condition-lowering | 4.3–4.5 |
+| CL4 | Class Restriction Filtering (REVISED 2026-07-22: action-GUARD field, moved to PR5) | compiler-condition-lowering | 8.1–8.4 |
 | CL3 | Resolution Against a Live QueryServer | compiler-condition-lowering | 5.1–5.2 |
 | CL5 | Golden Artifact Regeneration + Coverage Stats | compiler-condition-lowering | 5.3–5.5 |
 | RE1 | Payload Field Contract Alignment | questing-runtime-execution | 6.1–6.2 |
@@ -104,13 +105,20 @@ Rationale: PR1 (7 reqs, 6 importer files + new `coverage.rs`) and PR2 (new DSL p
 - [x] 3.2 GREEN `SentinelQuesting/compiler/src/condition.rs` (new): parse `&&`/`||`/`NOT`/parens per design mapping table into `condition.rs:9-27` variants (CL1)
 - [x] 3.3 GREEN `SentinelQuesting/compiler/src/lib.rs:160`: remove `RuntimeCondition::AlwaysTrue` shortcut, call new parser, wire unmapped-expr diagnostics (CL1) — `Compiler::compile` now returns `(RuntimeProfile, CompileReport)`; `CompileReport.unmapped_conditions: Vec<Diagnostic>` is the diagnostics vehicle PR2b (task 4.4) extends with `class_excluded`/`unresolved`. Post-4R-review CRITICAL fixes (size:exception approved): (1) `condition.rs` recursive descent had no depth bound (network-reachable stack-overflow DoS via editor `/compile`) — added `MAX_CONDITION_DEPTH`/`MAX_CONDITION_TOKENS` guards; (2) `editor/src/lib.rs::compile_project_inner` now merges `CompileReport.unmapped_conditions` into `CompileResult.diagnostics` (appended to `project.diagnostics`, not replacing it) so `UNMAPPED_CONDITION` reaches the editor `/compile` response — this task's editor-side plumbing is now genuinely complete
 
-## PR2b: Compiler — LootObject Resolution + Class Filtering
+## PR2b: Compiler — LootObject Resolution (CL2 only; REVISED 2026-07-22 — class filtering split out to PR5, see below)
 
-- [ ] 4.1 RED `SentinelQuesting/compiler/tests/compiler.rs`: resolvable `LootObject` → real `object_entry`; unresolvable → diagnostic, not `0` (CL2)
-- [ ] 4.2 GREEN `SentinelQuesting/compiler/src/lib.rs:198`: resolve via object library/entry ref instead of `object_entry: 0` (CL2)
-- [ ] 4.3 RED `SentinelQuesting/compiler/tests/compiler.rs`: Paladin-restricted action + `--class Warrior` → excluded + counted class-excluded; `--class Paladin` → retained, no restriction metadata (CL4)
-- [ ] 4.4 GREEN `SentinelQuesting/compiler/src/lib.rs`: class-filter pass over actions/operations, populate `CompileReport{class_excluded, unresolved, unmapped_conditions}` (CL4) — `unmapped_conditions` already flows to the editor via `compile_project_inner` (done in PR2a); this task only needs to add `class_excluded`/`unresolved` and confirm they flow through the same existing merge point
-- [ ] 4.5 GREEN `SentinelQuesting/compiler/src/main.rs`: add `--class <C>` CLI flag, name output `<project>.<class>.profile.json` (CL4)
+- [x] 4.1 RED `SentinelQuesting/compiler/tests/compiler.rs`: resolvable `LootObject` → real `object_entry`; unresolvable → diagnostic, not `0` (CL2)
+- [x] 4.2 GREEN `SentinelQuesting/compiler/src/lib.rs`: resolve via `project.object_library` (uuid→entry map, mirrors the NPC-resolution path) instead of `object_entry: 0`; unresolved → `UNRESOLVED_OBJECT` diagnostic + `CompileReport.unresolved` tally, falls back to `0` (never a guessed entry) (CL2)
+- [ ] 4.3–4.5 MOVED to PR5 (see below) — do not implement here.
+
+## PR5: Compiler — Class Restriction as an Action-GUARD Field (CL4, maintainer decision 2026-07-22)
+
+Maintainer decision (2026-07-22, superseding the ClassIs-into-Condition-payload approach explored during PR2b apply): class gating is represented as a dedicated action-level GUARD field, not lowered into the `Condition` action's `RuntimeCondition` payload. `Action.class_restriction` remains UNCONSUMED by the compiler until this slice. Design/task details (guard field shape on `RuntimeAction`/`RuntimeOperation`, and any required `sentinel/modules/questing/runtime_action.lua` dispatch change) TBD — this section is a placeholder pending a design pass; do not start implementation from the bullets below without a fresh design review.
+
+- [ ] 8.1 Design: action-GUARD field representation for `class_restriction` (where it lives on `RuntimeAction`/`RuntimeOperation`, how the Lua runtime evaluates it) (CL4)
+- [ ] 8.2 RED tests for the guard representation (CL4)
+- [ ] 8.3 GREEN compiler lowering (CL4)
+- [ ] 8.4 If required: `sentinel/modules/questing/runtime_action.lua` dispatch change to honor the guard (CL4) — out of scope for any Lua-frozen batch; needs explicit unblocking.
 
 ## PR3: Re-import Golden Artifacts
 

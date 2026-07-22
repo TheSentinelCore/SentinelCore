@@ -27,10 +27,16 @@ pub enum CompilerError {
 }
 
 /// Non-fatal compile-time findings, kept out of `RuntimeProfile` (clean runtime artifact).
-/// `unmapped_conditions` populated here (CL1); PR2b adds `class_excluded`/`unresolved`.
+/// `unmapped_conditions` populated here (CL1); PR2b adds `unresolved` (unresolvable
+/// `LootObject` references — CL2). Class filtering (CL4) is deferred to PR5 (action-GUARD
+/// field representation, maintainer decision 2026-07-22) — `Action.class_restriction` is not
+/// yet consumed by the compiler.
 #[derive(Debug, Clone, Default)]
 pub struct CompileReport {
     pub unmapped_conditions: Vec<Diagnostic>,
+    /// Count of references (currently: `LootObject`) that could not be resolved to a
+    /// concrete entry. Mirrored as an `UNRESOLVED_OBJECT` diagnostic in `unmapped_conditions`.
+    pub unresolved: u32,
 }
 
 pub struct Compiler;
@@ -42,16 +48,21 @@ impl Compiler {
             .iter()
             .filter_map(|n| n.entry.map(|e| (n.id, e)))
             .collect();
+        let object_uuid_to_entry: HashMap<Uuid, u32> = project.object_library
+            .iter()
+            .map(|o| (o.id, o.entry))
+            .collect();
 
         let mut diagnostics: Vec<Diagnostic> = Vec::new();
+        let mut unresolved: u32 = 0;
         let runtime_operations: Vec<RuntimeOperation> = project.operations
             .iter()
-            .map(|op| resolve_operation(op, &npc_uuid_to_entry, &mut diagnostics))
+            .map(|op| resolve_operation(op, &npc_uuid_to_entry, &object_uuid_to_entry, &mut diagnostics, &mut unresolved))
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut profile = RuntimeProfile::new(project.metadata.name.clone(), runtime_operations);
         profile.content_hash = compute_content_hash(&profile);
-        let report = CompileReport { unmapped_conditions: diagnostics };
+        let report = CompileReport { unmapped_conditions: diagnostics, unresolved };
         Ok((profile, report))
     }
 }
@@ -59,11 +70,13 @@ impl Compiler {
 fn resolve_operation(
     op: &sentinel_models::authoring::Operation,
     npc_uuid_to_entry: &HashMap<Uuid, u32>,
+    object_uuid_to_entry: &HashMap<Uuid, u32>,
     diagnostics: &mut Vec<Diagnostic>,
+    unresolved: &mut u32,
 ) -> Result<RuntimeOperation, CompilerError> {
     let runtime_actions: Vec<RuntimeAction> = op.actions
         .iter()
-        .map(|a| resolve_action(a, npc_uuid_to_entry, diagnostics))
+        .map(|a| resolve_action(a, npc_uuid_to_entry, object_uuid_to_entry, diagnostics, unresolved))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(RuntimeOperation::new(op.id, op.name.clone(), runtime_actions))
@@ -72,7 +85,9 @@ fn resolve_operation(
 fn resolve_action(
     action: &Action,
     npc_uuid_to_entry: &HashMap<Uuid, u32>,
+    object_uuid_to_entry: &HashMap<Uuid, u32>,
     diagnostics: &mut Vec<Diagnostic>,
+    unresolved: &mut u32,
 ) -> Result<RuntimeAction, CompilerError> {
     Ok(match &action.payload {
         ActionPayload::AcceptQuest(a) => {
@@ -219,8 +234,25 @@ fn resolve_action(
             })
         }
         ActionPayload::LootObject(l) => {
+            // CL2: resolve the authoring object UUID to its concrete entry via the project's
+            // object library (mirrors the NPC-resolution path). Unresolvable -> diagnostic +
+            // `unresolved` tally, never a silent `0` masquerading as a valid entry.
+            let object_entry = object_uuid_to_entry.get(&l.object).copied().unwrap_or_else(|| {
+                *unresolved += 1;
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "UNRESOLVED_OBJECT".to_string(),
+                    message: format!(
+                        "loot object reference '{}' could not be resolved to an entry",
+                        l.object
+                    ),
+                    entity: Some(l.object.to_string()),
+                    action: Some(action.id.to_string()),
+                });
+                0
+            });
             RuntimeAction::Loot(RuntimeLoot {
-                object_entry: 0, // Would need object resolution via QueryServer
+                object_entry,
                 count: l.count,
             })
         }
