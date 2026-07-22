@@ -1,8 +1,0 @@
-name: "kobolds_to_northshire"
-strategy: "smart"
-preferredPath: "road"
-avoid:
-  - "elite"
-  - "water"
-dynamicReplan: true
-allowShortcuts: true

@@ -1,9 +1,0 @@
-name: "to_nearest_vendor"
-strategy: "smart"
-preferredPath: "road"
-avoid:
-  - "elite"
-  - "water"
-  - "enemyTown"
-dynamicReplan: true
-allowShortcuts: true

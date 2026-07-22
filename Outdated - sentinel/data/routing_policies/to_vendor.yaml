@@ -1,6 +1,0 @@
-name: "to_vendor"
-strategy: "smart"
-preferredPath: "road"
-avoid:
-  - "elite"
-dynamicReplan: true
