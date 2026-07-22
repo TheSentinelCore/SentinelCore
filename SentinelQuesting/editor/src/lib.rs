@@ -687,6 +687,7 @@ mod tests {
                     id: uuid::Uuid::new_v4(),
                     enabled: true,
                     condition: None,
+                    class_restriction: None,
                     note: None,
                     payload: sentinel_models::authoring::ActionPayload::Comment(
                         sentinel_models::authoring::CommentAction {
@@ -751,6 +752,7 @@ mod tests {
                     id: uuid::Uuid::new_v4(),
                     enabled: true,
                     condition: None,
+                    class_restriction: None,
                     note: None,
                     payload: sentinel_models::authoring::ActionPayload::Comment(
                         sentinel_models::authoring::CommentAction {

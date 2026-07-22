@@ -27,6 +27,7 @@ fn compiles_project_to_runtime_profile() {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
+        class_restriction: None,
         note: None,
         payload: ActionPayload::Vendor(VendorAction {
             npc: npc_id,
@@ -52,6 +53,7 @@ fn fails_on_unresolved_npc_reference() {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
+        class_restriction: None,
         note: None,
         payload: ActionPayload::Vendor(VendorAction {
             npc: Uuid::new_v4(), // Non-existent NPC

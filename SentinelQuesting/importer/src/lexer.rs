@@ -34,6 +34,9 @@ pub enum Token {
         args: Vec<String>,
         note: Option<String>,
         line: SourceLineNo,
+        /// Trailing `<< ClassName` / `<< Class1/Class2` / `<< !Class` suffix, when present
+        /// (IF3). Extracted from whichever of `note`/args-tail carries the line's tail text.
+        class_restriction: Option<String>,
     },
     Text {
         content: String,
@@ -47,6 +50,24 @@ fn strip_inline_dev_comment(s: &str) -> &str {
     match s.find("--") {
         Some(idx) => s[..idx].trim_end(),
         None => s,
+    }
+}
+
+/// Extract a trailing `<< ClassName` / `<< Class1/Class2` / `<< !Class` suffix (IF3) from the
+/// tail portion of a command line (either its note, or its args when there is no note). Returns
+/// the cleaned text and the raw suffix (unparsed — the compiler's class filter, PR2b, interprets
+/// the `/`-list and `!`-negation grammar).
+fn extract_class_suffix(s: &str) -> (String, Option<String>) {
+    match s.rfind("<<") {
+        Some(idx) => {
+            let (head, tail) = s.split_at(idx);
+            // CRITICAL fix: corpus-dominant ordering is `<< Class --comment` (dev comment trails
+            // the class, not the args) — strip it from the class tail so class_restriction never
+            // absorbs it. This does not touch the note (already split off before this runs).
+            let tail = strip_inline_dev_comment(tail[2..].trim());
+            (head.trim().to_string(), Some(tail.to_string()))
+        }
+        None => (s.to_string(), None),
     }
 }
 
@@ -157,14 +178,25 @@ impl Lexer {
     fn lex_command(rest: &str, line: SourceLineNo) -> Token {
         // Split the human-readable note off on ">>".
         let (left, note) = match rest.split_once(">>") {
-            Some((l, n)) => (l.trim(), Some(n.trim().to_string())),
-            None => (rest.trim(), None),
+            Some((l, n)) => (l.trim().to_string(), Some(n.trim().to_string())),
+            None => (rest.trim().to_string(), None),
+        };
+        // IF3: a trailing `<< Class` suffix lives on whichever segment is the line's tail — the
+        // note when one exists (`.turnin 33,2 >> note << Warrior`), otherwise the args portion
+        // itself (`.collect 7972,1 << Priest`).
+        let (left, class_from_left) = extract_class_suffix(&left);
+        let (note, class_restriction) = match note {
+            Some(n) => {
+                let (n, class_from_note) = extract_class_suffix(&n);
+                (Some(n), class_from_note.or(class_from_left))
+            }
+            None => (None, class_from_left),
         };
         // Strip a trailing `--` dev comment before further parsing (REL-1 root cause: RestedXP
         // guides routinely append these after the last numeric arg, e.g.
         // `.complete 1598,1 --Collect Powers of the Void (x1)`). Doing this once, here, replaces
         // the per-callsite defensive stripping previously duplicated in project_builder.rs.
-        let left = strip_inline_dev_comment(left);
+        let left = strip_inline_dev_comment(&left);
         // Command name is the first whitespace-delimited token.
         let mut parts = left.splitn(2, char::is_whitespace);
         let name = parts.next().unwrap_or("").to_string();
@@ -179,7 +211,7 @@ impl Lexer {
                 .filter(|s| !s.is_empty())
                 .collect()
         };
-        Token::Command { name, args, note, line }
+        Token::Command { name, args, note, line, class_restriction }
     }
 }
 
@@ -219,6 +251,107 @@ mod tests {
             Token::Command { args, note, .. } => {
                 assert_eq!(args, vec!["1598".to_string()]);
                 assert_eq!(note.as_deref(), Some("Accept The Stolen Tome"));
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn class_suffix_without_note_is_extracted_from_args() {
+        // IF3, corpus-proven (2688 occurrences in The Burning Crusade.lua).
+        match Lexer::lex_command("collect 7972,1 << Priest", 1) {
+            Token::Command { args, note, class_restriction, .. } => {
+                assert_eq!(args, vec!["7972".to_string(), "1".to_string()]);
+                assert!(note.is_none());
+                assert_eq!(class_restriction.as_deref(), Some("Priest"));
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn class_suffix_after_note_is_extracted_and_note_is_cleaned() {
+        let cmd = "turnin 33,2 >> Turn in Wolves Across The Border << Warrior/Paladin/Rogue";
+        match Lexer::lex_command(cmd, 1) {
+            Token::Command { note, class_restriction, .. } => {
+                assert_eq!(note.as_deref(), Some("Turn in Wolves Across The Border"));
+                assert_eq!(class_restriction.as_deref(), Some("Warrior/Paladin/Rogue"));
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn negated_class_suffix_after_note_is_extracted() {
+        match Lexer::lex_command("fly Ironforge >> Fly to Ironforge << !Shaman", 1) {
+            Token::Command { class_restriction, .. } => {
+                assert_eq!(class_restriction.as_deref(), Some("!Shaman"));
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn class_suffix_trailing_dev_comment_is_stripped_without_note() {
+        // CRITICAL fix, corpus-dominant ordering (A-1-11-Human.lua:665; 99 lines/5 sampled
+        // guides): `<< Class --comment` must not leak the dev comment into class_restriction.
+        match Lexer::lex_command("collect 2589,1 << Paladin --Linen Cloth (1+)", 1) {
+            Token::Command { args, class_restriction, .. } => {
+                assert_eq!(args, vec!["2589".to_string(), "1".to_string()]);
+                assert_eq!(class_restriction.as_deref(), Some("Paladin"));
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn negated_and_multi_class_suffix_trailing_dev_comments_are_stripped() {
+        match Lexer::lex_command("fly Ironforge << !Shaman --comment text", 1) {
+            Token::Command { class_restriction, .. } => {
+                assert_eq!(class_restriction.as_deref(), Some("!Shaman"));
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+        match Lexer::lex_command("collect 1,1 << Warrior/Paladin --comment text", 1) {
+            Token::Command { class_restriction, .. } => {
+                assert_eq!(class_restriction.as_deref(), Some("Warrior/Paladin"));
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn class_suffix_after_note_strips_trailing_dev_comment_but_keeps_note_intact() {
+        // `--` inside the `>>` note must remain untouched — only the class tail is cleaned.
+        let cmd = "turnin 33,2 >> Turn in Wolves Across The Border << Warrior --dev note";
+        match Lexer::lex_command(cmd, 1) {
+            Token::Command { note, class_restriction, .. } => {
+                assert_eq!(note.as_deref(), Some("Turn in Wolves Across The Border"));
+                assert_eq!(class_restriction.as_deref(), Some("Warrior"));
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn command_without_class_suffix_leaves_class_restriction_none() {
+        match Lexer::lex_command("accept 1598 >> Accept The Stolen Tome", 1) {
+            Token::Command { class_restriction, .. } => {
+                assert!(class_restriction.is_none());
+            }
+            other => panic!("expected Command token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn early_mid_line_dev_comment_truncates_subsequent_args() {
+        // Review follow-up (PR1b): `--` truncates at its FIRST occurrence, so a mid-line "--"
+        // (zero corpus matches today) drops the trailing coords too, not just a dev comment.
+        // Pinned explicitly so a future corpus hit is a conscious decision, not a surprise.
+        match Lexer::lex_command("goto Zone--Name,1.0,2.0 -- note", 1) {
+            Token::Command { name, args, .. } => {
+                assert_eq!(name, "goto");
+                assert_eq!(args, vec!["Zone".to_string()]);
             }
             other => panic!("expected Command token, got {other:?}"),
         }

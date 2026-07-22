@@ -28,7 +28,7 @@ mod name_hints;
 mod project_builder;
 mod step_builder;
 
-pub use guide_splitter::{GuideSplitter, SplitGuide};
+pub use guide_splitter::{extract_guide_blocks, GuideSplitter, SplitGuide};
 pub use label_graph::{LabelGraph, LabelGraphBuilder, LabelRef};
 pub use lexer::{Lexer, Token};
 pub use project_builder::ProjectBuilder;
@@ -64,6 +64,10 @@ pub struct Command {
     pub args: Vec<String>,
     pub note: Option<String>,
     pub line: SourceLineNo,
+    /// Trailing `<< ClassName` / `<< Class1/Class2` / `<< !Class` suffix on this command line
+    /// (IF3), stripped out of `args`/`note` and carried separately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_restriction: Option<String>,
 }
 
 /// A parsed `step` block: a unit of guide progression.
@@ -135,4 +139,13 @@ pub fn parse_guide(source: &str) -> Result<ParsedGuide, ImportError> {
         steps,
         labels,
     })
+}
+
+/// Bundle entry point (IF6): split a source containing N concatenated `RegisterGuide` blocks
+/// (`The Burning Crusade.lua`: 253) and parse each exactly as [`parse_guide`] parses a
+/// single-guide file — one [`ParsedGuide`] result per block, in source order. Each block is
+/// parsed as if it started at line 1, so `SourceLineNo` values are currently block-relative, not
+/// bundle-file-absolute — dormant until the PR1b-iii `import-guides` wiring corrects the offset.
+pub fn parse_guide_bundle(source: &str) -> Vec<Result<ParsedGuide, ImportError>> {
+    extract_guide_blocks(source).iter().map(|block| parse_guide(block)).collect()
 }

@@ -387,6 +387,45 @@ async fn resolve_npc_with_hints(
     Ok(None)
 }
 
+/// Never-drop fallback (IF7): wrap a non-leveling-core command as a typed inert `Comment`,
+/// always carrying a diagnostic naming the command and its raw args — never a bare `Comment`.
+/// `note_as_text`: WARNING fix — restores the two pre-existing per-arm shapes exactly.
+/// `false` (named arms: waypoint/skill/equip): `text` is always the `.command args` template,
+/// `note` carries `cmd.note` separately. `true` (catch-all `_` only): `text` is the note when
+/// present (else the template), and `note` stays `None`.
+fn inert_preserved_action(
+    state: &mut MapperState,
+    step_index: usize,
+    cmd: &crate::Command,
+    note_as_text: bool,
+) -> Action {
+    let action_id = Uuid::new_v4();
+    let template = || format!(".{} {}", cmd.name, cmd.args.join(","));
+    let (text, note) = if note_as_text {
+        (cmd.note.clone().unwrap_or_else(template), None)
+    } else {
+        (template(), cmd.note.clone())
+    };
+    state.diagnostics.push(Diagnostic {
+        severity: Severity::Info,
+        code: "COMMAND_PRESERVED_INERT".to_string(),
+        message: format!(
+            "Command '.{}' is outside leveling-core semantic lowering; preserved as an inert action (args: {:?})",
+            cmd.name, cmd.args
+        ),
+        entity: Some(format!("step:{step_index}")),
+        action: Some(action_id.to_string()),
+    });
+    Action {
+        id: action_id,
+        enabled: true,
+        condition: None,
+        class_restriction: None,
+        note,
+        payload: ActionPayload::Comment(CommentAction { text }),
+    }
+}
+
 /// Build actions from a step's commands, mutating `state` to resolve entities.
 async fn build_step_actions(
     state: &mut MapperState<'_>,
@@ -396,6 +435,9 @@ async fn build_step_actions(
     let mut last_target: Option<Uuid> = None;
 
     for cmd in &step.commands {
+        // IF3: apply the command line's `<< Class` suffix (if any) to whichever action(s) this
+        // command produces below, rather than threading it through every match arm individually.
+        let actions_before = actions.len();
         match cmd.name.as_str() {
             "target" => {
                 last_target = resolve_npc_with_hints(state, step, cmd.args.first()).await?;
@@ -410,6 +452,7 @@ async fn build_step_actions(
                                     id: Uuid::new_v4(),
                                     enabled: true,
                                     condition: None,
+                                    class_restriction: None,
                                     note: cmd.note.clone(),
                                     payload: ActionPayload::AcceptQuest(AcceptQuestAction {
                                         quest: id,
@@ -425,6 +468,7 @@ async fn build_step_actions(
                                     id: Uuid::new_v4(),
                                     enabled: true,
                                     condition: None,
+                                    class_restriction: None,
                                     note: cmd.note.clone(),
                                     payload: ActionPayload::Comment(CommentAction {
                                         text: format!(".accept {}", id),
@@ -445,6 +489,7 @@ async fn build_step_actions(
                                     id: Uuid::new_v4(),
                                     enabled: true,
                                     condition: None,
+                                    class_restriction: None,
                                     note: cmd.note.clone(),
                                     payload: ActionPayload::TurnInQuest(TurnInQuestAction {
                                         quest: id,
@@ -459,6 +504,7 @@ async fn build_step_actions(
                                     id: Uuid::new_v4(),
                                     enabled: true,
                                     condition: None,
+                                    class_restriction: None,
                                     note: cmd.note.clone(),
                                     payload: ActionPayload::Comment(CommentAction {
                                         text: format!(".turnin {}", id),
@@ -478,6 +524,7 @@ async fn build_step_actions(
                     id: Uuid::new_v4(),
                     enabled: true,
                     condition: None,
+                    class_restriction: None,
                     note: cmd.note.clone(),
                     payload: ActionPayload::Travel(TravelAction {
                         destination: dest,
@@ -500,6 +547,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Vendor(VendorAction {
                             npc,
@@ -514,6 +562,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: None,
                         payload: ActionPayload::Comment(CommentAction {
                             text: ".vendor (unresolved NPC)".to_string(),
@@ -532,6 +581,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Train(TrainerAction {
                             npc,
@@ -544,6 +594,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: None,
                         payload: ActionPayload::Comment(CommentAction {
                             text: format!(".train {}", cmd.args.join(",")),
@@ -564,6 +615,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Flight(FlightAction {
                             npc,
@@ -575,6 +627,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Comment(CommentAction {
                             text: format!(".fly {}", dest),
@@ -588,6 +641,7 @@ async fn build_step_actions(
                     id: Uuid::new_v4(),
                     enabled: true,
                     condition: None,
+                    class_restriction: None,
                     note: cmd.note.clone(),
                     payload: ActionPayload::Hearth(HearthAction {
                         innkeeper: None,
@@ -604,6 +658,7 @@ async fn build_step_actions(
                     id: Uuid::new_v4(),
                     enabled: true,
                     condition: None,
+                    class_restriction: None,
                     note: cmd.note.clone(),
                     payload: ActionPayload::Kill(KillTargetAction {
                         creature_entries: entries,
@@ -623,6 +678,7 @@ async fn build_step_actions(
                             id: Uuid::new_v4(),
                             enabled: true,
                             condition: None,
+                            class_restriction: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::Condition(ConditionAction { expression }),
                         });
@@ -643,6 +699,7 @@ async fn build_step_actions(
                             id: action_id,
                             enabled: true,
                             condition: None,
+                            class_restriction: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::Comment(CommentAction {
                                 text: format!(".{} {}", cmd.name, cmd.args.join(",")),
@@ -659,6 +716,7 @@ async fn build_step_actions(
                             id: Uuid::new_v4(),
                             enabled: true,
                             condition: None,
+                            class_restriction: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::UseItem(UseItemAction {
                                 item: item_id,
@@ -676,6 +734,7 @@ async fn build_step_actions(
                             id: Uuid::new_v4(),
                             enabled: true,
                             condition: None,
+                            class_restriction: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::UseItem(UseItemAction {
                                 item: item_id,
@@ -686,16 +745,8 @@ async fn build_step_actions(
                 }
             }
             "waypoint" => {
-                // .waypoint <x>, <y> - waypoint in current zone (preserved as comment)
-                actions.push(Action {
-                    id: Uuid::new_v4(),
-                    enabled: true,
-                    condition: None,
-                    note: cmd.note.clone(),
-                    payload: ActionPayload::Comment(CommentAction {
-                        text: format!(".waypoint {}", cmd.args.join(",")),
-                    }),
-                });
+                // .waypoint <x>, <y> - waypoint in current zone (IF7: never-drop inert preserve)
+                actions.push(inert_preserved_action(state, step.index, cmd, false));
             }
             "trainer" => {
                 // .trainer - alias for train, uses last_target
@@ -704,6 +755,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Train(TrainerAction {
                             npc,
@@ -714,16 +766,8 @@ async fn build_step_actions(
                 }
             }
             "skill" => {
-                // .skill <skill_id> <level> - train skill
-                actions.push(Action {
-                    id: Uuid::new_v4(),
-                    enabled: true,
-                    condition: None,
-                    note: cmd.note.clone(),
-                    payload: ActionPayload::Comment(CommentAction {
-                        text: format!(".skill {}", cmd.args.join(",")),
-                    }),
-                });
+                // .skill <skill_id> <level> - train skill (IF7: never-drop inert preserve)
+                actions.push(inert_preserved_action(state, step.index, cmd, false));
             }
             "abandon" => {
                 // .abandon <quest_id> - abandon quest
@@ -733,6 +777,7 @@ async fn build_step_actions(
                             id: Uuid::new_v4(),
                             enabled: true,
                             condition: None,
+                            class_restriction: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::Comment(CommentAction {
                                 text: format!(".abandon {}", id),
@@ -748,6 +793,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::LearnFlightPath(LearnFlightPathAction {
                             npc,
@@ -758,6 +804,7 @@ async fn build_step_actions(
                         id: Uuid::new_v4(),
                         enabled: true,
                         condition: None,
+                        class_restriction: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Comment(CommentAction {
                             text: ".fp (unresolved NPC)".to_string(),
@@ -766,31 +813,19 @@ async fn build_step_actions(
                 }
             }
             "equip" => {
-                // .equip <item_id> - equip item (not an authoring action; preserved as comment)
-                actions.push(Action {
-                    id: Uuid::new_v4(),
-                    enabled: true,
-                    condition: None,
-                    note: cmd.note.clone(),
-                    payload: ActionPayload::Comment(CommentAction {
-                        text: format!(".equip {}", cmd.args.join(",")),
-                    }),
-                });
+                // .equip <item_id> - equip item (IF7: never-drop inert preserve, not a bare Comment)
+                actions.push(inert_preserved_action(state, step.index, cmd, false));
             }
             _ => {
-                // Unrecognized command → preserve as comment.
-                let text = if let Some(note) = &cmd.note {
-                    note.clone()
-                } else {
-                    format!(".{} {}", cmd.name, cmd.args.join(","))
-                };
-                actions.push(Action {
-                    id: Uuid::new_v4(),
-                    enabled: true,
-                    condition: None,
-                    note: None,
-                    payload: ActionPayload::Comment(CommentAction { text }),
-                });
+                // Unrecognized command (IF7): never-drop inert preserve, never a bare Comment.
+                actions.push(inert_preserved_action(state, step.index, cmd, true));
+            }
+        }
+
+        // IF3: stamp the command's class suffix onto every action this command just produced.
+        if cmd.class_restriction.is_some() {
+            for action in &mut actions[actions_before..] {
+                action.class_restriction = cmd.class_restriction.clone();
             }
         }
     }

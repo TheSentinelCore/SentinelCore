@@ -22,6 +22,11 @@ pub struct Action {
     /// Author note / provenance (e.g. RestedXP import source line).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Trailing per-line class restriction (e.g. `Warrior`, `Warrior/Paladin`, `!Rogue`), parsed
+    /// from a `<< ...` suffix on the source line (IF3). Authoring-side only: consumed by the
+    /// compiler's class-filter pass (PR2b); the runtime never sees this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_restriction: Option<String>,
     /// Flattened so the serialized form is `{ "id", "enabled", "type", "payload", ... }`
     /// (ADR `02_DATA_MODEL` §12: type + payload as siblings).
     #[serde(flatten)]

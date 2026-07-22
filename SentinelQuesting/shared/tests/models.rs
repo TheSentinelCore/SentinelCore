@@ -21,6 +21,7 @@ fn project_json_roundtrip_is_stable() {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
+        class_restriction: None,
         note: Some("imported from Human.lua:421".to_string()),
         payload: ActionPayload::Travel(TravelAction {
             destination: "Goldshire".into(),
@@ -35,6 +36,7 @@ fn project_json_roundtrip_is_stable() {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
+        class_restriction: None,
         note: None,
         payload: ActionPayload::AcceptQuest(AcceptQuestAction {
             quest: 54,
@@ -116,6 +118,7 @@ fn action_payload_is_adjacently_tagged() {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
+        class_restriction: None,
         note: None,
         payload: ActionPayload::Comment(sentinel_models::authoring::CommentAction {
             text: "hi".into(),

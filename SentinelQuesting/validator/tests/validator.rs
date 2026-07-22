@@ -38,6 +38,7 @@ fn detects_broken_npc_reference_in_vendor() {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
+        class_restriction: None,
         note: None,
         payload: ActionPayload::Vendor(VendorAction {
             npc: Uuid::new_v4(), // non-existent NPC
@@ -73,6 +74,7 @@ fn passes_valid_project() {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
+        class_restriction: None,
         note: None,
         payload: ActionPayload::Vendor(VendorAction {
             npc: npc_id,
