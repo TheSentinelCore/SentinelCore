@@ -165,8 +165,51 @@ These are enforced by the injector, not by convention — violating them fails a
 
 ## Known state
 
-`luajit sentinel/tests/run_offline.lua` currently reports **28 passed, 2 failed** on a clean
-checkout of `wave-3-navigation`. The two failures are pre-existing, not regressions:
+`luajit sentinel/tests/run_offline.lua` reports **31 passed, 0 failed**. Both previously
+documented failures were resolved (2026-07-23) and were not real module bugs:
 
-- `tests/modules/combat/test_module.run` — combat queues a spell for a non-hostile direct target.
-- `tests/modules/questing/test_runtime_persistence.run` — `test_restore_state_from_save`.
+- `tests/modules/questing/test_runtime_persistence.run` — `test_restore_state_from_save` failed
+  because the offline harness emitted Lua literals instead of JSON. The harness now uses a real
+  pure-Lua JSON encoder/decoder (`tests/harness/test_json_mock.lua` covers it).
+- `tests/modules/combat/test_module.run` — the combat module was correct. In IDLE with grind
+  disabled, `update()` runs `tick_maintenance`, which legitimately queues Frost Armor; the test's
+  placeholder buffs matched none of the mage maintenance aura IDs. The test player now carries the
+  real auras so maintenance no-ops and the assertion tests only target hostility.
+
+Two Rust↔Lua contract rules the runtime depends on (breaking either fails silently, not loudly):
+
+- Any enum crossing into the runtime profile must be **adjacently tagged** `{type, payload}` —
+  the Lua dispatches on `cond.type`/`action.type`. `RuntimeCondition` was externally tagged
+  (`{"ClassIs":"Mage"}`), so every non-unit condition fell through to fail-open `true` and
+  condition gating never actually gated. Wire shapes are now pinned by tests on both sides.
+- `unit:get_class()` returns a **numeric class_id**, not a string; `ctx:get_player_class()` maps it
+  to the Title-Case name that `ClassIs` (and RestedXP class tails) compare against.
+
+## Code intelligence: CodeGraph + graphify (use BOTH, pick by question shape)
+
+This repo has two complementary pre-built indexes. Neither replaces the other — route by what
+the question needs, and prefer either over raw Read/Grep/Glob exploration.
+
+**CodeGraph** (`.codegraph/`, `codegraph_explore` MCP tool or `codegraph explore` CLI) — symbol-level
+code intelligence. Use it for:
+- "Where is X defined / who calls X / what breaks if I edit X" (callers, callees, blast radius)
+- Reading current line-numbered source of a symbol or file before editing
+- Call-path tracing, including dynamic-dispatch hops grep can't follow
+- Anything mid-edit: always check blast radius via CodeGraph before changing a shared symbol
+
+**graphify** (`graphify-out/graph.json`; scope: everything except `Emulators/`) — corpus-level
+knowledge graph spanning code AND docs (ADRs, openspec changes, SylvannasAPI docs). Use it for:
+- Architecture and concept questions: `graphify query "<question>"`
+- Relationships between concepts/subsystems: `graphify path "<A>" "<B>"`
+- Focused explanations: `graphify explain "<concept>"`
+- Cross-cutting themes, doc↔code links, design rationale, community structure
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review
+
+Routing rule: symbol/edit questions → CodeGraph first; concept/architecture/docs questions →
+graphify first; for mixed questions run both (graphify to orient, CodeGraph for the source and
+blast radius). Include this routing rule in subagent prompts that explore code.
+
+Freshness:
+- CodeGraph auto-syncs via its file watcher — nothing to do.
+- graphify: after modifying code, run `graphify update .` (AST-only, no LLM cost). The graph does
+  not auto-update.
