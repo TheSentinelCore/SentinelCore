@@ -275,6 +275,15 @@ function RuntimeProfile:_load_save()
         end
     end
 
+    -- Always resume at the START of the restored operation, never mid-operation.
+    --
+    -- Actions are ordered Travel-then-work, so restoring a mid-operation action index drops the
+    -- character straight onto (say) a Kill while standing wherever the last session left them —
+    -- observed live: resumed at op 16 action 18 (a Kill) while physically at op 1's location, then
+    -- sat there because no target was in range. Re-running the leading Travels is cheap: an
+    -- already-satisfied Travel returns success immediately.
+    self._current_action_idx = 1
+
     self._dirty = false
     self:_log_event("save_restored", {
         operation = self._current_operation_idx,
