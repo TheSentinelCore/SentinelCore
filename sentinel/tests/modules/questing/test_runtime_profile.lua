@@ -217,6 +217,130 @@ function M.test_ghost_to_running_on_rez()
 end
 
 -- ============================================================================
+-- PR5b — Condition gating ("waiting" status)
+-- ============================================================================
+
+--- Mock a controllable player level so a LevelAtLeast Condition can be flipped
+--- between unmet/met across ticks.
+local function mock_player_level(get_level_fn)
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return false end,
+            get_level = get_level_fn,
+        }
+    end
+end
+
+function M.test_completion_gate_waits_then_advances_on_met()
+    local player_level = 1
+    local profile = create_profile(make_profile_ops("Condition", {
+        condition = { type = "LevelAtLeast", payload = 10 },
+        role = "Completion",
+    }))
+    mock_player_level(function() return player_level end)
+
+    -- Unmet: should wait, not advance, and stay put across ticks.
+    local status, msg = profile:execute()
+    T.assert_equal(status, "running", "Waiting should return running")
+    T.assert_equal(msg, "waiting for completion", "Waiting message should say so")
+    T.assert_equal(profile._current_action_idx, 1, "Waiting should not advance the action index")
+    T.assert_equal(profile._blackboard:get("questing.current_status"), "waiting",
+        "Blackboard should reflect waiting status")
+
+    status, msg = profile:execute()
+    T.assert_equal(status, "running", "Still waiting should return running")
+    T.assert_equal(profile._current_action_idx, 1, "Repeated wait should still not advance")
+
+    -- Now flip the condition to met: should succeed and advance.
+    player_level = 10
+    status, msg = profile:execute()
+    T.assert_equal(status, "running", "Met condition should return running (advancing)")
+    T.assert_equal(msg, "next action", "Met condition should advance to next action")
+    T.assert_equal(profile._current_operation_idx, 2,
+        "Single-action operation completing should advance to the next operation")
+end
+
+function M.test_applicability_gate_unmet_skips_and_advances()
+    local profile = create_profile(make_profile_ops("Condition", {
+        condition = { type = "LevelAtLeast", payload = 10 },
+        role = "Applicability",
+    }))
+    mock_player_level(function() return 1 end) -- unmet
+
+    local status, msg = profile:execute()
+    T.assert_equal(status, "running", "Applicability skip should return running")
+    T.assert_equal(msg, "skipped, advancing", "Applicability skip should advance")
+    T.assert_equal(profile._current_operation_idx, 2,
+        "Skipped single-action operation should advance to the next operation")
+end
+
+function M.test_both_roles_met_advance_immediately()
+    for _, role in ipairs({ "Completion", "Applicability" }) do
+        local profile = create_profile(make_profile_ops("Condition", {
+            condition = { type = "LevelAtLeast", payload = 1 },
+            role = role,
+        }))
+        mock_player_level(function() return 10 end) -- met
+
+        local status, msg = profile:execute()
+        T.assert_equal(status, "running", role .. ": met condition should return running")
+        T.assert_equal(msg, "next action", role .. ": met condition should advance immediately")
+        T.assert_equal(profile._current_operation_idx, 2,
+            role .. ": met single-action operation should advance to the next operation")
+    end
+end
+
+function M.test_condition_missing_role_defaults_to_completion_wait()
+    -- Back-compat: profiles compiled before PR5a carry no role field at all.
+    local profile = create_profile(make_profile_ops("Condition", {
+        condition = { type = "LevelAtLeast", payload = 10 },
+        -- no role field
+    }))
+    mock_player_level(function() return 1 end) -- unmet
+
+    local status, msg = profile:execute()
+    T.assert_equal(status, "running", "No-role gate should return running")
+    T.assert_equal(msg, "waiting for completion",
+        "No-role gate should default to Completion semantics and wait, not skip")
+    T.assert_equal(profile._current_action_idx, 1, "No-role wait should not advance")
+end
+
+function M.test_completion_gate_bounded_wait_times_out_and_advances()
+    local profile = create_profile(make_profile_ops("Condition", {
+        condition = { type = "LevelAtLeast", payload = 10 },
+        role = "Completion",
+    }))
+    mock_player_level(function() return 1 end) -- never met
+
+    local fake_now = 1000.0
+    local real_core_time = _G.core.time
+    _G.core.time = function() return fake_now end
+
+    local ok, err = pcall(function()
+        -- First tick starts the wait timer.
+        local status, msg = profile:execute()
+        T.assert_equal(status, "running", "First wait tick should return running")
+        T.assert_equal(msg, "waiting for completion", "First wait tick should be waiting")
+
+        -- Fast-forward well past MAX_CONDITION_WAIT (300s).
+        fake_now = fake_now + 301.0
+        local status2, msg2 = profile:execute()
+        T.assert_equal(status2, "running", "Timed-out wait should still return running")
+        T.assert_equal(msg2, "condition wait timed out, skipping",
+            "Bounded wait exceeded should log and advance, not hang")
+        T.assert_equal(profile._current_operation_idx, 2,
+            "Timed-out single-action operation should advance to the next operation")
+
+        local timeout_events = get_log_events(profile, "condition_wait_timeout")
+        T.assert_equal(#timeout_events, 1, "Should log exactly one condition_wait_timeout event")
+    end)
+
+    _G.core.time = real_core_time
+    if not ok then error(err) end
+end
+
+-- ============================================================================
 -- W4.4 — Consecutive failure tests
 -- ============================================================================
 
@@ -354,6 +478,13 @@ local tests = {
     -- W4.3
     test_death_detection_enters_ghost = M.test_death_detection_enters_ghost,
     test_ghost_to_running_on_rez = M.test_ghost_to_running_on_rez,
+
+    -- PR5b
+    test_completion_gate_waits_then_advances_on_met = M.test_completion_gate_waits_then_advances_on_met,
+    test_applicability_gate_unmet_skips_and_advances = M.test_applicability_gate_unmet_skips_and_advances,
+    test_both_roles_met_advance_immediately = M.test_both_roles_met_advance_immediately,
+    test_condition_missing_role_defaults_to_completion_wait = M.test_condition_missing_role_defaults_to_completion_wait,
+    test_completion_gate_bounded_wait_times_out_and_advances = M.test_completion_gate_bounded_wait_times_out_and_advances,
 
     -- W4.4
     test_consecutive_failures_stops_profile = M.test_consecutive_failures_stops_profile,

@@ -29,6 +29,7 @@ local MAX_CONSECUTIVE_FAILURES = 3      -- Max failures before profile stops
 local NAV_TIMEOUT = 30.0                -- Seconds before navigation is considered timed out
 local GHOST_TIMEOUT = 120.0             -- Seconds before ghost recovery is abandoned
 local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks
+local MAX_CONDITION_WAIT = 300.0        -- Seconds a Completion-role Condition gate may hold before forced advance
 
 local RuntimeProfile = {}
 RuntimeProfile.__index = RuntimeProfile
@@ -55,6 +56,8 @@ function RuntimeProfile:new(json_path, dry_run)
     o._ghost_start_time = nil           -- When death was detected (W4.3)
     o._last_blocked_action = nil        -- Copy of the action that triggered blocked
     o._execution_log = {}               -- Structured log entries (W4.5)
+    o._wait_started_at = nil            -- When the current Completion-role Condition gate started waiting
+    o._wait_action_key = nil            -- Identity of the action currently being waited on
 
     -- Hot reload (T16)
     o._json_mtime = nil                  -- Last known mtime for hot reload polling
@@ -970,6 +973,33 @@ function RuntimeProfile:_execute_running()
         end
         self:_save()  -- W5.3 — Save on skipped advance
         return "running", "skipped, advancing"
+
+    elseif status == "waiting" then
+        -- Completion-role Condition gate: hold this action and re-poll next tick. Does not
+        -- advance the action index and does not count as a retry/failure (PR5b).
+        local key = tostring(op_id) .. ":" .. tostring(self._current_action_idx)
+        local now = (core and core.time and core.time()) or 0
+        if self._wait_action_key ~= key then
+            self._wait_action_key = key
+            self._wait_started_at = now
+        end
+
+        local elapsed = now - self._wait_started_at
+        if elapsed >= MAX_CONDITION_WAIT then
+            self:_log_event("condition_wait_timeout", { action_type = action and action.type, duration = elapsed })
+            self._wait_started_at = nil
+            self._wait_action_key = nil
+
+            -- Bounded wait exceeded: don't deadlock the bot — advance past the gate.
+            self._current_action_idx = self._current_action_idx + 1
+            if self._current_action_idx > #op.actions then
+                self._current_operation_idx = self._current_operation_idx + 1
+                self._current_action_idx = 1
+            end
+            return "running", "condition wait timed out, skipping"
+        end
+
+        return "running", "waiting for completion"
 
     elseif status == "retry" then
         self._current_action_retries = self._current_action_retries + 1

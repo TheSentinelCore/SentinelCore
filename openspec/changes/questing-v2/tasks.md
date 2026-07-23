@@ -132,6 +132,25 @@ DEFERRED (explicitly out of scope for PR5a):
 - Lua runtime execution of the role (the "waiting" status, `_execute_running` branching on `RuntimeConditionAction.role`) — PR5b, `sentinel/modules/questing/runtime_profile.lua` / `runtime_action.lua`.
 - `Action.class_restriction` → applicability guard (CL4, below) — unrelated concern, per-action-guard semantics need the structural operation/action-guard model designed separately; class_restriction stays captured-but-uncompiled.
 
+## PR5b: Lua Runtime — Condition GATING Execution (Lua half of gating; maintainer decision 2026-07-22)
+
+Consumes the `role` field PR5a tagged onto the compiled profile's `Condition` action payload.
+Makes the runtime actually hold on a `Completion`-role gate until the condition is met (new
+`"waiting"` action status), instead of always advancing regardless of outcome.
+`Applicability`-role gates keep today's best-effort behavior (advance past the gate either way;
+a full step/action skip on unmet applicability is a documented follow-up, not built here).
+
+- [x] 10.1 RED `sentinel/tests/modules/questing/test_runtime_action.lua`: `execute_condition` role-branching tests — Completion role unmet → `"waiting"`; Completion role met → `"success"`; Applicability role unmet → `"skipped"`; Applicability role met → `"success"`; no `role` field on the payload → treated as Completion (back-compat)
+- [x] 10.2 GREEN `sentinel/modules/questing/runtime_action.lua`: `execute_condition` reads `payload.role` (default `"Completion"`) — met → `"success"` always; Completion unmet → `"waiting"`; Applicability unmet → `"skipped"` (unchanged best-effort)
+- [x] 10.3 RED `sentinel/tests/modules/questing/test_runtime_profile.lua`: `_execute_running` — Completion gate unmet holds the action (no index advance, no retry/failure counting, blackboard `questing.current_status = "waiting"`) across repeated ticks, then advances on met; Applicability gate unmet skips and advances (unchanged); both roles met advance immediately; no-role payload defaults to Completion/waiting
+- [x] 10.4 GREEN `sentinel/modules/questing/runtime_profile.lua`: new `elseif status == "waiting"` branch in `_execute_running` — does not advance `_current_action_idx`, does not touch retry/consecutive-failure counters, returns `"running", "waiting for completion"`
+- [x] 10.5 RED+GREEN bounded wait: new `MAX_CONDITION_WAIT` constant (300s, alongside `NAV_TIMEOUT`/`GHOST_TIMEOUT`) + per-action `_wait_started_at`/`_wait_action_key` tracking (reset when the waited-on action identity changes) — a Completion gate that stays unmet past `MAX_CONDITION_WAIT` logs a `condition_wait_timeout` event and force-advances past the action instead of hanging the bot forever; test fast-forwards a mocked `core.time()`
+- [x] 10.6 Verify: full offline suite (`luajit sentinel/tests/run_offline.lua`) — 28 passed / 2 failed, matching the documented pre-existing baseline exactly (combat `test_module.run` non-hostile-target queueing + questing `test_runtime_persistence.run` `test_restore_state_from_save`, both PR4b-scope, both untouched by this batch)
+
+DEFERRED (explicitly out of scope for PR5b):
+- Applicability-role unmet gate doing a full step/action skip (vs. the current best-effort advance-past-the-gate) — needs the structural operation/action-guard model, same prerequisite as CL4 below.
+- `Action.class_restriction` → applicability guard (CL4, below) — unrelated concern.
+
 ## PR5: Compiler — Class Restriction as an Action-GUARD Field (CL4, maintainer decision 2026-07-22)
 
 Maintainer decision (2026-07-22, superseding the ClassIs-into-Condition-payload approach explored during PR2b apply): class gating is represented as a dedicated action-level GUARD field, not lowered into the `Condition` action's `RuntimeCondition` payload. `Action.class_restriction` remains UNCONSUMED by the compiler until this slice. Design/task details (guard field shape on `RuntimeAction`/`RuntimeOperation`, and any required `sentinel/modules/questing/runtime_action.lua` dispatch change) TBD — this section is a placeholder pending a design pass; do not start implementation from the bullets below without a fresh design review.
