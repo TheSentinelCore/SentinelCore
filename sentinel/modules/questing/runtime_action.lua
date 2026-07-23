@@ -471,21 +471,22 @@ function RuntimeAction.execute_kill(payload, ctx)
 
     -- Branch trace. Inferring kill behaviour from state snapshots proved unreliable, so record the
     -- decision each tick and let the caller read it back. Cheap: one table write per execution.
-    ctx._kill_trace = { entries = #entries, quantity = quantity }
+    local P = ctx.persist or ctx
+    P._kill_trace = { entries = #entries, quantity = quantity }
     -- Records WHICH branch ran, and returns the real status unchanged. The trace must never
     -- influence behaviour.
     local function trace(branch, status)
-        ctx._kill_trace.branch = branch
+        P._kill_trace.branch = branch
         return status
     end
 
     -- Initialize kill tracking
-    ctx.kill_counts = ctx.kill_counts or {}
+    P.kill_counts = P.kill_counts or {}
     local key = table.concat(entries, ",")
-    ctx.kill_counts[key] = ctx.kill_counts[key] or 0
+    P.kill_counts[key] = P.kill_counts[key] or 0
 
     -- Already satisfied?
-    if ctx.kill_counts[key] >= quantity then
+    if P.kill_counts[key] >= quantity then
         return trace("success_count", "success")
     end
 
@@ -494,8 +495,8 @@ function RuntimeAction.execute_kill(payload, ctx)
     if target and target.get_position then
         -- Check if target is dead — count it toward quantity
         if target:is_dead() then
-            ctx.kill_counts[key] = ctx.kill_counts[key] + 1
-            if ctx.kill_counts[key] >= quantity then
+            P.kill_counts[key] = P.kill_counts[key] + 1
+            if P.kill_counts[key] >= quantity then
                 return trace("success_killed", "success")
             end
             return trace("next_target", "blocked")
@@ -522,7 +523,7 @@ function RuntimeAction.execute_kill(payload, ctx)
             -- Could not measure; fall back to the old per-entry proximity check.
             in_range = ctx:is_at_npc(entries[1], 30.0)
         end
-        ctx._kill_trace.dist = dist
+        P._kill_trace.dist = dist
 
         if not in_range then
             -- Chase: mobs wander, so the destination must track the target rather than being
@@ -530,14 +531,14 @@ function RuntimeAction.execute_kill(payload, ctx)
             -- onto a stale position — the bot walked to where the mob used to be and stopped.
             local ok_pos, npc_pos = pcall(target.get_position, target)
             if ok_pos and npc_pos then
-                local last = ctx._chase_dest
+                local last = P._chase_dest
                 local drifted = (not last)
                     or (Geometry and Geometry.distance
                         and Geometry.distance(last, npc_pos) > 3.0)
                     or false
                 if ctx.nav and (drifted or not ctx.nav:is_active()) then
                     ctx.nav:move_to(npc_pos, { tolerance = 5.0 })
-                    ctx._chase_dest = { x = npc_pos.x, y = npc_pos.y, z = npc_pos.z }
+                    P._chase_dest = { x = npc_pos.x, y = npc_pos.y, z = npc_pos.z }
                 end
             end
             -- "waiting", NOT "blocked". Blocked hands control to the profile's NAVIGATING state,
@@ -546,7 +547,7 @@ function RuntimeAction.execute_kill(payload, ctx)
             -- its own pursuit every tick, still bounded by MAX_CONDITION_WAIT.
             return trace("chasing", "waiting")
         end
-        ctx._chase_dest = nil
+        P._chase_dest = nil
 
         -- In range. Nothing here previously did anything at all — it returned "blocked" and
         -- assumed "the combat loop" would notice, but the combat module's world auto-engage is off

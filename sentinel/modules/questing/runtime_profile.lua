@@ -410,6 +410,14 @@ function RuntimeProfile:create_context()
         -- Shared app bus, so a Kill action can request engagement from the combat module.
         event_bus = self._event_bus,
         blackboard = self._blackboard,
+        -- Action state that must SURVIVE context recreation. create_context() runs fresh on every
+        -- execution, so anything an action stored directly on ctx was destroyed each tick: kill
+        -- tallies never accumulated, and the chase re-issued move_to every tick, restarting the
+        -- path continuously so the bot could never actually close on a mob.
+        persist = (function()
+            self._action_state = self._action_state or { kill_counts = {} }
+            return self._action_state
+        end)(),
 
         -- Quest log tracking caches (W2.3, W2.4)
         _completed_quests = {},   -- { [quest_entry] = true }
