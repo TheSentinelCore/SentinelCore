@@ -422,6 +422,102 @@ function M.test_objective_gate_met_for_rewarded_quest()
     _G.core.quests = nil
 end
 
+function M.test_missed_accept_rewinds_without_skipping_kills()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            { id = 1, actions = { { type = "AcceptQuest", payload = { quest_id = 10, npc_entry = 1 } } }, next_condition = "auto" },
+            { id = 2, actions = { { type = "Kill", payload = { creature_entries = { 5 } } } }, next_condition = "auto" },
+            { id = 3, actions = { { type = "AcceptQuest", payload = { quest_id = 20, npc_entry = 2 } } }, next_condition = "auto" },
+            { id = 4, actions = { { type = "Comment", payload = { text = "x" } } }, next_condition = "auto" },
+        },
+    })
+    -- Quest 10 active (its accept landed); quest 20 was MISSED (accept exhausted retries
+    -- and the route moved on to op 4).
+    _G.core.quests = {
+        is_quest_flagged_completed = function(_) return false end,
+        is_on_quest = function(qid) return qid == 10 end,
+        get_num_quest_log_entries = function() return 0 end,
+        get_quest_log_title = function(_) return nil end,
+    }
+    local start_idx, certain, certain_idx = profile:_reconcile_start_operation()
+    T.assert_equal(start_idx, 2, "forward position stays before the unobservable kills")
+    T.assert_true(certain, "a missed accept is an observable, certain verdict")
+    T.assert_equal(certain_idx, 3, "the rewind target is the accept op itself")
+
+    -- Route already at op 4: rewind to the ACCEPT (3), never to start_idx (2) — the
+    -- kills at op 2 must not be redone because of an accept verdict.
+    profile._current_operation_idx = 4
+    T.assert_true(profile:_apply_reconciliation(start_idx, certain, certain_idx),
+        "the route must come back for the missed accept")
+    T.assert_equal(profile._current_operation_idx, 3, "rewound exactly to the accept op")
+    _G.core.quests = nil
+end
+
+function M.test_class_guarded_accepts_do_not_block_status()
+    written_files = {}
+    local profile = create_profile(make_profile_ops())
+    -- One guard-met accept (quest 10, active) + one accept guarded to another class
+    -- (never accepted). The op must classify as satisfied — the foreign-class accept is
+    -- not this character's work. Guard evaluation runs through the real condition
+    -- evaluator; ClassIs compares against ctx:get_player_class() ("Unknown" offline).
+    local op = {
+        actions = {
+            { type = "AcceptQuest", payload = { quest_id = 10, npc_entry = 1 } },
+            {
+                type = "AcceptQuest",
+                payload = { quest_id = 99, npc_entry = 1 },
+                guard = { type = "ClassIs", payload = "Mage" },
+            },
+        },
+    }
+    _G.core.quests = {
+        is_quest_flagged_completed = function(_) return false end,
+        is_on_quest = function(qid) return qid == 10 end,
+        get_num_quest_log_entries = function() return 0 end,
+        get_quest_log_title = function(_) return nil end,
+    }
+    T.assert_equal(profile:_op_quest_status(op), "satisfied",
+        "an accept guarded to another class must not mark the op unsatisfied")
+    _G.core.quests = nil
+end
+
+function M.test_npc_position_falls_back_to_static_sources()
+    written_files = {}
+    mock_globals()
+    -- Source 1: the compiled profile's npcs table (NPC beyond draw distance).
+    local profile = create_profile(make_profile_ops())
+    profile._profile.npcs = {
+        { entry = 197, name = "Marshal McBride", position = { x = -8902.6, y = -162.6, z = 82.0 } },
+    }
+    local pos = profile:_get_npc_position(197)
+    T.assert_not_nil(pos, "profile npcs table must supply the position when the NPC is unseen")
+    T.assert_equal(pos and pos.z, 82.0, "profile-table Z must be kept (real DB height)")
+
+    -- Source 2: QueryServer spawn, used when the profile table is empty.
+    local profile2 = create_profile(make_profile_ops())
+    profile2._profile.npcs = {}
+    profile2._query = {
+        get_npc = function(_self, entry)
+            if entry == 197 then
+                return { positions = { { map = 0, x = 1, y = 2, z = 3 } } }
+            end
+            return nil
+        end,
+    }
+    local pos2 = profile2:_get_npc_position(197)
+    T.assert_not_nil(pos2, "QueryServer spawn must supply the position as a last resort")
+    T.assert_equal(pos2 and pos2.y, 2, "y must come from the query response")
+
+    -- Nothing anywhere: nil, so the blocked handler keeps retrying rather than guessing.
+    local profile3 = create_profile(make_profile_ops())
+    profile3._profile.npcs = {}
+    profile3._query = nil
+    T.assert_equal(profile3:_get_npc_position(197), nil,
+        "no live, profile, or query source must yield nil, never a guess")
+end
+
 function M.test_operation_with_kills_skipped_when_quest_rewarded()
     written_files = {}
     local profile = create_profile(make_profile_ops())
@@ -534,6 +630,9 @@ local tests = {
     test_certain_reconcile_rewinds_past_bogus_save = M.test_certain_reconcile_rewinds_past_bogus_save,
     test_operation_skipped_when_completion_gate_met = M.test_operation_skipped_when_completion_gate_met,
     test_objective_gate_met_for_rewarded_quest = M.test_objective_gate_met_for_rewarded_quest,
+    test_missed_accept_rewinds_without_skipping_kills = M.test_missed_accept_rewinds_without_skipping_kills,
+    test_class_guarded_accepts_do_not_block_status = M.test_class_guarded_accepts_do_not_block_status,
+    test_npc_position_falls_back_to_static_sources = M.test_npc_position_falls_back_to_static_sources,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,

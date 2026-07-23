@@ -410,8 +410,8 @@ function RuntimeProfile:load()
         -- WHERE WE ARE; the save is at best a hint. Forward jumps are always taken; a
         -- certain verdict (ready turn-in) overrides the save even backwards — see
         -- _apply_reconciliation.
-        local reconciled, certain = self:_reconcile_start_operation()
-        self:_apply_reconciliation(reconciled, certain)
+        local reconciled, certain, certain_idx = self:_reconcile_start_operation()
+        self:_apply_reconciliation(reconciled, certain, certain_idx)
 
         return true
     end
@@ -468,23 +468,38 @@ function RuntimeProfile:_op_quest_status(op)
 
     local saw_quest_work = false
     local ready_turnin = false
+    local ctx = nil
     for _, a in ipairs(op.actions or {}) do
         local p = a.payload or {}
-        if a.type == "AcceptQuest" and p.quest_id ~= nil then
+
+        -- CL4 class guards: an accept/turn-in gated to ANOTHER class is not this
+        -- character's work and must never mark the operation unsatisfied — the Marshal
+        -- McBride op carries six class-guarded accepts of which exactly one applies.
+        local guard_met = true
+        if a.guard then
+            ctx = ctx or self:create_context()
+            local ok_g, met = pcall(RuntimeAction.evaluate_condition, ctx, a.guard)
+            guard_met = ok_g and met == true
+        end
+
+        if guard_met and a.type == "AcceptQuest" and p.quest_id ~= nil then
             saw_quest_work = true
             local ok_r, done = pcall(rewarded, p.quest_id)
             local ok_o, active = false, false
             if on_quest then ok_o, active = pcall(on_quest, p.quest_id) end
-            -- Not yet accepted and not yet rewarded ⇒ there is real work here.
-            if not ((ok_r and done) or (ok_o and active)) then return "unsatisfied" end
-        elseif a.type == "TurnInQuest" and p.quest_id ~= nil then
+            -- Not yet accepted and not yet rewarded ⇒ there is real work here. The second
+            -- return distinguishes a MISSED ACCEPT (observable, doable right now) from a
+            -- turn-in whose kills may still be pending — only the former justifies
+            -- rewinding a route that already moved past it.
+            if not ((ok_r and done) or (ok_o and active)) then return "unsatisfied", true end
+        elseif guard_met and a.type == "TurnInQuest" and p.quest_id ~= nil then
             saw_quest_work = true
             local ok_r, done = pcall(rewarded, p.quest_id)
             if not (ok_r and done) then
                 if quest_ready_in_log(p.quest_id) then
                     ready_turnin = true
                 else
-                    return "unsatisfied"
+                    return "unsatisfied", false
                 end
             end
         end
@@ -556,12 +571,20 @@ end
 --- its retries, the save recorded op 7, and the restart resumed there instead of at the
 --- op-4 turn-in). A stop at an unsatisfied anchor stays uncertain: kills before it may
 --- or may not be done, so the save keeps forward precedence there.
+--- Returns (start_idx, certain, certain_idx).
+--- start_idx: conservative forward position (first op not provably done).
+--- certain + certain_idx: an op that is OBSERVABLY pending right now — a ready turn-in
+--- or a missed accept — strong enough to rewind a route that already moved past it.
+--- certain_idx can be LATER than start_idx (a missed accept sitting past unobservable
+--- kills): forward movement uses start_idx, backward correction uses certain_idx, so an
+--- accept verdict can never skip the kills in between.
 function RuntimeProfile:_reconcile_start_operation()
     local operations = (self._profile and self._profile.operations) or {}
     local start_idx = 1
     local certain = false
+    local certain_idx = nil
     for i, op in ipairs(operations) do
-        local status = self:_op_quest_status(op)
+        local status, missed_accept = self:_op_quest_status(op)
         if status == "satisfied" then
             start_idx = i + 1
         elseif status == "ready" then
@@ -569,19 +592,27 @@ function RuntimeProfile:_reconcile_start_operation()
             -- Jump straight TO this operation (skipping the kill ops before it).
             start_idx = i
             certain = true
+            certain_idx = i
             break
         elseif status == "unsatisfied" then
+            -- A missed accept (quest never taken, guard met) is observable pending work:
+            -- if the route already moved past it, it must come back — live-caught as
+            -- Accept 15 exhausting retries and the bot walking away with an empty log.
+            if missed_accept then
+                certain = true
+                certain_idx = i
+            end
             break
         end
     end
-    return start_idx, certain
+    return start_idx, certain, certain_idx
 end
 
 --- Apply a reconciliation verdict to the current route position. Forward jumps are always
 --- taken. Backward jumps are taken only when `certain` (a ready turn-in) and at most ONCE
 --- per target operation per session — if the turn-in genuinely cannot complete (NPC gone,
 --- bugged quest), the rewind guard stops an infinite advance→rewind loop.
-function RuntimeProfile:_apply_reconciliation(reconciled, certain)
+function RuntimeProfile:_apply_reconciliation(reconciled, certain, certain_idx)
     local current = self._current_operation_idx
     if reconciled > current then
         self:_log_event("route_reconciled", {
@@ -592,15 +623,19 @@ function RuntimeProfile:_apply_reconciliation(reconciled, certain)
         self._current_action_idx = 1
         return true
     end
-    if certain and reconciled < current then
+    -- Backward correction targets certain_idx (the observably-pending op), NOT start_idx:
+    -- for a missed accept the two differ, and rewinding to start_idx would redo the
+    -- unobservable kill stretch in between for nothing.
+    local rewind_to = certain and (certain_idx or reconciled) or nil
+    if rewind_to and rewind_to < current then
         self._rewound_ops = self._rewound_ops or {}
-        if not self._rewound_ops[reconciled] then
-            self._rewound_ops[reconciled] = true
+        if not self._rewound_ops[rewind_to] then
+            self._rewound_ops[rewind_to] = true
             self:_log_event("route_rewound", {
                 from_operation = current,
-                to_operation = reconciled,
+                to_operation = rewind_to,
             })
-            self._current_operation_idx = reconciled
+            self._current_operation_idx = rewind_to
             self._current_action_idx = 1
             return true
         end
@@ -1812,7 +1847,19 @@ function RuntimeProfile:_resolve_nav_target(action, ctx)
     return nil
 end
 
---- Look up an NPC's position from the object manager (Sylvannas API compliant).
+--- Look up an NPC's position: live object manager first, then STATIC sources.
+---
+--- The object manager only sees units in draw distance. Marshal McBride stands inside
+--- Northshire Abbey — invisible from where travel drops the character — so the accept had
+--- no nav target, burned its retries, and the quest was skipped (live-caught). When the
+--- NPC is not visible, fall back to:
+---   1. the compiled profile's own npcs table (authoritative spawn, zero requests —
+---      empty in today's profiles, a compiler gap, but honored the moment it lands);
+---   2. the QueryServer spawn position (async request-and-cache: nil while the response
+---      is in flight, which lands within a tick on localhost — the blocked-retry loop
+---      naturally re-polls).
+--- Walking to the static spawn brings the NPC into draw distance, after which the live
+--- lookup and is_at_npc take over.
 function RuntimeProfile:_get_npc_position(npc_entry)
     local npc = UnitHelper.get_nearest_creature({ npc_entry })
     if npc and npc:is_valid() then
@@ -1823,6 +1870,41 @@ function RuntimeProfile:_get_npc_position(npc_entry)
             end
         end
     end
+
+    -- Static source 1: the profile's resolved npc table.
+    if self._profile and type(self._profile.npcs) == "table" and #self._profile.npcs > 0 then
+        if not self._npc_index then
+            self._npc_index = {}
+            for _, n in ipairs(self._profile.npcs) do
+                if n.entry and n.position then
+                    self._npc_index[n.entry] = n.position
+                end
+            end
+        end
+        local p = self._npc_index[npc_entry]
+        if p then
+            local x = p.x or p.world_x
+            local y = p.y or p.world_y
+            local z = p.z or p.world_z or 0
+            if x and y then
+                return { x = x, y = y, z = RuntimeAction.resolve_ground_z(x, y, z) }
+            end
+        end
+    end
+
+    -- Static source 2: QueryServer spawn positions, filtered to the current map.
+    if self._query and self._query.get_npc then
+        local ok, info = pcall(self._query.get_npc, self._query, npc_entry)
+        if ok and type(info) == "table" and type(info.positions) == "table" then
+            local my_map = core and core.get_map_id and core.get_map_id() or nil
+            for _, p in ipairs(info.positions) do
+                if p.x and p.y and (my_map == nil or p.map == nil or p.map == my_map) then
+                    return { x = p.x, y = p.y, z = RuntimeAction.resolve_ground_z(p.x, p.y, p.z or 0) }
+                end
+            end
+        end
+    end
+
     return nil
 end
 
@@ -1895,8 +1977,8 @@ function RuntimeProfile:_advance_operation(op)
     -- is op 8's turn-in, not op 7's kobold camp). A certain verdict (ready turn-in) can
     -- also rewind — at most once per target op — so a turn-in that failed its retries is
     -- revisited instead of lost. Cost is a handful of client flag reads per operation.
-    local reconciled, certain = self:_reconcile_start_operation()
-    self:_apply_reconciliation(reconciled, certain)
+    local reconciled, certain, certain_idx = self:_reconcile_start_operation()
+    self:_apply_reconciliation(reconciled, certain, certain_idx)
 
     -- W5.3 — Auto-save after operation advance
     self:_save()

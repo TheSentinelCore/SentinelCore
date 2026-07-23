@@ -14,7 +14,7 @@ use sentinel_models::runtime::{
     RuntimeComment, RuntimeTravel, RuntimeTurnInQuest, RuntimeWaypoint, RuntimeRepair,
     RuntimeLearnFlightPath, RuntimeConditionAction, RuntimeSetVariable, RuntimeEscort,
     RuntimePatrol, RuntimeGrind, RuntimeLoot, RuntimeBank, RuntimeMailbox, RuntimeWait,
-    RuntimeCondition, RuntimeInteractNpc,
+    RuntimeCondition, RuntimeInteractNpc, RuntimeNpc,
 };
 
 /// Title-Case class names the runtime's `CLASS_ID_TO_NAME` map can produce
@@ -159,6 +159,15 @@ impl Compiler {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut profile = RuntimeProfile::new(project.metadata.name.clone(), runtime_operations);
+        // Embed resolved NPC spawn positions. The Lua runtime navigates to these when an
+        // NPC is beyond object-manager draw distance (e.g. Marshal McBride inside
+        // Northshire Abbey) — without them, quest accepts/turn-ins at unseen NPCs had no
+        // nav target and were skipped after exhausting retries. Set BEFORE the content
+        // hash so the fingerprint covers them.
+        profile.npcs = project.npc_library
+            .iter()
+            .filter_map(|n| Some(RuntimeNpc::new(n.entry?, n.name.clone(), n.position.clone()?)))
+            .collect();
         profile.content_hash = compute_content_hash(&profile);
         let report = CompileReport { unmapped_conditions: diagnostics, unresolved };
         Ok((profile, report))
