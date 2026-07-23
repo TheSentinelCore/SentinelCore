@@ -106,10 +106,14 @@ function M.run()
         guid = "player",
         position = { x = 0, y = 0, z = 0 },
         target = target,
+        -- Give the player the maintenance auras the frost-mage maintenance tree
+        -- checks (frost armor 168, arcane intellect 1459) so tick_maintenance is a
+        -- genuine no-op in IDLE. Without them the module correctly queues Frost
+        -- Armor as a self-buff, which is unrelated to (and would mask) the
+        -- "don't act on a non-hostile direct target" assertion below.
         buffs = {
-            [31892] = true,
-            [27140] = true,
-            [27150] = true,
+            [168] = true,   -- Frost Armor (rank 1) — see frost_conditions.frost_armor_aura_ids
+            [1459] = true,  -- Arcane Intellect (rank 1) — see frost_conditions.arcane_intellect_aura_ids
         },
     })
 
