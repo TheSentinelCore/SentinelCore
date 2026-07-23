@@ -1,13 +1,21 @@
 //! Integration tests for the ProjectBuilder (Wave 2).
 
 use sentinel_importer::{parse_guide, ProjectBuilder};
-use sentinel_models::authoring::{ActionPayload, Faction};
+use sentinel_models::authoring::{ActionPayload, ConditionRole, Faction};
 use sentinel_queryclient::{MemoryQueryClient, QuestDetail, NpcDetail, WorldPos};
 
 /// Look up a `Condition` action's expression string, if the payload is that variant.
 fn condition_expression(payload: &ActionPayload) -> Option<&str> {
     match payload {
         ActionPayload::Condition(c) => Some(c.expression.as_str()),
+        _ => None,
+    }
+}
+
+/// Look up a `Condition` action's role, if the payload is that variant.
+fn condition_role(payload: &ActionPayload) -> Option<ConditionRole> {
+    match payload {
+        ActionPayload::Condition(c) => Some(c.role),
         _ => None,
     }
 }
@@ -458,6 +466,10 @@ step
         condition_expression(&project.operations[op_idx].actions[0].payload)
             .unwrap_or_else(|| panic!("operation {op_idx} should have a Condition action, not Comment"))
     };
+    let role = |op_idx: usize| {
+        condition_role(&project.operations[op_idx].actions[0].payload)
+            .unwrap_or_else(|| panic!("operation {op_idx} should have a Condition action, not Comment"))
+    };
 
     assert_eq!(expr(0), "Objective(1234,1)");
     assert_eq!(expr(1), "ItemCount(159,10)");
@@ -466,6 +478,16 @@ step
     assert_eq!(expr(4), "QuestCompleted(1234)");
     assert_eq!(expr(5), "QuestRewarded(5624)");
     assert_eq!(expr(6), "NOT QuestRewarded(42)");
+
+    // PR5a: `.complete`/`.collect`/`.itemcount` are wait-until-true completion gates; the
+    // `isX` family only decides whether the step applies at all.
+    assert_eq!(role(0), ConditionRole::Completion, ".complete");
+    assert_eq!(role(1), ConditionRole::Completion, ".collect");
+    assert_eq!(role(2), ConditionRole::Completion, ".itemcount");
+    assert_eq!(role(3), ConditionRole::Applicability, ".isOnQuest");
+    assert_eq!(role(4), ConditionRole::Applicability, ".isQuestComplete");
+    assert_eq!(role(5), ConditionRole::Applicability, ".isQuestTurnedIn");
+    assert_eq!(role(6), ConditionRole::Applicability, ".isQuestAvailable");
 }
 
 #[tokio::test]

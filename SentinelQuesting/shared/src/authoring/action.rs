@@ -244,10 +244,33 @@ pub struct BankAction {
     pub npc: Uuid,
 }
 
+/// What a gating `Condition` action means for step progression (PR5a). The runtime does not
+/// gate on conditions today (`execute_condition` advances on success *or* skip alike); this
+/// tags each condition with its intended semantics so a runtime fix (PR5b) can branch on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConditionRole {
+    /// Wait-until-true: the step is not done until the condition holds (`.complete`,
+    /// `.collect`, `.itemcount`).
+    Completion,
+    /// The step only applies if the condition holds (`.isOnQuest`, `.isQuestComplete`,
+    /// `.isQuestTurnedIn`, `.isQuestAvailable`).
+    Applicability,
+}
+
+impl Default for ConditionRole {
+    fn default() -> Self {
+        Self::Completion
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConditionAction {
     /// Raw `Condition` expression (ADR `02_DATA_MODEL` §23).
     pub expression: String,
+    /// What this condition means for step progression (PR5a). Defaults to `Completion` for
+    /// legacy/hand-authored actions predating this field.
+    #[serde(default)]
+    pub role: ConditionRole,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -259,4 +282,17 @@ pub struct SetVariableAction {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommentAction {
     pub text: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn condition_action_without_role_field_deserializes_as_completion() {
+        // Pre-PR5a JSON (legacy hand-authored/serialized actions) never had a `role` field.
+        let json = r#"{"expression":"QuestCompleted(1234)"}"#;
+        let action: ConditionAction = serde_json::from_str(json).expect("deserialize ok");
+        assert_eq!(action.role, ConditionRole::Completion);
+    }
 }

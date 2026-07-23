@@ -17,10 +17,10 @@ mod variable;
 
 pub use action::{
     AcceptQuestAction, Action, ActionPayload, BankAction, CommentAction, ConditionAction,
-    EscortAction, FlightAction, GrindAreaAction, HearthAction, InteractNpcAction, KillTargetAction,
-    LearnFlightPathAction, LootObjectAction, MailboxAction, PatrolAction, RepairAction,
-    SetHearthAction, SetVariableAction, TrainerAction, TravelAction, TurnInQuestAction,
-    UseItemAction, VendorAction, WaitAction,
+    ConditionRole, EscortAction, FlightAction, GrindAreaAction, HearthAction, InteractNpcAction,
+    KillTargetAction, LearnFlightPathAction, LootObjectAction, MailboxAction, PatrolAction,
+    RepairAction, SetHearthAction, SetVariableAction, TrainerAction, TravelAction,
+    TurnInQuestAction, UseItemAction, VendorAction, WaitAction,
 };
 pub use area::Area;
 pub use enums::{

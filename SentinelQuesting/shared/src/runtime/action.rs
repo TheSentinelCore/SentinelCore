@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{condition::RuntimeCondition, waypoint::RuntimeWaypoint};
-use crate::authoring::VariableValue;
+use crate::authoring::{ConditionRole, VariableValue};
 
 /// All 22 runtime action variants (see ADR `05` Part 4).
 ///
@@ -158,6 +158,10 @@ pub struct RuntimePatrol {
 pub struct RuntimeConditionAction {
     /// Typed condition tree evaluated by the runtime before the next action.
     pub condition: RuntimeCondition,
+    /// What this condition means for step progression (PR5a) — carried through unchanged from
+    /// the authoring `ConditionAction.role` so the Lua runtime (PR5b) can branch on it.
+    #[serde(default)]
+    pub role: ConditionRole,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
