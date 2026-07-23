@@ -274,6 +274,7 @@ fn pipeline_end_to_end_success() {
             giver_entry: Some(448),
             finisher_entry: Some(448),
             objectives: vec![],
+            structured_objectives: vec![],
         })
     }
 

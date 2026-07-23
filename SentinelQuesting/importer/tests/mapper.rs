@@ -31,6 +31,7 @@ async fn setup_test_client() -> MemoryQueryClient {
         giver_entry: Some(123),
         finisher_entry: Some(456),
         objectives: vec![],
+        structured_objectives: vec![],
     };
     let giver = NpcDetail {
         entry: 123,

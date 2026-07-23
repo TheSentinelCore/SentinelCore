@@ -17,6 +17,7 @@ fn sample_client() -> MemoryQueryClient {
             giver_entry: Some(197),
             finisher_entry: Some(197),
             objectives: vec!["Kill 8 Kobold Vermin".into()],
+            structured_objectives: vec![],
         })
         .with_npc(NpcDetail {
             entry: 197,
