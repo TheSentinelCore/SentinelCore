@@ -262,6 +262,52 @@ function M.test_events_carry_severity()
     T.assert_equal(by_sev.info, 1, "successes are info")
 end
 
+-- ============================================================================
+-- Event severity table integrity (E6) — every key must have a real emitter.
+-- Encodes the exhaustive set of event names actually passed to
+-- RuntimeProfile:_log_event(...) (modules/questing/runtime_profile.lua) so a severity
+-- entry can never again go dead (e.g. the removed `operation_advance`, which no
+-- `_log_event` call ever emitted) without this test failing.
+-- ============================================================================
+
+local REAL_LOG_EVENTS = {
+    save_restored = true,
+    load_with_save = true,
+    load_fresh = true,
+    hot_reload_skip = true,
+    hot_reload = true,
+    death_detected = true,
+    operation_already_done = true,
+    action_success = true,
+    action_skipped = true,
+    condition_wait_timeout = true,
+    action_retry = true,
+    action_retry_exhausted = true,
+    action_blocked = true,
+    action_failed = true,
+    profile_failed = true,
+    nav_arrived = true,
+    nav_idle_unconfirmed = true,
+    nav_timeout = true,
+    nav_stuck = true,
+    nav_failed = true,
+    ghost_rezzed = true,
+    ghost_timeout = true,
+    ghost_release_spirit = true,
+    ghost_resurrect_attempt = true,
+    nav_already_active = true,
+    nav_dispatch_failed = true,
+    nav_started = true,
+}
+
+function M.test_every_event_severity_key_has_a_real_emitter()
+    for event_name in pairs(RunnerState.EVENT_SEVERITY) do
+        T.assert_true(REAL_LOG_EVENTS[event_name] ~= nil,
+            "EVENT_SEVERITY['" .. tostring(event_name) ..
+            "'] has no matching RuntimeProfile:_log_event(...) call site -- dead entry")
+    end
+end
+
 local tests = {
     test_idle_when_no_executor = M.test_idle_when_no_executor,
     test_running_is_not_an_alarm = M.test_running_is_not_an_alarm,
@@ -281,6 +327,7 @@ local tests = {
     test_guardrail_trips_on_stuck_duration = M.test_guardrail_trips_on_stuck_duration,
     test_events_are_newest_first_and_capped = M.test_events_are_newest_first_and_capped,
     test_events_carry_severity = M.test_events_carry_severity,
+    test_every_event_severity_key_has_a_real_emitter = M.test_every_event_severity_key_has_a_real_emitter,
 }
 
 function M.run()

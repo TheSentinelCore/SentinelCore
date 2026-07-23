@@ -315,6 +315,9 @@ local test_modules = {
     -- Harness (offline-only; exercises _G.JSON mocked above)
     "tests/harness/test_json_mock",
 
+    -- Entry point (main.lua diagnostics sink, C4)
+    "tests/test_main_diagnostics",
+
     -- Core
     "tests/core/test_event_bus",
     "tests/core/test_blackboard",

@@ -25,6 +25,83 @@ local function now_s()
     return (core and core.time and core.time()) or 0
 end
 
+-- ======================================================================
+-- Quest-log desync sync (C5)
+--
+-- The cockpit's "is it lying to me?" panel (runner_state.lua sync) compares
+-- questing.tracked_quests against questing.quest_log, but nothing ever wrote either
+-- blackboard key: both defaulted to {} and the panel always reported ok=true. This
+-- module owns writing them from data the executor already exposes, WITHOUT editing
+-- runtime_profile.lua:
+--   - tracked_quests: replayed from the compiled profile's own AcceptQuest/TurnInQuest
+--     actions in every operation BEFORE the one currently in progress. The executor
+--     keeps no other record of "accepted right now"; this reconstructs it from the
+--     profile it is already running.
+--   - quest_log: the REAL in-game quest log, sourced via the executor's public
+--     create_context()/ctx:_refresh_quest_log() (runtime_profile.lua:547-567) — reused,
+--     not duplicated.
+-- ======================================================================
+
+--- Replay AcceptQuest/TurnInQuest actions up to (not including) the operation currently
+--- in progress to approximate which quest ids the profile currently believes are accepted.
+local function tracked_quests_from_profile(executor)
+    if not executor or not executor._profile or type(executor._profile.operations) ~= "table" then
+        return {}
+    end
+    local operations = executor._profile.operations
+    local current_idx = executor._current_operation_idx or 1
+    local tracked, order = {}, {}
+    for i = 1, math.min(current_idx - 1, #operations) do
+        local op = operations[i]
+        local actions = op and op.actions
+        if type(actions) == "table" then
+            for _, action in ipairs(actions) do
+                local payload = action.payload
+                if action.type == "AcceptQuest" and type(payload) == "table" and payload.quest_id ~= nil then
+                    local qid = tostring(payload.quest_id)
+                    if not tracked[qid] then
+                        tracked[qid] = true
+                        order[#order + 1] = qid
+                    end
+                elseif action.type == "TurnInQuest" and type(payload) == "table" and payload.quest_id ~= nil then
+                    local qid = tostring(payload.quest_id)
+                    if tracked[qid] then
+                        tracked[qid] = nil
+                        for idx, existing in ipairs(order) do
+                            if existing == qid then
+                                table.remove(order, idx)
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return order
+end
+
+--- Read the real in-game quest log via the executor's existing (public) quest-log cache
+--- refresh, reused rather than reimplemented. Fails safe to {} — offline/no Sylvannas API,
+--- no executor, or an executor without create_context (e.g. test doubles) all yield {}.
+local function real_quest_log(executor)
+    if not executor or type(executor.create_context) ~= "function" then
+        return {}
+    end
+    local ok, ctx = pcall(executor.create_context, executor)
+    if not ok or type(ctx) ~= "table" or type(ctx._refresh_quest_log) ~= "function" then
+        return {}
+    end
+    local refreshed = pcall(ctx._refresh_quest_log, ctx)
+    if not refreshed then
+        return {}
+    end
+    local log = {}
+    for qid in pairs(ctx._active_quests or {}) do log[qid] = true end
+    for qid in pairs(ctx._completed_quests or {}) do log[qid] = true end
+    return log
+end
+
 function QuestingModule:new(blackboard, event_bus)
     local o = setmetatable({}, QuestingModule)
     o._blackboard = blackboard or Blackboard:new()
@@ -57,8 +134,17 @@ function QuestingModule:initialize(profile_json_path)
     return true
 end
 
+--- Refresh the quest-log desync inputs (C5) so the cockpit's sync panel reflects reality
+--- instead of two blackboard keys nothing ever wrote.
+function QuestingModule:_refresh_quest_sync()
+    self._blackboard:set("questing.tracked_quests", tracked_quests_from_profile(self._executor))
+    self._blackboard:set("questing.quest_log", real_quest_log(self._executor))
+end
+
 function QuestingModule:tick(delta)
     if not self._enabled or self._paused or not self._executor then return end
+
+    self:_refresh_quest_sync()
 
     -- Guardrails are evaluated BEFORE executing: an unattended run that has tripped its limit
     -- must halt on this tick, not after one more action.

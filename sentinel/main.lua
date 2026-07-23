@@ -25,6 +25,62 @@ local RunnerUI = nil
 local _questing_editor = nil
 local _editor_subscribed = false
 
+local function log_error(message)
+    if core and type(core.log_error) == "function" then
+        pcall(core.log_error, "[Sentinel] " .. tostring(message))
+    end
+end
+
+local function log_info(message)
+    if core and type(core.log) == "function" then
+        pcall(core.log, "[Sentinel] " .. tostring(message))
+    end
+end
+
+-- ======================================================================
+-- Diagnostics sink (C4) — the EventBus is otherwise write-only for these events
+-- (see audit finding C4): module:fault (Wave-1 per-module tick isolation),
+-- questing:error (profile-load failure), and module lifecycle/shutdown state
+-- changes all publish into the void with zero subscribers. This is a THIN sink:
+-- it only logs what already happened, it makes no decisions and changes no state.
+-- ======================================================================
+--- Subscribe the diagnostics sink to a given bus. Split out from ensure_diagnostics_wired (which
+--- binds it to the module-level `app`) so it is a pure, directly testable unit: pass any EventBus
+--- in, get the same three subscriptions out, no SentinelApp/IziBridge boot required.
+local function wire_diagnostics(bus)
+    if not bus then return end
+
+    bus:subscribe("module:fault", function(payload)
+        payload = payload or {}
+        log_error(string.format(
+            "module:fault module=%s error=%s",
+            tostring(payload.module), tostring(payload.error)))
+    end)
+
+    bus:subscribe("questing:error", function(payload)
+        payload = payload or {}
+        log_error("questing:error " .. tostring(payload.error))
+    end)
+
+    bus:subscribe("module_state_changed", function(payload)
+        payload = payload or {}
+        log_info(string.format(
+            "module_state_changed module=%s state=%s",
+            tostring(payload.module), tostring(payload.state)))
+    end)
+end
+
+local _diagnostics_subscribed = false
+
+local function ensure_diagnostics_wired()
+    if _diagnostics_subscribed then return end
+    if not app or not app.get_event_bus then return end
+    local bus = app:get_event_bus()
+    if not bus then return end
+    wire_diagnostics(bus)
+    _diagnostics_subscribed = true
+end
+
 -- Wire the runner cockpit to the toggle event once the app and its event bus are ready.
 local function ensure_editor_wired()
     if _editor_subscribed then return end
@@ -39,18 +95,6 @@ local function ensure_editor_wired()
         end
     end)
     _editor_subscribed = true
-end
-
-local function log_error(message)
-    if core and type(core.log_error) == "function" then
-        pcall(core.log_error, "[Sentinel] " .. tostring(message))
-    end
-end
-
-local function log_info(message)
-    if core and type(core.log) == "function" then
-        pcall(core.log, "[Sentinel] " .. tostring(message))
-    end
 end
 
 local function clear_module_cache()
@@ -91,6 +135,7 @@ local function ensure_initialized()
     initialized = true
     last_init_error = nil
     _G.Sentinel.app = app
+    ensure_diagnostics_wired()
     ensure_editor_wired()
     log_info("SentinelCore loaded (Combat Engine)")
     return true
@@ -136,7 +181,9 @@ _G.Sentinel = {
             app = result
             initialized = true
             _G.Sentinel.app = app
-            _editor_subscribed = false  -- re-subscribe with new event bus
+            _editor_subscribed = false      -- re-subscribe with new event bus
+            _diagnostics_subscribed = false -- re-subscribe with new event bus
+            ensure_diagnostics_wired()
             ensure_editor_wired()
             log_info("Reloaded successfully")
             return true
@@ -236,6 +283,7 @@ local function on_unload()
     initialized = false
     _questing_editor = nil
     _editor_subscribed = false
+    _diagnostics_subscribed = false
     _G.Sentinel = nil
 end
 
@@ -243,4 +291,7 @@ return {
     name = "SentinelCore",
     version = "0.2.0",
     unload = on_unload,
+    -- Exposed for offline tests only (tests/test_main_diagnostics.lua): lets the diagnostics
+    -- sink be exercised against a real EventBus without booting the injector-only IziBridge.
+    _wire_diagnostics_for_test = wire_diagnostics,
 }

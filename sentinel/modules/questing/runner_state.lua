@@ -30,7 +30,6 @@ local EVENT_SEVERITY = {
     nav_timeout = "warn",
     action_success = "info",
     action_skipped = "info",
-    operation_advance = "info",
 }
 
 local function num(v, fallback)
@@ -278,5 +277,9 @@ end
 -- Exposed for the render layer and for tests that assert operator-facing wording.
 RunnerState.humanize_condition = humanize_condition
 RunnerState.humanize_action = humanize_action
+
+-- Exposed so tests can assert every severity key still has a real emitter (E6): a key with
+-- no emitter is dead, permanently-info-defaulted noise waiting to happen again.
+RunnerState.EVENT_SEVERITY = EVENT_SEVERITY
 
 return RunnerState
