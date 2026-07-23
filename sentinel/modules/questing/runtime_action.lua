@@ -422,15 +422,37 @@ function RuntimeAction.execute_travel(payload, ctx)
     end
 
     -- Already there?
-    --
-    -- Arrival is judged HORIZONTALLY. Guides carry no Z, so world_z is inferred, and for a distant
-    -- waypoint the terrain is not loaded — the fallback uses the player's current height, which can
-    -- be many yards off the real ground. Observed live: nav reached 99.2% and 8.5 yards out, but the
-    -- destination Z was 79.9 against real ground at 88.7, so a 3D check never satisfied the
-    -- tolerance and the travel timed out short of its goal. Ground movement is 2D; the navmesh owns
-    -- elevation.
     if ctx:is_at_destination(target_pos, tol) then
         return "success"
+    end
+
+    -- Arrived HORIZONTALLY, with a bad inferred Z.
+    --
+    -- Guides carry no Z, so world_z is inferred and can be many yards off: measured live at player
+    -- (-8825.6,-166.1,79.9) against destination Z 88.3 — 0.9 yards away on the ground, nav
+    -- reporting "arrived" with 0 waypoints left, yet the 3D check stayed false. Because nav goes
+    -- INACTIVE on arrival, the poll branch below was skipped entirely and this fell through to
+    -- re-issuing move_to, producing an endless arrive → "navigated, retry" → re-navigate loop that
+    -- never advanced to the Kill behind it.
+    --
+    -- Accept it only when the navigator itself reports arrival: that is the navmesh confirming it
+    -- reached the requested point, so the sole disagreement is the height we invented. Requiring
+    -- nav's own "arrived" keeps a target directly above or below from being mistaken for reached.
+    if ctx.nav and ctx.nav.get_state and not ctx.nav:is_active() then
+        local nav_state = ctx.nav:get_state()
+        if nav_state == "arrived" then
+            local player = UnitHelper.get_local_player()
+            local ok_p, ppos = false, nil
+            if player and player.get_position then ok_p, ppos = pcall(player.get_position, player) end
+            if ok_p and type(ppos) == "table" then
+                local dx = (tonumber(ppos.x) or 0) - (tonumber(target_pos.x) or 0)
+                local dy = (tonumber(ppos.y) or 0) - (tonumber(target_pos.y) or 0)
+                if math.sqrt(dx * dx + dy * dy) <= (tonumber(tol) or 5.0) then
+                    ctx.nav:stop("arrived")
+                    return "success"
+                end
+            end
+        end
     end
 
     -- Already navigating? Poll for arrival.
