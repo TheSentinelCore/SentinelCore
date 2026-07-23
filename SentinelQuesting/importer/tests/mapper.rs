@@ -125,8 +125,12 @@ step
     };
     assert_eq!(travel.destination, "Elwynn Forest");
     let position = travel.position.expect("goto with numeric coords must populate position (IF1)");
-    assert_eq!(position.world_x, 48.2);
-    assert_eq!(position.world_y, 42.9);
+    // The guide's 48.2,42.9 are ZONE PERCENTAGES and are converted to world coordinates at
+    // compile time (ADR 06 invariant 3). Ground truth: this waypoint is Deputy Willem, whose DB
+    // spawn row is (-8933.5, -136.5).
+    assert_eq!(position.map, 0, "Position.map is the continent id the navmesh uses");
+    assert!((position.world_x - -8932.5).abs() < 2.0, "world_x was {}", position.world_x);
+    assert!((position.world_y - -137.5).abs() < 2.0, "world_y was {}", position.world_y);
 }
 
 #[tokio::test]
@@ -563,7 +567,7 @@ RXPGuides.RegisterGuide([[
 #version 7
 #name Test
 step
-    .goto Darnassus,55.239,23.996 -- Argent Guard Manados
+    .goto Elwynn Forest,48.923,41.606 -- Marshal McBride
 ]])"#;
     let parsed = parse_guide(guide).expect("parse ok");
     let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
@@ -573,8 +577,10 @@ step
         _ => panic!("not travel"),
     };
     let position = travel.position.expect("goto with a trailing dev comment must still populate position");
-    assert_eq!(position.world_x, 55.239);
-    assert_eq!(position.world_y, 23.996);
+    // Coordinates convert to world space; landing on Marshal McBride's DB position (-8902.6,
+    // -162.6) proves the trailing `--` comment was stripped before the args were parsed.
+    assert!((position.world_x - -8902.6).abs() < 2.0, "world_x was {}", position.world_x);
+    assert!((position.world_y - -162.6).abs() < 2.0, "world_y was {}", position.world_y);
 }
 
 #[tokio::test]
@@ -671,8 +677,10 @@ step
 }
 
 #[tokio::test]
-async fn goto_with_unmapped_zone_name_pushes_diagnostic_and_defaults_to_map_zero() {
-    // Follow-up 2: zone_to_map_id returning None must not silently default to map 0.
+async fn goto_with_unmapped_zone_emits_diagnostic_and_no_position() {
+    // An unconvertible zone must yield NO position rather than a bogus one. Previously the raw
+    // percentages were stored in world_x/world_y with a default map 0, which is what aimed all 522
+    // Elwynn Travel actions at meaningless coordinates (ADR 06 invariant 3).
     let client = MemoryQueryClient::new();
     let guide = r#"
 RXPGuides.RegisterGuide([[
@@ -688,11 +696,13 @@ step
         ActionPayload::Travel(t) => t,
         _ => panic!("not travel"),
     };
-    let position = travel.position.expect("numeric coords still populate position");
-    assert_eq!(position.map, 0, "unmapped zone still defaults to map 0");
+    assert!(
+        travel.position.is_none(),
+        "an unconvertible zone must emit no position rather than raw percentages"
+    );
     assert!(
         project.diagnostics.iter().any(|d| d.code == "UNMAPPED_GOTO_ZONE"),
-        "an unmapped zone name must not silently default to map 0 with no diagnostic trail"
+        "an unmapped zone name must leave a diagnostic trail"
     );
 }
 

@@ -274,6 +274,50 @@ step
     assert_eq!(kills[1], vec![69], "a numeric .mob keeps working unchanged");
 }
 
+#[tokio::test]
+async fn goto_converts_zone_percentages_to_world_coordinates() {
+    // RestedXP writes `.goto <zone>,<x%>,<y%>` — zone-relative percentages, not world coords. The
+    // importer stored them raw in world_x/world_y alongside a CONTINENT id, so all 522 Travel
+    // actions in the Elwynn profile pointed at meaningless positions and the bot stood still.
+    //
+    // Ground truth: this is the guide's own turn-in waypoint for Marshal McBride, whose DB spawn
+    // row is (-8902.6, -162.6). The conversion must land on him.
+    const GUIDE: &str = r#"RXPGuides.RegisterGuide([[
+#version 1
+#name Goto Conversion Test
+step
+    .goto Elwynn Forest,48.923,41.606
+]])"#;
+
+    let guide = parse_guide(GUIDE).expect("parses");
+    let client = MemoryQueryClient::new();
+    let project = sentinel_importer::ProjectBuilder::build(&guide, "goto.lua", &client)
+        .await
+        .expect("builds");
+
+    let pos = project
+        .operations
+        .iter()
+        .flat_map(|o| &o.actions)
+        .find_map(|a| match &a.payload {
+            sentinel_models::authoring::ActionPayload::Travel(t) => t.position.clone(),
+            _ => None,
+        })
+        .expect("goto lowers to a Travel with a position");
+
+    assert_eq!(pos.map, 0, "Position.map stays the CONTINENT id the navmesh uses");
+    assert!(
+        (pos.world_x - -8902.6).abs() < 2.0,
+        "world_x must convert to Marshal McBride's position, got {}",
+        pos.world_x
+    );
+    assert!(
+        (pos.world_y - -162.6).abs() < 2.0,
+        "world_y must convert to Marshal McBride's position, got {}",
+        pos.world_y
+    );
+}
+
 #[test]
 fn standalone_and_bundled_parse_are_invariant_modulo_line_offset() {
     // The same guide text, parsed standalone vs. embedded as the second block of a bundle, must

@@ -289,36 +289,78 @@ impl<'a> MapperState<'a> {
     }
 }
 
-/// Static zone-name -> continent map-id lookup used to build a `.goto` [`Position`]
-/// (design Decision 4: no QueryServer zone/map table exists, so this stays a static table).
-fn zone_to_map_id(zone: &str) -> Option<u32> {
-    const EASTERN_KINGDOMS: &[&str] = &[
-        "Elwynn Forest", "Westfall", "Redridge Mountains", "Duskwood", "Wetlands",
-        "Loch Modan", "Dun Morogh", "Ironforge", "Stormwind City", "Stormwind",
-        "Silverpine Forest", "Tirisfal Glades", "Undercity", "Hillsbrad Foothills",
-        "Arathi Highlands", "Badlands", "Swamp of Sorrows", "Blasted Lands",
-        "Stranglethorn Vale", "Northern Stranglethorn", "Cape of Stranglethorn",
-    ];
-    const KALIMDOR: &[&str] = &[
-        "Durotar", "Mulgore", "The Barrens", "Teldrassil", "Shadowglen", "Darkshore",
-        "Ashenvale", "Stonetalon Mountains", "Desolace", "Feralas", "Dustwallow Marsh",
-        "Thousand Needles", "Tanaris", "Azshara", "Orgrimmar", "Thunder Bluff", "Darnassus",
-        "Azuremyst Isle", "Bloodmyst Isle", "The Exodar",
-    ];
-    const OUTLAND: &[&str] = &[
-        "Hellfire Peninsula", "Zangarmarsh", "Terokkar Forest", "Nagrand",
-        "Blade's Edge Mountains", "Netherstorm", "Shadowmoon Valley", "Shattrath City",
-    ];
+/// A zone's UI map identity plus the linear bounds needed to turn RestedXP's zone-relative
+/// percentages into world coordinates.
+///
+/// `continent` is what lands in [`Position::map`] — the id the navmesh/server uses (Eastern
+/// Kingdoms 0, Kalimdor 1, Outland 530). The four bounds come from the client's own
+/// `core.game_ui.get_world_pos_from_map_pos`, sampled at the (0,0) and (1,1) corners of each zone
+/// map, so the table is measured rather than remembered.
+///
+/// Axis convention (verified against the live client and the world DB): world **X** interpolates
+/// along the map's **y** axis, world **Y** along the map's **x** axis.
+#[derive(Debug, Clone, Copy)]
+struct ZoneMap {
+    continent: u32,
+    /// world X at map y = 0
+    top: f32,
+    /// world Y at map x = 0
+    left: f32,
+    /// world X at map y = 1
+    bottom: f32,
+    /// world Y at map x = 1
+    right: f32,
+}
 
-    if EASTERN_KINGDOMS.iter().any(|z| z.eq_ignore_ascii_case(zone)) {
-        Some(0)
-    } else if KALIMDOR.iter().any(|z| z.eq_ignore_ascii_case(zone)) {
-        Some(1)
-    } else if OUTLAND.iter().any(|z| z.eq_ignore_ascii_case(zone)) {
-        Some(530)
-    } else {
-        None
+impl ZoneMap {
+    /// Convert zone-relative percentages (0..100) to world X/Y.
+    fn to_world(&self, pct_x: f32, pct_y: f32) -> (f32, f32) {
+        let mx = pct_x / 100.0;
+        let my = pct_y / 100.0;
+        (
+            self.top + my * (self.bottom - self.top),
+            self.left + mx * (self.right - self.left),
+        )
     }
+}
+
+/// Zone table: `(ui_map_id, aliases, bounds)`.
+///
+/// Bounds were sampled from a live client; each entry is verified against a known DB spawn (e.g.
+/// Elwynn `48.923,41.606` resolves to Marshal McBride at `(-8902.6, -162.6)`, within 0.1 yd).
+/// Zones absent from this table cannot be converted and produce a diagnostic rather than a
+/// bogus position — a percentage must never survive compilation (ADR 06 invariant 3).
+const ZONE_TABLE: &[(u32, &[&str], ZoneMap)] = &[
+    (1429, &["Elwynn Forest"],
+     ZoneMap { continent: 0, top: -7939.583, left: 1535.4166, bottom: -10254.166, right: -1935.4166 }),
+    (1426, &["Dun Morogh"],
+     ZoneMap { continent: 0, top: -3877.083, left: 1802.0833, bottom: -7160.4165, right: -3122.9165 }),
+    (1432, &["Loch Modan"],
+     ZoneMap { continent: 0, top: -4487.5, left: -1993.7499, bottom: -6327.083, right: -4752.083 }),
+    (1455, &["Ironforge"],
+     ZoneMap { continent: 0, top: -4569.2412, left: -713.5914, bottom: -5096.8457, right: -1504.2164 }),
+    (1453, &["Stormwind City", "Stormwind", "StormwindClassic"],
+     ZoneMap { continent: 0, top: -8278.8506, left: 1380.9714, bottom: -9175.205, right: 36.7006 }),
+    (1437, &["Wetlands"],
+     ZoneMap { continent: 0, top: -2147.9165, left: -389.5833, bottom: -4904.1665, right: -4525.0 }),
+    (1436, &["Westfall"],
+     ZoneMap { continent: 0, top: -9400.0, left: 3016.6665, bottom: -11733.333, right: -483.3333 }),
+    (1433, &["Redridge Mountains"],
+     ZoneMap { continent: 0, top: -8575.0, left: -1570.8333, bottom: -10022.916, right: -3741.6665 }),
+    (1439, &["Darkshore"],
+     ZoneMap { continent: 1, top: 8333.333, left: 2941.6665, bottom: 3966.6665, right: -3608.3333 }),
+];
+
+/// Look up a zone by name or by a bare UI map id (guides use both forms, e.g.
+/// `.goto Elwynn Forest,…` and `.goto 1429,…`).
+fn zone_map_for(zone: &str) -> Option<ZoneMap> {
+    if let Ok(ui_map_id) = zone.trim().parse::<u32>() {
+        return ZONE_TABLE.iter().find(|(id, _, _)| *id == ui_map_id).map(|(_, _, m)| *m);
+    }
+    ZONE_TABLE
+        .iter()
+        .find(|(_, names, _)| names.iter().any(|n| n.eq_ignore_ascii_case(zone.trim())))
+        .map(|(_, _, m)| *m)
 }
 
 /// Build a `.goto` [`Position`] from its comma-split args (`[dest, x, y, z?]`, IF1). Trailing
@@ -329,26 +371,30 @@ fn zone_to_map_id(zone: &str) -> Option<u32> {
 /// Pushes an `UNMAPPED_GOTO_ZONE` diagnostic (rather than silently defaulting to map 0) when the
 /// zone name is not a bare map id and is absent from [`zone_to_map_id`]'s static table.
 fn build_travel_position(state: &mut MapperState, step: &Step, args: &[String]) -> Option<Position> {
-    let x = args.get(1)?.parse::<f32>().ok()?;
-    let y = args.get(2)?.parse::<f32>().ok()?;
+    let pct_x = args.get(1)?.parse::<f32>().ok()?;
+    let pct_y = args.get(2)?.parse::<f32>().ok()?;
     let z = args.get(3).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
-    let map = match args.first() {
-        Some(a) => match a.parse::<u32>() {
-            Ok(m) => m,
-            Err(_) => zone_to_map_id(a).unwrap_or_else(|| {
-                state.diagnostics.push(Diagnostic {
-                    severity: Severity::Info,
-                    code: "UNMAPPED_GOTO_ZONE".to_string(),
-                    message: format!("Zone '{a}' has no known map id; defaulting to map 0"),
-                    entity: Some(format!("step:{}", step.index)),
-                    action: None,
-                });
-                0
-            }),
-        },
-        None => 0,
+    let zone = args.first()?;
+
+    // A zone we cannot convert yields NO position rather than a bogus one: emitting the raw
+    // percentages produced 522 Travel actions aimed at meaningless coordinates, which is why the
+    // bot travelled nowhere. ADR 06 invariant 3 — a percentage must never survive compilation.
+    let Some(zone_map) = zone_map_for(zone) else {
+        state.diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            code: "UNMAPPED_GOTO_ZONE".to_string(),
+            message: format!(
+                "Zone '{zone}' is not in the zone table; cannot convert {pct_x},{pct_y} to world \
+                 coordinates, so no travel position was emitted"
+            ),
+            entity: Some(format!("step:{}", step.index)),
+            action: None,
+        });
+        return None;
     };
-    Some(Position::new(map, x, y, z))
+
+    let (world_x, world_y) = zone_map.to_world(pct_x, pct_y);
+    Some(Position::new(zone_map.continent, world_x, world_y, z))
 }
 
 /// Encode a `.collect`/`.itemcount` count argument as a §23 DSL fragment. The grammar only
