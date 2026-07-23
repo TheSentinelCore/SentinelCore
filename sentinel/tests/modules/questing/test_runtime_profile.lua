@@ -317,6 +317,61 @@ function M.test_ghost_to_running_on_rez()
     T.assert_equal(profile._state, "running", "After rez, should transition to running")
 end
 
+local function make_ghost_player()
+    return {
+        is_valid = function() return true end,
+        -- Ghost form: the client reports is_dead() == FALSE. The old is_dead-only check
+        -- resumed the route here and fought wolves as a ghost (live-caught 2026-07-23).
+        is_dead = function() return false end,
+        is_ghost = function() return true end,
+        is_dead_or_ghost = function() return true end,
+        get_health = function() return 1 end,
+        get_position = function() return { x = 0, y = 0, z = 0 } end,
+    }
+end
+
+function M.test_ghost_form_stays_in_recovery()
+    local profile = create_profile(make_profile_ops("Comment", { text = "test" }))
+    _G.core.object_manager.get_local_player = make_ghost_player
+    profile:execute()
+    T.assert_equal(profile._state, "ghost",
+        "ghost form (is_dead false, is_ghost true) must stay in recovery, not resume the route")
+end
+
+function M.test_ghost_runs_to_corpse_before_resurrecting()
+    local profile = create_profile(make_profile_ops("Comment", { text = "test" }))
+    local moved_to = nil
+    profile._nav = {
+        is_active = function() return false end,
+        move_to = function(_self, pos) moved_to = pos return true end,
+        stop = function() end,
+        get_state = function() return "idle" end,
+        poll = function() return "idle", {} end,
+    }
+    _G.core.object_manager.get_local_player = make_ghost_player
+    local res_calls = 0
+    _G.core.input = _G.core.input or {}
+    _G.core.input.resurrect_corpse = function() res_calls = res_calls + 1 end
+    _G.core.game_ui = {
+        get_corpse_position = function() return { x = 200, y = 0, z = 0 } end,
+        get_resurrect_corpse_delay = function() return 0 end,
+    }
+
+    profile:execute() -- death detected, enters ghost state
+    profile:execute() -- ghost tick: corpse 200yd out → corpse run, no res spam
+    T.assert_not_nil(moved_to, "the ghost must navigate toward the corpse")
+    T.assert_equal(moved_to and moved_to.x, 200, "corpse-run destination must be the corpse position")
+    T.assert_equal(res_calls, 0, "resurrect_corpse must not be spammed while out of range")
+
+    -- Corpse now in range: the resurrect fires.
+    _G.core.game_ui.get_corpse_position = function() return { x = 5, y = 0, z = 0 } end
+    profile:execute()
+    T.assert_true(res_calls >= 1, "within corpse range the resurrect must be attempted")
+
+    _G.core.game_ui = nil
+    _G.core.input.resurrect_corpse = nil
+end
+
 -- ============================================================================
 -- PR5b — Condition gating ("waiting" status)
 -- ============================================================================
@@ -783,6 +838,8 @@ local tests = {
     -- W4.3
     test_death_detection_enters_ghost = M.test_death_detection_enters_ghost,
     test_ghost_to_running_on_rez = M.test_ghost_to_running_on_rez,
+    test_ghost_form_stays_in_recovery = M.test_ghost_form_stays_in_recovery,
+    test_ghost_runs_to_corpse_before_resurrecting = M.test_ghost_runs_to_corpse_before_resurrecting,
 
     -- PR5b
     test_completion_gate_waits_then_advances_on_met = M.test_completion_gate_waits_then_advances_on_met,

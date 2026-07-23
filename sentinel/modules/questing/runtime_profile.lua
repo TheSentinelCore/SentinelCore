@@ -67,7 +67,9 @@ local ARRIVAL_TOLERANCE = 5.0 -- Close enough to destination
 local MAX_RETRIES_PER_ACTION = 5        -- Max retry attempts for one action
 local MAX_CONSECUTIVE_FAILURES = 3      -- Max failures before profile stops
 local NAV_TIMEOUT = 30.0                -- Seconds before navigation is considered timed out
-local GHOST_TIMEOUT = 120.0             -- Seconds before ghost recovery is abandoned
+local GHOST_TIMEOUT = 300.0             -- Seconds before ghost recovery is abandoned — must
+                                        -- cover a REAL corpse run (graveyard → corpse can be
+                                        -- minutes at ghost speed), not just an in-place res
 local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks
 local MAX_CONDITION_WAIT = 300.0        -- Seconds a Completion-role Condition gate may hold before forced advance
 
@@ -1610,6 +1612,9 @@ end
 -- W4.3 — Ghost state: death recovery
 -- ====================================================================
 
+-- resurrect_corpse only works near the corpse; TBC accepts ~39yd, 30 keeps a margin.
+local CORPSE_RES_RANGE = 30.0
+
 function RuntimeProfile:_execute_ghost()
     -- Check if still dead
     local dead = self:_is_player_dead()
@@ -1618,6 +1623,9 @@ function RuntimeProfile:_execute_ghost()
         self:_log_event("ghost_rezzed", {})
         self._state = "running"
         self._ghost_start_time = nil
+        if self._nav and self._nav.is_active and self._nav:is_active() then
+            self._nav:stop("rezzed")
+        end
         return "running", "resurrected, retry"
     end
 
@@ -1633,21 +1641,56 @@ function RuntimeProfile:_execute_ghost()
         return "running", "ghost recovery timed out, skipping operation"
     end
 
-    -- Release spirit using core.input.release_spirit() (Sylvannas API)
-    if core and core.input and core.input.release_spirit then
-        core.input.release_spirit()
-        self:_log_event("ghost_release_spirit", {})
+    -- Phase 1 — still a corpse: release the spirit.
+    local player = UnitHelper.get_local_player()
+    local is_ghost = false
+    if player and player.is_ghost then
+        local ok, ghost = pcall(player.is_ghost, player)
+        is_ghost = ok and ghost == true
+    end
+    if not is_ghost then
+        if core and core.input and core.input.release_spirit then
+            core.input.release_spirit()
+            self:_log_event("ghost_release_spirit", {})
+        end
+        return "running", "ghost recovery: releasing spirit"
     end
 
-    -- Resurrect corpse using core.input.resurrect_corpse() (Sylvannas API)
+    -- Phase 2 — ghost at the graveyard: RUN TO THE CORPSE. This never happened before —
+    -- resurrect_corpse was spammed from wherever the ghost stood, silently failing out of
+    -- range while the ghost stood still (live-caught).
+    local corpse = nil
+    if core and core.game_ui and core.game_ui.get_corpse_position then
+        local ok, pos = pcall(core.game_ui.get_corpse_position)
+        if ok and type(pos) == "table" and pos.x then
+            corpse = pos
+        end
+    end
+    if corpse and player and player.get_position then
+        local ok_p, ppos = pcall(player.get_position, player)
+        if ok_p and ppos then
+            local dist = Geometry.distance(ppos, corpse)
+            if dist and dist > CORPSE_RES_RANGE then
+                if self._nav and self._nav.is_active and not self._nav:is_active() then
+                    self._nav:move_to({ x = corpse.x, y = corpse.y, z = corpse.z },
+                        { tolerance = CORPSE_RES_RANGE * 0.5 })
+                    self:_log_event("ghost_corpse_run", { distance = math.floor(dist) })
+                end
+                return "running", "ghost recovery: corpse run (" .. tostring(math.floor(dist)) .. "yd)"
+            end
+        end
+    end
+
+    -- Phase 3 — in range: wait out the res sickness delay, then resurrect.
+    if core and core.game_ui and core.game_ui.get_resurrect_corpse_delay then
+        local ok, delay = pcall(core.game_ui.get_resurrect_corpse_delay)
+        if ok and tonumber(delay) and delay > 0 then
+            return "running", "ghost recovery: res available in " .. tostring(math.floor(delay)) .. "s"
+        end
+    end
     if core and core.input and core.input.resurrect_corpse then
         core.input.resurrect_corpse()
         self:_log_event("ghost_resurrect_attempt", {})
-    end
-
-    -- Check every GHOST_RETRY_INTERVAL seconds
-    if elapsed % GHOST_RETRY_INTERVAL < 1.0 then
-        -- Just polled; return running to tick again
     end
 
     return "running", "ghost recovery (" .. tostring(math.floor(elapsed)) .. "s)"
@@ -1786,14 +1829,28 @@ function RuntimeProfile:_get_object_position(object_entry)
     return nil
 end
 
---- Check if the player is dead using Sylvannas API (get_local_player:is_dead()).
+--- Check if the player is dead OR a ghost. Ghost form reports is_dead() == false, which
+--- made the profile leave the ghost state at the graveyard and resume the route — fighting
+--- wolves as a ghost (live-caught 2026-07-23). is_dead_or_ghost is the authoritative check.
 function RuntimeProfile:_is_player_dead()
     local player = UnitHelper.get_local_player()
     if player and player:is_valid() then
-        if player.is_dead then
-            local ok, dead = pcall(player.is_dead, player)
+        if player.is_dead_or_ghost then
+            local ok, dead = pcall(player.is_dead_or_ghost, player)
             if ok then
                 return dead == true
+            end
+        end
+        if player.is_dead then
+            local ok, dead = pcall(player.is_dead, player)
+            if ok and dead == true then
+                return true
+            end
+        end
+        if player.is_ghost then
+            local ok, ghost = pcall(player.is_ghost, player)
+            if ok and ghost == true then
+                return true
             end
         end
         -- Fallback: check health

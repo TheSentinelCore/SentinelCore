@@ -499,6 +499,13 @@ function SentinelCombat:engage(target, opts)
     if self._blackboard:get("module.combat.enabled", true) ~= true then
         return
     end
+    -- A dead or ghost-running player can never accept an engagement — questing's Kill
+    -- action re-publishes engage_requested every commit, and without this the state
+    -- machine churned ENGAGING→disengage("dead_or_ghost") once per tick during recovery.
+    if self._blackboard:get("player.is_dead", false) == true
+        or self._blackboard:get("player.is_ghost", false) == true then
+        return
+    end
     local now_ms = self._blackboard:get("system.now_ms", 0)
     if self._outnumbered_backoff_until_ms and now_ms < self._outnumbered_backoff_until_ms then
         return
