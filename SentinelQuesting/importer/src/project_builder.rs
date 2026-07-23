@@ -422,7 +422,35 @@ async fn enrich_unsatisfiable_gates(
     // Insert back-to-front so earlier gate indices stay valid.
     for (gate_at, gate) in gates.into_iter().rev() {
         if actions[..gate_at].iter().any(is_satisfying_action) {
-            continue; // the guide already said how
+            // The guide already said HOW, but `.mob <name>` says nothing about HOW MANY, and the
+            // runtime defaults an absent quantity to 1. A step reading `.mob Young Wolf` +
+            // `.complete 33,1` would kill exactly one wolf and then wait forever on a gate needing
+            // eight. Bound the existing kill from the gate's own requirement.
+            let needed = match gate {
+                Gate::Objective { quest, index } => match state.client.get_quest(quest).await {
+                    Ok(d) => d
+                        .structured_objectives
+                        .iter()
+                        .find(|o| o.index as u32 == index)
+                        .map(|o| match o.kind {
+                            // Drop chance: see the overshoot rationale below.
+                            ObjectiveKind::CollectItem => o.required.saturating_mul(5).max(1),
+                            _ => o.required,
+                        }),
+                    Err(_) => None,
+                },
+                Gate::Item { count, .. } => Some(count.saturating_mul(5).max(1)),
+            };
+            if let Some(needed) = needed {
+                for a in actions[..gate_at].iter_mut() {
+                    if let ActionPayload::Kill(k) = &mut a.payload {
+                        if k.quantity.is_none() {
+                            k.quantity = Some(needed);
+                        }
+                    }
+                }
+            }
+            continue;
         }
 
         // A raw `.collect item,n` names no quest, so the requirement comes from the item's own
