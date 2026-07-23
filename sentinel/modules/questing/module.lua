@@ -9,11 +9,18 @@
 --- - In-game editor (optional, toggled via /qe or toggle_editor())
 
 local RuntimeProfile = require("modules/questing/runtime_profile")
+local RunnerState = require("modules/questing/runner_state")
 local Blackboard = require("core/blackboard")
 local EventBus = require("core/event_bus")
 
 local QuestingModule = {}
 QuestingModule.__index = QuestingModule
+
+local PROFILE_DIR = "SentinelCore/questing"
+
+local function now_s()
+    return (core and core.time and core.time()) or 0
+end
 
 function QuestingModule:new(blackboard, event_bus)
     local o = setmetatable({}, QuestingModule)
@@ -23,6 +30,14 @@ function QuestingModule:new(blackboard, event_bus)
     end)
     o._executor = nil
     o._enabled = false
+    -- Runner cockpit control state
+    o._paused = false
+    o._deaths = 0
+    o._started_at = nil
+    o._last_progress_at = nil
+    o._last_operation_idx = nil
+    o._guardrails = {}
+    o._profile_dir = PROFILE_DIR
     return o
 end
 
@@ -39,11 +54,34 @@ function QuestingModule:initialize(profile_json_path)
 end
 
 function QuestingModule:tick(delta)
-    if not self._enabled or not self._executor then return end
+    if not self._enabled or self._paused or not self._executor then return end
+
+    -- Guardrails are evaluated BEFORE executing: an unattended run that has tripped its limit
+    -- must halt on this tick, not after one more action.
+    local view = self:get_view()
+    if view.guardrails.tripped then
+        self:pause()
+        self._event_bus:publish("questing:guardrail_tripped", { reason = view.guardrails.reason })
+        return
+    end
 
     local status, message = self._executor:execute()
     self._blackboard:set("questing.status", status)
     self._blackboard:set("questing.message", message)
+
+    -- Liveness marker: record when the run last actually moved forward, so the cockpit can tell
+    -- a healthy wait from a wedged one.
+    local op_idx = self._executor._current_operation_idx
+    if op_idx ~= self._last_operation_idx then
+        self._last_operation_idx = op_idx
+        self._last_progress_at = now_s()
+    end
+    if self._executor._state == "ghost" and not self._counted_death then
+        self._deaths = self._deaths + 1
+        self._counted_death = true
+    elseif self._executor._state ~= "ghost" then
+        self._counted_death = false
+    end
 
     if status == "finished" then
         self._enabled = false
@@ -61,6 +99,101 @@ end
 
 function QuestingModule:is_enabled()
     return self._enabled
+end
+
+-- ======================================================================
+-- Runner cockpit control surface
+-- ======================================================================
+
+--- Load a profile and begin running it. Resets session counters.
+function QuestingModule:start(profile_path)
+    local ok = self:initialize(profile_path)
+    if not ok then return false end
+    self._paused = false
+    self._deaths = 0
+    self._counted_death = false
+    self._started_at = now_s()
+    self._last_progress_at = self._started_at
+    self._last_operation_idx = self._executor and self._executor._current_operation_idx or nil
+    self._event_bus:publish("questing:started", { path = profile_path })
+    return true
+end
+
+--- Halt execution while keeping the executor, so progress is not lost.
+function QuestingModule:pause()
+    self._paused = true
+    self._blackboard:set("questing.paused", true)
+end
+
+function QuestingModule:resume()
+    self._paused = false
+    self._blackboard:set("questing.paused", false)
+end
+
+function QuestingModule:is_paused()
+    return self._paused == true
+end
+
+--- Full stop: disable and release the executor.
+function QuestingModule:stop()
+    self._enabled = false
+    self._paused = false
+    self._executor = nil
+    self._blackboard:set("questing.enabled", false)
+    self._event_bus:publish("questing:stopped", {})
+end
+
+--- Manual recovery: abandon the current operation and move to the next one.
+function QuestingModule:skip_current_step()
+    if not self._executor then return false end
+    self._executor._current_operation_idx = (self._executor._current_operation_idx or 1) + 1
+    self._executor._current_action_idx = 1
+    self._executor._current_action_retries = 0
+    -- Releasing the wait timer matters: without it the next gate inherits a stale start time.
+    self._executor._wait_started_at = nil
+    self._executor._wait_action_key = nil
+    self._last_progress_at = now_s()
+    self._event_bus:publish("questing:step_skipped", {
+        operation = self._executor._current_operation_idx,
+    })
+    return true
+end
+
+function QuestingModule:set_guardrails(cfg)
+    self._guardrails = cfg or {}
+end
+
+--- Available compiled profiles, discovered from the data folder rather than hardcoded.
+--- Returns extension-stripped stems, sorted. A missing/unreadable directory yields {}.
+function QuestingModule:list_profiles(dir)
+    dir = dir or self._profile_dir
+    if not (core and core.read_dir) then return {} end
+    local ok, entries = pcall(core.read_dir, dir)
+    if not ok or type(entries) ~= "table" then return {} end
+    local out = {}
+    for _, name in ipairs(entries) do
+        local stem = tostring(name):match("^(.+)%.json$")
+        -- Skip the runtime's own save sidecars; they are state, not selectable profiles.
+        if stem and not stem:match("%.save$") then
+            out[#out + 1] = stem
+        end
+    end
+    table.sort(out)
+    return out
+end
+
+--- One snapshot for the cockpit to render.
+function QuestingModule:get_view()
+    return RunnerState.build({
+        executor = self._executor,
+        now = now_s(),
+        started_at = self._started_at or now_s(),
+        last_progress_at = self._last_progress_at,
+        deaths = self._deaths,
+        guardrails = self._guardrails,
+        tracked_quests = self._blackboard:get("questing.tracked_quests", nil),
+        quest_log = self._blackboard:get("questing.quest_log", nil),
+    })
 end
 
 -- ======================================================================
