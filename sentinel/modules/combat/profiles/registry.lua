@@ -1,4 +1,3 @@
-local ProfileInterface = require("modules/combat/profile_interface")
 local PaladinRetTBC = require("modules/combat/profiles/paladin/retribution_tbc")
 local MageFrostTBC = require("modules/combat/profiles/mage/frost_tbc")
 
