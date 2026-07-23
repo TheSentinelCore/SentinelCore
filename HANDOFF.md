@@ -52,6 +52,42 @@ local ex=_G.Q._executor for i=1,300 do ex:execute() end return ex._current_opera
 `execute()` polls instantly but the character walks in real time — insert real waits (60–120s)
 between batches or you will conclude it is stuck when it is merely walking.
 
+## THE EXACT NEXT BUG (start here)
+
+The Kill action now reaches its target. Verified live, all in one run:
+
+```
+operation 16 / action 18 (Kill)
+kill trace:      engaging   dist=2.6
+target:          Young Wolf (299), 2.6 yd, TARGETED
+combat state:    ENGAGING  →  COOLDOWN   (after ticking)
+combat _source:  "questing"          ← the questing engage event reaches combat
+_current_target: set
+_forced_target:  set                 ← neutral-mob override holds
+combat enabled:  true
+player:          is_auto_attacking = false, is_in_combat = false
+```
+
+So: questing finds the mob, targets it, requests engagement, combat accepts the target and runs —
+then goes to COOLDOWN having **queued no spell**. Nothing ever swings.
+
+The remaining gate is almost certainly that the rotation/target-strategy path refuses a
+**non-hostile** unit. Elwynn's Young Wolves report `enemy = false` and never aggro. Note
+`sentinel/tests/modules/combat/test_module.lua` explicitly asserts "combat should not queue spells
+for non-hostile direct targets" — that rule is correct for AUTO engagement and wrong for an
+explicitly requested quest target. `SentinelCombat:engage` and `_ensure_target` were already taught
+to honour `_forced_target`; the spell/rotation path was not.
+
+Look at `sentinel/modules/combat/strategies/grind_target_strategy.lua` (`is_valid_enemy`, which
+consults `is_enemy_with` / `can_attack`) and wherever the rotation validates a target before
+queueing. Thread the forced-target exemption through, and keep the auto-engage guarantee intact so
+that existing test still passes.
+
+Secondary, same area: the bot does not close the last few yards as the mob wanders (observed
+drifting 2.6 → 6.5 yd). The chase re-issues `move_to` only when the target moves >3 yd from the
+last commanded destination; consider tightening that, and note the Kill action owns pursuit —
+combat must NOT be made to chase.
+
 ## Where the kill loop stands
 
 The route reaches operation 16 (`label:WolfMeatEnd`), whose action 18 is
