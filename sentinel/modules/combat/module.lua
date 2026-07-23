@@ -411,6 +411,17 @@ function SentinelCombat:_ensure_target()
         end
         self:_clear_forced_target()
     end
+    -- A questing engagement never self-selects a replacement target. When the forced
+    -- target dies (or goes invalid), control goes BACK to the kill action, which picks
+    -- the next entry-filtered quest mob and re-requests engagement. Falling through to
+    -- the selector here is how the bot fought neutral Kobold Vermin and then A RABBIT
+    -- under source="questing" (live-caught): the selector's idea of "best target" has no
+    -- notion of which entries the quest needs. Real aggressors re-enter combat through
+    -- _find_attacker, which only ever yields units attacking the player.
+    if self._source == "questing" then
+        self:disengage("quest_target_done")
+        return nil
+    end
     local selected = self._target_selector:get_best_target({
         require_player = self:_require_player_targets(),
     })

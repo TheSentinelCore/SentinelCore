@@ -298,6 +298,28 @@ function M.run()
     combat9:disengage("test")
     T.assert_equal(bb9:get("combat.forced_target_guid"), nil,
         "disengage must clear the forced-target guid")
+
+    -- Test 10: when the forced quest target dies, combat must NOT self-select a
+    -- replacement — the selector has no notion of which entries the quest needs, which
+    -- is how the bot ended up fighting neutral vermin and a RABBIT under
+    -- source="questing" while its chase deadlocked against the kill action's navigation
+    -- (live log: out_of_range dist=38 range=5 spam, nav thrash, frozen in place).
+    -- Control goes back to the kill action via disengage.
+    local bb10 = make_blackboard()
+    local bus10 = EventBus:new()
+    local combat10 = SentinelCombat:new(bus10, bb10, nav)
+    combat10:initialize()
+    local dying_opts = { guid = "quest-mob", position = { x = 3, y = 0, z = 0 }, hostile = false }
+    local dying = make_unit(dying_opts)
+    combat10:engage(dying, { source = "questing" })
+    T.assert_equal(combat10:get_state(), "ENGAGING", "sanity: forced engage entered combat")
+    dying_opts.dead = true
+    -- A perfectly valid hostile target is available to the selector (player.target in
+    -- the blackboard) — it must still not be taken.
+    local got = combat10:_ensure_target()
+    T.assert_equal(got, nil, "questing combat must not self-select a replacement target")
+    T.assert_equal(combat10:get_state(), "IDLE",
+        "combat must disengage and return control to the kill action when the quest target dies")
 end
 
 return M
