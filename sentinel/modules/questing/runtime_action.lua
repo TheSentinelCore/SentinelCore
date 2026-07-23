@@ -438,6 +438,16 @@ function RuntimeAction.execute_travel(payload, ctx)
         local state, progress = ctx.nav:poll()
         if state == "arrived" or state == "idle" then
             -- Arrived: verify position
+            -- Trust the navigator's own arrival. Re-verifying with a 3D distance check fails
+            -- whenever the inferred Z is wrong: measured live at (-8835.6,-51.9,88.3) against a
+            -- destination Z of 79.9 — 0.9 yards away horizontally, nav reporting "arrived" with 0
+            -- waypoints left, yet an 8.4-yard vertical error kept the check false and the travel
+            -- looped "navigated, retry" forever. The navmesh owns elevation; if it says it arrived,
+            -- it arrived.
+            if state == "arrived" then
+                ctx.nav:stop("arrived")
+                return "success"
+            end
             if ctx:is_at_destination(target_pos, tol) then
                 ctx.nav:stop("arrived")
                 return "success"
