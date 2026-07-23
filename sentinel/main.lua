@@ -16,20 +16,23 @@ local last_init_error = nil
 
 -- Menu elements for main menu
 local _menu_tree = core.menu.tree_node()
-local _toggle_editor_btn = core.menu.button("sentinel_open_quest_editor")
+local _toggle_editor_btn = core.menu.button("sentinel_open_runner_cockpit")
 
--- QuestingEditor UI (deferred load until app is ready, to avoid Sylvannas API issues in tests)
-local QuestingEditor = nil
+-- Runner cockpit UI (deferred load until app is ready, to avoid Sylvannas API issues in tests).
+-- Authoring lives OUTSIDE the game (the sentinel-editor HTTP API); the client is a cockpit for
+-- running compiled profiles, not for editing them.
+local RunnerUI = nil
 local _questing_editor = nil
 local _editor_subscribed = false
 
--- Wire the questing editor to the toggle event once the app and its event bus are ready.
+-- Wire the runner cockpit to the toggle event once the app and its event bus are ready.
 local function ensure_editor_wired()
     if _editor_subscribed then return end
     if not app or not app.get_event_bus then return end
-    -- Lazy-load editor_ui only when needed (avoids issues in test contexts)
-    QuestingEditor = QuestingEditor or require("modules/questing/editor_ui")
-    _questing_editor = QuestingEditor:new()
+    -- Lazy-load the UI only when needed (avoids issues in test contexts)
+    RunnerUI = RunnerUI or require("modules/questing/runner_ui")
+    local questing = app:get_module("questing")
+    _questing_editor = RunnerUI:new(questing and questing._questing or nil)
     app:get_event_bus():subscribe("questing:toggle_editor", function()
         if _questing_editor then
             _questing_editor:toggle()
@@ -216,7 +219,7 @@ end)
 core.register_on_render_menu_callback(function()
     if not ensure_initialized() then return end
     _menu_tree:render("SentinelCore", function()
-        if _toggle_editor_btn:render("Open Quest Editor") then
+        if _toggle_editor_btn:render("Open Runner Cockpit") then
             _G.Sentinel.toggle_quest_editor()
         end
     end)

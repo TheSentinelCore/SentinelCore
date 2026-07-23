@@ -101,7 +101,7 @@ concrete entry IDs and coordinates — never add reference resolution to the Lua
 Boot chain:
 
 ```
-sentinel/main.lua        registers Sylvannas callbacks, exposes _G.Sentinel, owns the quest editor UI
+sentinel/main.lua        registers Sylvannas callbacks, exposes _G.Sentinel, owns the runner cockpit
   └ runtime/app.lua      SentinelApp:new/initialize — wires EventBus, Blackboard, ErrorBoundary,
                          ModuleRegistry, SensorHub, CallbackBridge, NavAdapter, IziBridge
       └ runtime/module_registry.lua
@@ -123,6 +123,14 @@ Shared infrastructure:
 - **Geometry** (`core/geometry.lua`) — use `Geometry.distance()` (nil-safe, returns infinity)
   rather than inlining `distance_3d`.
 
+**In-game UI is a runner cockpit, not an editor.** Authoring lives outside the game (the
+`sentinel-editor` HTTP API); the client only runs compiled profiles. The cockpit is split so it is
+testable: `modules/questing/runner_state.lua` is a **pure view-model** (health, liveness, progress
++ ETA, blocked reason, quest-log desync, guardrails, events) covered by offline tests, and
+`modules/questing/runner_ui.lua` is a thin Sylvannas projection of it. Put no decision logic in the
+render layer — it cannot be tested outside the game. Control verbs (`start/pause/resume/stop/
+skip_current_step/set_guardrails/list_profiles/get_view`) live on `module.lua`.
+
 Questing execution path: `modules/questing/init.lua` (registry wrapper) → `module.lua` (lifecycle)
 → `runtime_profile.lua` → `runtime_action.lua` (one handler per action type). `runtime_profile.lua`
 is a recovery state machine — `running | navigating | ghost | failed | finished` — with retry
@@ -134,7 +142,7 @@ budgets, nav/ghost timeouts, and progress persisted alongside the profile as
 | Caller | Callee | Port | Via |
 | --- | --- | --- | --- |
 | `sentinel/shared/query_client.lua` | SentinelQueryServer | 3030 | `core.http_get` |
-| `sentinel/modules/questing/editor_ui.lua` | sentinel-editor | 3031 | `core.http_get` / `core.http_post` |
+| _(authoring clients)_ | sentinel-editor | 3031 | `core.http_get` / `core.http_post` |
 | `sentinel/integrations/nav_client/adapter.lua` | SentinelNavClient (`_G.SentinelNavClient.client`) | — | in-process Lua |
 | SentinelNavClient | SentinelNavServer | 47110 | HTTP GET only |
 
