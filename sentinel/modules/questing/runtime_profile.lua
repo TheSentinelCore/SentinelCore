@@ -517,6 +517,32 @@ function RuntimeProfile:_operation_already_done(op)
     return self:_op_quest_status(op) == "satisfied"
 end
 
+--- The inverse of _operation_gate_already_met: a farm operation whose Completion gate
+--- evaluates FALSE is provably PENDING — e.g. a kill op sitting at 3/10 that a failure
+--- cascade or wait-timeout advanced past (live-caught: nav/combat deadlock churned op 24
+--- forward with quest 15 unfinished, and the save then resumed at op 25). Quest-action
+--- ops are excluded — they have their own classification.
+function RuntimeProfile:_operation_gate_unmet(op, ctx)
+    local saw_farm = false
+    local saw_gate_unmet = false
+    for _, a in ipairs(op.actions or {}) do
+        if a.type == "AcceptQuest" or a.type == "TurnInQuest" then
+            return false
+        elseif a.type == "Kill" or a.type == "Grind" or a.type == "Loot" or a.type == "UseItem" then
+            saw_farm = true
+        elseif a.type == "Condition" then
+            local p = a.payload or {}
+            if p.role == "Completion" and p.condition then
+                local ok, met = pcall(RuntimeAction.evaluate_condition, ctx, p.condition)
+                if not (ok and met == true) then
+                    saw_gate_unmet = true
+                end
+            end
+        end
+    end
+    return saw_farm and saw_gate_unmet
+end
+
 --- Is this operation's own Completion gate ALREADY met before any of its actions ran?
 ---
 --- Kill operations are compiled as Travel + Kill(quantity) + Condition(ObjectiveComplete).
@@ -583,6 +609,7 @@ function RuntimeProfile:_reconcile_start_operation()
     local start_idx = 1
     local certain = false
     local certain_idx = nil
+    local gate_ctx = nil
     for i, op in ipairs(operations) do
         local status, missed_accept = self:_op_quest_status(op)
         if status == "satisfied" then
@@ -603,6 +630,19 @@ function RuntimeProfile:_reconcile_start_operation()
                 certain_idx = i
             end
             break
+        else
+            -- "unobservable" quest-wise — but farm ops carry their own truth in their
+            -- Completion gate: met ⇒ proven done, advance past; unmet ⇒ provably
+            -- pending (kill op at 3/10), a certain rewind target for a save that
+            -- advanced past it.
+            gate_ctx = gate_ctx or self:create_context()
+            if self:_operation_gate_already_met(op, gate_ctx) then
+                start_idx = i + 1
+            elseif self:_operation_gate_unmet(op, gate_ctx) then
+                certain = true
+                certain_idx = i
+                break
+            end
         end
     end
     return start_idx, certain, certain_idx

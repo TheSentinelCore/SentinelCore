@@ -518,6 +518,53 @@ function M.test_npc_position_falls_back_to_static_sources()
         "no live, profile, or query source must yield nil, never a guess")
 end
 
+function M.test_unmet_gate_rewinds_save_that_skipped_kills()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            { id = 1, actions = { { type = "Comment", payload = { text = "a" } } }, next_condition = "auto" },
+            {
+                id = 2,
+                actions = {
+                    { type = "Kill", payload = { creature_entries = { 257 }, quantity = 10 } },
+                    { type = "Condition", payload = { role = "Completion", condition = { type = "ObjectiveComplete", payload = { 15, 1 } } } },
+                },
+                next_condition = "auto",
+            },
+            { id = 3, actions = { { type = "Comment", payload = { text = "b" } } }, next_condition = "auto" },
+        },
+    })
+    -- Quest 15 in the log at 3/10 — the kill op is provably unfinished.
+    _G.core.quests = {
+        is_quest_flagged_completed = function(_) return false end,
+        is_on_quest = function(qid) return qid == 15 end,
+        get_num_quest_log_entries = function() return 1 end,
+        get_quest_log_title = function(_) return { quest_id = 15, is_complete = 0 } end,
+        get_num_quest_leader_boards = function(_) return 1 end,
+        get_quest_log_leader_board = function(_, _)
+            return { objective_type = "monster", description = "Kobold Workers slain: 3/10", is_completed = false }
+        end,
+    }
+    local start_idx, certain, certain_idx = profile:_reconcile_start_operation()
+    T.assert_true(certain, "an unmet farm gate is a certain verdict")
+    T.assert_equal(certain_idx, 2, "the rewind target is the unfinished kill op")
+
+    -- A save that churned past the kills must come back for them.
+    profile._current_operation_idx = 3
+    T.assert_true(profile:_apply_reconciliation(start_idx, certain, certain_idx),
+        "the route must rewind to the unfinished kill op")
+    T.assert_equal(profile._current_operation_idx, 2, "rewound to the kill op")
+
+    -- Once the objective completes, the same op advances the scan instead.
+    _G.core.quests.get_quest_log_leader_board = function(_, _)
+        return { objective_type = "monster", description = "Kobold Workers slain: 10/10", is_completed = 1 }
+    end
+    local start2 = profile:_reconcile_start_operation()
+    T.assert_true(start2 >= 3, "a met gate must advance the scan past the kill op")
+    _G.core.quests = nil
+end
+
 function M.test_operation_with_kills_skipped_when_quest_rewarded()
     written_files = {}
     local profile = create_profile(make_profile_ops())
@@ -633,6 +680,7 @@ local tests = {
     test_missed_accept_rewinds_without_skipping_kills = M.test_missed_accept_rewinds_without_skipping_kills,
     test_class_guarded_accepts_do_not_block_status = M.test_class_guarded_accepts_do_not_block_status,
     test_npc_position_falls_back_to_static_sources = M.test_npc_position_falls_back_to_static_sources,
+    test_unmet_gate_rewinds_save_that_skipped_kills = M.test_unmet_gate_rewinds_save_that_skipped_kills,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,
