@@ -4,6 +4,17 @@
 
 local SpellHelper = {}
 
+---Sentinel returned when the helper is unresolved (offline/mocked env) instead
+---of a hard `true`. C3: the previous unconditional `return true` fail-open made
+---every offline test exercise the "unknown" branch without ever distinguishing
+---it from a real, verified `true` result. Existing callers across the codebase
+---(condition_library, frost_conditions, retribution_conditions, target
+---strategies) use truthiness (`if ok then`), so `SpellHelper.UNKNOWN` being
+---non-nil/non-false keeps them behaving exactly as before. New/future callers
+---that need to tell "verified castable" apart from "helper unavailable" can
+---compare `result == true` vs `result == SpellHelper.UNKNOWN`.
+SpellHelper.UNKNOWN = "unknown"
+
 local _ref = nil
 local _resolved = false
 local _call_style = "self"
@@ -43,9 +54,22 @@ function SpellHelper.resolve()
     return nil
 end
 
----Call a spell helper method with automatic plain/method fallback.
----Tries plain-call (fn(...)) first (works for mock functions without self),
----then method-call (fn(owner, ...)) for IZI SDK convention.
+---Call a spell helper method using the Sylvannas IZI SDK method-call
+---convention: fn(owner, ...), i.e. `owner:fn(...)`.
+---C1: previously this tried a plain call (fn(...)) FIRST and only fell back
+---to the method-call form on error. Every real Sylvannas source uses the
+---colon/method form (spellbook-helper.md, spell-queue.md, fire-mage.md) where
+---the first parameter is `self`/owner. The plain-call-first branch shifted
+---every argument by one; when the callee didn't immediately index `self`,
+---pcall silently succeeded with the WRONG answer reported as authoritative.
+---That fallback existed only to match test mocks that omit `self`, not the
+---real SDK — see CLAUDE.md's warning against this exact pattern for
+---`spell_queue`. Method-call is now the only path.
+-- VERIFY-IN-GAME: confirm the real spellbook helper accepts the colon form
+-- for all three wrapped methods, e.g.:
+--   game_eval("return tostring(spell_helper:is_spell_castable(133, core.object_manager.get_local_player(), core.object_manager.get_local_player(), false, false))")
+--   game_eval("return tostring(spell_helper:is_spell_in_line_of_sight(133, core.object_manager.get_local_player(), core.object_manager.get_local_player()))")
+--   game_eval("return tostring(spell_helper:get_spell_cooldown(133))")
 ---@param fn function The method to call
 ---@param owner table The owning module (for method-call convention)
 ---@param ... any Arguments
@@ -55,14 +79,6 @@ function SpellHelper.call_method(fn, owner, ...)
     if type(fn) ~= "function" then
         return false, nil
     end
-    -- Try plain-call first (fn(arg1, arg2, ...))
-    -- This is safer — mock functions often omit the `self` parameter.
-    -- If it errors (because the function expects self), we fall through.
-    local ok, value = pcall(fn, ...)
-    if ok then
-        return true, value
-    end
-    -- Fallback to method-call (fn(owner, arg1, arg2, ...))
     return pcall(fn, owner, ...)
 end
 
@@ -70,15 +86,20 @@ end
 ---@param spell_id number
 ---@param source table|nil
 ---@param dest table|nil
----@return boolean
+---@return boolean|string true, false, or SpellHelper.UNKNOWN when the helper is unresolved
 function SpellHelper.is_spell_castable(spell_id, source, dest)
     local helper = SpellHelper.resolve_cached()
     if not helper or type(helper.is_spell_castable) ~= "function" then
-        return true -- unknown = castable
+        return SpellHelper.UNKNOWN -- C3: unresolved helper, not a verified castable=true
     end
+    -- C2: trailing params are (skip_facing, skips_range). Every documented
+    -- example (spellbook-helper.md:163) passes false, false — the caller
+    -- wants a real castability check, not one that ignores facing/range.
+    -- VERIFY-IN-GAME:
+    --   game_eval("return tostring(spell_helper:is_spell_castable(133, core.object_manager.get_local_player(), core.object_manager.get_local_player(), false, false))")
     local ok, castable = SpellHelper.call_method(
         helper.is_spell_castable, helper,
-        spell_id, source, dest, true, true
+        spell_id, source, dest, false, false
     )
     return ok and castable == true
 end
@@ -87,12 +108,14 @@ end
 ---@param spell_id number
 ---@param source table|nil
 ---@param dest table|nil
----@return boolean
+---@return boolean|string true, false, or SpellHelper.UNKNOWN when the helper is unresolved
 function SpellHelper.is_spell_in_los(spell_id, source, dest)
     local helper = SpellHelper.resolve_cached()
     if not helper or type(helper.is_spell_in_line_of_sight) ~= "function" then
-        return true -- unknown = in LOS
+        return SpellHelper.UNKNOWN -- C3: unresolved helper, not a verified in_los=true
     end
+    -- VERIFY-IN-GAME:
+    --   game_eval("return tostring(spell_helper:is_spell_in_line_of_sight(133, core.object_manager.get_local_player(), core.object_manager.get_local_player()))")
     local ok, in_los = SpellHelper.call_method(
         helper.is_spell_in_line_of_sight, helper,
         spell_id, source, dest
