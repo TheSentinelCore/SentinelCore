@@ -324,6 +324,7 @@ local test_modules = {
     "tests/runtime/test_sensor_hub",
     "tests/runtime/test_nav_adapter",
     "tests/runtime/test_module_registry",
+    "tests/runtime/test_tick_isolation",
     "tests/runtime/test_app_tick",
 
     -- Combat module
