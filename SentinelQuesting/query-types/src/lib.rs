@@ -124,6 +124,18 @@ pub struct ObjectInfo {
     pub position: WorldPos,
 }
 
+/// Static item facts for runtime decisions the client cannot make on its own — the live
+/// SDK exposes no item-quality API, so grey detection for vendor selling comes from here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemInfo {
+    pub entry: u32,
+    pub name: String,
+    /// 0 = poor (grey), 1 = common, 2 = uncommon, ...
+    pub quality: i32,
+    /// Vendor sell price in copper.
+    pub sell_price: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreaturePolygon {
     pub creature_entry: u32,

@@ -405,6 +405,34 @@ impl Db {
         }))
     }
 
+    pub fn get_item(&self, entry: u32) -> Result<Option<ItemInfo>, String> {
+        let db = self.0.lock().unwrap();
+        let mut stmt = db.prepare(
+            "SELECT entry, name, Quality, SellPrice FROM item_template WHERE entry = ?1"
+        )
+        .map_err(|e| e.to_string())?;
+        let mut rows = stmt.query_map([entry], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+        let Some(row) = rows.next().transpose().map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
+        let (entry_val, name_opt, quality_opt, sell_price_opt) = row;
+        Ok(Some(ItemInfo {
+            entry: entry_val as u32,
+            name: name_opt.unwrap_or_default(),
+            quality: quality_opt.unwrap_or(0) as i32,
+            sell_price: sell_price_opt.unwrap_or(0).max(0) as u32,
+        }))
+    }
+
     pub fn get_object(&self, entry: u32) -> Result<Option<ObjectInfo>, String> {
         let db = self.0.lock().unwrap();
         let mut stmt = db.prepare(

@@ -978,20 +978,44 @@ function RuntimeAction.execute_vendor(payload, ctx)
 
     local attempted = false
 
-    -- Sell greys using core.input.sell_item or vendor API
-    -- A6: `attempted = true` used to be set OUTSIDE these guards, so a vendor stop with neither
-    -- API present still reported "success" with full bags and no gold. VERIFY-IN-GAME:
-    -- core.input.sell_greys / core.inventory.sell_greys are not documented Sylvannas APIs
-    -- (docs/SylvannasAPI/dev/api/); if neither exists at runtime both guards stay false and
-    -- `attempted` must correctly stay false too.
-    if sell_grey then
-        if core and core.input and core.input.sell_greys then
-            core.input.sell_greys()
-            attempted = true
-        elseif core and core.inventory and core.inventory.sell_greys then
-            core.inventory.sell_greys()
-            attempted = true
+    -- Sell greys. VERIFIED LIVE 2026-07-23: the SDK has NO bulk sell API (no sell_greys,
+    -- no sell_item) — selling is use_container_item(bag, slot) while the merchant window
+    -- is open, exactly like a player right-clicking bag items. Grey detection needs item
+    -- quality, which no live API exposes either; it comes from the QueryServer item
+    -- endpoint, cached per item id (compile-before-execute spirit: DB knowledge stays
+    -- outside the client). Unknown quality (QueryServer down, item missing) fails SAFE:
+    -- the item is never sold.
+    if sell_grey and core and core.inventory and core.inventory.get_items_in_bag
+        and core.input and core.input.use_container_item then
+        local P = ctx.persist or ctx
+        P._item_quality = P._item_quality or {}
+        for bag = 0, 4 do
+            local ok_items, items = pcall(core.inventory.get_items_in_bag, bag)
+            if ok_items and type(items) == "table" then
+                for _, slot_info in ipairs(items) do
+                    local obj = slot_info and slot_info.object
+                    if obj and obj.get_item_id then
+                        local ok_id, item_id = pcall(obj.get_item_id, obj)
+                        if ok_id and item_id then
+                            local quality = P._item_quality[item_id]
+                            if quality == nil then
+                                local info
+                                if ctx.query and ctx.query.get_item then
+                                    local ok_q, res = pcall(ctx.query.get_item, ctx.query, item_id)
+                                    if ok_q then info = res end
+                                end
+                                quality = (type(info) == "table" and tonumber(info.quality)) or -1
+                                P._item_quality[item_id] = quality
+                            end
+                            if quality == 0 and slot_info.slot_id ~= nil then
+                                pcall(core.input.use_container_item, bag, slot_info.slot_id)
+                            end
+                        end
+                    end
+                end
+            end
         end
+        attempted = true
     end
 
     -- Repair using core.input.repair_all_items

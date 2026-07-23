@@ -228,6 +228,46 @@ step
 }
 
 #[tokio::test]
+async fn turnin_reward_choice_is_captured() {
+    let client = setup_test_client().await;
+    // `.turnin 1598,2` — the comma-arg is the guide's 1-based reward slot. Dropping it
+    // left choice-reward turn-ins stalled on the reward frame at runtime.
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .turnin 1598,2 >> Turn in The Stolen Tome
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let turnin = project.operations[0].actions.iter().find_map(|a| match &a.payload {
+        ActionPayload::TurnInQuest(t) => Some(t),
+        _ => None,
+    });
+    let turnin = turnin.expect("should have TurnInQuest action");
+    assert_eq!(turnin.choose_reward, Some(2), "reward slot from `.turnin id,slot` must be captured");
+
+    // No comma-arg → no forced choice; the runtime falls back to slot 1 on its own.
+    let guide_plain = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .turnin 1598 >> Turn in The Stolen Tome
+]])"#;
+    let parsed_plain = parse_guide(guide_plain).expect("parse ok");
+    let project_plain = ProjectBuilder::build(&parsed_plain, "test.lua", &client).await.expect("build ok");
+    let turnin_plain = project_plain.operations[0].actions.iter().find_map(|a| match &a.payload {
+        ActionPayload::TurnInQuest(t) => Some(t),
+        _ => None,
+    });
+    assert_eq!(turnin_plain.expect("turnin present").choose_reward, None,
+        "a bare `.turnin id` must not invent a reward choice");
+}
+
+#[tokio::test]
 async fn multiple_steps_create_multiple_operations() {
     let client = MemoryQueryClient::new();
     let guide = r#"

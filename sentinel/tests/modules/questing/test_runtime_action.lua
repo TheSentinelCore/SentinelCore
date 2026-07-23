@@ -484,7 +484,86 @@ end
 -- Run all tests
 -- ============================================================================
 
+-- ============================================================================
+-- Gossip pacing (turn-in): attempts are TIME-paced, not frame-paced
+-- ============================================================================
+
+function M.test_turnin_attempts_are_time_paced()
+    local now = 100
+    local complete_calls, reward_choice = 0, nil
+    local rewarded = false
+    _G.core = _G.core or {}
+    local prev_time, prev_quests = _G.core.time, _G.core.quests
+    _G.core.time = function() return now end
+    _G.core.quests = {
+        is_quest_flagged_completed = function(_) return rewarded end,
+        is_on_quest = function(_) return not rewarded end,
+        is_gossip_frame_shown = function() return true end,
+        select_gossip_active_quest = function(_) end,
+        complete_quest = function() complete_calls = complete_calls + 1 end,
+        get_quest_reward = function(choice) reward_choice = choice end,
+    }
+    local ctx = { persist = {} }
+    function ctx:is_at_npc(_e, _r) return true end
+
+    local payload = { quest_id = 7, npc_entry = 1 }
+
+    -- Attempt 1 fires immediately and claims the DEFAULT reward slot.
+    local s1 = RuntimeAction.execute_turnin_quest(payload, ctx)
+    assert(s1 == "retry", "unverified attempt reports retry, got " .. tostring(s1))
+    assert(complete_calls == 1, "first tick must issue exactly one real attempt")
+    assert(reward_choice == 1, "reward must be claimed with default slot 1")
+
+    -- Frames inside the pacing window HOLD instead of burning the retry budget.
+    now = 100.1
+    local s2 = RuntimeAction.execute_turnin_quest(payload, ctx)
+    assert(s2 == "waiting", "inside the pacing window the action must hold, got " .. tostring(s2))
+    assert(complete_calls == 1, "no second attempt inside the pacing window")
+
+    -- A settling attempt is detected WHILE holding, without a new attempt.
+    rewarded = true
+    now = 100.2
+    local s3 = RuntimeAction.execute_turnin_quest(payload, ctx)
+    assert(s3 == "success", "the hold path must verify and succeed, got " .. tostring(s3))
+    assert(complete_calls == 1, "success on settle must not re-attempt")
+
+    -- After the interval, a still-unfinished turn-in gets a fresh real attempt.
+    rewarded = false
+    now = 200
+    local s4 = RuntimeAction.execute_turnin_quest(payload, ctx)
+    assert(s4 == "retry", "past the interval a new attempt runs, got " .. tostring(s4))
+    assert(complete_calls == 2, "one more real attempt after the interval")
+
+    _G.core.time = prev_time
+    _G.core.quests = prev_quests
+end
+
+function M.test_turnin_guide_reward_choice_wins()
+    local reward_choice = nil
+    _G.core = _G.core or {}
+    local prev_time, prev_quests = _G.core.time, _G.core.quests
+    _G.core.time = function() return 50 end
+    _G.core.quests = {
+        is_quest_flagged_completed = function(_) return false end,
+        is_on_quest = function(_) return true end,
+        is_gossip_frame_shown = function() return true end,
+        select_gossip_active_quest = function(_) end,
+        complete_quest = function() end,
+        get_quest_reward = function(choice) reward_choice = choice end,
+    }
+    local ctx = { persist = {} }
+    function ctx:is_at_npc(_e, _r) return true end
+
+    RuntimeAction.execute_turnin_quest({ quest_id = 33, npc_entry = 1, choose_reward = 2 }, ctx)
+    assert(reward_choice == 2, "the guide's `.turnin 33,2` choice must win over the default")
+
+    _G.core.time = prev_time
+    _G.core.quests = prev_quests
+end
+
 local tests = {
+    test_turnin_attempts_are_time_paced = M.test_turnin_attempts_are_time_paced,
+    test_turnin_guide_reward_choice_wins = M.test_turnin_guide_reward_choice_wins,
     test_runtime_action_table = M.test_runtime_action_table,
     test_f4_snapshot_window_shares_one_scan = M.test_f4_snapshot_window_shares_one_scan,
     test_f4_lookups_outside_a_snapshot_scan_independently = M.test_f4_lookups_outside_a_snapshot_scan_independently,

@@ -156,6 +156,20 @@ pub async fn get_item_sources(
     }
 }
 
+pub async fn get_item(
+    Extension(db): Extension<Db>,
+    Path(entry): Path<u32>,
+) -> Result<AxumJson<ItemInfo>, (StatusCode, Json<serde_json::Value>)> {
+    match db.get_item(entry) {
+        Ok(Some(item)) => Ok(AxumJson(item)),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Item not found: {}", entry) })),
+        )),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })))),
+    }
+}
+
 pub async fn get_object(
     Extension(db): Extension<Db>,
     Path(entry): Path<u32>,

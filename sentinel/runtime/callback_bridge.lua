@@ -24,6 +24,14 @@ function CallbackBridge:new(event_bus)
                 event_bus:publish("game:mail_inbox_update", {})
             elseif event_name == "QUEST_LOG_UPDATE" then
                 event_bus:publish("game:quest_log_update", {})
+            elseif event_name == "UI_ERROR_MESSAGE" then
+                -- The ONLY signal the client gives for hard inventory errors —
+                -- get_num_bag_slots returns 0 live, so "Inventory is full." arrives
+                -- here or nowhere. Consumed by questing's vendor maintenance.
+                event_bus:publish("game:ui_error", {
+                    error_type = args and args[1] or nil,
+                    message = args and args[2] or nil,
+                })
             elseif event_name == "LFG_LIST_SEARCH_RESULT_UPDATED" then
                 event_bus:publish("game:lfg_search_result_updated", {})
             elseif event_name == "LFG_LIST_APPLICATION_STATUS_UPDATED" then

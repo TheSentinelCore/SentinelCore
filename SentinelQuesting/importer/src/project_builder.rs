@@ -892,6 +892,10 @@ async fn build_step_actions(
             "turnin" => {
                 if let Some(id_str) = cmd.args.first() {
                     if let Ok(id) = id_str.parse::<u32>() {
+                        // `.turnin 33,2` — the second comma-arg is the guide's reward
+                        // choice (1-based slot). Dropping it left choice-reward turn-ins
+                        // stalled on the reward frame at runtime (live-caught on quest 33).
+                        let choose_reward = cmd.args.get(1).and_then(|a| a.parse::<u32>().ok());
                         match state.resolve_quest(id).await? {
                             Some((_, _, finisher)) => {
                                 let npc = finisher.or(last_target);
@@ -904,7 +908,7 @@ async fn build_step_actions(
                                     payload: ActionPayload::TurnInQuest(TurnInQuestAction {
                                         quest: id,
                                         npc,
-                                        choose_reward: None,
+                                        choose_reward,
                                         optional: step.directives.iter().any(|d| d.name == "optional"),
                                     }),
                                 });
