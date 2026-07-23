@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0.0",
+  "name": "Northshire 1-6 (reference)",
+  "description": "Hand-authored gold-reference route for Human 1-6. Every Completion gate is preceded by an action that can actually satisfy it, and every position is a real world coordinate taken from the game DB (creature/creature_template spawn rows) rather than a guide percentage. This is the executable target the compiler must learn to reproduce.",
+  "game": "2.4.3",
+  "content_hash": "ref-northshire-1-6-v1",
+  "variables": [],
+  "areas": [],
+  "npcs": [],
+  "quests": [],
+  "operations": [
+    {
+      "id": 1,
+      "name": "Accept: A Threat Within (Deputy Willem)",
+      "entry_conditions": [],
+      "exit_conditions": [],
+      "actions": [
+        {
+          "type": "Travel",
+          "payload": {
+            "destination": "Deputy Willem",
+            "position": { "map": 0, "world_x": -8933.5, "world_y": -136.5, "world_z": 83.4 },
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "type": "AcceptQuest",
+          "payload": { "quest_id": 783, "npc_entry": 823, "auto_complete_dialog": true, "optional": false }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Turn in A Threat Within, accept Kobold Camp Cleanup (Marshal McBride)",
+      "entry_conditions": [],
+      "exit_conditions": [],
+      "actions": [
+        {
+          "type": "Travel",
+          "payload": {
+            "destination": "Marshal McBride",
+            "position": { "map": 0, "world_x": -8902.6, "world_y": -162.6, "world_z": 82.0 },
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "type": "TurnInQuest",
+          "payload": { "quest_id": 783, "npc_entry": 197, "optional": false }
+        },
+        {
+          "type": "AcceptQuest",
+          "payload": { "quest_id": 7, "npc_entry": 197, "auto_complete_dialog": true, "optional": false }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Kill 10 Kobold Vermin",
+      "entry_conditions": [],
+      "exit_conditions": [],
+      "actions": [
+        {
+          "type": "Travel",
+          "payload": {
+            "destination": "Kobold camp",
+            "position": { "map": 0, "world_x": -8779.0, "world_y": -173.8, "world_z": 83.5 },
+            "tolerance": 15.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "type": "Kill",
+          "payload": { "creature_entries": [6], "quantity": 10, "loot": true, "ignore_elites": true }
+        },
+        {
+          "type": "Condition",
+          "payload": {
+            "condition": { "type": "ObjectiveComplete", "payload": [7, 1] },
+            "role": "Completion"
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Turn in Kobold Camp Cleanup (Marshal McBride)",
+      "entry_conditions": [],
+      "exit_conditions": [],
+      "actions": [
+        {
+          "type": "Travel",
+          "payload": {
+            "destination": "Marshal McBride",
+            "position": { "map": 0, "world_x": -8902.6, "world_y": -162.6, "world_z": 82.0 },
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "type": "TurnInQuest",
+          "payload": { "quest_id": 7, "npc_entry": 197, "optional": false }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Accept: Eagan Peltskinner (Deputy Willem)",
+      "entry_conditions": [],
+      "exit_conditions": [],
+      "actions": [
+        {
+          "type": "Travel",
+          "payload": {
+            "destination": "Deputy Willem",
+            "position": { "map": 0, "world_x": -8933.5, "world_y": -136.5, "world_z": 83.4 },
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "type": "AcceptQuest",
+          "payload": { "quest_id": 5261, "npc_entry": 823, "auto_complete_dialog": true, "optional": false }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Turn in Eagan Peltskinner, accept Wolves Across the Border",
+      "entry_conditions": [],
+      "exit_conditions": [],
+      "actions": [
+        {
+          "type": "Travel",
+          "payload": {
+            "destination": "Eagan Peltskinner",
+            "position": { "map": 0, "world_x": -8869.2, "world_y": -163.2, "world_z": 81.0 },
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "type": "TurnInQuest",
+          "payload": { "quest_id": 5261, "npc_entry": 196, "optional": false }
+        },
+        {
+          "type": "AcceptQuest",
+          "payload": { "quest_id": 33, "npc_entry": 196, "auto_complete_dialog": true, "optional": false }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Farm 8 Tough Wolf Meat from wolves",
+      "entry_conditions": [],
+      "exit_conditions": [],
+      "actions": [
+        {
+          "type": "Travel",
+          "payload": {
+            "destination": "Northshire wolf area",
+            "position": { "map": 0, "world_x": -9016.3, "world_y": -66.7, "world_z": 80.5 },
+            "tolerance": 20.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "type": "Kill",
+          "payload": { "creature_entries": [299, 69, 704, 705], "quantity": 20, "loot": true, "ignore_elites": true }
+        },
+        {
+          "type": "Condition",
+          "payload": {
+            "condition": { "type": "ItemCountAtLeast", "payload": [750, 8] },
+            "role": "Completion"
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Turn in Wolves Across the Border (Eagan Peltskinner)",
+      "entry_conditions": [],
+      "exit_conditions": [],
+      "actions": [
+        {
+          "type": "Travel",
+          "payload": {
+            "destination": "Eagan Peltskinner",
+            "position": { "map": 0, "world_x": -8869.2, "world_y": -163.2, "world_z": 81.0 },
+            "tolerance": 5.0,
+            "allow_flight": false
+          }
+        },
+        {
+          "type": "TurnInQuest",
+          "payload": { "quest_id": 33, "npc_entry": 196, "optional": false }
+        }
+      ]
+    }
+  ]
+}
