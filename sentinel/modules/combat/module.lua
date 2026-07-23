@@ -302,6 +302,16 @@ function SentinelCombat:_ensure_target()
         self._blackboard:set("combat.target", self._current_target)
         return self._current_target
     end
+    -- A forced (quest) target stays current while it lives, even though the selector rejects it
+    -- for being neutral. Without this it would be dropped on the very next tick after engage.
+    if self._forced_target and self._forced_target == self._current_target then
+        local ok, dead = pcall(self._forced_target.is_dead, self._forced_target)
+        if ok and dead ~= true then
+            self._blackboard:set("combat.target", self._current_target)
+            return self._current_target
+        end
+        self._forced_target = nil
+    end
     -- When grind tree controls engagement, don't auto-select new targets.
     -- The grind tree handles loot → rest → acquire → pull → engage.
     -- Defensive auto-engage (IDLE handler) still picks up attackers next frame.
@@ -394,15 +404,25 @@ function SentinelCombat:engage(target, opts)
     self._blackboard:set("combat.leash_center", opts.leash_center or self._blackboard:get("player.position"))
     self._blackboard:set("combat.leash_radius", tonumber(opts.leash_radius) or 25)
 
-    if target and not self:_target_is_valid(target) then
-        if self._source == "bg" or self._source == "auto" then
-            target = nil
-        else
-            -- For grind and other sources, don't return early - fall through
-            -- to get_best_target() to find a valid target
-            target = nil
-        end
+    -- An explicitly requested quest target is trusted even if the target selector would reject it.
+    -- Quest mobs are frequently NEUTRAL (Elwynn's Young Wolves are `enemy = false` and never
+    -- aggro), so `_target_is_valid` discards them, engage falls through to get_best_target, that
+    -- returns nil, and the bot stands next to the mob it was told to kill. Auto/BG engagement keeps
+    -- the validity check — this only trusts a caller that named a specific unit on purpose.
+    local function is_alive(unit)
+        if not unit or not unit.is_dead then return false end
+        local ok, dead = pcall(unit.is_dead, unit)
+        return ok and dead ~= true
     end
+    local forced = target ~= nil
+        and (opts.force == true or self._source == "questing")
+        and is_alive(target)
+
+    if target and not forced and not self:_target_is_valid(target) then
+        -- bg/auto and every other source alike: drop it and let the selector choose.
+        target = nil
+    end
+    self._forced_target = forced and target or nil
 
     self._current_target = target or self._target_selector:get_best_target({
         require_player = self:_require_player_targets(),

@@ -353,6 +353,40 @@ function RuntimeProfile:load()
 end
 
 --- Runtime context with helper methods and Sylvanas API facade.
+--- Is every piece of quest work in this operation already satisfied?
+---
+--- Returns false unless the operation actually CONTAINS quest work — a pure travel/kill step is
+--- never "already done", because nothing here can observe that. Conservative on purpose: wrongly
+--- skipping a step breaks the route, while wrongly doing one only costs time.
+function RuntimeProfile:_operation_already_done(op)
+    if not (core and core.quests) then return false end
+    local rewarded = core.quests.is_quest_flagged_completed
+    local on_quest = core.quests.is_on_quest
+    if not rewarded then return false end
+
+    local saw_quest_work = false
+    for _, a in ipairs(op.actions or {}) do
+        local p = a.payload or {}
+        if a.type == "AcceptQuest" then
+            saw_quest_work = true
+            local ok_r, done = pcall(rewarded, p.quest_id)
+            local ok_o, active = true, false
+            if on_quest then ok_o, active = pcall(on_quest, p.quest_id) end
+            -- Not yet accepted and not yet rewarded ⇒ there is real work here.
+            if not ((ok_r and done) or (ok_o and active)) then return false end
+        elseif a.type == "TurnInQuest" then
+            saw_quest_work = true
+            local ok_r, done = pcall(rewarded, p.quest_id)
+            if not (ok_r and done) then return false end
+        elseif a.type == "Kill" or a.type == "Loot" or a.type == "UseItem"
+            or a.type == "InteractNpc" or a.type == "Grind" then
+            -- Real world work whose completion this cannot observe; never skip on its account.
+            return false
+        end
+    end
+    return saw_quest_work
+end
+
 function RuntimeProfile:create_context()
     local ctx = {
         variables = self._variables,
@@ -996,6 +1030,21 @@ function RuntimeProfile:_execute_running()
     end
     local action = op.actions[self._current_action_idx]
     local ctx = self:create_context()
+
+    -- Operation-level applicability, evaluated BEFORE the first action runs.
+    --
+    -- Actions are ordered Travel-then-work, so a step whose quests are already done would otherwise
+    -- walk the whole way there and only then discover there is nothing to do — which is exactly
+    -- what "it went back to the very first step we already did" looks like. Decide up front: if the
+    -- operation has quest work and ALL of it is already satisfied, skip the operation without
+    -- moving. This observes real game state rather than trusting saved progress (ADR 06 §8.1).
+    if self._current_action_idx == 1 and self:_operation_already_done(op) then
+        self:_log_event("operation_already_done", { operation = self._current_operation_idx })
+        self._current_operation_idx = self._current_operation_idx + 1
+        self._current_action_idx = 1
+        self:_save()
+        return "running", "already done, skipping operation"
+    end
 
     local status, msg
     -- CL4: a per-action class guard (compiler-emitted `action.guard`, a RuntimeCondition) is
