@@ -4,6 +4,7 @@ GrindTargetStrategy.__index = GrindTargetStrategy
 local AuraCatalog = require("modules/combat/aura_catalog")
 local Events = require("modules/combat/events")
 local SpellHelper = require("shared/spell_helper")
+local Geometry = require("core/geometry")
 
 local function safe_call(obj, method, ...)
     if not obj or type(obj[method]) ~= "function" then
@@ -16,14 +17,10 @@ local function num(value)
     return tonumber(value) or 0
 end
 
+-- F5: delegate to Geometry.distance. Unmeasurable input now returns math.huge
+-- (was a private 99999 sentinel), matching every other distance helper.
 local function distance(a, b)
-    if type(a) ~= "table" or type(b) ~= "table" then
-        return 99999
-    end
-    local dx = num(a.x) - num(b.x)
-    local dy = num(a.y) - num(b.y)
-    local dz = num(a.z) - num(b.z)
-    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+    return Geometry.distance(a, b)
 end
 
 local function same_guid(a, b)
@@ -176,7 +173,7 @@ function GrindTargetStrategy:_score(player, candidate, current_target, leash_cen
     local ok_candidate_pos, candidate_pos = safe_call(candidate, "get_position")
     local ok_player_pos, player_pos = safe_call(player, "get_position")
     local score = 0
-    local dist = 99999
+    local dist = math.huge
     if ok_player_pos and ok_candidate_pos and type(player_pos) == "table" and type(candidate_pos) == "table" then
         dist = distance(player_pos, candidate_pos)
     end
@@ -253,7 +250,7 @@ function GrindTargetStrategy:get_best_target(opts)
     local leash_radius = tonumber(self._blackboard:get("combat.leash_radius", 25)) or 25
     local best_unit = nil
     local best_score = -99999
-    local best_dist = 99999
+    local best_dist = math.huge
 
     for _, candidate in ipairs(self:_enemy_list(player_pos, opts)) do
         local ok_dead, dead = safe_call(candidate, "is_dead")

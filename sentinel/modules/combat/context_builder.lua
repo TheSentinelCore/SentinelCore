@@ -1,4 +1,5 @@
 local AuraCatalog = require("modules/combat/aura_catalog")
+local Geometry = require("core/geometry")
 
 local ContextBuilder = {}
 ContextBuilder.__index = ContextBuilder
@@ -14,14 +15,10 @@ local function safe_call(obj, method, ...)
     return pcall(obj[method], obj, ...)
 end
 
+-- F5: delegate to Geometry.distance. Unmeasurable input now returns math.huge
+-- (was a private 99999 sentinel), matching every other distance helper.
 local function distance(a, b)
-    if type(a) ~= "table" or type(b) ~= "table" then
-        return 99999
-    end
-    local dx = num(a.x) - num(b.x)
-    local dy = num(a.y) - num(b.y)
-    local dz = num(a.z) - num(b.z)
-    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+    return Geometry.distance(a, b)
 end
 
 
@@ -59,7 +56,23 @@ function ContextBuilder:refresh(event_bus)
 
     local player_pos = self._blackboard:get("player.position")
     local ok_target_pos, target_pos = safe_call(target, "get_position")
-    local target_distance = ok_target_pos and distance(player_pos, target_pos) or 99999
+    local target_distance
+    if ok_target_pos then
+        target_distance = distance(player_pos, target_pos)
+    else
+        -- C6: ContextBuilder:refresh() runs BEFORE module.lua's _ensure_target()
+        -- picks a fresh target for this tick (see chase_controller.lua for the
+        -- other writer of this key). On an acquisition tick `target` above is
+        -- still nil/positionless here even though a target is about to be
+        -- chosen a few lines later in module.lua. Writing a hardcoded "far"
+        -- sentinel in that gap would stomp the real distance chase_controller
+        -- wrote last tick and spuriously fail `target_distance <= 10.0` below,
+        -- suppressing burst_context on the very tick a nearby target is
+        -- acquired. Instead, keep whatever is already on the blackboard (the
+        -- last real measurement) and only fall back to Geometry's math.huge
+        -- "unmeasurable" sentinel if nothing has ever been written.
+        target_distance = tonumber(self._blackboard:get("combat.target_distance")) or math.huge
+    end
     self._blackboard:set("combat.target_distance", target_distance)
 
     local vengeance = AuraCatalog.get_stacks(player, AuraCatalog.vengeance_proc_auras)

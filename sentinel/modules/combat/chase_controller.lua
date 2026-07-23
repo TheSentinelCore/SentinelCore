@@ -1,3 +1,5 @@
+local Geometry = require("core/geometry")
+
 local ChaseController = {}
 ChaseController.__index = ChaseController
 
@@ -5,14 +7,10 @@ local function num(value)
     return tonumber(value) or 0
 end
 
+-- F5: delegate to Geometry.distance. Unmeasurable input now returns math.huge
+-- (was a private 99999 sentinel), matching every other distance helper.
 local function distance(a, b)
-    if type(a) ~= "table" or type(b) ~= "table" then
-        return 99999
-    end
-    local dx = num(a.x) - num(b.x)
-    local dy = num(a.y) - num(b.y)
-    local dz = num(a.z) - num(b.z)
-    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+    return Geometry.distance(a, b)
 end
 
 local function safe_call(obj, method, ...)
@@ -48,6 +46,14 @@ function ChaseController:update(target)
     end
 
     local dist = distance(player_pos, target_pos)
+    -- C6: `combat.target_distance` has two writers — this one (a real measured
+    -- distance to the currently-chased target) and context_builder.lua (a
+    -- refresh-time snapshot that runs earlier in the tick, before a target may
+    -- have been chosen). ChaseController is the source of truth whenever it
+    -- actually has a target+position to measure; on early return above (no
+    -- target, no positions, nav not owned by combat) it deliberately does NOT
+    -- write here, leaving whatever context_builder last wrote in place instead
+    -- of clobbering it with a worse value.
     self._blackboard:set("combat.target_distance", dist)
 
     -- Always face the target

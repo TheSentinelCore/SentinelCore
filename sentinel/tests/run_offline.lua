@@ -319,6 +319,7 @@ local test_modules = {
     "tests/core/test_event_bus",
     "tests/core/test_blackboard",
     "tests/core/test_bt",
+    "tests/core/test_geometry",
 
     -- Infrastructure (runtime sensors, nav, module registry)
     "tests/runtime/test_sensor_hub",
@@ -339,6 +340,7 @@ local test_modules = {
     "tests/modules/combat/test_combat_zone_detector",
     "tests/modules/combat/test_pvp_target_selector",
     "tests/modules/combat/test_retribution_tbc",
+    "tests/modules/combat/test_context_builder_distance",
 
     -- Combat profiles
     "tests/modules/combat/profiles/mage/test_frost_conditions",
@@ -362,6 +364,7 @@ local test_modules = {
     -- Shared libs
     "tests/shared/test_compat",
     "tests/shared/test_humanization",
+    "tests/shared/test_aoe_helper",
 
     -- Integration
     "tests/integration/test_combat_dummy",

@@ -5,6 +5,7 @@
 
 local QueuePriorities = require("shared/queue_priorities")
 local Status = require("core/bt/status")
+local Geometry = require("core/geometry")
 
 local CombatHelpers = {}
 
@@ -32,15 +33,11 @@ function CombatHelpers.num(value)
 end
 
 ---3D distance between two position tables.
+---Delegates to Geometry.distance (F5): returns math.huge, not a magic
+---sentinel, when either position is missing/invalid.
 ---@return number
 function CombatHelpers.distance(a, b)
-    if type(a) ~= "table" or type(b) ~= "table" then
-        return 99999
-    end
-    local dx = num(a.x) - num(b.x)
-    local dy = num(a.y) - num(b.y)
-    local dz = num(a.z) - num(b.z)
-    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+    return Geometry.distance(a, b)
 end
 
 ---Resolve player and target from blackboard.

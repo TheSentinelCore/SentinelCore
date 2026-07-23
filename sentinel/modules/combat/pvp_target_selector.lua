@@ -1,3 +1,5 @@
+local Geometry = require("core/geometry")
+
 local PvPTargetSelector = {}
 PvPTargetSelector.__index = PvPTargetSelector
 
@@ -93,14 +95,11 @@ local function is_probably_player_object(obj)
     return false
 end
 
+-- F5: delegate to Geometry.distance instead of a hand-rolled sqrt. Unmeasurable
+-- input now returns math.huge (was a private 99999 sentinel) so it sorts as
+-- "worst" everywhere distance is compared, consistent with every other owned file.
 local function distance(a, b)
-    if type(a) ~= "table" or type(b) ~= "table" then
-        return 99999
-    end
-    local dx = num(a.x) - num(b.x)
-    local dy = num(a.y) - num(b.y)
-    local dz = num(a.z) - num(b.z)
-    return math.sqrt(dx * dx + dy * dy + dz * dz)
+    return Geometry.distance(a, b)
 end
 
 local function now_ms()
@@ -527,7 +526,7 @@ function PvPTargetSelector:select(player, settings)
             end
         end
 
-        local d = 99999
+        local d = math.huge
         if player_pos then
             local okp, pos = invoke_unit_method(unit, "get_position")
             if okp and type(pos) == "table" then
