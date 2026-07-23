@@ -82,6 +82,14 @@ function M.test_vendor_sells_only_known_greys()
     T.assert_equal(ctx.persist._item_quality[300], -1,
         "unknown quality must be cached as unsellable, never sold")
 
+    -- Async pending: the lookup is in flight — hold the vendor stop and do NOT cache.
+    local ctx2 = make_vendor_ctx({})
+    ctx2.query.get_item = function(_self, _item_id) return nil, true end
+    local status2 = RuntimeAction.execute_vendor({ npc_entry = 5, sell_grey = true }, ctx2)
+    T.assert_equal(status2, "retry", "pending quality lookups must hold the vendor stop")
+    T.assert_equal(ctx2.persist._item_quality[100], nil,
+        "a pending lookup must never be cached as unsellable")
+
     _G.core.input = prev_input
     _G.core.inventory = prev_inv
 end

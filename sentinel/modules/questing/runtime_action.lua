@@ -989,6 +989,7 @@ function RuntimeAction.execute_vendor(payload, ctx)
         and core.input and core.input.use_container_item then
         local P = ctx.persist or ctx
         P._item_quality = P._item_quality or {}
+        local any_pending = false
         for bag = 0, 4 do
             local ok_items, items = pcall(core.inventory.get_items_in_bag, bag)
             if ok_items and type(items) == "table" then
@@ -999,13 +1000,23 @@ function RuntimeAction.execute_vendor(payload, ctx)
                         if ok_id and item_id then
                             local quality = P._item_quality[item_id]
                             if quality == nil then
-                                local info
+                                -- QueryClient is async request-and-cache: (value, pending).
+                                -- A PENDING lookup must NOT be cached as unsellable — hold
+                                -- the vendor stop and re-check once the response lands.
+                                local info, pending
                                 if ctx.query and ctx.query.get_item then
-                                    local ok_q, res = pcall(ctx.query.get_item, ctx.query, item_id)
-                                    if ok_q then info = res end
+                                    local ok_q, res, pend = pcall(ctx.query.get_item, ctx.query, item_id)
+                                    if ok_q then info, pending = res, pend end
                                 end
-                                quality = (type(info) == "table" and tonumber(info.quality)) or -1
-                                P._item_quality[item_id] = quality
+                                if type(info) == "table" then
+                                    quality = tonumber(info.quality) or -1
+                                    P._item_quality[item_id] = quality
+                                elseif pending then
+                                    any_pending = true
+                                else
+                                    quality = -1
+                                    P._item_quality[item_id] = quality
+                                end
                             end
                             if quality == 0 and slot_info.slot_id ~= nil then
                                 pcall(core.input.use_container_item, bag, slot_info.slot_id)
@@ -1014,6 +1025,11 @@ function RuntimeAction.execute_vendor(payload, ctx)
                     end
                 end
             end
+        end
+        if any_pending then
+            -- Qualities still resolving: try again next tick rather than walking away
+            -- from the vendor having sold nothing.
+            return "retry"
         end
         attempted = true
     end
