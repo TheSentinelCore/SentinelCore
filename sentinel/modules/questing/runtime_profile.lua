@@ -182,26 +182,33 @@ function RuntimeProfile:_save()
     if not json then
         return false
     end
+    -- Sylvannas signature is core.write_data_file(filename, data) — NO self. Passing `core` as the
+    -- first argument made every save fail, fall through to a non-existent core.write_file, and then
+    -- to io.open, which does not exist in the sandbox: "attempt to index global 'io'" on every save.
     if core and core.write_data_file then
-        local ok, err = pcall(core.write_data_file, core, self._save_path, json)
-        if ok then
-            self._dirty = false
-            return true
-        end
-    elseif core and core.write_file then
-        local ok, err = pcall(core.write_file, core, self._save_path, json)
+        local ok = pcall(core.write_data_file, self._save_path, json)
         if ok then
             self._dirty = false
             return true
         end
     end
-    -- Fallback: write to standard Lua file
-    local f, err = io.open(self._save_path, "w")
-    if f then
-        f:write(json)
-        f:close()
-        self._dirty = false
-        return true
+    if core and core.write_file then
+        local ok = pcall(core.write_file, self._save_path, json)
+        if ok then
+            self._dirty = false
+            return true
+        end
+    end
+    -- Offline/test fallback only: `io` is absent in the Sylvannas sandbox, so it must never be
+    -- indexed unguarded.
+    if type(io) == "table" and io.open then
+        local f = io.open(self._save_path, "w")
+        if f then
+            f:write(json)
+            f:close()
+            self._dirty = false
+            return true
+        end
     end
     return false
 end

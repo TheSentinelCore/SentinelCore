@@ -280,6 +280,34 @@ function RuntimeAction.execute_turnin_quest(payload, ctx)
     return "retry"
 end
 
+--- Resolve a ground Z for a target that has none.
+---
+--- RestedXP guides carry only zone x/y, so the compiler emits `world_z = 0` — a point buried in
+--- the terrain rather than standing on it. Left alone, a target 3 yards away in x/y reads as ~83
+--- yards distant, never satisfies the arrival tolerance, and the navmesh query looks for a polygon
+--- underground. Ask the client for the surface height; if that terrain is not loaded (the API
+--- returns 0 for distant chunks) fall back to the player's own Z, which assumes same-ground and is
+--- far closer than 0.
+function RuntimeAction.resolve_ground_z(x, y, z)
+    if type(z) == "number" and z ~= 0 then
+        return z
+    end
+    if core and core.get_height_for_position then
+        local ok, h = pcall(core.get_height_for_position, { x = x, y = y, z = 0 })
+        if ok and type(h) == "number" and h ~= 0 then
+            return h
+        end
+    end
+    local player = UnitHelper.get_local_player()
+    if player and player.get_position then
+        local ok_p, pos = pcall(player.get_position, player)
+        if ok_p and type(pos) == "table" and type(pos.z) == "number" then
+            return pos.z
+        end
+    end
+    return z or 0
+end
+
 function RuntimeAction.execute_travel(payload, ctx)
     local dest   = payload.destination    -- string zone name (e.g. "Elwynn Forest")
     local tol    = payload.tolerance or 5.0
@@ -292,8 +320,13 @@ function RuntimeAction.execute_travel(payload, ctx)
             -- Legacy format: {x, y, z}
             target_pos = { x = target.x, y = target.y, z = target.z }
         elseif target.world_x then
-            -- New format from compiler: {world_x, world_y, world_z, map}
-            target_pos = { x = target.world_x, y = target.world_y, z = target.world_z }
+            -- New format from compiler: {world_x, world_y, world_z, map}. Guides supply no Z, so
+            -- world_z is 0 and must be lifted onto the terrain before any distance check.
+            target_pos = {
+                x = target.world_x,
+                y = target.world_y,
+                z = RuntimeAction.resolve_ground_z(target.world_x, target.world_y, target.world_z),
+            }
         end
     elseif type(dest) == "string" then
         target_pos = ctx:get_zone_waypoint(dest)

@@ -26,7 +26,8 @@ local function mock_globals()
     _G.core.time = function() return os.clock() end
 
     -- File I/O mocks
-    _G.core.write_data_file = function(self, path, content)
+    -- Sylvannas signature: core.write_data_file(filename, data) — NO self (see persistence suite).
+    _G.core.write_data_file = function(path, content)
         written_files[path] = content
         file_contents[path] = content  -- sync so read can find it
         return true

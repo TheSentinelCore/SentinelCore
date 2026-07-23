@@ -23,7 +23,10 @@ local function mock_globals()
     _G.core.object_manager = _G.core.object_manager or {}
     _G.core.unit = _G.core.unit or {}
     _G.core.input = _G.core.input or {}
-    _G.core.write_data_file = function(self, path, content)
+    -- Sylvannas signature: core.write_data_file(filename, data) — NO self. The mock previously
+    -- took (self, path, content), which matched a buggy call site and hid the fact that every
+    -- in-game save failed and fell through to io.open (absent in the sandbox).
+    _G.core.write_data_file = function(path, content)
         written_files[path] = content
         return true
     end
