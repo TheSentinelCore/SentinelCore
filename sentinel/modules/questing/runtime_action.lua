@@ -371,6 +371,28 @@ function RuntimeAction.resolve_ground_z(x, y, z)
     return z or 0
 end
 
+--- Horizontal arrival check, ignoring height (see execute_travel for why Z is untrustworthy).
+--- Falls back to the context's 3D check when the player position cannot be read.
+function RuntimeAction.is_at_destination_2d(ctx, target_pos, tol)
+    if not target_pos then return false end
+    -- The 3D check is authoritative when it PASSES: it can only be stricter, never looser. The 2D
+    -- test below exists solely to also accept arrivals that a bad inferred Z would reject.
+    if ctx.is_at_destination and ctx:is_at_destination(target_pos, tol) then
+        return true
+    end
+    local player = UnitHelper.get_local_player()
+    if not (player and player.get_position) then
+        return false
+    end
+    local ok, pos = pcall(player.get_position, player)
+    if not ok or type(pos) ~= "table" then
+        return false
+    end
+    local dx = (tonumber(pos.x) or 0) - (tonumber(target_pos.x) or 0)
+    local dy = (tonumber(pos.y) or 0) - (tonumber(target_pos.y) or 0)
+    return math.sqrt(dx * dx + dy * dy) <= (tonumber(tol) or 5.0)
+end
+
 function RuntimeAction.execute_travel(payload, ctx)
     local dest   = payload.destination    -- string zone name (e.g. "Elwynn Forest")
     local tol    = payload.tolerance or 5.0
@@ -400,6 +422,13 @@ function RuntimeAction.execute_travel(payload, ctx)
     end
 
     -- Already there?
+    --
+    -- Arrival is judged HORIZONTALLY. Guides carry no Z, so world_z is inferred, and for a distant
+    -- waypoint the terrain is not loaded — the fallback uses the player's current height, which can
+    -- be many yards off the real ground. Observed live: nav reached 99.2% and 8.5 yards out, but the
+    -- destination Z was 79.9 against real ground at 88.7, so a 3D check never satisfied the
+    -- tolerance and the travel timed out short of its goal. Ground movement is 2D; the navmesh owns
+    -- elevation.
     if ctx:is_at_destination(target_pos, tol) then
         return "success"
     end
