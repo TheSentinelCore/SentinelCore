@@ -28,6 +28,30 @@ local function same_guid(a, b)
     return ok_a and ok_b and tostring(guid_a) == tostring(guid_b)
 end
 
+local CLASS_ID_TO_NAME = {
+    [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE",
+    [5] = "PRIEST", [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE",
+    [9] = "WARLOCK", [11] = "DRUID",
+}
+
+-- Reads a real numeric class_id off the local player, or nil when the player
+-- object isn't available yet (e.g. during a loading screen) or get_class()
+-- returns something that isn't a real class id. Never guesses a class.
+-- VERIFY-IN-GAME: confirm get_local_player() becomes available and get_class()
+-- returns a numeric id within the first few ticks after login/reload.
+local function detect_class_id()
+    local player = core and core.object_manager and core.object_manager.get_local_player
+        and core.object_manager.get_local_player()
+    if not player or type(player.get_class) ~= "function" then
+        return nil
+    end
+    local ok, raw_class = pcall(player.get_class, player)
+    if not ok then
+        return nil
+    end
+    return tonumber(raw_class)
+end
+
 function SentinelCombat:new(event_bus, blackboard, nav_adapter, izi_bridge)
     local o = setmetatable({}, SentinelCombat)
     o._event_bus = event_bus
@@ -37,7 +61,6 @@ function SentinelCombat:new(event_bus, blackboard, nav_adapter, izi_bridge)
     o._subscriptions = {}
     o._source = nil
     o._current_target = nil
-    o._rest_prev_hp = nil
     return o
 end
 
@@ -58,12 +81,22 @@ function SentinelCombat:initialize()
     self._blackboard:set("module.combat.izi_bridge", self._izi_bridge)
     self._blackboard:set("module.combat.rotation_engine", "dsl")
 
-    local player = core and core.object_manager and core.object_manager.get_local_player and core.object_manager.get_local_player()
-    local raw_class = player and type(player.get_class) == "function" and player:get_class()
-    local class_id = tonumber(raw_class) or 8
-    if not raw_class and core and type(core.log) == "function" then
-        pcall(core.log, "[Combat] WARNING: could not detect player class, defaulting to mage (8)")
+    -- Class detection: a real numeric class_id must be read before the
+    -- profile is treated as final. `initialize()` can fire from the first
+    -- on_update, which can happen during a loading screen when the local
+    -- player object isn't valid yet — building the wrong class' rotation
+    -- and never re-checking silently ran the wrong spec for the whole
+    -- session (see audit finding B2). `self._class_confirmed` latches once
+    -- a real class_id has been read; `update()` keeps retrying detection
+    -- every tick until then and rebuilds the profile exactly once on the
+    -- tick detection succeeds.
+    local class_id = detect_class_id()
+    self._class_confirmed = class_id ~= nil
+    if not self._class_confirmed and core and type(core.log) == "function" then
+        pcall(core.log, "[Combat] WARNING: player class not yet detectable, deferring profile confirmation (placeholder mage build in use until detection succeeds)")
     end
+    class_id = class_id or 8
+    self._class_id = class_id
     local spec_id = core and core.spell_book and core.spell_book.get_specialization_id and core.spell_book.get_specialization_id() or 0
     local profile_module = ProfileRegistry.resolve(class_id, spec_id)
     self._profile = profile_module.build(self._blackboard, self._event_bus)
@@ -71,11 +104,6 @@ function SentinelCombat:initialize()
 
     self._blackboard:set("player.class_id", class_id)
     -- Store class name string (e.g. "WARRIOR") for quest modules that need it
-    local CLASS_ID_TO_NAME = {
-        [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE",
-        [5] = "PRIEST", [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE",
-        [9] = "WARLOCK", [11] = "DRUID",
-    }
     self._blackboard:set("player.class_name", CLASS_ID_TO_NAME[class_id] or "WARRIOR")
     self._blackboard:set("module.combat.catalog", self._spell_catalog)
     self._blackboard:set("module.combat.dispatcher", self._dispatcher)
@@ -99,20 +127,6 @@ function SentinelCombat:initialize()
     self._blackboard:set("combat.burst_context", false)
     self._blackboard:set("combat.gcd_until_ms", 0)
     self._blackboard:set("combat.leash_radius", 25)
-
-    -- Grind module removed (ADR-001) - set defaults so combat module doesn't error
-    self._blackboard:set("module.grind.enabled", false)
-    self._blackboard:set("module.grind.attack_neutral", false)
-    self._blackboard:set("module.grind.is_looting", false)
-    self._blackboard:set("module.grind.is_resting", false)
-    self._blackboard:set("module.grind.current_target", nil)
-    self._blackboard:set("module.grind.health_eat_pct", 0.50)
-    self._blackboard:set("module.grind.mana_drink_pct", 0.40)
-    self._blackboard:set("module.grind.needs_food", false)
-    self._blackboard:set("module.grind.needs_water", false)
-    self._blackboard:set("module.grind.bag_free_slots", 0)
-    self._blackboard:set("module.grind.water_count", 0)
-    self._blackboard:set("module.grind.food_count", 0)
 
     self:_subscribe(Events.ENGAGE_REQUESTED, function(payload)
         self:_handle_engage_requested(payload)
@@ -153,7 +167,6 @@ function SentinelCombat:initialize()
     end)
 
     self:_subscribe(Events.PLAYER_HEALTH_THRESHOLD, function(payload)
-        if self._source == "grind" then return end
         local health_threshold = tonumber(self._blackboard:get("module.combat.low_health_threshold", 0.35)) or 0.35
         if payload.direction == "below" and payload.threshold == health_threshold then
             self:disengage("low_health")
@@ -312,13 +325,6 @@ function SentinelCombat:_ensure_target()
         end
         self._forced_target = nil
     end
-    -- When grind tree controls engagement, don't auto-select new targets.
-    -- The grind tree handles loot → rest → acquire → pull → engage.
-    -- Defensive auto-engage (IDLE handler) still picks up attackers next frame.
-    if self._source == "grind" then
-        self._blackboard:set("combat.target", nil)
-        return nil
-    end
     local selected = self._target_selector:get_best_target({
         require_player = self:_require_player_targets(),
     })
@@ -348,14 +354,7 @@ function SentinelCombat:_check_safety()
         end
     end
 
-    -- Skip HP threshold for grind source — the grind tree's Safety phase
-    -- handles flee-at-low-HP with its own threshold (health_flee_pct).
-    -- Checking here too creates an engage-disengage loop: rest triggers
-    -- because hp < eat_threshold, a mob attacks during rest, auto-engage
-    -- fires, then this check immediately disengages because hp is below
-    -- low_health_threshold (which sits between the eat and flee thresholds).
-    -- Source clears, rest restarts, the cycle repeats every frame.
-    if self._source ~= "grind" and effective_hp <= health_threshold then
+    if effective_hp <= health_threshold then
         self._event_bus:publish(Events.HEALTH_THRESHOLD, {
             health_pct = hp,
             predicted_pct = effective_hp,
@@ -366,6 +365,15 @@ function SentinelCombat:_check_safety()
         return false
     end
 
+    -- outnumber_delta tunes the enemy/ally ratio that trips this (default 2,
+    -- i.e. "enemies >= allies + 2"). Whether get_ally_list_around includes
+    -- the player is an open in-game question (audit B6) — that only shifts
+    -- where the trigger sits (2-vs-3 vs 1-vs-2), it does not change the
+    -- disengage/backoff mechanism below. Without OUTNUMBERED_BACKOFF_MS a
+    -- solo pull of `outnumber_delta` mobs re-triggers engage (via auto-engage
+    -- next tick) then immediately disengage("outnumbered") again, every
+    -- single frame, with both mobs still attacking — see engage()'s backoff
+    -- gate.
     if enemies >= allies + outnumber_delta and enemies > 0 then
         self._event_bus:publish(Events.OUTNUMBERED, {
             enemy_count = enemies,
@@ -394,15 +402,35 @@ function SentinelCombat:_check_safety()
     return true
 end
 
+-- Minimum time after an "outnumbered" disengage before engage() will accept
+-- a new engagement (audit B6). Without this, questing/auto re-publish an
+-- engage request the very next tick (B3), _check_safety immediately
+-- disengages again, and the pair oscillates once per frame while the mobs
+-- keep attacking. VERIFY-IN-GAME: tune against real pull cadence.
+local OUTNUMBERED_BACKOFF_MS = 2000
+
 function SentinelCombat:engage(target, opts)
     if self._blackboard:get("module.combat.enabled", true) ~= true then
         return
     end
+    local now_ms = self._blackboard:get("system.now_ms", 0)
+    if self._outnumbered_backoff_until_ms and now_ms < self._outnumbered_backoff_until_ms then
+        return
+    end
     opts = opts or {}
+    -- combat.leash_center anchors the "don't chase mobs too far" check in
+    -- _check_safety. It must only be set on entry into combat from IDLE —
+    -- setting it on every engage() call (audit B3) tracks the player's own
+    -- position each tick (execute_kill re-publishes engage_requested every
+    -- tick while in range, with no dedup), so leash_dist stays ~0 forever
+    -- and disengage("leash_exceeded") becomes unreachable.
+    local already_engaged = self:is_in_combat()
     self._source = opts.source or opts.bg_key or "external"
     self._blackboard:set("combat.source", self._source)
-    self._blackboard:set("combat.leash_center", opts.leash_center or self._blackboard:get("player.position"))
-    self._blackboard:set("combat.leash_radius", tonumber(opts.leash_radius) or 25)
+    if not already_engaged then
+        self._blackboard:set("combat.leash_center", opts.leash_center or self._blackboard:get("player.position"))
+        self._blackboard:set("combat.leash_radius", tonumber(opts.leash_radius) or 25)
+    end
 
     -- An explicitly requested quest target is trusted even if the target selector would reject it.
     -- Quest mobs are frequently NEUTRAL (Elwynn's Young Wolves are `enemy = false` and never
@@ -455,7 +483,10 @@ function SentinelCombat:disengage(reason)
     self._blackboard:set("combat.source", nil)
     self._blackboard:set("rotation.after_judgement_reseal", false)
     self._blackboard:set("rotation.twist.pending_reseal", false)
-    self._rest_prev_hp = nil
+    if reason == "outnumbered" then
+        local now_ms = self._blackboard:get("system.now_ms", 0)
+        self._outnumbered_backoff_until_ms = now_ms + OUTNUMBERED_BACKOFF_MS
+    end
     self._profile:reset()
     self._state_machine:transition("IDLE", reason or "disengage")
     if active then
@@ -479,6 +510,33 @@ function SentinelCombat:_combat_diag(blackboard, msg)
     end
 end
 
+-- Retries class detection until a real numeric class_id is read, then
+-- rebuilds the profile exactly once for the confirmed class and latches
+-- `_class_confirmed` so this never runs again. No-op once confirmed.
+function SentinelCombat:_confirm_class_detection(blackboard)
+    if self._class_confirmed then
+        return
+    end
+    local class_id = detect_class_id()
+    if not class_id then
+        return
+    end
+    self._class_confirmed = true
+    if class_id == self._class_id then
+        return
+    end
+    self._class_id = class_id
+    local spec_id = core and core.spell_book and core.spell_book.get_specialization_id and core.spell_book.get_specialization_id() or 0
+    local profile_module = ProfileRegistry.resolve(class_id, spec_id)
+    self._profile = profile_module.build(self._blackboard, self._event_bus)
+    self._blackboard:set("module.combat.profile", self._profile)
+    self._blackboard:set("player.class_id", class_id)
+    self._blackboard:set("player.class_name", CLASS_ID_TO_NAME[class_id] or "WARRIOR")
+    if core and type(core.log) == "function" then
+        pcall(core.log, string.format("[Combat] player class confirmed as %s (id=%d), profile rebuilt", CLASS_ID_TO_NAME[class_id] or "?", class_id))
+    end
+end
+
 function SentinelCombat:update(blackboard)
     if blackboard:get("module.combat.enabled", true) ~= true then
         if self._state_machine:get_state() ~= "IDLE" then
@@ -487,42 +545,7 @@ function SentinelCombat:update(blackboard)
         return
     end
 
-    -- Don't cast while grind module is looting — unless we're being attacked
-    -- and need to fight back (player.in_combat means a mob is hitting us).
-    if blackboard:get("module.grind.is_looting") == true
-        and blackboard:get("player.in_combat", false) ~= true then
-        return
-    end
-
-    -- When resting, restrict to defensive combat only.
-    -- IDLE: only engage if player health is actually dropping (real attack,
-    -- not just 5-6s post-kill combat linger). Clear is_resting BEFORE
-    -- engaging so the player stands up and safety phase can fire.
-    -- Non-IDLE: already fighting back — continue combat normally.
-    if blackboard:get("module.grind.is_resting") == true then
-        if self._state_machine:get_state() == "IDLE" then
-            local hp = tonumber(blackboard:get("player.health_pct", 1)) or 1
-            local prev_hp = self._rest_prev_hp or hp
-            local health_dropping = hp < prev_hp - 0.01
-            self._rest_prev_hp = hp
-
-            if health_dropping and blackboard:get("player.in_combat", false) == true then
-                local attacker = self:_find_attacker()
-                if attacker then
-                    blackboard:set("module.grind.is_resting", false)
-                    self:engage(attacker, {
-                        source = "grind",
-                        leash_center = blackboard:get("player.position"),
-                        leash_radius = tonumber(blackboard:get("combat.leash_radius", 25)) or 25,
-                    })
-                    blackboard:set("module.grind.current_target", attacker)
-                end
-            end
-            return
-        end
-        -- Non-IDLE: already engaged, continue fighting below.
-        self._rest_prev_hp = nil
-    end
+    self:_confirm_class_detection(blackboard)
 
     local now_ms = blackboard:get("system.now_ms", 0)
     self._cooldowns:refresh(now_ms)
@@ -550,57 +573,14 @@ function SentinelCombat:update(blackboard)
     if self._state_machine:get_state() == "IDLE" then
         self:_combat_diag(blackboard, "idle")
 
-        -- When grind controls the loop, only run maintenance when the GCD
-        -- won't compete with a pending pull.  Three cases:
-        --   1) Grind needs rest → skip entirely (prepare_rest handles it)
-        --   2) Grind has a target ready to pull → skip (keep GCD free)
-        --   3) No target yet (looting/acquiring) → safe to rebuff
-        -- Without this, Ice Armor + Arcane Intellect consume 2 GCDs (~3 s)
-        -- that block the pull spell, making the bot "stand around" post-fight.
-        if blackboard:get("module.grind.enabled") == true then
-            local hp    = tonumber(blackboard:get("player.health_pct", 1)) or 1
-            local mana  = tonumber(blackboard:get("player.mana_pct", 1)) or 1
-            local eat   = tonumber(blackboard:get("module.grind.health_eat_pct", 0.50)) or 0.50
-            local drink = tonumber(blackboard:get("module.grind.mana_drink_pct", 0.40)) or 0.40
-            local grind_needs_rest = hp < eat or mana < drink
-            local has_pull_target  = blackboard:get("module.grind.current_target") ~= nil
-
-            if not grind_needs_rest and not has_pull_target then
-                local maintenance_status = self._profile:tick_maintenance(blackboard)
-                if maintenance_status == "SUCCESS" or maintenance_status == "RUNNING" then
-                    return
-                end
-            end
-        else
-            local maintenance_status = self._profile:tick_maintenance(blackboard)
-            if maintenance_status == "SUCCESS" or maintenance_status == "RUNNING" then
-                return
-            end
+        local maintenance_status = self._profile:tick_maintenance(blackboard)
+        if maintenance_status == "SUCCESS" or maintenance_status == "RUNNING" then
+            return
         end
         if blackboard:get("module.combat.auto_engage", true) ~= true then
             return
         end
         if not self:_allow_idle_auto_engage() then
-            return
-        end
-
-        -- When grind module controls engagement, only auto-engage actual
-        -- attackers (mobs targeting the player). _auto_engage_target() reads
-        -- player.target and get_best_target, picking up random nearby mobs
-        -- during the 5-6s post-kill combat linger — hijacking the grind
-        -- tree's loot/rest flow before those phases can set their flags.
-        if blackboard:get("module.grind.enabled") == true then
-            if blackboard:get("player.in_combat", false) == true then
-                local attacker = self:_find_attacker()
-                if attacker then
-                    self:engage(attacker, {
-                        source = "grind",
-                        leash_center = blackboard:get("player.position"),
-                        leash_radius = tonumber(blackboard:get("combat.leash_radius", 25)) or 25,
-                    })
-                    blackboard:set("module.grind.current_target", attacker)
-                end
-            end
             return
         end
 
@@ -617,7 +597,7 @@ function SentinelCombat:update(blackboard)
 
     -- Guard: phantom combat state — spell events or stale transitions left
     -- the state machine in a non-IDLE state without a formal engagement.
-    -- Reset to IDLE so the grind tree retains sole navigation control.
+    -- Reset to IDLE so nothing tries to act without a real source.
     if self._source == nil then
         if self._state_machine:get_state() ~= "IDLE" then
             self._state_machine:transition("IDLE", "phantom_reset")
@@ -670,11 +650,11 @@ function SentinelCombat:update(blackboard)
     self._profile:tick_off_gcd(blackboard)
 
     -- COOLDOWN timeout: if the GCD tree found no legal actions and we've been
-    -- waiting long enough, disengage and return control to the grind tree.
-    -- This prevents the combat phase from locking the grind priority selector
-    -- when there's nothing to do (e.g. all spells on cooldown, target out of
-    -- range, no valid target). The timeout is reset whenever we transition out
-    -- of COOLDOWN (e.g. a spell confirms via the event handler).
+    -- waiting long enough, disengage and return to IDLE. This prevents the
+    -- combat phase from wedging indefinitely when there's nothing to do
+    -- (e.g. all spells on cooldown, target out of range, no valid target).
+    -- The timeout is reset whenever we transition out of COOLDOWN (e.g. a
+    -- spell confirms via the event handler).
     local COOLDOWN_TIMEOUT_MS = 2500
     if self._state_machine:get_state() == "COOLDOWN" then
         if self._cooldown_enter_ms == 0 then

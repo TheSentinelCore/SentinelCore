@@ -48,9 +48,13 @@ function ProximitySensor:refresh(player, now_ms)
     local bb = self._blackboard
     local position = bb:get("player.position")
 
-    -- Throttle unit counts to every 3 frames (~50ms at 60fps)
+    -- Throttle unit counts to every 3 frames (~50ms at 60fps). Recompute on
+    -- the FIRST pass (frame 1), not the third — `frame_count % 3 == 0` would
+    -- make frames 1-2 publish the constructor's zeros after every load or
+    -- reload, suppressing AoE and the outnumbered check for two frames
+    -- (audit B9).
     self._frame_count = self._frame_count + 1
-    if self._frame_count % 3 == 0 then
+    if (self._frame_count - 1) % 3 == 0 then
         local count_10, count_30 = self:_get_enemy_counts(position)
         self._cached_enemy_count_10 = count_10
         self._cached_enemy_count_30 = count_30

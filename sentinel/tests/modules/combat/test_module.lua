@@ -1,6 +1,8 @@
 local Blackboard = require("core/blackboard")
 local EventBus = require("core/event_bus")
 local SentinelCombat = require("modules/combat/module")
+local CombatStateMachine = require("modules/combat/state_machine")
+local ProximitySensor = require("runtime/sensors/proximity_sensor")
 local T = require("tests/test_util")
 
 local M = {}
@@ -158,6 +160,88 @@ function M.run()
 
     T.assert_equal(combat_friendly:get_state(), "IDLE", "combat should ignore non-hostile direct targets")
     T.assert_equal(queued[1], nil, "combat should not queue spells for non-hostile direct targets")
+
+    -- Test 3 (B2): class detection defers instead of silently latching a
+    -- default. Without a readable player object, the module must still be
+    -- usable (unconfirmed placeholder), but must not mark class_confirmed.
+    -- Once a real numeric class_id becomes readable, confirmation must
+    -- happen exactly once and rebuild the profile for that class.
+    local bb3 = make_blackboard()
+    local bus3 = EventBus:new()
+    local combat3 = SentinelCombat:new(bus3, bb3, nav)
+    combat3:initialize()
+    T.assert_false(combat3._class_confirmed, "class should not be confirmed without a readable player object")
+    T.assert_equal(bb3:get("player.class_id"), 8, "unconfirmed class should fall back to the mage placeholder without erroring")
+
+    local prev_core = core
+    core = {
+        object_manager = {
+            get_local_player = function()
+                return { get_class = function() return 2 end } -- Paladin
+            end,
+        },
+    }
+    combat3:_confirm_class_detection(bb3)
+    core = prev_core
+    T.assert_true(combat3._class_confirmed, "class should confirm once a real numeric class_id is read")
+    T.assert_equal(bb3:get("player.class_id"), 2, "profile should rebuild for the confirmed class")
+
+    -- Test 4 (B3): combat.leash_center must only be set on entry into combat
+    -- from a non-engaged state, not on every engage() call (execute_kill
+    -- re-publishes engage_requested every tick while in range).
+    local bb4 = make_blackboard()
+    local bus4 = EventBus:new()
+    local combat4 = SentinelCombat:new(bus4, bb4, nav)
+    combat4:initialize()
+    combat4:engage(target, { source = "auto", leash_center = { x = 10, y = 0, z = 0 } })
+    local first_center = bb4:get("combat.leash_center")
+    T.assert_equal(first_center and first_center.x, 10, "leash_center should be set on first engage")
+    bb4:set("player.position", { x = 50, y = 0, z = 0 })
+    combat4:engage(target, { source = "auto", leash_center = bb4:get("player.position") })
+    local second_center = bb4:get("combat.leash_center")
+    T.assert_equal(second_center and second_center.x, 10, "leash_center should not move on a repeat engage call while already in combat")
+
+    -- Test 5 (B6): an "outnumbered" disengage must back off re-engagement
+    -- for a cooldown window, so questing/auto-engage can't re-trigger
+    -- engage/disengage every frame while still outnumbered.
+    local bb5 = make_blackboard()
+    local bus5 = EventBus:new()
+    local combat5 = SentinelCombat:new(bus5, bb5, nav)
+    combat5:initialize()
+    bb5:set("system.now_ms", 1000)
+    combat5:engage(target, { source = "auto" })
+    T.assert_equal(combat5:get_state(), "ENGAGING", "sanity: engage should transition out of IDLE")
+    combat5:disengage("outnumbered")
+    T.assert_equal(combat5:get_state(), "IDLE", "disengage should return to IDLE")
+    combat5:engage(target, { source = "auto" })
+    T.assert_equal(combat5:get_state(), "IDLE", "engage should be blocked during the outnumbered backoff window")
+    bb5:set("system.now_ms", 1000 + 2000 + 1)
+    combat5:engage(target, { source = "auto" })
+    T.assert_equal(combat5:get_state(), "ENGAGING", "engage should succeed again once the outnumbered backoff window elapses")
+
+    -- Test 6 (C7): transition() must reject unlisted states instead of
+    -- silently accepting any string.
+    local bb6 = Blackboard:new()
+    local bus6 = EventBus:new()
+    local sm = CombatStateMachine:new(bus6, bb6)
+    sm:transition("BOGUS_STATE", "typo")
+    T.assert_equal(sm:get_state(), "IDLE", "illegal transition should be rejected and state should remain unchanged")
+    sm:transition("ENGAGING", "engage")
+    T.assert_equal(sm:get_state(), "ENGAGING", "legal transition should still succeed")
+
+    -- Test 7 (B9): proximity sensor must recompute unit counts on the
+    -- FIRST frame, not the third — frames 1-2 previously published the
+    -- constructor's zeros after every load/reload.
+    local bb7 = Blackboard:new()
+    bb7:set("player.position", { x = 0, y = 0, z = 0 })
+    local sensor = ProximitySensor:new(bb7)
+    local recompute_calls = 0
+    sensor._get_enemy_counts = function(_self, _pos)
+        recompute_calls = recompute_calls + 1
+        return 0, 0
+    end
+    sensor:refresh(nil, 0)
+    T.assert_equal(recompute_calls, 1, "proximity sensor should recompute counts on the first frame, not the third")
 end
 
 return M
