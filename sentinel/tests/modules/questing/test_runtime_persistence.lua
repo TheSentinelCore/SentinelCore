@@ -390,6 +390,38 @@ function M.test_operation_skipped_when_completion_gate_met()
         "a gateless kill operation must never gate-skip")
 end
 
+function M.test_objective_gate_met_for_rewarded_quest()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Kill", payload = { creature_entries = { 5 }, quantity = 8 } },
+                    -- ObjectiveComplete payload is (quest_id, objective_idx) positional,
+                    -- matching the compiled wire shape.
+                    { type = "Condition", payload = { role = "Completion", condition = { type = "ObjectiveComplete", payload = { 7, 1 } } } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    -- Quest 7 is REWARDED: it is gone from the log, but its objectives are trivially
+    -- complete — the kill op must gate-skip instead of re-farming (live-caught).
+    _G.core.quests = {
+        is_quest_flagged_completed = function(qid) return qid == 7 end,
+        is_on_quest = function(_) return false end,
+        get_num_quest_log_entries = function() return 0 end,
+        get_quest_log_title = function(_) return nil end,
+        get_num_quest_leader_boards = function(_) return 0 end,
+    }
+    local ctx = profile:create_context()
+    T.assert_true(profile:_operation_gate_already_met(profile._profile.operations[1], ctx),
+        "a kill op gated on a rewarded quest's objective must be skipped")
+    _G.core.quests = nil
+end
+
 function M.test_operation_with_kills_skipped_when_quest_rewarded()
     written_files = {}
     local profile = create_profile(make_profile_ops())
@@ -501,6 +533,7 @@ local tests = {
     test_advance_reconciles_past_moot_kills = M.test_advance_reconciles_past_moot_kills,
     test_certain_reconcile_rewinds_past_bogus_save = M.test_certain_reconcile_rewinds_past_bogus_save,
     test_operation_skipped_when_completion_gate_met = M.test_operation_skipped_when_completion_gate_met,
+    test_objective_gate_met_for_rewarded_quest = M.test_objective_gate_met_for_rewarded_quest,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,

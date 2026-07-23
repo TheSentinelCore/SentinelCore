@@ -787,6 +787,17 @@ function ContextMethods:is_quest_active(quest_entry)
 end
 
 function ContextMethods:is_objective_complete(quest_entry, objective_idx)
+    -- A REWARDED quest's objectives are trivially complete. Without this, kill operations
+    -- gated on an already-turned-in quest re-farm forever: the quest is no longer in the
+    -- log, so the leader-board walk below finds nothing and the old fallback (log-complete
+    -- cache) said false — live-caught as "killing wolves with an empty quest log" (op 17
+    -- gated on ObjectiveComplete for rewarded quest 7).
+    if core and core.quests and core.quests.is_quest_flagged_completed then
+        local ok, done = pcall(core.quests.is_quest_flagged_completed, quest_entry)
+        if ok and done == true then
+            return true
+        end
+    end
     -- Use core.quests.get_num_quest_leader_boards and get_quest_log_leader_board (Sylvannas API)
     if core and core.quests and core.quests.get_num_quest_leader_boards then
         -- Find quest log index for this quest

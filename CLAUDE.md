@@ -177,7 +177,7 @@ These are enforced by the injector, not by convention — violating them fails a
 
 ## Known state
 
-`luajit sentinel/tests/run_offline.lua` reports **64 passed, 0 failed**. Both previously
+`luajit sentinel/tests/run_offline.lua` reports **119 passed, 0 failed** (2026-07-23). Both previously
 documented failures were resolved (2026-07-23) and were not real module bugs:
 
 - `tests/modules/questing/test_runtime_persistence.run` — `test_restore_state_from_save` failed
