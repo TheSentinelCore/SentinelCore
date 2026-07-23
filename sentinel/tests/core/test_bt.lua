@@ -80,6 +80,39 @@ function M.run()
     -- Tick 2: urgent becomes active, preempts normal
     preempt_state.high_active = true
     T.assert_equal(ps2:tick(bb), "SUCCESS")
+
+    -- C8: Sequence:new's construction-time contract check.
+    -- Condition-first sequence (the shipped pattern) — no violation.
+    local guarded = BT.sequence("guarded", {
+        BT.condition("cond", function() return true end),
+        BT.action("act", function() return "SUCCESS" end),
+    })
+    T.assert_false(guarded._contract_violation, "condition-first sequence: no contract violation")
+
+    -- Nested-sequence-of-conditions guard (priority_builder.lua's compound-AND
+    -- pattern) is also accepted — it never returns RUNNING.
+    local compound_guard = BT.sequence("guarded_compound", {
+        BT.sequence("conds", {
+            BT.condition("c1", function() return true end),
+            BT.condition("c2", function() return true end),
+        }),
+        BT.action("act", function() return "SUCCESS" end),
+    })
+    T.assert_false(compound_guard._contract_violation, "compound-AND condition guard: no contract violation")
+
+    -- Action-first sequence with 2+ children violates the contract (flagged,
+    -- not thrown — see composites.lua's Sequence:new doc comment).
+    local unguarded = BT.sequence("unguarded", {
+        BT.action("act1", function() return "RUNNING" end),
+        BT.action("act2", function() return "SUCCESS" end),
+    })
+    T.assert_true(unguarded._contract_violation, "action-first sequence: contract violation flagged")
+
+    -- A single-child sequence never re-ticks a guard, so the contract doesn't apply.
+    local single_child = BT.sequence("single", {
+        BT.action("act", function() return "SUCCESS" end),
+    })
+    T.assert_false(single_child._contract_violation, "single-child sequence: contract does not apply")
 end
 
 return M

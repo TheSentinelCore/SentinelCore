@@ -10,7 +10,14 @@ local function safe_require(module_name)
 end
 
 local spell_prediction = safe_require("common/modules/spell_prediction")
-local core = safe_require("core")
+-- `core` is the Sylvannas-injected global (see docs/SylvannasAPI/dev/api/core.md);
+-- it is never a requireable module. `safe_require("core")` always failed here
+-- (no `core.lua` anywhere on package.path, in-game or offline), which shadowed
+-- the real global `core` with a permanent `nil` local and made every
+-- `core.input.*` call below dead code — `cast_ground_optimal` silently
+-- returned `false, 0` unconditionally. Every other owned file in this lane
+-- (chase_controller.lua, context_builder.lua, etc.) references the bare
+-- global `core` directly; do the same here instead of shadowing it.
 local izi = safe_require("common/izi_sdk")
 
 -- Cache frequently accessed values
@@ -83,9 +90,16 @@ function AoeHelper.cast_ground_optimal(spell_id, range, min_targets, radius)
     local position, hits = AoeHelper.find_optimal_position(spell_id, range, min_targets, radius)
     
     if position and hits >= min_targets then
-        -- Attempt to cast the spell at the calculated position
-        local success = core.input.cast_position_spell(spell_id, position)
-        return success, hits
+        -- Attempt to cast the spell at the calculated position.
+        -- C9: guard the call the same way every other core.input.* call site in
+        -- this file does — the outer `not core.input.cast_position_spell` check
+        -- above only ran once at function entry and can go stale/nil between
+        -- that check and this call in a hot-reload; re-check + pcall here.
+        if type(core.input.cast_position_spell) ~= "function" then
+            return false, hits
+        end
+        local ok, success = pcall(core.input.cast_position_spell, spell_id, position)
+        return ok and success or false, hits
     end
     
     return false, 0

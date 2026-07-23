@@ -13,9 +13,25 @@ local ABANDON_RANGE = 50.0     -- Give up on a committed target that has run thi
 -- Nil-safe distance (returns infinity on bad input) — used to notice a chased target drifting.
 local Geometry = (function()
     local ok, mod = pcall(require, "core/geometry")
-    if ok and type(mod) == "table" and mod.distance then return mod end
+    if ok and type(mod) == "table" and mod.distance and mod.distance_sq then return mod end
     return nil
 end)()
+
+--- Squared distance helper for the nearest-neighbor loops below (no sqrt on
+--- the hot path). Falls back to a manual squared distance if Geometry failed
+--- to load, keeping the same math.huge "unmeasurable" sentinel either way.
+local function distance_sq(a, b)
+    if Geometry then
+        return Geometry.distance_sq(a, b)
+    end
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return math.huge
+    end
+    local dx = (a.x or 0) - (b.x or 0)
+    local dy = (a.y or 0) - (b.y or 0)
+    local dz = (a.z or 0) - (b.z or 0)
+    return dx * dx + dy * dy + dz * dz
+end
 
 --- Stable per-corpse identity, used both to dedupe kill counting and to bound
 --- loot attempts. Prefers the GUID; falls back to rounded position + npc id so a
@@ -86,8 +102,10 @@ function UnitHelper.get_nearest_creature(entries, filter)
     end
 
     -- Find nearest valid creature by entry
+    -- F5: Geometry.distance_sq's math.huge sentinel (was a private 999999999,
+    -- behind a dead `math.hfov and ... or ...` check — math.hfov never exists).
     local nearest_obj = nil
-    local nearest_dist_sq = math.hfov and math.huge or 999999999
+    local nearest_dist_sq = math.huge
 
     local player_pos
     if core and core.object_manager and core.object_manager.get_local_player then
@@ -121,10 +139,7 @@ function UnitHelper.get_nearest_creature(entries, filter)
                 if player_pos and obj.get_position then
                     local ok, pos = pcall(obj.get_position, obj)
                     if ok and pos then
-                        local dx = pos.x - player_pos.x
-                        local dy = pos.y - player_pos.y
-                        local dz = pos.z - player_pos.z
-                        dist_sq = dx*dx + dy*dy + dz*dz
+                        dist_sq = distance_sq(player_pos, pos)
                     end
                 end
 
@@ -158,8 +173,9 @@ function UnitHelper.get_nearest_game_object(entries)
         return nil
     end
 
+    -- F5: math.huge sentinel (was a private 999999999), matching Geometry's convention.
     local nearest_obj = nil
-    local nearest_dist_sq = 999999999
+    local nearest_dist_sq = math.huge
 
     local player_pos
     if core and core.object_manager and core.object_manager.get_local_player then
@@ -190,10 +206,7 @@ function UnitHelper.get_nearest_game_object(entries)
                 if player_pos and obj.get_position then
                     local ok, pos = pcall(obj.get_position, obj)
                     if ok and pos then
-                        local dx = pos.x - player_pos.x
-                        local dy = pos.y - player_pos.y
-                        local dz = pos.z - player_pos.z
-                        dist_sq = dx*dx + dy*dy + dz*dz
+                        dist_sq = distance_sq(player_pos, pos)
                     end
                 end
 
