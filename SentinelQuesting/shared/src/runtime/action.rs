@@ -123,6 +123,10 @@ pub struct RuntimeRepair {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeTrain {
     pub npc_entry: u32,
+    /// Spell IDs to train, carried through from `TrainerAction.spells` (`.train <spell_id>`).
+    /// Serde-defaulted so pre-existing profiles without the field still deserialize.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spells: Vec<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trainer_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

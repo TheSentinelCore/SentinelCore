@@ -383,6 +383,18 @@ fn condition_role_for(cmd_name: &str) -> ConditionRole {
     }
 }
 
+/// Spell IDs from a `.train`/`.trainer` arg list. RestedXP writes `.train <spell_id>` or
+/// `.train <spell_id>,<rank>` — measured across The Burning Crusade.lua, every one of the 1,383
+/// `.train` lines has exactly one or two comma-separated fields, never more. Only the first field
+/// is a spell ID; a trailing rank is a qualifier, not a second spell, so taking every arg would
+/// invent a bogus "spell 1". Unparseable/empty args yield an empty list rather than a guess.
+fn train_spell_ids(args: &[String]) -> Vec<u32> {
+    args.first()
+        .and_then(|a| a.trim().parse::<u32>().ok())
+        .into_iter()
+        .collect()
+}
+
 /// Parse every comma-separated arg as a quest ID, lowering through `predicate` into a §23
 /// infix-`||` chain: RestedXP quest gates commonly list several IDs read as "any of these"
 /// (round-3 finding); one ID yields the unchanged single string. `||` is the grammar's OR form
@@ -640,6 +652,7 @@ async fn build_step_actions(
                         note: cmd.note.clone(),
                         payload: ActionPayload::Train(TrainerAction {
                             npc,
+                            spells: train_spell_ids(&cmd.args),
                             trainer_type: None,
                             minimum_level: None,
                         }),
@@ -817,6 +830,7 @@ async fn build_step_actions(
                         note: cmd.note.clone(),
                         payload: ActionPayload::Train(TrainerAction {
                             npc,
+                            spells: train_spell_ids(&cmd.args),
                             trainer_type: None,
                             minimum_level: None,
                         }),

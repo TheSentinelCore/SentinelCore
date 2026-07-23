@@ -191,6 +191,49 @@ step
     );
 }
 
+#[tokio::test]
+async fn train_preserves_the_spell_ids_from_its_args() {
+    // `.train <spell_id>[,rank]` names the SPELL to train, not an NPC — only 1 of the 1,383
+    // `.train` lines in The Burning Crusade.lua carries an NPC hint. The importer was discarding
+    // `cmd.args` entirely, so every `.train` (including the 1,157 that resolved an NPC and counted
+    // as "typed") lost what to actually train. Preserve the spell IDs.
+    const GUIDE: &str = r#"RXPGuides.RegisterGuide([[
+#version 1
+#name Train Spell Test
+step
+    .target Rogo Waterspout
+    .train 48792,1 >> Train the spell
+]])"#;
+
+    let guide = parse_guide(GUIDE).expect("parses");
+    let client = MemoryQueryClient::new().with_npc(sentinel_queryclient::NpcDetail {
+        entry: 777,
+        name: "Rogo Waterspout".to_string(),
+        faction: "Alliance".to_string(),
+        positions: vec![],
+        roles: vec![],
+    });
+    let project = sentinel_importer::ProjectBuilder::build(&guide, "train.lua", &client)
+        .await
+        .expect("builds");
+
+    let spells: Vec<u32> = project
+        .operations
+        .iter()
+        .flat_map(|o| &o.actions)
+        .filter_map(|a| match &a.payload {
+            sentinel_models::authoring::ActionPayload::Train(t) => Some(t.spells.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(
+        spells,
+        vec![48792],
+        ".train must preserve its spell id (rank suffix is not a second spell)"
+    );
+}
+
 #[test]
 fn standalone_and_bundled_parse_are_invariant_modulo_line_offset() {
     // The same guide text, parsed standalone vs. embedded as the second block of a bundle, must

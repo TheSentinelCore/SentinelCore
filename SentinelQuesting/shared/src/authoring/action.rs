@@ -173,6 +173,11 @@ pub struct RepairAction {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrainerAction {
     pub npc: Uuid,
+    /// Spell IDs the guide asked to train (`.train <spell_id>[,rank]`). RestedXP's `.train` names
+    /// the SPELL, not the trainer, so dropping this loses what to actually train. Serde-defaulted:
+    /// projects authored before this field simply carry an empty list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spells: Vec<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trainer_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

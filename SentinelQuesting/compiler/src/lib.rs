@@ -200,6 +200,7 @@ fn resolve_action(
             let npc_entry = *npc_uuid_to_entry.get(&tr.npc).ok_or(CompilerError::UnresolvedNpc)?;
             RuntimeAction::Train(RuntimeTrain {
                 npc_entry,
+                spells: tr.spells.clone(),
                 trainer_type: tr.trainer_type.clone(),
                 minimum_level: tr.minimum_level,
             })
