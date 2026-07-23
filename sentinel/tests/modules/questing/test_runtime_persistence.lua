@@ -246,8 +246,13 @@ local tests = {
 }
 
 function M.run()
-    for name, fn in pairs(tests) do
-        local ok, err = pcall(fn)
+    -- Deterministic order: `pairs` varies per run, which turned shared-fixture leakage between
+    -- these tests into an intermittent failure that moved around and read as flaky.
+    local names = {}
+    for name in pairs(tests) do names[#names + 1] = name end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        local ok, err = pcall(tests[name])
         if not ok then
             error(name .. " FAILED: " .. tostring(err))
         end

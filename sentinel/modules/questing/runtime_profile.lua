@@ -91,17 +91,20 @@ local CLASS_ID_TO_NAME = {
 local RuntimeProfile = {}
 RuntimeProfile.__index = RuntimeProfile
 
-function RuntimeProfile:new(json_path, dry_run)
+--- `event_bus`/`blackboard` are injected by QuestingModule so the executor shares the APP's bus.
+--- Without that, publishing an engage request lands on a private bus the combat module never
+--- subscribed to, and the bot walks up to a mob and stands there.
+function RuntimeProfile:new(json_path, dry_run, event_bus, blackboard)
     local o = setmetatable({}, RuntimeProfile)
     o._json_path = json_path
     o._dry_run = dry_run == true
     o._profile = nil
-    o._blackboard = Blackboard:new()
+    o._blackboard = blackboard or Blackboard:new()
     o._query = QueryClient:new("127.0.0.1", 3030)
     o._current_operation_idx = 1
     o._current_op_id = nil              -- Tracks identity for retry reset
     o._variables = {}
-    o._event_bus = EventBus:new()       -- W3.3
+    o._event_bus = event_bus or EventBus:new()  -- W3.3 (shared bus when injected)
     o._nav = NavAdapter:new(o._event_bus) -- W3.3
 
     -- Recovery state machine (W4.1–W4.5)
@@ -355,6 +358,9 @@ function RuntimeProfile:create_context()
         variables = self._variables,
         query = self._query,
         nav = self._nav,           -- W3.3: NavAdapter for movement
+        -- Shared app bus, so a Kill action can request engagement from the combat module.
+        event_bus = self._event_bus,
+        blackboard = self._blackboard,
 
         -- Quest log tracking caches (W2.3, W2.4)
         _completed_quests = {},   -- { [quest_entry] = true }

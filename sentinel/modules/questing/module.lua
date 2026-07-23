@@ -45,7 +45,8 @@ function QuestingModule:new(blackboard, event_bus)
 end
 
 function QuestingModule:initialize(profile_json_path)
-    self._executor = RuntimeProfile:new(profile_json_path)
+    -- Share the module's bus/blackboard so questing actions can reach the combat module.
+    self._executor = RuntimeProfile:new(profile_json_path, false, self._event_bus, self._blackboard)
     local success, err = self._executor:load()
     if not success then
         self._event_bus:publish("questing:error", { error = err })

@@ -467,7 +467,22 @@ function RuntimeAction.execute_kill(payload, ctx)
             end
             return "blocked" -- Navigate to target first
         end
-        return "blocked" -- In range, let combat loop handle the kill
+
+        -- In range. Nothing here previously did anything at all — it returned "blocked" and
+        -- assumed "the combat loop" would notice, but the combat module's world auto-engage is off
+        -- by default, so the bot walked up to the mob and stood there. Target it and REQUEST
+        -- engagement explicitly on the shared event bus.
+        if core and core.input and core.input.set_target then
+            pcall(core.input.set_target, target)
+        end
+        if ctx.event_bus and ctx.event_bus.publish then
+            pcall(ctx.event_bus.publish, ctx.event_bus, "combat:engage_requested", {
+                target = target,
+                source = "questing",
+                leash_radius = 40.0,
+            })
+        end
+        return "blocked" -- combat module drives the rotation; poll again next tick
     end
 
     -- No targets found — check if we should navigate to a known spawn area
