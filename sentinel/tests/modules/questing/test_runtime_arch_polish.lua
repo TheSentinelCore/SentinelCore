@@ -49,49 +49,24 @@ local function mock_globals()
         return nil
     end
 
-    -- Mock JSON
+    -- JSON mock backed by the SHIPPED parser (core/JSON) — the same one the runtime uses in-game.
+    -- This previously emitted Lua literals (`{["k"]=v}`) and parsed them with `load()`, which only
+    -- worked because runtime_profile carried a matching `load("return "..json)` fallback. That
+    -- fallback is dead in the Sylvannas sandbox (no global JSON, no usable `load`), so the runtime
+    -- could not read a real compiled profile in-game at all. Fixtures must be real JSON for these
+    -- tests to mean anything.
+    local CoreJson = select(2, pcall(require, "core/JSON"))
     _G.JSON = _G.JSON or {}
     _G.JSON.parse = function(str)
-        local fn = load("return " .. str)
-        if fn then
-            local ok, result = pcall(fn)
-            if ok then return result end
-        end
+        if type(str) ~= "string" then return nil end
+        local ok, result = pcall(CoreJson.decode, str)
+        if ok then return result end
         return nil
     end
     _G.JSON.stringify = function(tbl)
-        local function serialize(val)
-            local t = type(val)
-            if t == "string" then return string.format("%q", val)
-            elseif t == "number" then return tostring(val)
-            elseif t == "boolean" then return tostring(val)
-            elseif t == "nil" then return "null"
-            elseif t == "table" then
-                local is_array = true
-                local count = 0
-                for k in pairs(val) do
-                    count = count + 1
-                    if type(k) ~= "number" or k ~= count then
-                        is_array = false
-                        break
-                    end
-                end
-                if is_array and count > 0 then
-                    local parts = {}
-                    for i = 1, count do
-                        parts[i] = serialize(val[i])
-                    end
-                    return "{" .. table.concat(parts, ",") .. "}"
-                end
-                local parts = {}
-                for k, v in pairs(val) do
-                    parts[#parts + 1] = "[" .. serialize(k) .. "]=" .. serialize(v)
-                end
-                return "{" .. table.concat(parts, ",") .. "}"
-            end
-            return tostring(val)
-        end
-        return serialize(tbl)
+        local ok, str = pcall(CoreJson.encode, tbl)
+        if ok then return str end
+        return nil
     end
 
     _G.SentinelNavClient = {
@@ -743,8 +718,14 @@ local tests = {
 }
 
 function M.run()
-    for name, fn in pairs(tests) do
-        local ok, err = pcall(fn)
+    -- Deterministic order: `pairs` iteration varies per run, which turned shared-fixture leakage
+    -- between these tests into a failure that moved around and looked flaky. Sorting makes any
+    -- remaining ordering dependency reproducible instead of intermittent.
+    local names = {}
+    for name in pairs(tests) do names[#names + 1] = name end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        local ok, err = pcall(tests[name])
         if not ok then
             error(name .. " FAILED: " .. tostring(err))
         end

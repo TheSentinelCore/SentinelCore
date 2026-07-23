@@ -251,12 +251,41 @@ local function json_decode_value(str, pos)
     end
 end
 
+-- Back the harness JSON with the SHIPPED parser (core/JSON) rather than the local encoder above.
+-- The runtime uses core/JSON in-game (the Sylvannas sandbox has no global JSON), so a separate
+-- harness implementation meant tests exercised a parser production never runs — which is exactly
+-- how the "runtime cannot load any profile in-game" bug stayed invisible. One implementation,
+-- exercised by both. The local json_* helpers remain as the fallback if core/JSON is unavailable.
+-- Resolved lazily: this block runs BEFORE package.path is configured below, so an eager
+-- require would silently fail and leave the harness on its own encoder — reintroducing the very
+-- test/production split this is meant to remove.
+local CoreJson, core_json_checked = nil, false
+local function core_json()
+    if not core_json_checked then
+        core_json_checked = true
+        local ok, mod = pcall(require, "core/JSON")
+        if ok and type(mod) == "table" and mod.decode and mod.encode then CoreJson = mod end
+    end
+    return CoreJson
+end
+
 _G.JSON.stringify = function(tbl)
+    local J = core_json()
+    if J then
+        local ok, str = pcall(J.encode, tbl)
+        if ok and str then return str end
+    end
     return json_encode_value(tbl)
 end
 
 _G.JSON.parse = function(str)
     if type(str) ~= "string" then return nil end
+    local J = core_json()
+    if J then
+        local ok, result = pcall(J.decode, str)
+        if ok then return result end
+        return nil
+    end
     local ok, result = pcall(json_decode_value, str, 1)
     if ok then return result end
     return nil

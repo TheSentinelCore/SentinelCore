@@ -13,6 +13,46 @@ local NavAdapter = require("integrations/nav_client/adapter")
 -- UnitHelper is exposed from RuntimeAction for object lookup (Sylvannas API compliant)
 local UnitHelper = RuntimeAction.UnitHelper
 
+-- JSON access. The Sylvannas sandbox provides NO global `JSON` and no usable `load`, so the old
+-- `JSON and JSON.parse(...)` / `load("return "..json)()` path meant the runtime could not parse a
+-- compiled profile in-game at all (it failed with "attempt to call a nil value"). Prefer the
+-- shipped pure-Lua parser so the in-game path is the one tests exercise too; fall back to an
+-- injected global only if some harness supplies one.
+local JsonLib = (function()
+    local ok, mod = pcall(require, "core/JSON")
+    if ok and type(mod) == "table" and mod.decode and mod.encode then
+        return mod
+    end
+    return nil
+end)()
+
+local function json_parse(str)
+    if type(str) ~= "string" then return nil end
+    if JsonLib then
+        local ok, value = pcall(JsonLib.decode, str)
+        if ok then return value end
+        return nil
+    end
+    if JSON and JSON.parse then
+        local ok, value = pcall(JSON.parse, str)
+        if ok then return value end
+    end
+    return nil
+end
+
+local function json_stringify(value)
+    if JsonLib then
+        local ok, str = pcall(JsonLib.encode, value)
+        if ok then return str end
+        return nil
+    end
+    if JSON and JSON.stringify then
+        local ok, str = pcall(JSON.stringify, value)
+        if ok then return str end
+    end
+    return nil
+end
+
 -- ============================================================================
 -- Named constants for proximity checks (W3.1, W3.2, W3.6)
 -- ============================================================================
@@ -134,11 +174,9 @@ end
 function RuntimeProfile:_save()
     if self._dry_run then return false end
     local data = self:_serialize_state()
-    local json = nil
-    if JSON and JSON.stringify then
-        json = JSON.stringify(data)
-    else
-        -- Manual JSON serialization fallback
+    local json = json_stringify(data)
+    if not json then
+        -- Manual serialization fallback (never leaves the save unwritten).
         json = self:_serialize_lua(data)
     end
     if not json then
@@ -178,15 +216,7 @@ function RuntimeProfile:_load_save()
     if not json then
         return false
     end
-    local decoded = nil
-    if JSON and JSON.parse then
-        decoded = JSON.parse(json)
-    else
-        local fn, err = load("return " .. json)
-        if fn then
-            decoded = fn()
-        end
-    end
+    local decoded = json_parse(json)
     if not decoded or type(decoded) ~= "table" then
         return false
     end
@@ -282,9 +312,9 @@ function RuntimeProfile:load()
         if not json then
             return nil, err or "file not found"
         end
-        local decoded = JSON and JSON.parse(json)
+        local decoded = json_parse(json)
         if not decoded then
-            decoded = load("return " .. json)()
+            return nil, "profile JSON could not be parsed"
         end
         self._profile = decoded
 
@@ -700,11 +730,7 @@ function RuntimeProfile:_check_hot_reload()
         return
     end
 
-    local decoded = JSON and JSON.parse(json)
-    if not decoded then
-        local fn = load("return " .. json)
-        decoded = fn and fn()
-    end
+    local decoded = json_parse(json)
     if not decoded or type(decoded) ~= "table" then
         self._json_mtime = mtime
         return

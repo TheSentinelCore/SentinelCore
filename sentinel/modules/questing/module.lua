@@ -16,7 +16,10 @@ local EventBus = require("core/event_bus")
 local QuestingModule = {}
 QuestingModule.__index = QuestingModule
 
-local PROFILE_DIR = "SentinelCore/questing"
+-- Compiled RuntimeProfile JSON lives alongside the existing sentinel data tree in the loader's
+-- scripts_data sandbox. Legacy .yaml route files share this folder; list_profiles filters to
+-- .json so the two coexist without collision.
+local PROFILE_DIR = "sentinel/data/profiles/quests"
 
 local function now_s()
     return (core and core.time and core.time()) or 0
