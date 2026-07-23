@@ -218,8 +218,24 @@ function QuestingModule:load_compiled_profile(profile_json)
     -- Create a temporary executor that loads from a JSON string
     -- (by writing to a temp file and loading it)
     local temp_path = "SentinelCore/questing/_editor_compile.json"
-    if core and core.write_file then
-        core.write_file(temp_path, profile_json)
+    -- A8: core.write_file is not a Sylvannas API (docs/SylvannasAPI/dev/api/file-io.md
+    -- documents read_data_file/write_data_file/create_data_file). The old guard was always
+    -- false, so nothing was ever written and initialize(temp_path) then loaded a MISSING
+    -- file, publishing questing:error and leaving the runner disabled on every editor-driven
+    -- reload. Match the working RuntimeProfile:_save() path: create then write.
+    local wrote = false
+    if core and core.write_data_file then
+        if core.create_data_file then
+            pcall(core.create_data_file, temp_path)
+        end
+        wrote = pcall(core.write_data_file, temp_path, profile_json)
+    end
+    if not wrote then
+        -- Make the failure diagnosable instead of silently loading a stale/missing file.
+        self._event_bus:publish("questing:error", {
+            error = "load_compiled_profile: failed to write " .. temp_path,
+        })
+        return false
     end
     return self:initialize(temp_path)
 end

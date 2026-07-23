@@ -360,7 +360,12 @@ function M.test_kill_no_targets_found()
     T.assert_equal(result, "blocked", "Kill should return blocked when no targets and no destination")
 end
 
-function M.test_kill_navigate_to_spawn_area()
+function M.test_kill_no_targets_ignores_destination_field()
+    -- A9: RuntimeKill has no `destination` field (SentinelQuesting/shared/src/runtime/
+    -- action.rs never emits one for Kill payloads) — the old navigate-to-spawn-area branch
+    -- keyed off payload.destination was permanently dead code and has been removed. A stray
+    -- `destination` key on the payload must now be silently ignored: no navigation, just
+    -- "blocked" like any other no-targets-found case.
     local ctx = mock_context({
         is_at_npc = function() return false end,
         get_zone_waypoint = function() return { x = -8000, y = -100, z = 80 } end,
@@ -373,8 +378,9 @@ function M.test_kill_navigate_to_spawn_area()
         destination = "Elwynn Forest",
     } }
     local result = RuntimeAction.execute(action, ctx)
-    T.assert_equal(result, "blocked", "Kill should return blocked and start navigation to spawn area")
-    T.assert_not_nil(ctx.nav and ctx.nav._moved_to, "NavAdapter should navigate to spawn area")
+    T.assert_equal(result, "blocked", "Kill should return blocked when no targets found")
+    T.assert_nil(ctx.nav and ctx.nav._moved_to,
+        "Kill must not navigate on payload.destination — that field does not exist on RuntimeKill")
 end
 
 -- ============================================================================
@@ -385,15 +391,30 @@ function M.test_loot_object_in_range()
     local ctx = mock_context({
         is_at_object = function() return true end,
     })
+    -- A3: execute_loot must resolve and pass the GAME OBJECT to core.input.loot_object, not the
+    -- raw entry id (docs/SylvannasAPI/dev/api/input.md:200 documents loot_object(target)).
+    -- Passing the entry id fails silently in Sylvannas (no error), so nothing was ever looted
+    -- while this returned "success" and the executor advanced past the objective — this test
+    -- used to assert on the entry id, encoding that broken contract as expected (D1).
+    local mock_obj = {
+        is_valid = function() return true end,
+        is_game_object = function() return true end,
+        get_entry_id = function() return 1234 end,
+        get_position = function() return { x = 1, y = 1, z = 1 } end,
+    }
+    _G.core.object_manager.get_all_objects = function()
+        return { mock_obj }
+    end
     _G.core.input = {
-        loot_object = function(entry)
-            _G._last_looted = entry
+        loot_object = function(target)
+            _G._last_looted = target
         end,
     }
     local action = { type = "Loot", payload = { object_entry = 1234 } }
     local result = RuntimeAction.execute(action, ctx)
     T.assert_equal(result, "success", "Loot should succeed when object in range")
-    T.assert_equal(_G._last_looted, 1234, "loot_object should be called")
+    T.assert_equal(_G._last_looted, mock_obj,
+        "loot_object should be called with the resolved game object, not the raw entry id")
 end
 
 function M.test_loot_object_out_of_range()
@@ -415,6 +436,87 @@ function M.test_loot_object_out_of_range()
     local result = RuntimeAction.execute(action, ctx)
     T.assert_equal(result, "blocked", "Loot should return blocked when object out of range")
     T.assert_not_nil(ctx.nav and ctx.nav._moved_to, "NavAdapter should navigate to loot object")
+end
+
+-- ============================================================================
+-- Grind / Escort / Patrol (A5 — PR2b) — none may report "success" for a no-op
+-- ============================================================================
+
+function M.test_grind_no_targets_fails()
+    -- A5: execute_grind was `return "success" -- Placeholder`, instantly advancing past real
+    -- compiler output having killed nothing. With no targets list at all there is nothing to
+    -- delegate to execute_kill, so it must report "failed", never "success".
+    local ctx = mock_context()
+    local action = { type = "Grind", payload = { minimum_kills = 5 } }
+    local result = RuntimeAction.execute(action, ctx)
+    T.assert_equal(result, "failed", "Grind with no target list must fail, not silently succeed")
+end
+
+function M.test_escort_waits_until_arrival()
+    -- A5: execute_escort must hold ("waiting") while the escortee is alive and the destination
+    -- has not been reached — never "success" on the first tick.
+    local ctx = mock_context({
+        is_at_destination = function() return false end,
+    })
+    _G.core.object_manager.get_all_objects = function()
+        return {
+            {
+                is_valid = function() return true end,
+                is_unit = function() return true end,
+                get_npc_id = function() return 5000 end,
+                is_dead = function() return false end,
+                get_position = function() return { x = 5, y = 5, z = 0 } end,
+            },
+        }
+    end
+    local action = { type = "Escort", payload = {
+        npc_entry = 5000,
+        destination = { x = 100, y = 100, z = 0 },
+    } }
+    local result = RuntimeAction.execute(action, ctx)
+    T.assert_equal(result, "waiting", "Escort should wait, not succeed, before the destination is reached")
+end
+
+function M.test_escort_fails_when_escortee_dead()
+    local ctx = mock_context()
+    _G.core.object_manager.get_all_objects = function()
+        return {
+            {
+                is_valid = function() return true end,
+                is_unit = function() return true end,
+                get_npc_id = function() return 5000 end,
+                is_dead = function() return true end,
+                get_position = function() return { x = 5, y = 5, z = 0 } end,
+            },
+        }
+    end
+    local action = { type = "Escort", payload = { npc_entry = 5000, destination = { x = 100, y = 100, z = 0 } } }
+    local result = RuntimeAction.execute(action, ctx)
+    T.assert_equal(result, "failed", "Escort must fail, not succeed, when the escortee has died")
+end
+
+function M.test_patrol_no_waypoints_fails()
+    local ctx = mock_context()
+    local action = { type = "Patrol", payload = {} }
+    local result = RuntimeAction.execute(action, ctx)
+    T.assert_equal(result, "failed", "Patrol with no waypoint list must fail, not silently succeed")
+end
+
+function M.test_patrol_succeeds_when_already_at_all_waypoints()
+    -- With is_at_destination always true, each waypoint is satisfied immediately; the action
+    -- must still walk its own internal index across every waypoint before reporting success.
+    local ctx = mock_context({
+        is_at_destination = function() return true end,
+    })
+    local action = { type = "Patrol", payload = {
+        waypoints = { { x = 1, y = 1, z = 0 }, { x = 2, y = 2, z = 0 } },
+    } }
+    local result
+    for _ = 1, 5 do
+        result = RuntimeAction.execute(action, ctx)
+        if result == "success" then break end
+    end
+    T.assert_equal(result, "success", "Patrol should succeed once every waypoint has been visited")
 end
 
 -- ============================================================================
@@ -450,10 +552,16 @@ local tests = {
     test_kill_npc_dead_and_in_range = M.test_kill_npc_dead_and_in_range,
     test_kill_npc_out_of_range = M.test_kill_npc_out_of_range,
     test_kill_no_targets_found = M.test_kill_no_targets_found,
-    test_kill_navigate_to_spawn_area = M.test_kill_navigate_to_spawn_area,
+    test_kill_no_targets_ignores_destination_field = M.test_kill_no_targets_ignores_destination_field,
 
     test_loot_object_in_range = M.test_loot_object_in_range,
     test_loot_object_out_of_range = M.test_loot_object_out_of_range,
+
+    test_grind_no_targets_fails = M.test_grind_no_targets_fails,
+    test_escort_waits_until_arrival = M.test_escort_waits_until_arrival,
+    test_escort_fails_when_escortee_dead = M.test_escort_fails_when_escortee_dead,
+    test_patrol_no_waypoints_fails = M.test_patrol_no_waypoints_fails,
+    test_patrol_succeeds_when_already_at_all_waypoints = M.test_patrol_succeeds_when_already_at_all_waypoints,
 
     test_context_has_nav = M.test_context_has_nav,
 }

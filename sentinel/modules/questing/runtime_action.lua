@@ -408,27 +408,9 @@ function RuntimeAction.resolve_ground_z(x, y, z)
     return z or 0
 end
 
---- Horizontal arrival check, ignoring height (see execute_travel for why Z is untrustworthy).
---- Falls back to the context's 3D check when the player position cannot be read.
-function RuntimeAction.is_at_destination_2d(ctx, target_pos, tol)
-    if not target_pos then return false end
-    -- The 3D check is authoritative when it PASSES: it can only be stricter, never looser. The 2D
-    -- test below exists solely to also accept arrivals that a bad inferred Z would reject.
-    if ctx.is_at_destination and ctx:is_at_destination(target_pos, tol) then
-        return true
-    end
-    local player = UnitHelper.get_local_player()
-    if not (player and player.get_position) then
-        return false
-    end
-    local ok, pos = pcall(player.get_position, player)
-    if not ok or type(pos) ~= "table" then
-        return false
-    end
-    local dx = (tonumber(pos.x) or 0) - (tonumber(target_pos.x) or 0)
-    local dy = (tonumber(pos.y) or 0) - (tonumber(target_pos.y) or 0)
-    return math.sqrt(dx * dx + dy * dy) <= (tonumber(tol) or 5.0)
-end
+-- A12: is_at_destination_2d used to live here. It was carefully documented but had no caller —
+-- its horizontal-arrival logic was inlined directly into execute_travel (below) instead. Verified
+-- no requirer anywhere in sentinel/ before removal.
 
 function RuntimeAction.execute_travel(payload, ctx)
     local dest   = payload.destination    -- string zone name (e.g. "Elwynn Forest")
@@ -558,6 +540,12 @@ end
 function RuntimeAction.execute_kill(payload, ctx)
     local entries = payload.creature_entries or {}
     local quantity = payload.quantity or 1
+    -- A4: RuntimeKill carries loot/ignore_elites (SentinelQuesting/shared/src/runtime/action.rs
+    -- :227-233); neither was read before. `loot` defaults true for back-compat with profiles
+    -- compiled before this field existed.
+    local should_loot = payload.loot
+    if should_loot == nil then should_loot = true end
+    local ignore_elites = payload.ignore_elites == true
 
     -- Branch trace. Inferring kill behaviour from state snapshots proved unreliable, so record the
     -- decision each tick and let the caller read it back. Cheap: one table write per execution.
@@ -601,6 +589,22 @@ function RuntimeAction.execute_kill(payload, ctx)
         return (P._loot_attempts[id] or 0) < LOOT_ATTEMPTS or not P._counted_corpses[id]
     end
 
+    -- A4(ignore_elites): with ignore_elites=true, an elite must never be picked as a fresh
+    -- target — the old code committed to whichever creature was nearest regardless, chased,
+    -- engaged, and typically died and re-committed to the same elite on respawn.
+    local function is_elite(obj)
+        if not obj or type(obj.is_elite) ~= "function" then
+            return false
+        end
+        local ok, elite = pcall(obj.is_elite, obj)
+        return ok and elite == true
+    end
+    local function is_acquirable(obj)
+        if not is_unfinished(obj) then return false end
+        if ignore_elites and is_elite(obj) then return false end
+        return true
+    end
+
     -- STICKY TARGET.
     --
     -- Re-picking "nearest" every tick makes the bot thrash: two wolves at similar
@@ -630,7 +634,7 @@ function RuntimeAction.execute_kill(payload, ctx)
     end
 
     if not target then
-        target = UnitHelper.get_nearest_creature(entries, is_unfinished)
+        target = UnitHelper.get_nearest_creature(entries, is_acquirable)
         local new_key = target and corpse_key(target) or nil
         if new_key ~= P._target_key then
             P._chase_dest = nil -- new target, so the old chase destination is stale
@@ -654,7 +658,10 @@ function RuntimeAction.execute_kill(payload, ctx)
             -- (already skinned, no drops, tap-denied) cannot wedge the run.
             P._loot_attempts = P._loot_attempts or {}
             local attempts = P._loot_attempts[corpse_id] or 0
-            if corpse_id and attempts < LOOT_ATTEMPTS then
+            -- A4(loot): payload.loot=false means this objective is not item-gated — skip
+            -- looting entirely and count the corpse immediately instead of spending
+            -- LOOT_ATTEMPTS ticks approaching/looting something the objective never needed.
+            if should_loot and corpse_id and attempts < LOOT_ATTEMPTS then
                 local dist_to_corpse = nil
                 local ok_cpos, cpos = pcall(target.get_position, target)
                 local looter = UnitHelper.get_local_player()
@@ -796,12 +803,18 @@ function RuntimeAction.execute_kill(payload, ctx)
         if core and core.input and core.input.set_target then
             pcall(core.input.set_target, target)
         end
-        if ctx.event_bus and ctx.event_bus.publish then
+        -- B3: publish engage_requested only on a TRANSITION (a new sticky target), not every
+        -- tick while in range. Re-requesting every tick fed combat's `engage()`, which
+        -- unconditionally re-set `leash_center` to the player's current position each time —
+        -- leash_dist stayed ~0 and disengage("leash_exceeded") was unreachable for the entire
+        -- questing path. Gating on P._target_key makes engage_requested fire once per commit.
+        if ctx.event_bus and ctx.event_bus.publish and P._target_key ~= P._last_engage_key then
             pcall(ctx.event_bus.publish, ctx.event_bus, "combat:engage_requested", {
                 target = target,
                 source = "questing",
                 leash_radius = 40.0,
             })
+            P._last_engage_key = P._target_key
         end
         -- "waiting", NOT "blocked": blocked drives the profile into its NAVIGATING state, which
         -- then polls the nav adapter forever while the kill action never runs again. "waiting"
@@ -811,20 +824,11 @@ function RuntimeAction.execute_kill(payload, ctx)
         return trace("engaging", "waiting")
     end
 
-    -- No targets found — check if we should navigate to a known spawn area
-    local dest = payload.destination
-    if dest and ctx.nav and not ctx.nav:is_active() then
-        local target_pos = nil
-        if type(dest) == "table" and dest.x then
-            target_pos = dest
-        elseif type(dest) == "string" then
-            target_pos = ctx:get_zone_waypoint(dest)
-        end
-        if target_pos then
-            ctx.nav:move_to(target_pos)
-            return "blocked" -- Navigating to spawn area
-        end
-    end
+    -- No targets found.
+    -- A9: RuntimeKill has no `destination` field (SentinelQuesting/shared/src/runtime/action.rs)
+    -- — the compiler never emits one for Kill payloads, so the previous navigate-to-spawn-area
+    -- branch here was permanently dead code (payload.destination always nil). Removed rather
+    -- than left as misleading unreachable navigation logic.
     return "blocked" -- No targets nearby or no API
 end
 
@@ -848,23 +852,30 @@ function RuntimeAction.execute_vendor(payload, ctx)
     local attempted = false
 
     -- Sell greys using core.input.sell_item or vendor API
+    -- A6: `attempted = true` used to be set OUTSIDE these guards, so a vendor stop with neither
+    -- API present still reported "success" with full bags and no gold. VERIFY-IN-GAME:
+    -- core.input.sell_greys / core.inventory.sell_greys are not documented Sylvannas APIs
+    -- (docs/SylvannasAPI/dev/api/); if neither exists at runtime both guards stay false and
+    -- `attempted` must correctly stay false too.
     if sell_grey then
         if core and core.input and core.input.sell_greys then
             core.input.sell_greys()
+            attempted = true
         elseif core and core.inventory and core.inventory.sell_greys then
             core.inventory.sell_greys()
+            attempted = true
         end
-        attempted = true
     end
 
     -- Repair using core.input.repair_all_items
     if repair then
         if core and core.input and core.input.repair_all_items then
             core.input.repair_all_items(false) -- use_guild_bank = false
+            attempted = true
         elseif core and core.inventory and core.inventory.repair_all_items then
             core.inventory.repair_all_items()
+            attempted = true
         end
-        attempted = true
     end
 
     -- Buy items from vendor
@@ -875,8 +886,8 @@ function RuntimeAction.execute_vendor(payload, ctx)
                 local quantity = item.quantity or 1
                 core.input.buy_item(index, quantity)
             end
+            attempted = true
         end
-        attempted = true
     end
 
     if not attempted then
@@ -915,8 +926,20 @@ function RuntimeAction.execute_flight(payload, ctx)
 
     -- Flight path taking requires interacting with flight master
     -- then using taxi frame - this is complex and may need UI interaction
+    --
+    -- VERIFY-IN-GAME: core.input.take_taxi is not a documented Sylvannas API
+    -- (docs/SylvannasAPI/dev/api/input.md has no taxi/flight entry); if the injector does not
+    -- expose it this guard stays false and the action correctly falls through to "retry" (A7a).
+    -- A7b: RuntimeFlight.destination (action.rs:245) is a STRING flight-node name, not a table —
+    -- `destination.index or destination.id or 1` indexed a string, which is a silent nil in Lua
+    -- (no error), so dest_idx always fell through to the WRONG hardcoded node 1. There is no
+    -- documented name->node lookup API, so only accept an already-numeric destination and fail
+    -- loudly rather than guess a node.
     if core and core.input and core.input.take_taxi then
-        local dest_idx = destination.index or destination.id or 1
+        local dest_idx = tonumber(destination)
+        if not dest_idx then
+            return "failed" -- Cannot resolve a flight-node name to a taxi index; do not guess
+        end
         core.input.take_taxi(dest_idx)
         return "success"
     end
@@ -1237,25 +1260,146 @@ function RuntimeAction.execute_loot(payload, ctx)
         return "blocked" -- Not in loot range
     end
 
+    -- A3: core.input.loot_object(target) expects the resolved game object
+    -- (docs/SylvannasAPI/dev/api/input.md:200), not the raw entry id — passing the entry id
+    -- fails silently (no error), so nothing was ever looted while this returned "success" and
+    -- the executor advanced past the objective. execute_kill's own corpse-loot path (above)
+    -- already resolves and passes the object correctly; this callsite disagreed with it.
+    local target_obj = UnitHelper.get_nearest_game_object({ object_entry })
+    if not target_obj then
+        -- Was in range a moment ago (the is_at_object gate above passed) but not resolvable
+        -- this tick — retry rather than faking success on a no-op.
+        return "retry"
+    end
+
     if core and core.input and core.input.loot_object then
-        core.input.loot_object(object_entry)
+        core.input.loot_object(target_obj)
     end
     return "success"
 end
 
+-- ============================================================================
+-- PR2b: real Grind/Escort/Patrol implementations (A5)
+--
+-- All three were `return "success" -- Placeholder`, instantly advancing past real compiler
+-- output (RuntimeGrind/Escort/Patrol — action.rs:34,35,39) having done nothing. None may ever
+-- return "success" for a no-op: each holds ("waiting"/"blocked") until its own observable
+-- objective is met, or reports "failed" when it cannot make progress.
+-- ============================================================================
+
+--- Grind: kill mobs in an area (by explicit target list or bounding polygon) until
+--- minimum_kills is reached. Delegates target acquisition/engagement to execute_kill so both
+--- paths share the same sticky-target, loot, chase, and engage-request logic (A3/A4/B3 fixes
+--- above apply here too).
 function RuntimeAction.execute_grind(payload, ctx)
-    -- Navigate to grind area and kill mobs
-    return "success" -- Placeholder - needs area navigation
+    local targets = payload.targets or payload.creature_entries
+    local minimum_kills = payload.minimum_kills or payload.quantity or 1
+
+    if not (type(targets) == "table" and #targets > 0) then
+        -- No creature list to grind against — cannot make progress.
+        return "failed"
+    end
+
+    -- VERIFY-IN-GAME: RuntimeGrind.polygon (a bounded area) is not enforced here — there is no
+    -- Sylvannas API to query "am I inside this polygon" cheaply, and get_all_objects already
+    -- scans the full visible range (F4). Kills are still counted correctly; only the area
+    -- restriction is unenforced pending a polygon-aware target filter.
+    local kill_payload = {
+        creature_entries = targets,
+        quantity = minimum_kills,
+        loot = payload.loot,
+        ignore_elites = payload.ignore_elites,
+    }
+    return RuntimeAction.execute_kill(kill_payload, ctx)
 end
 
+--- Escort: stay near an NPC being escorted until it reaches its destination.
+--- Holds ("waiting") while the escorted NPC is alive and not yet at the destination; only a
+--- confirmed arrival (or the escortee's death, if observable) ends the action.
 function RuntimeAction.execute_escort(payload, ctx)
-    -- Escort NPC behavior
-    return "success" -- Placeholder
+    local npc_entry = payload.npc_entry or payload.creature_entry
+    local destination = payload.destination or payload.position
+
+    if not npc_entry then
+        return "failed" -- No NPC to escort
+    end
+
+    local escortee = UnitHelper.get_nearest_creature({ npc_entry })
+    if not escortee then
+        -- Not spawned/visible yet (or already despawned after completing); cannot confirm
+        -- either way, so hold rather than silently declaring victory.
+        return "waiting"
+    end
+
+    local ok_dead, dead = pcall(escortee.is_dead, escortee)
+    if ok_dead and dead == true then
+        -- The escortee died: the escort cannot complete as intended.
+        return "failed"
+    end
+
+    local target_pos = nil
+    if type(destination) == "table" and destination.x then
+        target_pos = destination
+    elseif type(destination) == "string" then
+        target_pos = ctx:get_zone_waypoint(destination)
+    end
+
+    if target_pos and ctx.is_at_destination and ctx:is_at_destination(target_pos, 5.0) then
+        return "success"
+    end
+
+    -- Stay near the escortee; nav ownership/chase logic mirrors execute_kill's approach.
+    if ctx.nav and escortee.get_position then
+        local ok_pos, epos = pcall(escortee.get_position, escortee)
+        if ok_pos and epos and not ctx.nav:is_active() then
+            ctx.nav:move_to(epos, { tolerance = 5.0 })
+        end
+    end
+    return "waiting"
 end
 
+--- Patrol: visit an ordered list of waypoints. Advances its own internal waypoint index in
+--- ctx.persist as each point is reached; only reports "success" once every waypoint has been
+--- visited.
 function RuntimeAction.execute_patrol(payload, ctx)
-    -- Patrol waypoints
-    return "success" -- Placeholder
+    local waypoints = payload.waypoints or payload.points
+    if not (type(waypoints) == "table" and #waypoints > 0) then
+        return "failed" -- Nothing to patrol
+    end
+
+    local P = ctx.persist or ctx
+    P._patrol_idx = P._patrol_idx or 1
+
+    if P._patrol_idx > #waypoints then
+        P._patrol_idx = nil -- Done; reset so a re-run starts from the top
+        return "success"
+    end
+
+    local wp = waypoints[P._patrol_idx]
+    local target_pos = nil
+    if type(wp) == "table" and wp.x then
+        target_pos = wp
+    elseif type(wp) == "string" then
+        target_pos = ctx:get_zone_waypoint(wp)
+    end
+
+    if not target_pos then
+        return "failed" -- Unresolvable waypoint; do not silently skip it
+    end
+
+    if ctx.is_at_destination and ctx:is_at_destination(target_pos, 5.0) then
+        P._patrol_idx = P._patrol_idx + 1
+        if P._patrol_idx > #waypoints then
+            P._patrol_idx = nil
+            return "success"
+        end
+        return "waiting" -- Advance to the next waypoint on a later tick
+    end
+
+    if ctx.nav and not ctx.nav:is_active() then
+        ctx.nav:move_to(target_pos, { tolerance = 5.0 })
+    end
+    return "waiting"
 end
 
 return RuntimeAction

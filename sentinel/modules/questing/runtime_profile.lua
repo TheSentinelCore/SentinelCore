@@ -461,7 +461,11 @@ function RuntimeProfile:create_context()
                     return Geometry.distance(player_pos, npc_pos) <= range
                 end
             end
-            return true -- NPC exists nearby; best-effort
+            -- A10: get_nearest_creature scans the FULL visible range (get_all_objects), not just
+            -- nearby — an NPC found here can be ~90yd away. Without an actual distance check
+            -- there is no basis to claim "at" the NPC, so this must fail closed (routes callers
+            -- to "blocked" -> navigate) instead of failing open into a doomed interaction retry.
+            return false
         end
         return false
     end
@@ -712,8 +716,12 @@ function RuntimeProfile:create_context()
         end
         -- Check bags for item count
         if core and core.inventory and core.inventory.get_items_in_bag then
+            -- A2: docs/SylvannasAPI/dev/api/core.md:990 documents get_items_in_bag(id: integer)
+            -- with NO self/method-call convention. Passing core.inventory as a leading arg put
+            -- it in the `id` parameter and dropped bag_id, so bag item counts were always 0 and
+            -- HasItem/ItemCountAtLeast blocked for the full MAX_CONDITION_WAIT.
             for bag_id = 0, 4 do
-                local ok, items = pcall(core.inventory.get_items_in_bag, core.inventory, bag_id)
+                local ok, items = pcall(core.inventory.get_items_in_bag, bag_id)
                 if ok and items then
                     for _, slot_info in ipairs(items) do
                         if slot_info.object and slot_info.object.get_item_id then
@@ -774,8 +782,13 @@ end
 -- Hot reload (T16)
 -- ============================================================================
 
---- Get the last modification time of the profile JSON file.
---- Returns a number (timestamp) or nil.
+--- Get a change-detection signature for the profile JSON file.
+--- A11: core.get_file_info is not a documented Sylvannas API and lfs is absent from the
+--- sandbox — both branches were always nil in-game, so hot reload was dead everywhere except
+--- the offline harness (which stubs core.get_file_info). Fall back to the one real,
+--- sandbox-viable API: read the file's raw text via core.read_data_file (already used by
+--- :load()/:_check_hot_reload()) and hash its content. Returns a change signature, not a real
+--- timestamp — the caller (_check_hot_reload) must compare it for INEQUALITY, not ordering.
 function RuntimeProfile:_get_file_mtime()
     if core and core.get_file_info then
         local ok, info = pcall(core.get_file_info, self._json_path)
@@ -783,7 +796,20 @@ function RuntimeProfile:_get_file_mtime()
             return info.mtime
         end
     end
-    -- Fallback: LuaFileSystem if available
+    if core and core.read_data_file then
+        local ok, text = pcall(core.read_data_file, self._json_path)
+        if ok and type(text) == "string" then
+            -- Cheap, deterministic checksum — sampled, not a full scan, so this stays cheap on
+            -- large profiles while still catching any byte change.
+            local hash = #text
+            for i = 1, #text, 37 do
+                hash = (hash * 31 + text:byte(i)) % 2147483647
+            end
+            return hash
+        end
+    end
+    -- Fallback: LuaFileSystem if available (not present in the Sylvannas sandbox; kept for
+    -- non-sandbox test/dev environments that do have it).
     local ok, lfs = pcall(require, "lfs")
     if ok and lfs and lfs.attributes then
         local attr = lfs.attributes(self._json_path)
@@ -804,8 +830,9 @@ function RuntimeProfile:_check_hot_reload()
     local mtime = self:_get_file_mtime()
     if not mtime then return end
 
-    -- First check or mtime unchanged?
-    if self._json_mtime and mtime <= self._json_mtime then return end
+    -- First check or signature unchanged? (A11: _get_file_mtime may now return a content
+    -- checksum rather than a real timestamp, so compare for inequality, not ordering.)
+    if self._json_mtime and mtime == self._json_mtime then return end
 
     -- Read file
     local json, err = core.read_data_file and core.read_data_file(self._json_path)
@@ -1174,15 +1201,10 @@ function RuntimeProfile:_execute_running()
             self:_log_event("action_retry_exhausted", { action_type = action and action.type })
             self._consecutive_failures = self._consecutive_failures + 1
             self:_check_consecutive_failures()
-            
-            -- Move to next action after exhausting retries
-            self._current_action_idx = self._current_action_idx + 1
-            
-            -- If we've processed all actions, move to next operation
-            if self._current_action_idx > #op.actions then
-                self._current_operation_idx = self._current_operation_idx + 1
-                self._current_action_idx = 1  -- Reset for next operation
-            end
+
+            -- A1: _advance_action resets the retry budget too, so the NEXT action starts fresh
+            -- rather than inheriting an already-exhausted counter.
+            self:_advance_action(op)
             return "running", "retries exhausted, skipping action"
         end
         return "running", "retry"
@@ -1197,15 +1219,9 @@ function RuntimeProfile:_execute_running()
         self:_log_event("action_failed", { action_type = action and action.type, msg = msg })
         self._consecutive_failures = self._consecutive_failures + 1
         self:_check_consecutive_failures()
-        
-        -- Move to next action on failure
-        self._current_action_idx = self._current_action_idx + 1
-        
-        -- If we've processed all actions, move to next operation
-        if self._current_action_idx > #op.actions then
-            self._current_operation_idx = self._current_operation_idx + 1
-            self._current_action_idx = 1  -- Reset for next operation
-        end
+
+        -- A1: reset the retry budget for the next action.
+        self:_advance_action(op)
         return "running", "action failed, skipping"
     end
 
@@ -1226,15 +1242,59 @@ function RuntimeProfile:_check_consecutive_failures()
 end
 
 -- ====================================================================
+-- A1 — Per-action retry budget
+-- ====================================================================
+
+--- Advance to the next action within `op`, rolling over to the next operation at the boundary.
+--- ALWAYS resets `_current_action_retries` to 0.
+---
+--- PROVEN: `_current_action_retries` used to reset ONLY on success (:1103) and operation change
+--- (:1053). The retry-exhausted, failed, and _handle_blocked-no-target branches advanced
+--- `_current_action_idx` with a raw `+ 1` and left the counter alone, so every action after the
+--- first in an operation inherited whatever was left of the budget. Repro: 4 retry-returning
+--- actions -> action 1 got 5 attempts, actions 2/3/4 got ONE each, _consecutive_failures hit 3,
+--- state="failed" by tick 7. One flaky action could kill the whole operation in ~1 second. Each
+--- action now gets its own full MAX_RETRIES_PER_ACTION budget.
+function RuntimeProfile:_advance_action(op)
+    self._current_action_idx = self._current_action_idx + 1
+    self._current_action_retries = 0
+    if op and self._current_action_idx > #op.actions then
+        self._current_operation_idx = self._current_operation_idx + 1
+        self._current_action_idx = 1
+    end
+end
+
+-- ====================================================================
 -- W4.2 — Navigating state: poll NavAdapter, retry on arrival
 -- ====================================================================
+
+--- B5 support: verify the player is actually near the target the blocked action was navigating
+--- to, rather than trusting the nav client's "idle" state on faith. Anything that calls stop()
+--- on the shared nav client (combat preempting it, a reload, another module) drives it idle
+--- with no position guarantee — execute_travel already handles the same pair correctly (trusts
+--- "arrived" blindly, requires a position check for "idle"); this brings _execute_navigating
+--- in line with it.
+function RuntimeProfile:_confirm_nav_arrival()
+    local target_pos = self:_resolve_nav_target(self._last_blocked_action)
+    if not target_pos then
+        -- No known target to confirm against — nothing to verify, so fall back to trusting
+        -- idle rather than wedging the run on a check this cannot perform.
+        return true
+    end
+    local ctx = self:create_context()
+    return ctx:is_at_destination(target_pos, ARRIVAL_TOLERANCE)
+end
 
 function RuntimeProfile:_execute_navigating()
     -- If nav completed without us noticing, check if we're there
     if not self._nav:is_active() then
         local state = self._nav:get_state()
-        if state == "idle" or state == "arrived" then
-            -- Nav finished; retry the action
+        if state == "arrived" then
+            -- Nav finished; the navmesh's own confirmation is trusted directly.
+            self:_log_event("nav_arrived", {})
+            self._state = "running"
+            return "running", "navigated, retry"
+        elseif state == "idle" and self:_confirm_nav_arrival() then
             self:_log_event("nav_arrived", {})
             self._state = "running"
             return "running", "navigated, retry"
@@ -1245,11 +1305,25 @@ function RuntimeProfile:_execute_navigating()
     local state, progress = self._nav:poll()
     self._blackboard:set("questing.nav_state", state)
 
-    if state == "arrived" or state == "idle" then
+    if state == "arrived" then
         self._nav:stop("arrived")
         self:_log_event("nav_arrived", {})
         self._state = "running"
         return "running", "navigated, retry"
+
+    elseif state == "idle" then
+        -- B5: "idle" with NO position check used to be treated as arrival unconditionally.
+        -- Require an actual position confirmation before accepting it.
+        if self:_confirm_nav_arrival() then
+            self._nav:stop("arrived")
+            self:_log_event("nav_arrived", {})
+            self._state = "running"
+            return "running", "navigated, retry"
+        end
+        self:_log_event("nav_idle_unconfirmed", {})
+        self._current_action_retries = self._current_action_retries + 1
+        self._state = "running"
+        return "running", "nav idle without arrival, retry"
 
     elseif state == "requesting_path" or state == "moving" then
         -- Check timeout
@@ -1356,16 +1430,12 @@ function RuntimeProfile:_handle_blocked(action)
         -- Can't navigate: increment retries
         self._current_action_retries = self._current_action_retries + 1
         if self._current_action_retries >= MAX_RETRIES_PER_ACTION then
-            -- Exhausted retries → advance to next action
+            -- Exhausted retries → advance to next action (A1: reset the budget for the next one).
             self._consecutive_failures = self._consecutive_failures + 1
             self:_check_consecutive_failures()
-            self._current_action_idx = self._current_action_idx + 1
             local operations = self._profile.operations or {}
             local op = operations[self._current_operation_idx]
-            if op and self._current_action_idx > #op.actions then
-                self._current_operation_idx = self._current_operation_idx + 1
-                self._current_action_idx = 1
-            end
+            self:_advance_action(op)
             return "running", "blocked (no nav target), retries exhausted, advancing"
         end
         return "running", "blocked (no nav target)"

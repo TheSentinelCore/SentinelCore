@@ -106,13 +106,52 @@ function M.test_retry_counter_increments()
             "Should remain in running state after retry")
     end
 
-    -- 5th retry exhausts MAX_RETRIES_PER_ACTION (5)
+    -- 5th retry exhausts MAX_RETRIES_PER_ACTION (5). A1: _advance_action resets the retry
+    -- counter to 0 as part of moving past the exhausted action, so the NEXT action starts with
+    -- its own fresh budget instead of inheriting an already-exhausted counter.
     local status, msg = profile:execute()
     T.assert_equal(status, "running", "Should still be running after retry exhaust")
-    T.assert_equal(profile._current_action_retries, 5,
-        "Retry counter should be 5 at exhaustion")
+    T.assert_equal(profile._current_action_retries, 0,
+        "Retry counter should reset to 0 after advancing past the exhausted action (A1)")
     T.assert_true(profile._consecutive_failures >= 1,
         "Retry exhaustion should increment consecutive failures")
+end
+
+function M.test_a1_each_retry_returning_action_gets_full_budget()
+    -- A1 repro (PROVEN in the audit register): 4 retry-returning actions in one operation.
+    -- Before the fix, only the FIRST action in an operation got a fresh retry counter (reset
+    -- happened only on success or operation change) — every action after it inherited a
+    -- shared, already-exhausted counter. Action 1 got 5 attempts; actions 2/3/4 got exactly
+    -- ONE each; _consecutive_failures hit MAX_CONSECUTIVE_FAILURES (3) and the profile entered
+    -- "failed" after only ~7 ticks. With _advance_action resetting the counter on every
+    -- advance, each action gets its own MAX_RETRIES_PER_ACTION (5) budget, so the profile must
+    -- survive at least 3 actions x 5 retries = 15 ticks before the 3rd exhaustion fails it.
+    local profile = create_profile({
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Hearth", payload = {} },
+                    { type = "Hearth", payload = {} },
+                    { type = "Hearth", payload = {} },
+                    { type = "Hearth", payload = {} },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+
+    local ticks_to_failure = 0
+    for _tick = 1, 30 do
+        profile:execute()
+        ticks_to_failure = ticks_to_failure + 1
+        if profile._state == "failed" then break end
+    end
+
+    T.assert_true(profile._state == "failed", "profile should eventually fail (all-retry actions)")
+    T.assert_true(ticks_to_failure >= 15,
+        "each action should get its own full retry budget (expected >=15 ticks to failure, got "
+            .. tostring(ticks_to_failure) .. ") — a shared/exhausted counter fails by tick ~7")
 end
 
 function M.test_retry_success_resets_counter()
@@ -167,6 +206,68 @@ function M.test_blocked_with_position_starts_nav()
     -- verify the profile didn't crash
     T.assert_true(profile._state == "running" or profile._state == "navigating",
         "Should transition to navigating or stay running")
+end
+
+function M.test_is_at_npc_fails_closed_when_player_pos_unreadable()
+    -- A10: get_nearest_creature scans the FULL visible range (get_all_objects), not just
+    -- nearby — an NPC found there can be ~90yd away. Without an actual distance check there is
+    -- no basis to claim "at" the NPC, so is_at_npc must fail closed (routes callers to
+    -- "blocked" -> navigate) instead of the old best-effort "true" when the player position
+    -- could not be read.
+    local profile = create_profile(make_profile_ops("Comment", { text = "test" }))
+    local ctx = profile:create_context()
+
+    _G.core.object_manager.get_all_objects = function()
+        return {
+            {
+                is_valid = function() return true end,
+                is_unit = function() return true end,
+                get_npc_id = function() return 1000 end,
+                get_position = function() return { x = 100, y = 100, z = 0 } end,
+            },
+        }
+    end
+    -- No get_local_player mocked here — player position is unreadable.
+    _G.core.object_manager.get_local_player = nil
+
+    T.assert_false(ctx:is_at_npc(1000),
+        "is_at_npc must return false, not best-effort true, when the player position can't be read")
+end
+
+function M.test_navigating_idle_without_arrival_is_not_treated_as_arrival()
+    -- B5: _execute_navigating used to treat client state "idle" as arrival with NO position
+    -- check. Anything that calls stop() on the shared nav client (combat preempting it, a
+    -- reload, another module) drives it idle without the player having actually arrived.
+    -- Require a real position confirmation before accepting "idle" as arrival.
+    local profile = create_profile(make_profile_ops("Travel", {
+        position = { x = 500, y = 500, z = 0 },
+        tolerance = 5.0,
+    }))
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            get_position = function() return { x = 0, y = 0, z = 0 } end, -- far from the target
+        }
+    end
+
+    profile._state = "navigating"
+    profile._last_blocked_action = profile._profile.operations[1].actions[1]
+    local retries_before = profile._current_action_retries
+    profile._nav = {
+        is_active = function() return false end,
+        get_state = function() return "idle" end,
+        poll = function() return "idle", {} end,
+        stop = function() end,
+    }
+
+    profile:execute()
+
+    T.assert_equal(#get_log_events(profile, "nav_arrived"), 0,
+        "An idle state hundreds of yards from the destination must not be logged as arrival (B5)")
+    T.assert_true(#get_log_events(profile, "nav_idle_unconfirmed") >= 1,
+        "An unconfirmed idle must be logged distinctly, not silently accepted as arrival")
+    T.assert_true(profile._current_action_retries > retries_before,
+        "Unconfirmed idle should count toward the retry budget so this cannot wedge forever")
 end
 
 -- ============================================================================
@@ -601,10 +702,13 @@ local tests = {
     -- W4.1
     test_retry_counter_increments = M.test_retry_counter_increments,
     test_retry_success_resets_counter = M.test_retry_success_resets_counter,
+    test_a1_each_retry_returning_action_gets_full_budget = M.test_a1_each_retry_returning_action_gets_full_budget,
 
     -- W4.2
     test_blocked_enters_navigating = M.test_blocked_enters_navigating,
     test_blocked_with_position_starts_nav = M.test_blocked_with_position_starts_nav,
+    test_is_at_npc_fails_closed_when_player_pos_unreadable = M.test_is_at_npc_fails_closed_when_player_pos_unreadable,
+    test_navigating_idle_without_arrival_is_not_treated_as_arrival = M.test_navigating_idle_without_arrival_is_not_treated_as_arrival,
 
     -- W4.3
     test_death_detection_enters_ghost = M.test_death_detection_enters_ghost,
