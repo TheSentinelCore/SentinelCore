@@ -119,6 +119,10 @@ function RuntimeProfile:new(json_path, dry_run, event_bus, blackboard)
     o._save_path = o:_compute_save_path()
     o._dirty = false                    -- Track unsaved changes
 
+    -- Route reconciliation: operations already rewound to once this session (backward
+    -- jumps to a ready turn-in are one-shot per target op — see _apply_reconciliation).
+    o._rewound_ops = {}
+
     -- Extended state for v2 persistence (T18)
     o._completed_quests = {}            -- { [quest_entry] = true }
     o._temporary_variables = {}         -- Runtime-only variables
@@ -401,19 +405,11 @@ function RuntimeProfile:load()
         end
 
         -- ADR 06 §8.1 route reconciliation: the game's per-character quest flags decide
-        -- WHERE WE ARE; the save is at best a hint. The save may legitimately be AHEAD of
-        -- what the flags can prove (kill-only progress is unobservable), never behind —
-        -- so take whichever points further. With no save (fresh login, new character)
-        -- this alone lands on the right step.
-        local reconciled = self:_reconcile_start_operation()
-        if reconciled > self._current_operation_idx then
-            self:_log_event("route_reconciled", {
-                from_operation = self._current_operation_idx,
-                to_operation = reconciled,
-            })
-            self._current_operation_idx = reconciled
-            self._current_action_idx = 1
-        end
+        -- WHERE WE ARE; the save is at best a hint. Forward jumps are always taken; a
+        -- certain verdict (ready turn-in) overrides the save even backwards — see
+        -- _apply_reconciliation.
+        local reconciled, certain = self:_reconcile_start_operation()
+        self:_apply_reconciliation(reconciled, certain)
 
         return true
     end
@@ -504,6 +500,42 @@ function RuntimeProfile:_operation_already_done(op)
     return self:_op_quest_status(op) == "satisfied"
 end
 
+--- Is this operation's own Completion gate ALREADY met before any of its actions ran?
+---
+--- Kill operations are compiled as Travel + Kill(quantity) + Condition(ObjectiveComplete).
+--- The Kill action counts its own corpses from zero every session, so on a resume it
+--- hunts the full quantity again even when the quest objective is already complete — and
+--- the gate behind it never gets evaluated, because Kill holds "waiting" until ITS count
+--- is satisfied (live-caught: the bot re-farmed wolves for a quest sitting at 8/8).
+--- The objective state in the quest log is the real source of truth (ADR 06 §8.1), so:
+--- if the operation carries at least one Completion-role gate, contains no quest
+--- accept/turn-in actions (those have their own skip logic), and EVERY Completion gate
+--- already evaluates true, the whole operation is done — skip it without moving.
+function RuntimeProfile:_operation_gate_already_met(op, ctx)
+    local saw_gate = false
+    local saw_farm_work = false
+    for _, a in ipairs(op.actions or {}) do
+        if a.type == "AcceptQuest" or a.type == "TurnInQuest" then
+            return false
+        elseif a.type == "Kill" or a.type == "Grind" or a.type == "Loot" or a.type == "UseItem" then
+            -- The re-farm problem only exists for work counted by zeroed local state.
+            saw_farm_work = true
+        elseif a.type == "Condition" then
+            local p = a.payload or {}
+            if p.role == "Completion" and p.condition then
+                saw_gate = true
+                local ok, met = pcall(RuntimeAction.evaluate_condition, ctx, p.condition)
+                if not (ok and met == true) then
+                    return false
+                end
+            end
+        end
+    end
+    -- Condition-only operations keep their normal per-action flow (their gates are
+    -- cheap to evaluate in place); the skip exists to avoid REDOING expensive work.
+    return saw_gate and saw_farm_work
+end
+
 --- Derive the starting operation from the character's REAL quest state instead of
 --- trusting a save file. Guides are linear, so quest anchors dominate: an operation whose
 --- Accept/TurnIn work is all satisfied proves every earlier operation done, and
@@ -513,9 +545,19 @@ end
 ---
 --- This is what makes a relog — or a DIFFERENT character — land on the right step with no
 --- save file at all: the server's per-character quest flags are the source of truth.
+--- Returns (start_idx, certain). `certain` is true when the scan stopped AT a ready
+--- turn-in: that is observable, mandatory pending work (a log-complete quest waiting to
+--- be handed in), strong enough to override a save file even BACKWARDS — a save can
+--- legitimately be ahead of what flags prove (kill-only progress is unobservable), but a
+--- save that advanced past a failed turn-in is simply wrong, and the route would
+--- otherwise never come back for the quest (live-caught: turn-in of quest 7 exhausted
+--- its retries, the save recorded op 7, and the restart resumed there instead of at the
+--- op-4 turn-in). A stop at an unsatisfied anchor stays uncertain: kills before it may
+--- or may not be done, so the save keeps forward precedence there.
 function RuntimeProfile:_reconcile_start_operation()
     local operations = (self._profile and self._profile.operations) or {}
     local start_idx = 1
+    local certain = false
     for i, op in ipairs(operations) do
         local status = self:_op_quest_status(op)
         if status == "satisfied" then
@@ -524,12 +566,44 @@ function RuntimeProfile:_reconcile_start_operation()
             -- The work feeding this turn-in is done; the turn-in itself is not.
             -- Jump straight TO this operation (skipping the kill ops before it).
             start_idx = i
+            certain = true
             break
         elseif status == "unsatisfied" then
             break
         end
     end
-    return start_idx
+    return start_idx, certain
+end
+
+--- Apply a reconciliation verdict to the current route position. Forward jumps are always
+--- taken. Backward jumps are taken only when `certain` (a ready turn-in) and at most ONCE
+--- per target operation per session — if the turn-in genuinely cannot complete (NPC gone,
+--- bugged quest), the rewind guard stops an infinite advance→rewind loop.
+function RuntimeProfile:_apply_reconciliation(reconciled, certain)
+    local current = self._current_operation_idx
+    if reconciled > current then
+        self:_log_event("route_reconciled", {
+            from_operation = current,
+            to_operation = reconciled,
+        })
+        self._current_operation_idx = reconciled
+        self._current_action_idx = 1
+        return true
+    end
+    if certain and reconciled < current then
+        self._rewound_ops = self._rewound_ops or {}
+        if not self._rewound_ops[reconciled] then
+            self._rewound_ops[reconciled] = true
+            self:_log_event("route_rewound", {
+                from_operation = current,
+                to_operation = reconciled,
+            })
+            self._current_operation_idx = reconciled
+            self._current_action_idx = 1
+            return true
+        end
+    end
+    return false
 end
 
 -- ============================================================================
@@ -1271,6 +1345,16 @@ function RuntimeProfile:_execute_running()
         return "running", "already done, skipping operation"
     end
 
+    -- Same idea for non-quest operations gated by their own Completion condition: if the
+    -- gate (usually ObjectiveComplete) is already met, the kills/loots in front of it are
+    -- moot — skip the operation instead of re-farming from a zeroed local counter.
+    if self._current_action_idx == 1 and self:_operation_gate_already_met(op, ctx) then
+        self:_log_event("operation_gate_met", { operation = self._current_operation_idx })
+        self:_advance_operation(op)
+        self._current_action_idx = 1
+        return "running", "completion gate already met, skipping operation"
+    end
+
     local status, msg
     -- CL4: a per-action class guard (compiler-emitted `action.guard`, a RuntimeCondition) is
     -- evaluated BEFORE dispatch. Unmet -> treat exactly like an existing "skipped" action: never
@@ -1740,17 +1824,11 @@ function RuntimeProfile:_advance_operation(op)
     -- Re-reconcile at every operation boundary: the turn-in that just landed may prove a
     -- whole later stretch of the route done (e.g. turning in quest 7 makes ops 5-6's
     -- accept/turn-in satisfied and quest 33's kills log-complete, so the right next stop
-    -- is op 8's turn-in, not op 7's kobold camp). Forward-only — reconciliation can never
-    -- move the route backwards. Cost is a handful of client flag reads once per operation.
-    local reconciled = self:_reconcile_start_operation()
-    if reconciled > self._current_operation_idx then
-        self:_log_event("route_reconciled", {
-            from_operation = self._current_operation_idx,
-            to_operation = reconciled,
-        })
-        self._current_operation_idx = reconciled
-        self._current_action_idx = 1
-    end
+    -- is op 8's turn-in, not op 7's kobold camp). A certain verdict (ready turn-in) can
+    -- also rewind — at most once per target op — so a turn-in that failed its retries is
+    -- revisited instead of lost. Cost is a handful of client flag reads per operation.
+    local reconciled, certain = self:_reconcile_start_operation()
+    self:_apply_reconciliation(reconciled, certain)
 
     -- W5.3 — Auto-save after operation advance
     self:_save()
@@ -1775,6 +1853,7 @@ function RuntimeProfile:reset()
     self._last_blocked_action = nil
     self._execution_log = {}
     self._json_mtime = nil
+    self._rewound_ops = {}
     self._completed_quests = {}
     self._temporary_variables = {}
     self._visited_vendors = {}

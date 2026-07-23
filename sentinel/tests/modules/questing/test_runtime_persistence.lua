@@ -313,6 +313,83 @@ function M.test_advance_reconciles_past_moot_kills()
     _G.core.quests = nil
 end
 
+function M.test_certain_reconcile_rewinds_past_bogus_save()
+    written_files = {}
+    mock_globals()
+    local ops = {
+        content_hash = "abc123hash",
+        operations = {
+            { id = 1, actions = { { type = "TurnInQuest", payload = { quest_id = 20, npc_entry = 1 } } }, next_condition = "auto" },
+            { id = 2, actions = { { type = "Kill", payload = { creature_entries = { 5 } } } }, next_condition = "auto" },
+            { id = 3, actions = { { type = "Comment", payload = { text = "x" } } }, next_condition = "auto" },
+        },
+    }
+    -- A previous session's turn-in failed its retries and the save recorded op 3.
+    local stale = create_profile(ops)
+    stale._current_operation_idx = 3
+    stale:_save()
+
+    _G.core.quests = {
+        is_quest_flagged_completed = function(_) return false end,
+        is_on_quest = function(qid) return qid == 20 end,
+        get_num_quest_log_entries = function() return 1 end,
+        get_quest_log_title = function(_) return { quest_id = 20, is_complete = 1 } end,
+    }
+    local profile = create_profile(ops)
+    profile:_load_save()
+    T.assert_equal(profile._current_operation_idx, 3, "sanity: save restored the bogus position")
+    local reconciled, certain = profile:_reconcile_start_operation()
+    T.assert_true(certain, "a ready turn-in is a certain verdict")
+    T.assert_true(profile:_apply_reconciliation(reconciled, certain),
+        "certain verdict must rewind past the bogus save")
+    T.assert_equal(profile._current_operation_idx, 1,
+        "route must return to the pending turn-in the save skipped")
+
+    -- The rewind is one-shot per target op: a permanently failing turn-in cannot loop.
+    profile._current_operation_idx = 3
+    T.assert_false(profile:_apply_reconciliation(profile:_reconcile_start_operation()),
+        "second rewind to the same operation must be refused")
+    _G.core.quests = nil
+end
+
+function M.test_operation_skipped_when_completion_gate_met()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Travel", payload = { position = { x = 0, y = 0, z = 0 } } },
+                    { type = "Kill", payload = { creature_entries = { 5 }, quantity = 8 } },
+                    { type = "Condition", payload = { role = "Completion", condition = { type = "AlwaysTrue", payload = {} } } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    local ctx = profile:create_context()
+    T.assert_true(profile:_operation_gate_already_met(profile._profile.operations[1], ctx),
+        "a met Completion gate must mark the whole kill operation as done")
+
+    -- A quest action in the operation defers to the quest-status skip logic instead.
+    local op_with_quest = {
+        actions = {
+            { type = "TurnInQuest", payload = { quest_id = 9, npc_entry = 1 } },
+            { type = "Condition", payload = { role = "Completion", condition = { type = "AlwaysTrue", payload = {} } } },
+        },
+    }
+    T.assert_false(profile:_operation_gate_already_met(op_with_quest, ctx),
+        "operations with quest actions must never gate-skip")
+
+    -- No Completion gate at all: nothing observable, never skip.
+    local op_no_gate = {
+        actions = { { type = "Kill", payload = { creature_entries = { 5 } } } },
+    }
+    T.assert_false(profile:_operation_gate_already_met(op_no_gate, ctx),
+        "a gateless kill operation must never gate-skip")
+end
+
 function M.test_operation_with_kills_skipped_when_quest_rewarded()
     written_files = {}
     local profile = create_profile(make_profile_ops())
@@ -422,6 +499,8 @@ local tests = {
     test_reconcile_starts_after_last_satisfied_anchor = M.test_reconcile_starts_after_last_satisfied_anchor,
     test_reconcile_jumps_to_ready_turnin = M.test_reconcile_jumps_to_ready_turnin,
     test_advance_reconciles_past_moot_kills = M.test_advance_reconciles_past_moot_kills,
+    test_certain_reconcile_rewinds_past_bogus_save = M.test_certain_reconcile_rewinds_past_bogus_save,
+    test_operation_skipped_when_completion_gate_met = M.test_operation_skipped_when_completion_gate_met,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,
