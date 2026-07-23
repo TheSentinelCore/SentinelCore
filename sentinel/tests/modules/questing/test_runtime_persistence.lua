@@ -212,12 +212,13 @@ function M.test_auto_save_on_skipped_advance()
         operations = {
             {
                 id = 1,
-                actions = { { type = "Condition", payload = { condition = { type = "LevelAtLeast", payload = 100 } } } },
+                actions = { { type = "Condition", payload = { role = "Applicability", condition = { type = "LevelAtLeast", payload = 100 } } } },
                 next_condition = "auto",
             },
         },
     })
-    -- LevelAtLeast(100) will fail (mock context returns level 1), so it's "skipped"
+    -- LevelAtLeast(100) will fail (mock context returns level 1); an unmet Applicability
+    -- condition returns "skipped" (unmet Completion would instead "wait"), so it advances.
 
     profile:execute()
 

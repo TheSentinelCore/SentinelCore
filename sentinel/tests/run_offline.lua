@@ -94,52 +94,173 @@ _G.core = {
     },
 }
 
--- Mock JSON module
-_G.JSON = {
-    parse = function(str)
-        local ok, result = pcall(function()
-            return assert(loadstring("return " .. str))()
-        end)
-        if ok then return result end
-        return nil
-    end,
-    stringify = function(tbl)
-        local function serialize(val, indent)
-            local indent = indent or ""
-            local t = type(val)
-            if t == "string" then
-                return string.format("%q", val)
-            elseif t == "number" then
-                return tostring(val)
-            elseif t == "boolean" then
-                return tostring(val)
-            elseif t == "nil" then
-                return "null"
-            elseif t == "table" then
-                local parts = {}
-                local is_array = true
-                local max_key = 0
-                for k, v in pairs(val) do
-                    if type(k) ~= "number" then is_array = false end
-                    if type(k) == "number" and k > max_key then max_key = k end
-                end
-                if is_array and max_key == #val then
-                    for i, v in ipairs(val) do
-                        table.insert(parts, serialize(v, indent .. "  "))
-                    end
-                    return "[" .. table.concat(parts, ", ") .. "]"
-                else
-                    for k, v in pairs(val) do
-                        table.insert(parts, string.format("%s%q: %s", indent .. "  ", k, serialize(v, indent .. "  ")))
-                    end
-                    return "{\n" .. table.concat(parts, ",\n") .. "\n" .. indent .. "}"
-                end
-            end
-            return tostring(val)
+-- Mock JSON module — a real, round-trippable JSON encoder/decoder pair.
+-- `stringify(x)` emits valid JSON; `parse(stringify(x))` must reproduce `x`
+-- for the table/array/string/number/boolean/nested shapes used by
+-- runtime_profile.lua's persistence save/load (RE9).
+_G.JSON = {}
+
+local function json_escape(str)
+    return (str:gsub('[%z\1-\31"\\]', function(c)
+        if c == '"' then return '\\"'
+        elseif c == "\\" then return "\\\\"
+        elseif c == "\n" then return "\\n"
+        elseif c == "\r" then return "\\r"
+        elseif c == "\t" then return "\\t"
+        else return string.format("\\u%04x", string.byte(c))
         end
-        return serialize(tbl)
-    end,
-}
+    end))
+end
+
+local function json_encode_value(val)
+    local t = type(val)
+    if t == "string" then
+        return '"' .. json_escape(val) .. '"'
+    elseif t == "number" then
+        return tostring(val)
+    elseif t == "boolean" then
+        return tostring(val)
+    elseif t == "nil" then
+        return "null"
+    elseif t == "table" then
+        local is_array = true
+        local max_key = 0
+        local count = 0
+        for k in pairs(val) do
+            count = count + 1
+            if type(k) ~= "number" or k ~= math.floor(k) or k < 1 then
+                is_array = false
+            elseif k > max_key then
+                max_key = k
+            end
+        end
+        if is_array and max_key == count then
+            local parts = {}
+            for i = 1, max_key do
+                parts[i] = json_encode_value(val[i])
+            end
+            return "[" .. table.concat(parts, ",") .. "]"
+        else
+            local parts = {}
+            for k, v in pairs(val) do
+                table.insert(parts, '"' .. json_escape(tostring(k)) .. '":' .. json_encode_value(v))
+            end
+            return "{" .. table.concat(parts, ",") .. "}"
+        end
+    end
+    return "null"
+end
+
+local function json_skip_ws(str, pos)
+    local _, e = str:find("^%s*", pos)
+    return e + 1
+end
+
+local function json_decode_string(str, pos)
+    -- `pos` points at the opening quote.
+    pos = pos + 1
+    local parts = {}
+    while true do
+        local c = str:sub(pos, pos)
+        if c == "" then
+            error("Unterminated JSON string")
+        elseif c == '"' then
+            return table.concat(parts), pos + 1
+        elseif c == "\\" then
+            local nc = str:sub(pos + 1, pos + 1)
+            if nc == "n" then parts[#parts + 1] = "\n"; pos = pos + 2
+            elseif nc == "t" then parts[#parts + 1] = "\t"; pos = pos + 2
+            elseif nc == "r" then parts[#parts + 1] = "\r"; pos = pos + 2
+            elseif nc == '"' then parts[#parts + 1] = '"'; pos = pos + 2
+            elseif nc == "\\" then parts[#parts + 1] = "\\"; pos = pos + 2
+            elseif nc == "/" then parts[#parts + 1] = "/"; pos = pos + 2
+            elseif nc == "u" then
+                local hex = str:sub(pos + 2, pos + 5)
+                parts[#parts + 1] = string.char(tonumber(hex, 16) % 256)
+                pos = pos + 6
+            else
+                parts[#parts + 1] = nc; pos = pos + 2
+            end
+        else
+            parts[#parts + 1] = c
+            pos = pos + 1
+        end
+    end
+end
+
+local function json_decode_value(str, pos)
+    pos = json_skip_ws(str, pos)
+    local c = str:sub(pos, pos)
+    if c == '"' then
+        return json_decode_string(str, pos)
+    elseif c == "{" then
+        local obj = {}
+        pos = json_skip_ws(str, pos + 1)
+        if str:sub(pos, pos) == "}" then return obj, pos + 1 end
+        while true do
+            pos = json_skip_ws(str, pos)
+            local key
+            key, pos = json_decode_string(str, pos)
+            pos = json_skip_ws(str, pos)
+            assert(str:sub(pos, pos) == ":", "expected ':' in JSON object")
+            pos = pos + 1
+            local val
+            val, pos = json_decode_value(str, pos)
+            obj[key] = val
+            pos = json_skip_ws(str, pos)
+            local sep = str:sub(pos, pos)
+            if sep == "," then
+                pos = pos + 1
+            elseif sep == "}" then
+                return obj, pos + 1
+            else
+                error("expected ',' or '}' in JSON object")
+            end
+        end
+    elseif c == "[" then
+        local arr = {}
+        pos = json_skip_ws(str, pos + 1)
+        if str:sub(pos, pos) == "]" then return arr, pos + 1 end
+        local i = 0
+        while true do
+            local val
+            val, pos = json_decode_value(str, pos)
+            i = i + 1
+            arr[i] = val
+            pos = json_skip_ws(str, pos)
+            local sep = str:sub(pos, pos)
+            if sep == "," then
+                pos = pos + 1
+            elseif sep == "]" then
+                return arr, pos + 1
+            else
+                error("expected ',' or ']' in JSON array")
+            end
+        end
+    elseif c:match("[%-%d]") then
+        local _, e, num = str:find("^(%-?%d+%.?%d*[eE]?[%-%+]?%d*)", pos)
+        return tonumber(num), e + 1
+    elseif str:sub(pos, pos + 3) == "true" then
+        return true, pos + 4
+    elseif str:sub(pos, pos + 4) == "false" then
+        return false, pos + 5
+    elseif str:sub(pos, pos + 3) == "null" then
+        return nil, pos + 4
+    else
+        error("Unexpected JSON token at position " .. pos .. ": " .. str:sub(pos, pos + 10))
+    end
+end
+
+_G.JSON.stringify = function(tbl)
+    return json_encode_value(tbl)
+end
+
+_G.JSON.parse = function(str)
+    if type(str) ~= "string" then return nil end
+    local ok, result = pcall(json_decode_value, str, 1)
+    if ok then return result end
+    return nil
+end
 
 -- Mock core data file APIs
 _G.core.read_data_file = function(path)
@@ -162,6 +283,9 @@ package.path = table.concat({
 
 -- Run test modules (combat + core + infrastructure + questing)
 local test_modules = {
+    -- Harness (offline-only; exercises _G.JSON mocked above)
+    "tests/harness/test_json_mock",
+
     -- Core
     "tests/core/test_event_bus",
     "tests/core/test_blackboard",

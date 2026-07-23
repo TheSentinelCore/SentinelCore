@@ -187,8 +187,8 @@ Maintainer decision (2026-07-22, superseding the ClassIs-into-Condition-payload 
 
 ## PR4b: Runtime — JSON Mock + Action-Type/FSM Verification
 
-- [ ] 7.1 RED `sentinel/tests/modules/questing/test_runtime_persistence.lua::test_restore_state_from_save`: save→parse round-trip loses no state (RE9)
-- [ ] 7.2 GREEN `sentinel/tests/run_offline.lua`: replace Lua-literal mock emission with real JSON stringify + pure-Lua JSON decoder, keep production JSON-then-Lua fallback unchanged (RE9)
+- [x] 7.1 RED `sentinel/tests/modules/questing/test_runtime_persistence.lua::test_restore_state_from_save`: save→parse round-trip loses no state (RE9)
+- [x] 7.2 GREEN `sentinel/tests/run_offline.lua`: replace Lua-literal mock emission with real JSON stringify + pure-Lua JSON decoder, keep production JSON-then-Lua fallback unchanged (RE9)
 - [ ] 7.3 Manual: verify `AcceptQuest` action on a startable Human quest (RE8)
 - [ ] 7.4 Manual: verify `TravelAction` navigation to resolved coords (RE8)
 - [ ] 7.5 Manual: verify `Kill` action targets via `creature_entries` (RE8)
