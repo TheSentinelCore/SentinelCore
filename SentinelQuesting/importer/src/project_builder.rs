@@ -351,6 +351,21 @@ const ZONE_TABLE: &[(u32, &[&str], ZoneMap)] = &[
      ZoneMap { continent: 1, top: 8333.333, left: 2941.6665, bottom: 3966.6665, right: -3608.3333 }),
 ];
 
+/// Class names the compiler's `parse_class_guard` can lower (kept in sync with its KNOWN_CLASSES).
+const CLASS_TOKENS: &[&str] = &[
+    "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "DeathKnight", "Shaman", "Mage", "Warlock",
+    "Druid",
+];
+
+/// Is this step-condition token a class name (optionally `!`-negated)?
+///
+/// Step headers carry a mix of classes (`<< Warlock`) and races (`<< !Human`); only the former can
+/// currently be gated, so this keeps race tokens from being lowered into a class guard.
+fn is_known_class_token(token: &str) -> bool {
+    let name = token.trim().trim_start_matches('!').trim();
+    CLASS_TOKENS.iter().any(|c| c.eq_ignore_ascii_case(name))
+}
+
 /// Look up a zone by name or by a bare UI map id (guides use both forms, e.g.
 /// `.goto Elwynn Forest,…` and `.goto 1429,…`).
 fn zone_map_for(zone: &str) -> Option<ZoneMap> {
@@ -1099,6 +1114,30 @@ impl ProjectBuilder {
                 }
             }
             op.actions = build_step_actions(&mut state, step).await?;
+
+            // Step-level class gating (`step << Warlock`, `step << Priest/Mage/Warlock`).
+            // IF3 already stamps COMMAND-level suffixes (`.turnin 33,2 << Rogue`), but a step
+            // header restriction reached only `op.conditions`, which the compiler drops — so a
+            // Paladin happily ran the Warlock opening. Stamp it onto every action in the step that
+            // has no class suffix of its own; the command-level suffix is more specific and wins.
+            //
+            // Only CLASS tokens are propagated. `step << !Human` is a RACE restriction, and
+            // RaceIs compares against a numeric race id the runtime does not yet map, so emitting
+            // it would gate on a comparison that cannot match. Unknown tokens are left to
+            // parse_class_guard, which diagnoses and fails open (runs the step) — the safe
+            // direction, since doing an extra step costs time while skipping a needed one breaks
+            // the route.
+            if !step.conditions.is_empty()
+                && step.conditions.iter().all(|c| is_known_class_token(c))
+            {
+                let restriction = step.conditions.join("/");
+                for action in op.actions.iter_mut() {
+                    if action.class_restriction.is_none() {
+                        action.class_restriction = Some(restriction.clone());
+                    }
+                }
+            }
+
             operations.push(op);
         }
         project.operations = operations;
