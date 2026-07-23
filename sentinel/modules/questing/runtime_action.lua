@@ -469,6 +469,16 @@ function RuntimeAction.execute_kill(payload, ctx)
     local entries = payload.creature_entries or {}
     local quantity = payload.quantity or 1
 
+    -- Branch trace. Inferring kill behaviour from state snapshots proved unreliable, so record the
+    -- decision each tick and let the caller read it back. Cheap: one table write per execution.
+    ctx._kill_trace = { entries = #entries, quantity = quantity }
+    -- Records WHICH branch ran, and returns the real status unchanged. The trace must never
+    -- influence behaviour.
+    local function trace(branch, status)
+        ctx._kill_trace.branch = branch
+        return status
+    end
+
     -- Initialize kill tracking
     ctx.kill_counts = ctx.kill_counts or {}
     local key = table.concat(entries, ",")
@@ -476,7 +486,7 @@ function RuntimeAction.execute_kill(payload, ctx)
 
     -- Already satisfied?
     if ctx.kill_counts[key] >= quantity then
-        return "success"
+        return trace("success_count", "success")
     end
 
     -- Find and target nearest creature using UnitHelper (Sylvannas API compliant)
@@ -486,12 +496,35 @@ function RuntimeAction.execute_kill(payload, ctx)
         if target:is_dead() then
             ctx.kill_counts[key] = ctx.kill_counts[key] + 1
             if ctx.kill_counts[key] >= quantity then
-                return "success"
+                return trace("success_killed", "success")
             end
-            return "blocked" -- Find more targets
+            return trace("next_target", "blocked")
         end
-        -- Check proximity — if out of combat range, initiate navigation (W3.6)
-        if not ctx:is_at_npc(entries[1], 30.0) then
+
+        -- Range is measured against the TARGET WE FOUND, not entries[1].
+        --
+        -- This previously asked `is_at_npc(entries[1], 30)`. With a multi-entry kill such as
+        -- [299, 69, 704, 705], the nearest creature can be a Timber Wolf (69) while no Young Wolf
+        -- (299) is within 30 yards — so the check failed and the bot navigated forever while
+        -- standing next to a perfectly valid target.
+        local in_range = false
+        local dist = nil
+        local ok_pos, tpos = pcall(target.get_position, target)
+        local player = UnitHelper.get_local_player()
+        if ok_pos and tpos and player and player.get_position then
+            local ok_p, ppos = pcall(player.get_position, player)
+            if ok_p and ppos and Geometry and Geometry.distance then
+                dist = Geometry.distance(ppos, tpos)
+                in_range = dist <= 30.0
+            end
+        end
+        if dist == nil then
+            -- Could not measure; fall back to the old per-entry proximity check.
+            in_range = ctx:is_at_npc(entries[1], 30.0)
+        end
+        ctx._kill_trace.dist = dist
+
+        if not in_range then
             -- Chase: mobs wander, so the destination must track the target rather than being
             -- captured once. The old guard only issued move_to when nav was IDLE, which locked
             -- onto a stale position — the bot walked to where the mob used to be and stopped.
@@ -511,7 +544,7 @@ function RuntimeAction.execute_kill(payload, ctx)
             -- where this action stops running — so the chase above could never re-issue and the bot
             -- walked to a stale position and stopped. Waiting keeps the Kill action in control of
             -- its own pursuit every tick, still bounded by MAX_CONDITION_WAIT.
-            return "waiting"
+            return trace("chasing", "waiting")
         end
         ctx._chase_dest = nil
 
@@ -534,7 +567,7 @@ function RuntimeAction.execute_kill(payload, ctx)
         -- holds this action and re-polls each tick without burning the retry budget, which is what
         -- a fight needs — and it is still bounded by MAX_CONDITION_WAIT so a hopeless kill cannot
         -- wedge the run.
-        return "waiting"
+        return trace("engaging", "waiting")
     end
 
     -- No targets found — check if we should navigate to a known spawn area
