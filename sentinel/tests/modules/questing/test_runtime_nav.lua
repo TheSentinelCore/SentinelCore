@@ -326,7 +326,10 @@ function M.test_kill_npc_out_of_range()
     end
     local action = { type = "Kill", payload = { creature_entries = { 1234 } } }
     local result = RuntimeAction.execute(action, ctx)
-    T.assert_equal(result, "blocked", "Kill should return blocked when NPC out of range")
+    -- "waiting", not "blocked": blocked hands control to the profile's NAVIGATING state, where the
+    -- Kill action stops running and can no longer re-issue navigation as the mob wanders. Waiting
+    -- keeps the action in control of its own pursuit each tick.
+    T.assert_equal(result, "waiting", "Kill waits and keeps chasing when the NPC is out of range")
     -- NavAdapter should have been called to navigate to target
     T.assert_not_nil(ctx.nav and ctx.nav._moved_to, "NavAdapter move_to should have been called")
     if ctx.nav and ctx.nav._moved_to then
