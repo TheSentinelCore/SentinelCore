@@ -233,18 +233,66 @@ function RuntimeAction.execute(action, ctx)
     end
 end
 
+--- Open the quest/gossip dialog on an NPC, if it is not already open.
+---
+--- Nothing previously interacted with the NPC at all: `accept_quest()` was called with no dialog
+--- open and no target, so it did nothing while the action still reported success. Returns true once
+--- the gossip frame is shown.
+local function ensure_gossip_open(npc_entry)
+    if not (core and core.quests) then return false end
+    if core.quests.is_gossip_frame_shown and core.quests.is_gossip_frame_shown() then
+        return true
+    end
+    local npc = UnitHelper.get_nearest_creature({ npc_entry })
+    if not npc then return false end
+    if core.input and core.input.interact_with_object then
+        pcall(core.input.interact_with_object, npc)
+    end
+    -- The frame opens asynchronously; the caller retries on a later tick.
+    return core.quests.is_gossip_frame_shown and core.quests.is_gossip_frame_shown() or false
+end
+
+--- Is the quest currently in the player's log?
+local function is_on_quest(quest_id)
+    if not (core and core.quests and core.quests.is_on_quest) then return false end
+    local ok, on = pcall(core.quests.is_on_quest, quest_id)
+    return ok and on == true
+end
+
+--- Has the quest already been turned in?
+local function is_quest_rewarded(quest_id)
+    if not (core and core.quests and core.quests.is_quest_flagged_completed) then return false end
+    local ok, done = pcall(core.quests.is_quest_flagged_completed, quest_id)
+    return ok and done == true
+end
+
 function RuntimeAction.execute_accept_quest(payload, ctx)
     local quest_id = payload.quest_id
     local npc_entry = payload.npc_entry
 
-    -- Navigate to NPC first
+    -- Already done? Nothing to do — treat as satisfied rather than retrying forever.
+    if is_on_quest(quest_id) or is_quest_rewarded(quest_id) then
+        return "success"
+    end
+
     if not ctx:is_at_npc(npc_entry) then
         return "blocked"
     end
+    if not ensure_gossip_open(npc_entry) then
+        return "retry" -- dialog not up yet; interact was issued, poll next tick
+    end
 
-    -- Use core.quests.accept_quest (Sylvannas API)
-    if core and core.quests and core.quests.accept_quest then
-        core.quests.accept_quest()
+    -- Pick THIS quest out of the NPC's offer list, then accept it.
+    if core.quests.select_gossip_available_quest then
+        pcall(core.quests.select_gossip_available_quest, quest_id)
+    end
+    if core.quests.accept_quest then
+        pcall(core.quests.accept_quest)
+    end
+
+    -- Verify against the quest log. Reporting success without this is how the runner claimed to
+    -- accept quests while the log stayed empty.
+    if is_on_quest(quest_id) then
         return "success"
     end
     return "retry"
@@ -254,27 +302,35 @@ function RuntimeAction.execute_turnin_quest(payload, ctx)
     local quest_id = payload.quest_id
     local npc_entry = payload.npc_entry
 
+    -- Already handed in — satisfied, not a failure to retry.
+    if is_quest_rewarded(quest_id) then
+        return "success"
+    end
+    -- Not in the log and not rewarded: there is nothing to turn in here.
+    if not is_on_quest(quest_id) then
+        return "skipped"
+    end
+
     if not ctx:is_at_npc(npc_entry) then
         return "blocked"
     end
-
-    -- Check if quest is active using Sylvannas API
-    if not core or not core.quests or not core.quests.is_on_quest then
+    if not ensure_gossip_open(npc_entry) then
         return "retry"
     end
 
-    local ok, is_on_quest = pcall(core.quests.is_on_quest, quest_id)
-    if not ok or not is_on_quest then
-        return "retry"
+    if core.quests.select_gossip_active_quest then
+        pcall(core.quests.select_gossip_active_quest, quest_id)
     end
-
-    -- Complete quest using Sylvannas API
     if core.quests.complete_quest then
-        core.quests.complete_quest()
-        -- Select reward if specified
-        if payload.reward_choice and core.quests.get_quest_reward then
-            core.quests.get_quest_reward(payload.reward_choice)
-        end
+        pcall(core.quests.complete_quest)
+    end
+    local choice = payload.choose_reward or payload.reward_choice
+    if choice and core.quests.get_quest_reward then
+        pcall(core.quests.get_quest_reward, choice)
+    end
+
+    -- Verify: the quest must have left the log (or be flagged complete).
+    if is_quest_rewarded(quest_id) or not is_on_quest(quest_id) then
         return "success"
     end
     return "retry"
