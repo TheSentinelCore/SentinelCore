@@ -1,6 +1,12 @@
+-- NOTE: this test originally exercised `modules/combat/target_selector.lua`
+-- (v1), which was dead code (audit finding E5 — no production requirer;
+-- `modules/combat/module.lua` uses `target_selector_v2`). E5's deletion left
+-- this the only test requiring the v1 module, so it has been re-targeted at
+-- the live `target_selector_v2` module while keeping this file's own path
+-- (and therefore its entry in run_offline.lua's test_modules list) intact.
 local Blackboard = require("core/blackboard")
 local EventBus = require("core/event_bus")
-local TargetSelector = require("modules/combat/target_selector")
+local TargetSelector = require("modules/combat/target_selector_v2")
 local T = require("tests/test_util")
 
 local M = {}
@@ -37,7 +43,10 @@ function M.run()
     local dps = make_unit({ guid = "dps", position = { x = 2, y = 0, z = 0 }, health_pct = 0.9, hostile = true })
     local ram = make_unit({ guid = "ram", position = { x = 1, y = 0, z = 0 }, health_pct = 1.0, hostile = true, is_player = false })
 
-    selector._unit_helper = {
+    -- v2 delegates enemy scanning to the active strategy (default), which
+    -- holds its own `_unit_helper` reference — unlike v1, the top-level
+    -- selector does not read `_unit_helper` itself.
+    selector._strategies.default._unit_helper = {
         get_enemy_list_around = function() return { ram, healer, dps } end,
         is_healer = function(_self, unit) return unit == healer end,
     }
