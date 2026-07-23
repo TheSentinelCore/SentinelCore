@@ -340,6 +340,49 @@ function M.test_completion_gate_bounded_wait_times_out_and_advances()
     if not ok then error(err) end
 end
 
+-- Loop-safety: the wait timer must not survive a reset(). A profile that loops
+-- (or is restarted) can revisit the same op_id:action_idx that previously waited;
+-- if the stale _wait_action_key/_wait_started_at linger, the re-entered gate would
+-- compute elapsed against an ancient start time and spuriously time out instead of
+-- starting a fresh wait.
+function M.test_reset_clears_wait_timer_loop_safety()
+    local profile = create_profile(make_profile_ops("Condition", {
+        condition = { type = "LevelAtLeast", payload = 10 },
+        role = "Completion",
+    }))
+    mock_player_level(function() return 1 end) -- never met
+
+    local fake_now = 1000.0
+    local real_core_time = _G.core.time
+    _G.core.time = function() return fake_now end
+
+    local ok, err = pcall(function()
+        -- First pass: start the wait timer at t=1000.
+        local status, msg = profile:execute()
+        T.assert_equal(msg, "waiting for completion", "First pass should be waiting")
+        T.assert_equal(profile._wait_started_at, 1000.0, "Wait timer should have started")
+
+        -- Loop back: a long time passes and the profile resets to the top.
+        fake_now = fake_now + 100000.0
+        profile:reset()
+        T.assert_equal(profile._wait_action_key, nil, "reset() must clear the wait key")
+        T.assert_equal(profile._wait_started_at, nil, "reset() must clear the wait start time")
+
+        -- Re-entering the same gate must start a FRESH wait, not inherit the old
+        -- start time and immediately time out.
+        local status2, msg2 = profile:execute()
+        T.assert_equal(msg2, "waiting for completion",
+            "Re-entered gate after reset should wait fresh, not time out on a stale timer")
+        T.assert_equal(profile._wait_started_at, fake_now,
+            "Re-entered gate should restart the timer at the current time")
+        T.assert_equal(profile._current_operation_idx, 1,
+            "Fresh wait should hold on the first operation, not skip it")
+    end)
+
+    _G.core.time = real_core_time
+    if not ok then error(err) end
+end
+
 -- ============================================================================
 -- W4.4 — Consecutive failure tests
 -- ============================================================================
@@ -485,6 +528,7 @@ local tests = {
     test_both_roles_met_advance_immediately = M.test_both_roles_met_advance_immediately,
     test_condition_missing_role_defaults_to_completion_wait = M.test_condition_missing_role_defaults_to_completion_wait,
     test_completion_gate_bounded_wait_times_out_and_advances = M.test_completion_gate_bounded_wait_times_out_and_advances,
+    test_reset_clears_wait_timer_loop_safety = M.test_reset_clears_wait_timer_loop_safety,
 
     -- W4.4
     test_consecutive_failures_stops_profile = M.test_consecutive_failures_stops_profile,

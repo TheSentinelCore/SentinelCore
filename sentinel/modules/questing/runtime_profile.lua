@@ -946,6 +946,10 @@ function RuntimeProfile:_execute_running()
         self:_log_event("action_success", { action_type = action and action.type, msg = msg })
         self._current_action_retries = 0
         self._consecutive_failures = 0
+        -- A Completion-role gate that just became met ends its wait here; release the
+        -- timer so a later action (or a looped re-entry) starts a fresh wait (PR5b loop-safety).
+        self._wait_started_at = nil
+        self._wait_action_key = nil
         
         -- W1.1: Move to next action within current operation
         self._current_action_idx = self._current_action_idx + 1
@@ -1355,6 +1359,8 @@ function RuntimeProfile:reset()
     self._current_action_idx = 1
     self._nav_start_time = nil
     self._ghost_start_time = nil
+    self._wait_started_at = nil
+    self._wait_action_key = nil
     self._last_blocked_action = nil
     self._execution_log = {}
     self._json_mtime = nil
