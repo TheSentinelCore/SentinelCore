@@ -420,6 +420,14 @@ function RuntimeProfile:load()
     return nil, "no data file API"
 end
 
+--- The live client returns NUMBERS for quest-log flags (is_complete = 1, not true) —
+--- verified in-game 2026-07-23 on `get_quest_log_title`. `== true` silently missed every
+--- complete quest, and a bare truthiness check is equally wrong the other way: 0 is
+--- truthy in Lua, so an incomplete quest would read as complete.
+local function quest_flag(v)
+    return v == true or v == 1
+end
+
 --- Is this quest sitting in the log with all objectives complete (ready to turn in)?
 --- info.is_complete is the client's own verdict — reconcile, never count (ADR 06 §8.1).
 local function quest_ready_in_log(quest_id)
@@ -431,7 +439,7 @@ local function quest_ready_in_log(quest_id)
     for i = 1, num do
         local ok, info = pcall(core.quests.get_quest_log_title, i)
         if ok and info and not info.is_header and info.quest_id == quest_id then
-            return info.is_complete == true
+            return quest_flag(info.is_complete)
         end
     end
     return false
@@ -669,7 +677,7 @@ function ContextMethods:_refresh_quest_log()
         for i = 1, num_entries do
             local info = core.quests.get_quest_log_title(i)
             if info and not info.is_header then
-                if info.is_complete then
+                if quest_flag(info.is_complete) then
                     self._completed_quests[tostring(info.quest_id)] = true
                 else
                     self._active_quests[tostring(info.quest_id)] = true
@@ -726,7 +734,7 @@ function ContextMethods:is_objective_complete(quest_entry, objective_idx)
                     end
                     -- is_completed is the client's own verdict — reconcile,
                     -- never count (ADR 06 §8.1). Trust it when it says done.
-                    if board.is_completed == true then
+                    if quest_flag(board.is_completed) then
                         return true
                     end
                     -- Otherwise derive from the "Name: cur/need" counter. Note
@@ -1254,9 +1262,12 @@ function RuntimeProfile:_execute_running()
     -- moving. This observes real game state rather than trusting saved progress (ADR 06 §8.1).
     if self._current_action_idx == 1 and self:_operation_already_done(op) then
         self:_log_event("operation_already_done", { operation = self._current_operation_idx })
-        self._current_operation_idx = self._current_operation_idx + 1
+        -- Advance THROUGH _advance_operation, not a raw increment: the advance path
+        -- re-reconciles and can jump a whole stretch of moot operations. Live-caught:
+        -- ops 5-6 skipped here one at a time, then the raw +1 landed on op 7's kills
+        -- even though quest 33 was log-complete and the right stop was op 8's turn-in.
+        self:_advance_operation(op)
         self._current_action_idx = 1
-        self:_save()
         return "running", "already done, skipping operation"
     end
 

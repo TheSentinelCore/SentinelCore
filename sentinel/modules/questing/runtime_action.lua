@@ -371,20 +371,52 @@ local function is_quest_rewarded(quest_id)
     return ok and done == true
 end
 
+-- Gossip is asynchronous: interact → the frame opens a few frames later → the
+-- accept/turn-in round-trips to the server. Raw "retry" returns burned the whole 5-attempt
+-- budget inside ~5 frames (live 2026-07-23: action_retry x5 in under a second, quest 7
+-- never turned in, and the route moved on without it). Pace to one REAL attempt per
+-- interval; between attempts hold with "waiting", which never consumes the retry budget —
+-- so the 5 retries now span ~10s of genuine attempts instead of five frames.
+local GOSSIP_RETRY_INTERVAL = 2.0
+
+--- True when this paced action may attempt now (stamps the next slot); false while holding.
+local function gossip_attempt_due(ctx, pace_key)
+    local P = ctx.persist or ctx
+    P._gossip_next_try = P._gossip_next_try or {}
+    local now = (core and core.time and core.time()) or 0
+    local next_try = P._gossip_next_try[pace_key]
+    if next_try and now < next_try then
+        return false
+    end
+    P._gossip_next_try[pace_key] = now + GOSSIP_RETRY_INTERVAL
+    return true
+end
+
+local function gossip_pace_clear(ctx, pace_key)
+    local P = ctx.persist or ctx
+    if P._gossip_next_try then P._gossip_next_try[pace_key] = nil end
+end
+
 function RuntimeAction.execute_accept_quest(payload, ctx)
     local quest_id = payload.quest_id
     local npc_entry = payload.npc_entry
+    local pace_key = "accept:" .. tostring(quest_id)
 
     -- Already done? Nothing to do — treat as satisfied rather than retrying forever.
+    -- Also the settle path: a paced attempt from a previous tick lands here as success.
     if is_on_quest(quest_id) or is_quest_rewarded(quest_id) then
+        gossip_pace_clear(ctx, pace_key)
         return "success"
     end
 
     if not ctx:is_at_npc(npc_entry) then
         return "blocked"
     end
+    if not gossip_attempt_due(ctx, pace_key) then
+        return "waiting" -- previous attempt still settling; re-verified above every tick
+    end
     if not ensure_gossip_open(npc_entry) then
-        return "retry" -- dialog not up yet; interact was issued, poll next tick
+        return "retry" -- dialog not up yet; interact was issued, attempt again next interval
     end
 
     -- Pick THIS quest out of the NPC's offer list, then accept it.
@@ -398,6 +430,7 @@ function RuntimeAction.execute_accept_quest(payload, ctx)
     -- Verify against the quest log. Reporting success without this is how the runner claimed to
     -- accept quests while the log stayed empty.
     if is_on_quest(quest_id) then
+        gossip_pace_clear(ctx, pace_key)
         return "success"
     end
     return "retry"
@@ -407,17 +440,25 @@ function RuntimeAction.execute_turnin_quest(payload, ctx)
     local quest_id = payload.quest_id
     local npc_entry = payload.npc_entry
 
+    local pace_key = "turnin:" .. tostring(quest_id)
+
     -- Already handed in — satisfied, not a failure to retry.
+    -- Also the settle path: a paced attempt from a previous tick lands here as success.
     if is_quest_rewarded(quest_id) then
+        gossip_pace_clear(ctx, pace_key)
         return "success"
     end
     -- Not in the log and not rewarded: there is nothing to turn in here.
     if not is_on_quest(quest_id) then
+        gossip_pace_clear(ctx, pace_key)
         return "skipped"
     end
 
     if not ctx:is_at_npc(npc_entry) then
         return "blocked"
+    end
+    if not gossip_attempt_due(ctx, pace_key) then
+        return "waiting" -- previous attempt still settling; re-verified above every tick
     end
     if not ensure_gossip_open(npc_entry) then
         return "retry"
@@ -436,6 +477,7 @@ function RuntimeAction.execute_turnin_quest(payload, ctx)
 
     -- Verify: the quest must have left the log (or be flagged complete).
     if is_quest_rewarded(quest_id) or not is_on_quest(quest_id) then
+        gossip_pace_clear(ctx, pace_key)
         return "success"
     end
     return "retry"

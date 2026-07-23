@@ -269,21 +269,24 @@ function M.test_reconcile_jumps_to_ready_turnin()
             { id = 3, actions = { { type = "TurnInQuest", payload = { quest_id = 20, npc_entry = 1 } } }, next_condition = "auto" },
         },
     })
-    -- Quest 10 rewarded; quest 20 unrewarded but sitting in the log with all
-    -- objectives complete — its kills (op 2) are proven done, only the turn-in remains.
+    -- Quest 10 rewarded; quest 20 unrewarded but sitting in the log with all objectives
+    -- complete — its kills (op 2) are proven done, only the turn-in remains. The live
+    -- client returns is_complete = 1 (a NUMBER, verified in-game 2026-07-23), so the
+    -- mock pins that wire shape.
     _G.core.quests = {
         is_quest_flagged_completed = function(qid) return qid == 10 end,
         is_on_quest = function(qid) return qid == 20 end,
         get_num_quest_log_entries = function() return 1 end,
-        get_quest_log_title = function(_) return { quest_id = 20, is_complete = true } end,
+        get_quest_log_title = function(_) return { quest_id = 20, is_complete = 1 } end,
     }
     T.assert_equal(profile:_reconcile_start_operation(), 3,
         "a log-complete quest must place us AT its turn-in, past its finished kills")
 
     -- Same quest still mid-objectives: the kills are real work, start before them.
-    _G.core.quests.get_quest_log_title = function(_) return { quest_id = 20, is_complete = false } end
+    -- is_complete = 0 is TRUTHY in Lua — it must still read as incomplete.
+    _G.core.quests.get_quest_log_title = function(_) return { quest_id = 20, is_complete = 0 } end
     T.assert_equal(profile:_reconcile_start_operation(), 2,
-        "an incomplete quest must start at its kill operation, not skip it")
+        "an incomplete quest (is_complete = 0) must start at its kill operation, not skip it")
     _G.core.quests = nil
 end
 
@@ -301,7 +304,7 @@ function M.test_advance_reconciles_past_moot_kills()
         is_quest_flagged_completed = function(_) return false end,
         is_on_quest = function(qid) return qid == 20 end,
         get_num_quest_log_entries = function() return 1 end,
-        get_quest_log_title = function(_) return { quest_id = 20, is_complete = true } end,
+        get_quest_log_title = function(_) return { quest_id = 20, is_complete = 1 } end,
     }
     profile._current_operation_idx = 1
     profile:_advance_operation(profile._profile.operations[1])
