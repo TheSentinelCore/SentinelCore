@@ -1055,9 +1055,12 @@ name = "sentinel-tests"
 version = "0.1.0"
 dependencies = [
  "sentinel-compiler",
+ "sentinel-importer",
  "sentinel-models",
+ "sentinel-queryclient",
  "sentinel-validator",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 

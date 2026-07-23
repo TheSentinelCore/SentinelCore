@@ -874,3 +874,88 @@ step
         other => panic!("expected Comment fallback, got {other:?}"),
     }
 }
+
+/// CRITICAL fix (post-PR3-review): a `QueryClient` that fails with a transport-level error
+/// (server down, timeout, DNS...) rather than a clean `NotFound` — this is what `HttpQueryClient`
+/// actually surfaces when `SentinelQueryServer` is unreachable, unlike `MemoryQueryClient` which
+/// only ever returns `NotFound`. Before this fix, every resolver `?`-propagated any non-`NotFound`
+/// error straight out of `ProjectBuilder::build`, aborting the whole guide block instead of
+/// degrading gracefully — regressing offline import.
+struct UnreachableQueryClient;
+
+#[async_trait::async_trait]
+impl sentinel_queryclient::QueryClient for UnreachableQueryClient {
+    async fn search_quests(&self, _query: &str) -> Result<Vec<sentinel_queryclient::QuestSummary>, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn get_quest(&self, _id: u32) -> Result<QuestDetail, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn search_npcs(&self, _query: &str) -> Result<Vec<sentinel_queryclient::NpcSummary>, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn get_npc(&self, _entry: u32) -> Result<NpcDetail, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn get_vendor(&self, _entry: u32) -> Result<sentinel_queryclient::VendorInfo, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn get_trainer(&self, _entry: u32) -> Result<sentinel_queryclient::TrainerInfo, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn get_flight(&self, _entry: u32) -> Result<sentinel_queryclient::FlightInfo, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn get_object(&self, _entry: u32) -> Result<sentinel_queryclient::ObjectInfo, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn creatures_polygon(&self, _creature_entry: u32) -> Result<sentinel_queryclient::CreaturePolygon, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn validate(&self, _req: sentinel_queryclient::ValidateRequest) -> Result<sentinel_queryclient::ValidateResponse, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+    async fn travel_estimate(&self, _req: sentinel_queryclient::TravelEstimateRequest) -> Result<sentinel_queryclient::TravelEstimateResponse, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
+}
+
+#[tokio::test]
+async fn transport_failure_during_resolution_degrades_to_diagnostic_not_a_block_abort() {
+    let client = UnreachableQueryClient;
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .accept 26 >> Accept A Lesson to Learn
+    .turnin 26
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+
+    // Before the fix: a Transport error `?`-propagates out of resolve_quest/resolve_npc_*,
+    // aborting the whole block — `build` returns Err instead of a degraded Project.
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client)
+        .await
+        .expect("a transport failure must degrade to a diagnostic, not abort the whole block");
+
+    let unreachable_diag = project.diagnostics.iter().find(|d| d.code == "QUERY_UNREACHABLE");
+    assert!(
+        unreachable_diag.is_some(),
+        "expected a QUERY_UNREACHABLE diagnostic distinct from UNRESOLVED_QUEST/UNRESOLVED_NPC, got: {:?}",
+        project.diagnostics
+    );
+    assert!(
+        !project.diagnostics.iter().any(|d| d.code == "UNRESOLVED_QUEST"),
+        "a transport failure is not the same as a genuinely-absent entity — must not reuse UNRESOLVED_QUEST"
+    );
+
+    // The quest actions must still be present, as inert Comment fallbacks (never dropped, never
+    // an aborted block).
+    let actions = &project.operations[0].actions;
+    assert_eq!(actions.len(), 2, "both commands must still produce actions despite the transport failure");
+    assert!(
+        actions.iter().all(|a| matches!(a.payload, ActionPayload::Comment(_))),
+        "unresolved-due-to-transport-failure actions fall back to Comment, same as unresolved-due-to-NotFound"
+    );
+}

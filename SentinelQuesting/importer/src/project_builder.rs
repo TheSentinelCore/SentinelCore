@@ -93,12 +93,43 @@ impl<'a> MapperState<'a> {
                 });
                 Ok(None)
             }
-            Err(e) => Err(e),
+            // CRITICAL fix (post-PR3-review): a Transport/Server/Decode error means the query
+            // itself failed (server down, timeout, bad response) — NOT that the entity is
+            // genuinely absent. Before this fix these `?`-propagated out of `build`, aborting
+            // the whole guide block; with `HttpQueryClient` as the default (PR3) this is
+            // reachable whenever `SentinelQueryServer` is unreachable, regressing offline
+            // import. Degrade the same way as NotFound (unresolved, inert fallback) but with a
+            // distinct diagnostic code so an operator can tell "server down" apart from
+            // "entity genuinely absent".
+            Err(e) => {
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "QUERY_UNREACHABLE".to_string(),
+                    message: format!("NPC entry {entry} lookup failed: {e}"),
+                    entity: Some(entry.to_string()),
+                    action: None,
+                });
+                Ok(None)
+            }
         }
     }
 
     async fn resolve_npc_by_name(&mut self, name: &str) -> Result<Option<Uuid>, QueryClientError> {
-        let results = self.client.search_npcs(name).await?;
+        let results = match self.client.search_npcs(name).await {
+            Ok(r) => r,
+            Err(e) => {
+                // See `resolve_npc_by_entry`: a transport-level failure degrades to a
+                // diagnostic instead of aborting the block.
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "QUERY_UNREACHABLE".to_string(),
+                    message: format!("NPC search '{name}' failed: {e}"),
+                    entity: Some(name.to_string()),
+                    action: None,
+                });
+                return Ok(None);
+            }
+        };
         let Some(summary) = results.first() else {
             self.diagnostics.push(Diagnostic {
                 severity: Severity::Warning,
@@ -149,7 +180,18 @@ impl<'a> MapperState<'a> {
                 });
                 Ok(None)
             }
-            Err(e) => Err(e),
+            // CRITICAL fix (post-PR3-review): see `resolve_npc_by_entry` — a transport-level
+            // failure degrades to a diagnostic instead of `?`-propagating and aborting the block.
+            Err(e) => {
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "QUERY_UNREACHABLE".to_string(),
+                    message: format!("Quest {id} lookup failed: {e}"),
+                    entity: Some(id.to_string()),
+                    action: None,
+                });
+                Ok(None)
+            }
         }
     }
 

@@ -1,14 +1,17 @@
 //! Batch importer for RestedXP guides into Sentinel Questing projects.
 //!
 //! Usage:
-//!   cargo run -p sentinel-editor --bin import-guides -- <guides_dir> <output_dir>
+//!   cargo run -p sentinel-editor --bin import-guides -- <guides_dir> <output_dir> [query_url]
 //!
-//! Example:
+//! Example (live QueryServer resolution, CL3):
 //!   cargo run -p sentinel-editor --bin import-guides -- \
 //!     "../sentinel/docs/adr/restedxp guides" ".questing/projects"
 //!
-//! This importer runs offline (no QueryServer needed). Unresolved NPCs/quests will
-//! appear as diagnostic warnings in the output project - resolve them in the editor.
+//! By default this importer resolves NPC/quest/object references against a live
+//! `SentinelQueryServer` at `http://127.0.0.1:3030` (overridable via the `SENTINEL_QUERY_URL` env
+//! var or an optional third positional argument). Unresolved references (e.g. no server running,
+//! or an entity genuinely absent from the DB) still surface as diagnostic warnings in the output
+//! project - resolve them in the editor.
 //!
 //! Each guide file may bundle multiple `RegisterGuide([[ ... ]])` blocks (IF6, e.g. `The
 //! Burning Crusade.lua`: 253 blocks in one file) — one Project JSON is written per guide block,
@@ -19,18 +22,26 @@ use std::path::{Path, PathBuf};
 use std::fs;
 
 use sentinel_importer::parse_guide_bundle;
-use sentinel_queryclient::MemoryQueryClient;
+use sentinel_models::authoring::Project;
+use sentinel_queryclient::{HttpQueryClient, QueryClient};
+
+const DEFAULT_QUERY_URL: &str = "http://127.0.0.1:3030";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: import-guides <guides_dir> <output_dir>");
+    if args.len() < 3 || args.len() > 4 {
+        eprintln!("Usage: import-guides <guides_dir> <output_dir> [query_url]");
         std::process::exit(1);
     }
 
     let guides_dir = PathBuf::from(&args[1]);
     let output_dir: PathBuf = args[2].clone().into();
+    let query_url = args
+        .get(3)
+        .cloned()
+        .or_else(|| std::env::var("SENTINEL_QUERY_URL").ok())
+        .unwrap_or_else(|| DEFAULT_QUERY_URL.to_string());
 
     // Ensure output directory exists
     fs::create_dir_all(&output_dir)?;
@@ -44,11 +55,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("Found {} guide files to import", guide_files.len());
+    println!("Resolving references against QueryServer at {query_url}");
 
-    // Use empty MemoryQueryClient (offline mode - unresolved references will be diagnostics)
-    let client = MemoryQueryClient::new();
+    // Live QueryServer resolution (CL3): NPC/quest/object references resolve to concrete
+    // entries/coordinates instead of the empty offline MemoryQueryClient. References that remain
+    // unresolved after a live lookup still surface as diagnostics, never as silently zeroed
+    // defaults (per compiler-condition-lowering spec, "Resolution Against a Live QueryServer").
+    let client = HttpQueryClient::new(query_url);
 
-    let (total_projects, all_failures) = run_import(&guide_files, &output_dir, &client).await;
+    let (built_projects, all_failures) = run_import(&guide_files, &output_dir, &client).await;
+    let total_projects = built_projects.len();
 
     if !all_failures.is_empty() {
         eprintln!("\n{} block(s) failed to import:", all_failures.len());
@@ -56,6 +72,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("  ✗ {failure}");
         }
     }
+
+    // CL5: corpus-wide coverage report alongside the regenerated projects.
+    let coverage = sentinel_importer::CoverageReport::from_projects(&built_projects);
+    let coverage_path = output_dir.join("coverage_report.json");
+    match serde_json::to_string_pretty(&coverage) {
+        Ok(json) => {
+            if let Err(e) = fs::write(&coverage_path, json) {
+                eprintln!("  (failed to write {:?}: {e})", coverage_path);
+            }
+        }
+        Err(e) => eprintln!("  (failed to serialize coverage report: {e})"),
+    }
+    println!("\n{}", coverage.text_summary());
 
     println!(
         "\nImport complete! {} projects created from {} guide files in {:?}",
@@ -81,18 +110,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn run_import(
     guide_files: &[PathBuf],
     output_dir: &Path,
-    client: &MemoryQueryClient,
-) -> (usize, Vec<String>) {
+    client: &dyn QueryClient,
+) -> (Vec<Project>, Vec<String>) {
     // Tracked across the WHOLE run (not per guide file): header-less blocks from different
     // files can collide on the same default name just as easily as two blocks in one bundle
     // (CRITICAL 2 fix), and a re-run must not collide with a PRIOR run's output either.
     let mut used_filenames = seed_used_filenames_from_existing_output(output_dir);
-    let mut total_projects = 0usize;
+    let mut built_projects: Vec<Project> = Vec::new();
     let mut all_failures: Vec<String> = Vec::new();
     for guide_path in guide_files {
         match import_guide(guide_path, output_dir, client, &mut used_filenames).await {
-            Ok((written, failures)) => {
-                total_projects += written;
+            Ok((projects, failures)) => {
+                built_projects.extend(projects);
                 all_failures.extend(failures);
             }
             Err(e) => {
@@ -102,7 +131,7 @@ async fn run_import(
             }
         }
     }
-    (total_projects, all_failures)
+    (built_projects, all_failures)
 }
 
 /// Seeds `used_filenames` with the stem of every `.json` file already present in `output_dir`
@@ -184,20 +213,20 @@ fn dedupe_filename(used: &mut HashSet<String>, stem: &str) -> String {
 /// writing one Project JSON per block. A per-block parse/build/write failure is recorded and
 /// does NOT abort the remaining blocks in this file, matching `parse_guide_bundle`'s own
 /// per-block isolation contract (`lib.rs:157-165`) instead of contradicting it (CRITICAL 1 fix).
-/// Returns the number of projects actually written plus any recorded failure messages.
+/// Returns the projects actually written plus any recorded failure messages.
 async fn import_guide(
     guide_path: &Path,
     output_dir: &Path,
-    client: &MemoryQueryClient,
+    client: &dyn QueryClient,
     used_filenames: &mut HashSet<String>,
-) -> Result<(usize, Vec<String>), Box<dyn std::error::Error>> {
+) -> Result<(Vec<Project>, Vec<String>), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(guide_path)?;
 
-    let mut written = 0usize;
+    let mut written = Vec::new();
     let mut failures = Vec::new();
 
     for (block_idx, result) in parse_guide_bundle(&source).into_iter().enumerate() {
-        let outcome: Result<(), String> = async {
+        let outcome: Result<Project, String> = async {
             let parsed = result.map_err(|e| e.to_string())?;
             let project = sentinel_importer::ProjectBuilder::build(
                 &parsed,
@@ -219,11 +248,11 @@ async fn import_guide(
             if unresolved_count > 0 {
                 println!("  ({} unresolved references - resolve in editor)", unresolved_count);
             }
-            Ok(())
+            Ok(project)
         }.await;
 
         match outcome {
-            Ok(()) => written += 1,
+            Ok(project) => written.push(project),
             Err(e) => {
                 let msg = format!("{}: block {block_idx}: {e}", guide_path.display());
                 eprintln!("✗ {msg}");
@@ -238,6 +267,7 @@ async fn import_guide(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sentinel_queryclient::MemoryQueryClient;
 
     #[tokio::test]
     async fn one_bad_block_does_not_abort_the_rest() {
@@ -259,7 +289,7 @@ mod tests {
             .await
             .expect("file-level read must still succeed");
 
-        assert_eq!(written, 1, "the well-formed block must still produce output");
+        assert_eq!(written.len(), 1, "the well-formed block must still produce output");
         assert_eq!(failures.len(), 1, "the malformed block must be recorded, not silently dropped");
         assert!(fs::read(output_dir.join("Good.json")).is_ok());
     }
@@ -284,7 +314,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(written, 2);
+        assert_eq!(written.len(), 2);
         assert!(failures.is_empty());
         assert!(fs::read(output_dir.join("Imported-Guide.json")).is_ok());
         assert!(fs::read(output_dir.join("Imported-Guide-2.json")).is_ok());
@@ -311,7 +341,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(written, 3, "all three blocks must be written, none silently overwritten");
+        assert_eq!(written.len(), 3, "all three blocks must be written, none silently overwritten");
         assert!(failures.is_empty());
         assert!(fs::read(output_dir.join("Foo.json")).is_ok());
         assert!(fs::read(output_dir.join("Foo-2.json")).is_ok());
@@ -344,7 +374,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(written, 1);
+        assert_eq!(written.len(), 1);
         assert!(failures.is_empty());
 
         // Nothing must have escaped into the tempdir root (one level above output_dir).
@@ -380,7 +410,7 @@ mod tests {
             &client,
         ).await;
 
-        assert_eq!(written, 1, "the readable file must still import despite an earlier unreadable one");
+        assert_eq!(written.len(), 1, "the readable file must still import despite an earlier unreadable one");
         assert_eq!(failures.len(), 1, "the unreadable file must be recorded as a failure, not silently swallowed");
         assert!(failures[0].contains(&missing_path.display().to_string()));
         assert!(fs::read(output_dir.join("Good.json")).is_ok());
