@@ -6,7 +6,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Adjacently tagged as `{ "type": <Variant>, "payload": <value> }` so the Lua runtime's
+/// `RuntimeAction.evaluate_condition` (which dispatches on `cond.type` and reads `cond.payload`)
+/// consumes it directly. Tuple variants encode `payload` as a JSON array (e.g. ObjectiveComplete
+/// -> `payload: [quest, idx]`); unit variants (AlwaysTrue) emit `{ "type": "AlwaysTrue" }`.
+/// NOTE: this MUST stay in sync with the Lua condition-handler table — do not change the tagging
+/// without updating `sentinel/modules/questing/runtime_action.lua`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
 pub enum RuntimeCondition {
     AlwaysTrue,
     QuestAccepted(u32),

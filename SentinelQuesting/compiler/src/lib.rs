@@ -9,13 +9,70 @@ mod condition;
 
 use sentinel_models::authoring::{Action, ActionPayload, Diagnostic, Project, Severity};
 use sentinel_models::runtime::{
-    compute_content_hash, RuntimeAction, RuntimeOperation, RuntimeProfile, RuntimeAcceptQuest,
+    compute_content_hash, GuardedAction, RuntimeAction, RuntimeOperation, RuntimeProfile, RuntimeAcceptQuest,
     RuntimeFlight, RuntimeHearth, RuntimeKill, RuntimeVendor, RuntimeTrain, RuntimeUseItem,
     RuntimeComment, RuntimeTravel, RuntimeTurnInQuest, RuntimeWaypoint, RuntimeRepair,
     RuntimeLearnFlightPath, RuntimeConditionAction, RuntimeSetVariable, RuntimeEscort,
     RuntimePatrol, RuntimeGrind, RuntimeLoot, RuntimeBank, RuntimeMailbox, RuntimeWait,
     RuntimeCondition, RuntimeInteractNpc,
 };
+
+/// Title-Case class names the runtime's `CLASS_ID_TO_NAME` map can produce
+/// (`sentinel/modules/questing/runtime_profile.lua`). Anything else in a `class_restriction`
+/// tail is an authoring error worth a diagnostic, not a guess.
+const KNOWN_CLASSES: &[&str] = &[
+    "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "DeathKnight", "Shaman", "Mage", "Warlock",
+    "Druid",
+];
+
+/// Lower a RestedXP class-tail (e.g. `"Warrior"`, `"Warrior/Paladin"`, `"!Rogue"`) into a
+/// `RuntimeCondition` guard (CL4). Returns `None` — plus a diagnostic — for empty/unknown class
+/// tokens; never panics, never guesses.
+fn parse_class_guard(
+    restriction: &str,
+    action_id: Uuid,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<RuntimeCondition> {
+    let trimmed = restriction.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (negate, rest) = match trimmed.strip_prefix('!') {
+        Some(stripped) => (true, stripped),
+        None => (false, trimmed),
+    };
+    let names: Vec<&str> = rest.split('/').map(|s| s.trim()).collect();
+
+    let unknown = |diagnostics: &mut Vec<Diagnostic>, detail: String| {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            code: "UNKNOWN_CLASS_RESTRICTION".to_string(),
+            message: format!(
+                "class restriction '{restriction}' could not be mapped to a guard: {detail}"
+            ),
+            entity: Some(restriction.to_string()),
+            action: Some(action_id.to_string()),
+        });
+    };
+
+    if names.is_empty() || names.iter().any(|n| n.is_empty()) {
+        unknown(diagnostics, "empty class token".to_string());
+        return None;
+    }
+    for name in &names {
+        if !KNOWN_CLASSES.contains(name) {
+            unknown(diagnostics, format!("unknown class '{name}'"));
+            return None;
+        }
+    }
+
+    let base = if names.len() == 1 {
+        RuntimeCondition::ClassIs(names[0].to_string())
+    } else {
+        RuntimeCondition::Any(names.iter().map(|n| RuntimeCondition::ClassIs(n.to_string())).collect())
+    };
+    Some(if negate { RuntimeCondition::Not(Box::new(base)) } else { base })
+}
 
 /// Compiler errors that prevent profile generation.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -28,9 +85,9 @@ pub enum CompilerError {
 
 /// Non-fatal compile-time findings, kept out of `RuntimeProfile` (clean runtime artifact).
 /// `unmapped_conditions` populated here (CL1); PR2b adds `unresolved` (unresolvable
-/// `LootObject` references — CL2). Class filtering (CL4) is deferred to PR5 (action-GUARD
-/// field representation, maintainer decision 2026-07-22) — `Action.class_restriction` is not
-/// yet consumed by the compiler.
+/// `LootObject` references — CL2). Class filtering (CL4, PR5c) lowers `Action.class_restriction`
+/// into a per-action `GuardedAction.guard` (`RuntimeCondition`); unknown class tokens surface
+/// here as `UNKNOWN_CLASS_RESTRICTION` diagnostics rather than a guessed guard.
 #[derive(Debug, Clone, Default)]
 pub struct CompileReport {
     pub unmapped_conditions: Vec<Diagnostic>,
@@ -74,12 +131,18 @@ fn resolve_operation(
     diagnostics: &mut Vec<Diagnostic>,
     unresolved: &mut u32,
 ) -> Result<RuntimeOperation, CompilerError> {
-    let runtime_actions: Vec<RuntimeAction> = op.actions
+    let runtime_actions: Vec<GuardedAction> = op.actions
         .iter()
         .map(|a| resolve_action(a, npc_uuid_to_entry, object_uuid_to_entry, diagnostics, unresolved))
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(RuntimeOperation::new(op.id, op.name.clone(), runtime_actions))
+    Ok(RuntimeOperation {
+        id: op.id,
+        name: op.name.clone(),
+        entry_conditions: Vec::new(),
+        exit_conditions: Vec::new(),
+        actions: runtime_actions,
+    })
 }
 
 fn resolve_action(
@@ -88,8 +151,8 @@ fn resolve_action(
     object_uuid_to_entry: &HashMap<Uuid, u32>,
     diagnostics: &mut Vec<Diagnostic>,
     unresolved: &mut u32,
-) -> Result<RuntimeAction, CompilerError> {
-    Ok(match &action.payload {
+) -> Result<GuardedAction, CompilerError> {
+    let runtime_action = match &action.payload {
         ActionPayload::AcceptQuest(a) => {
             let npc_entry = a.npc.and_then(|u| npc_uuid_to_entry.get(&u).copied())
                 .ok_or(CompilerError::UnresolvedNpc)?;
@@ -280,5 +343,13 @@ fn resolve_action(
                 destination: None,
             })
         }
-    })
+    };
+
+    // CL4: lower the authoring class-tail into a per-action guard. `None`/empty -> no guard,
+    // unchanged behavior; unknown tokens -> diagnostic + no guard (fail open, never a guess).
+    let guard = action.class_restriction
+        .as_deref()
+        .and_then(|r| parse_class_guard(r, action.id, diagnostics));
+
+    Ok(GuardedAction { action: runtime_action, guard })
 }

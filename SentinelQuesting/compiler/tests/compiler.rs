@@ -13,6 +13,23 @@ fn condition_action(expression: &str) -> Action {
     condition_action_with_role(expression, ConditionRole::Completion)
 }
 
+fn vendor_action_with_class(npc: Uuid, class_restriction: Option<&str>) -> Action {
+    Action {
+        id: Uuid::new_v4(),
+        enabled: true,
+        condition: None,
+        class_restriction: class_restriction.map(|s| s.to_string()),
+        note: None,
+        payload: ActionPayload::Vendor(VendorAction {
+            npc,
+            sell_grey: false,
+            repair: false,
+            buy_items: vec![],
+            minimum_free_slots: None,
+        }),
+    }
+}
+
 fn condition_action_with_role(expression: &str, role: ConditionRole) -> Action {
     Action {
         id: Uuid::new_v4(),
@@ -107,7 +124,7 @@ fn recognized_condition_expression_lowers_to_typed_runtime_condition() {
     project.operations.push(op);
 
     let (profile, _report) = Compiler::compile(&project).expect("compile ok");
-    let RuntimeAction::Condition(c) = &profile.operations[0].actions[0] else { panic!("expected Condition") };
+    let RuntimeAction::Condition(c) = &profile.operations[0].actions[0].action else { panic!("expected Condition") };
     assert_eq!(c.condition, RuntimeCondition::QuestCompleted(1234));
 }
 
@@ -120,8 +137,8 @@ fn condition_role_is_carried_through_to_the_runtime_action() {
     project.operations.push(op);
 
     let (profile, _report) = Compiler::compile(&project).expect("compile ok");
-    let RuntimeAction::Condition(c0) = &profile.operations[0].actions[0] else { panic!("expected Condition") };
-    let RuntimeAction::Condition(c1) = &profile.operations[0].actions[1] else { panic!("expected Condition") };
+    let RuntimeAction::Condition(c0) = &profile.operations[0].actions[0].action else { panic!("expected Condition") };
+    let RuntimeAction::Condition(c1) = &profile.operations[0].actions[1].action else { panic!("expected Condition") };
     assert_eq!(c0.role, ConditionRole::Completion);
     assert_eq!(c1.role, ConditionRole::Applicability);
 }
@@ -137,7 +154,7 @@ fn unmappable_condition_expression_records_diagnostic_and_fails_open() {
 
     let (profile, report) = Compiler::compile(&project).expect("compile ok");
     // Fail-open (never a blanket compile failure), but only alongside a diagnostic — never silent.
-    let RuntimeAction::Condition(c) = &profile.operations[0].actions[0] else { panic!("expected Condition") };
+    let RuntimeAction::Condition(c) = &profile.operations[0].actions[0].action else { panic!("expected Condition") };
     assert_eq!(c.condition, RuntimeCondition::AlwaysTrue);
     assert!(
         report.unmapped_conditions.iter().any(|d| {
@@ -170,7 +187,7 @@ fn resolvable_loot_object_gets_real_entry() {
     project.operations.push(op);
 
     let (profile, report) = Compiler::compile(&project).expect("compile ok");
-    let RuntimeAction::Loot(l) = &profile.operations[0].actions[0] else { panic!("expected Loot") };
+    let RuntimeAction::Loot(l) = &profile.operations[0].actions[0].action else { panic!("expected Loot") };
     assert_eq!(l.object_entry, 4444);
     assert_eq!(report.unresolved, 0);
 }
@@ -187,13 +204,89 @@ fn unresolvable_loot_object_records_diagnostic_and_unresolved_count() {
     project.operations.push(op);
 
     let (profile, report) = Compiler::compile(&project).expect("compile ok");
-    let RuntimeAction::Loot(l) = &profile.operations[0].actions[0] else { panic!("expected Loot") };
+    let RuntimeAction::Loot(l) = &profile.operations[0].actions[0].action else { panic!("expected Loot") };
     assert_eq!(l.object_entry, 0, "unresolved object falls back to 0, never a guessed entry");
     assert_eq!(report.unresolved, 1);
     assert!(
         report.unmapped_conditions.iter().any(|d| {
             d.code == "UNRESOLVED_OBJECT" && d.action.as_deref() == Some(&action_id.to_string())
         }),
+        "got: {:?}", report.unmapped_conditions
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CL4 — class-restriction lowered to a per-action guard (RuntimeCondition).
+// ---------------------------------------------------------------------------
+
+fn project_with_class_restricted_vendor(class_restriction: Option<&str>) -> sentinel_models::authoring::Project {
+    let npc_id = Uuid::new_v4();
+    let npc = NPCReference {
+        id: npc_id,
+        entry: Some(555),
+        guid: None,
+        name: "Test Vendor".to_string(),
+        faction: None,
+        roles: vec![],
+        position: None,
+        source: None,
+        notes: None,
+    };
+    let mut project = new_project("test");
+    project.npc_library.push(npc);
+    let mut op = Operation::new("test-op".to_string());
+    op.actions.push(vendor_action_with_class(npc_id, class_restriction));
+    project.operations.push(op);
+    project
+}
+
+#[test]
+fn no_class_restriction_yields_no_guard() {
+    let project = project_with_class_restricted_vendor(None);
+    let (profile, _report) = Compiler::compile(&project).expect("compile ok");
+    assert_eq!(profile.operations[0].actions[0].guard, None);
+}
+
+#[test]
+fn single_class_restriction_lowers_to_class_is_guard() {
+    let project = project_with_class_restricted_vendor(Some("Mage"));
+    let (profile, _report) = Compiler::compile(&project).expect("compile ok");
+    assert_eq!(
+        profile.operations[0].actions[0].guard,
+        Some(RuntimeCondition::ClassIs("Mage".to_string()))
+    );
+}
+
+#[test]
+fn multi_class_restriction_lowers_to_any_of_class_is_guards() {
+    let project = project_with_class_restricted_vendor(Some("Warrior/Paladin"));
+    let (profile, _report) = Compiler::compile(&project).expect("compile ok");
+    assert_eq!(
+        profile.operations[0].actions[0].guard,
+        Some(RuntimeCondition::Any(vec![
+            RuntimeCondition::ClassIs("Warrior".to_string()),
+            RuntimeCondition::ClassIs("Paladin".to_string()),
+        ]))
+    );
+}
+
+#[test]
+fn negated_single_class_restriction_lowers_to_not_class_is_guard() {
+    let project = project_with_class_restricted_vendor(Some("!Rogue"));
+    let (profile, _report) = Compiler::compile(&project).expect("compile ok");
+    assert_eq!(
+        profile.operations[0].actions[0].guard,
+        Some(RuntimeCondition::Not(Box::new(RuntimeCondition::ClassIs("Rogue".to_string()))))
+    );
+}
+
+#[test]
+fn unknown_class_token_records_diagnostic_and_skips_guard() {
+    let project = project_with_class_restricted_vendor(Some("NotAClass"));
+    let (profile, report) = Compiler::compile(&project).expect("compile ok");
+    assert_eq!(profile.operations[0].actions[0].guard, None);
+    assert!(
+        report.unmapped_conditions.iter().any(|d| d.code == "UNKNOWN_CLASS_RESTRICTION"),
         "got: {:?}", report.unmapped_conditions
     );
 }

@@ -162,11 +162,12 @@ mod tests {
         let mut ops2 = vec![sample_op("action-test")];
         // Give ops2 an action
         if let Some(op) = ops2.get_mut(0) {
-            op.actions.push(crate::runtime::RuntimeAction::Comment(
-                crate::runtime::RuntimeComment {
+            op.actions.push(
+                crate::runtime::RuntimeAction::Comment(crate::runtime::RuntimeComment {
                     text: "hi".to_string(),
-                },
-            ));
+                })
+                .into(),
+            );
         }
         let p1 = RuntimeProfile::new("x".to_string(), ops1);
         let p2 = RuntimeProfile::new("x".to_string(), ops2);

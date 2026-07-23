@@ -24,6 +24,7 @@ local function make_profile_ops(action_type, payload, overrides)
                     {
                         type = action_type,
                         payload = payload or {},
+                        guard = overrides.guard, -- CL4: optional per-action class guard
                     },
                 },
                 next_condition = "auto",
@@ -409,6 +410,68 @@ function M.test_classis_maps_numeric_class_id_to_name()
 end
 
 -- ============================================================================
+-- CL4 — per-action class guard (action.guard, evaluated before dispatch)
+-- ============================================================================
+
+--- A Comment action guarded by a ClassIs condition the player's class does NOT satisfy must be
+--- skipped entirely: it must never execute, and the profile must advance past it exactly like
+--- the existing "skipped" semantics (no retry/failure counted).
+function M.test_action_guard_unmet_skips_action_without_executing_it()
+    local profile = create_profile(make_profile_ops("Comment", { text = "mage only" }, {
+        guard = { type = "ClassIs", payload = "Mage" },
+    }))
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return false end,
+            get_class = function() return 4 end, -- Rogue (numeric class_id), guard wants Mage
+        }
+    end
+
+    local status, msg = profile:execute()
+    T.assert_equal(status, "running", "guard-unmet action should still return running (skipped, advancing)")
+    T.assert_equal(msg, "skipped, advancing", "guard-unmet action must use the existing skip-advance path")
+    T.assert_equal(profile._current_action_retries, 0,
+        "a skipped (guard-unmet) action must not count as a retry")
+    T.assert_equal(profile._consecutive_failures, 0,
+        "a skipped (guard-unmet) action must not count as a failure")
+    T.assert_equal(profile._current_operation_idx, 2,
+        "the single-action operation must advance past the guarded (and skipped) action")
+end
+
+--- A Comment action guarded by a ClassIs condition the player's class DOES satisfy must execute
+--- normally (Comment always succeeds), exactly as if it had no guard at all.
+function M.test_action_guard_met_executes_action_normally()
+    local profile = create_profile(make_profile_ops("Comment", { text = "mage only" }, {
+        guard = { type = "ClassIs", payload = "Mage" },
+    }))
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return false end,
+            get_class = function() return 8 end, -- Mage (numeric class_id) — guard is met
+        }
+    end
+
+    local status, msg = profile:execute()
+    T.assert_equal(status, "running", "guard-met action should execute and return running")
+    T.assert_equal(msg, "next action", "guard-met Comment action must execute normally (success path)")
+    T.assert_equal(profile._current_operation_idx, 2,
+        "the single-action operation must advance past the executed action")
+end
+
+--- An action with no `guard` field at all must behave exactly as before CL4 (unaffected).
+function M.test_action_without_guard_executes_normally()
+    local profile = create_profile(make_profile_ops("Comment", { text = "no guard" }))
+
+    local status, msg = profile:execute()
+    T.assert_equal(status, "running", "guard-less action should execute and return running")
+    T.assert_equal(msg, "next action", "guard-less Comment action must execute normally")
+    T.assert_equal(profile._current_operation_idx, 2,
+        "the single-action operation must advance past the executed action")
+end
+
+-- ============================================================================
 -- W4.4 — Consecutive failure tests
 -- ============================================================================
 
@@ -555,6 +618,11 @@ local tests = {
     test_completion_gate_bounded_wait_times_out_and_advances = M.test_completion_gate_bounded_wait_times_out_and_advances,
     test_reset_clears_wait_timer_loop_safety = M.test_reset_clears_wait_timer_loop_safety,
     test_classis_maps_numeric_class_id_to_name = M.test_classis_maps_numeric_class_id_to_name,
+
+    -- CL4
+    test_action_guard_unmet_skips_action_without_executing_it = M.test_action_guard_unmet_skips_action_without_executing_it,
+    test_action_guard_met_executes_action_normally = M.test_action_guard_met_executes_action_normally,
+    test_action_without_guard_executes_normally = M.test_action_without_guard_executes_normally,
 
     -- W4.4
     test_consecutive_failures_stops_profile = M.test_consecutive_failures_stops_profile,

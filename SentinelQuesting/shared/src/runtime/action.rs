@@ -44,6 +44,28 @@ pub enum RuntimeAction {
     LearnFlightPath(RuntimeLearnFlightPath),
 }
 
+/// A `RuntimeAction` plus an optional per-action class guard (CL4).
+///
+/// Additive, 100%-backward-compatible wrapper: `#[serde(flatten)]` keeps the serialized
+/// `{ "type", "payload" }` shape byte-for-byte identical to a bare `RuntimeAction`, with `guard`
+/// appended only when present (`skip_serializing_if`). A profile compiled before CL4, or any
+/// action without a `class_restriction`, deserializes with `guard: None` and behaves exactly as
+/// before. The Lua runtime evaluates `action.guard` (when present) before dispatching the action;
+/// see `sentinel/modules/questing/runtime_profile.lua`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GuardedAction {
+    #[serde(flatten)]
+    pub action: RuntimeAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard: Option<RuntimeCondition>,
+}
+
+impl From<RuntimeAction> for GuardedAction {
+    fn from(action: RuntimeAction) -> Self {
+        Self { action, guard: None }
+    }
+}
+
 fn default_tolerance() -> f32 {
     5.0
 }

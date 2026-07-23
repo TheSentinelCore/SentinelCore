@@ -958,7 +958,16 @@ function RuntimeProfile:_execute_running()
     local action = op.actions[self._current_action_idx]
     local ctx = self:create_context()
 
-    local status, msg = RuntimeAction.execute(action, ctx)
+    local status, msg
+    -- CL4: a per-action class guard (compiler-emitted `action.guard`, a RuntimeCondition) is
+    -- evaluated BEFORE dispatch. Unmet -> treat exactly like an existing "skipped" action: never
+    -- executed, advances the action/operation index, never counts as a retry/failure. Guard-less
+    -- actions (the overwhelming majority, and every pre-CL4 profile) are unaffected.
+    if action and action.guard and not RuntimeAction.evaluate_condition(ctx, action.guard) then
+        status, msg = "skipped", "class guard unmet"
+    else
+        status, msg = RuntimeAction.execute(action, ctx)
+    end
 
     self._blackboard:set("questing.current_operation", self._current_operation_idx)
     self._blackboard:set("questing.current_status", status)

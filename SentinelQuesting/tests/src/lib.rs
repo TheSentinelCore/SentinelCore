@@ -50,9 +50,9 @@ fn pipeline_compiles_to_valid_profile() {
     assert_eq!(op1.actions.len(), 3, "Northshire Start should have 3 actions");
 
     // Verify action types in op1
-    assert!(matches!(op1.actions[0], sentinel_models::runtime::RuntimeAction::AcceptQuest(_)));
-    assert!(matches!(op1.actions[1], sentinel_models::runtime::RuntimeAction::Kill(_)));
-    assert!(matches!(op1.actions[2], sentinel_models::runtime::RuntimeAction::SetVariable(_)));
+    assert!(matches!(op1.actions[0].action, sentinel_models::runtime::RuntimeAction::AcceptQuest(_)));
+    assert!(matches!(op1.actions[1].action, sentinel_models::runtime::RuntimeAction::Kill(_)));
+    assert!(matches!(op1.actions[2].action, sentinel_models::runtime::RuntimeAction::SetVariable(_)));
 
     // Verify operation 2
     let op2 = &profile.operations[1];
@@ -60,12 +60,12 @@ fn pipeline_compiles_to_valid_profile() {
     assert_eq!(op2.actions.len(), 3, "Goldshire Delivery should have 3 actions");
 
     // Verify action types in op2
-    assert!(matches!(op2.actions[0], sentinel_models::runtime::RuntimeAction::Travel(_)));
-    assert!(matches!(op2.actions[1], sentinel_models::runtime::RuntimeAction::TurnInQuest(_)));
-    assert!(matches!(op2.actions[2], sentinel_models::runtime::RuntimeAction::SetVariable(_)));
+    assert!(matches!(op2.actions[0].action, sentinel_models::runtime::RuntimeAction::Travel(_)));
+    assert!(matches!(op2.actions[1].action, sentinel_models::runtime::RuntimeAction::TurnInQuest(_)));
+    assert!(matches!(op2.actions[2].action, sentinel_models::runtime::RuntimeAction::SetVariable(_)));
 
     // Verify NPC references resolved to entries
-    if let sentinel_models::runtime::RuntimeAction::AcceptQuest(a) = &op1.actions[0] {
+    if let sentinel_models::runtime::RuntimeAction::AcceptQuest(a) = &op1.actions[0].action {
         assert_eq!(a.npc_entry, 197, "Marshal McBride should resolve to entry 197");
         assert_eq!(a.quest_id, 33);
     } else {

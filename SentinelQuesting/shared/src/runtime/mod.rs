@@ -15,11 +15,11 @@ mod variable;
 mod waypoint;
 
 pub use action::{
-    RuntimeAcceptQuest, RuntimeAction, RuntimeBank, RuntimeComment, RuntimeConditionAction,
-    RuntimeEscort, RuntimeFlight, RuntimeGrind, RuntimeHearth, RuntimeInteractNpc, RuntimeKill,
-    RuntimeLearnFlightPath, RuntimeLoot, RuntimeMailbox, RuntimePatrol, RuntimeRepair,
-    RuntimeSetVariable, RuntimeTrain, RuntimeTravel, RuntimeTurnInQuest, RuntimeUseItem,
-    RuntimeVendor, RuntimeWait,
+    GuardedAction, RuntimeAcceptQuest, RuntimeAction, RuntimeBank, RuntimeComment,
+    RuntimeConditionAction, RuntimeEscort, RuntimeFlight, RuntimeGrind, RuntimeHearth,
+    RuntimeInteractNpc, RuntimeKill, RuntimeLearnFlightPath, RuntimeLoot, RuntimeMailbox,
+    RuntimePatrol, RuntimeRepair, RuntimeSetVariable, RuntimeTrain, RuntimeTravel,
+    RuntimeTurnInQuest, RuntimeUseItem, RuntimeVendor, RuntimeWait,
 };
 pub use area::RuntimeArea;
 pub use condition::RuntimeCondition;
