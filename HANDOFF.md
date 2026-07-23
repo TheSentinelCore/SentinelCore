@@ -78,10 +78,24 @@ for non-hostile direct targets" — that rule is correct for AUTO engagement and
 explicitly requested quest target. `SentinelCombat:engage` and `_ensure_target` were already taught
 to honour `_forced_target`; the spell/rotation path was not.
 
-Look at `sentinel/modules/combat/strategies/grind_target_strategy.lua` (`is_valid_enemy`, which
-consults `is_enemy_with` / `can_attack`) and wherever the rotation validates a target before
-queueing. Thread the forced-target exemption through, and keep the auto-engage guarantee intact so
-that existing test still passes.
+**A hook already exists — try it before writing new plumbing.**
+`grind_target_strategy.lua::is_valid_enemy` (line ~60) reads:
+
+```lua
+local attack_neutral = self._blackboard:get("module.grind.attack_neutral") == true
+if attack_neutral then return true end   -- players already filtered out above
+return is_hostile(player, unit)
+```
+
+So setting `module.grind.attack_neutral = true` on the blackboard should make neutral quest mobs
+valid targets everywhere the strategy is consulted. Cheapest experiment: set that flag in-game and
+re-run the Kill — if the wolf dies, the fix is to set it (scoped to questing engagement, not
+globally, so auto-engage behaviour is unchanged) rather than to add a new exemption path.
+
+If that is not sufficient, trace where the rotation validates a target before queueing a spell and
+thread the forced-target exemption through. Either way keep the auto-engage guarantee intact —
+`sentinel/tests/modules/combat/test_module.lua` asserts combat must not queue spells for
+non-hostile *auto*-selected targets, and that test must keep passing.
 
 Secondary, same area: the bot does not close the last few yards as the mob wanders (observed
 drifting 2.6 → 6.5 yd). The chase re-issues `move_to` only when the target moves >3 yd from the
