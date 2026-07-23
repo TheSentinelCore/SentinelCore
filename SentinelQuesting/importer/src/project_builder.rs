@@ -621,7 +621,12 @@ fn zone_map_for(zone: &str) -> Option<ZoneMap> {
 fn build_travel_position(state: &mut MapperState, step: &Step, args: &[String]) -> Option<Position> {
     let pct_x = args.get(1)?.parse::<f32>().ok()?;
     let pct_y = args.get(2)?.parse::<f32>().ok()?;
-    let z = args.get(3).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+    // RestedXP `.goto zone,x,y[,radius][,flags]` NEVER carries a height — the optional
+    // third numeric is a reach RADIUS (`.goto 1429,47.601,36.720,45,0` = 45yd radius for
+    // the Echo Ridge sweep). Baking it as Z buried those waypoints ~35yd inside the
+    // terrain, the navmesh found no polygon, and travel wedged in awaiting_path forever
+    // (live-caught). Z is always 0 here; the runtime resolves ground height on arrival.
+    let z = 0.0;
     let zone = args.first()?;
 
     // A zone we cannot convert yields NO position rather than a bogus one: emitting the raw
@@ -934,6 +939,14 @@ async fn build_step_actions(
                     .map(|a| if a.parse::<u32>().is_ok() { format!("Map {}", a) } else { a.clone() })
                     .unwrap_or_else(|| "Unknown".to_string());
                 let position = build_travel_position(state, step, &cmd.args);
+                // The optional radius arg (`.goto zone,x,y,45,0`) is the guide's reach
+                // tolerance in yards; keep the 5yd default when absent or zero, and clamp
+                // so a typo can never make "arrived" meaninglessly wide.
+                let tolerance = cmd.args.get(3)
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .filter(|r| *r > 0.0)
+                    .map(|r| r.clamp(5.0, 60.0))
+                    .unwrap_or(5.0);
                 actions.push(Action {
                     id: Uuid::new_v4(),
                     enabled: true,
@@ -943,7 +956,7 @@ async fn build_step_actions(
                     payload: ActionPayload::Travel(TravelAction {
                         destination: dest,
                         position,
-                        tolerance: 5.0,
+                        tolerance,
                         mount: None,
                         allow_flight: false,
                         timeout: None,

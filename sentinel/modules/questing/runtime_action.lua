@@ -498,8 +498,24 @@ end
 --- returns 0 for distant chunks) fall back to the player's own Z, which assumes same-ground and is
 --- far closer than 0.
 function RuntimeAction.resolve_ground_z(x, y, z)
+    local player_z = nil
+    local player = UnitHelper.get_local_player()
+    if player and player.get_position then
+        local ok_p, pos = pcall(player.get_position, player)
+        if ok_p and type(pos) == "table" and type(pos.z) == "number" then
+            player_z = pos.z
+        end
+    end
+
+    -- A recorded Z is trusted only when PLAUSIBLE. Guides never carry heights, and one
+    -- importer bug baked a .goto reach RADIUS (45) into world_z — waypoints ~35yd inside
+    -- the terrain at Echo Ridge, no navmesh polygon, travel wedged in awaiting_path
+    -- forever (live-caught). More than 30yd of vertical disagreement with the player on
+    -- a single travel leg means the number is not a height; re-resolve it.
     if type(z) == "number" and z ~= 0 then
-        return z
+        if player_z == nil or math.abs(z - player_z) <= 30 then
+            return z
+        end
     end
     if core and core.get_height_for_position then
         local ok, h = pcall(core.get_height_for_position, { x = x, y = y, z = 0 })
@@ -507,12 +523,8 @@ function RuntimeAction.resolve_ground_z(x, y, z)
             return h
         end
     end
-    local player = UnitHelper.get_local_player()
-    if player and player.get_position then
-        local ok_p, pos = pcall(player.get_position, player)
-        if ok_p and type(pos) == "table" and type(pos.z) == "number" then
-            return pos.z
-        end
+    if player_z ~= nil then
+        return player_z
     end
     return z or 0
 end

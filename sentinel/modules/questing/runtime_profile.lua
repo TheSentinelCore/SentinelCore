@@ -1815,8 +1815,17 @@ function RuntimeProfile:_resolve_nav_target(action, ctx)
             -- Legacy format: {x, y, z}
             return { x = p.position.x, y = p.position.y, z = p.position.z }
         elseif p.position.world_x then
-            -- New format from compiler: {world_x, world_y, world_z, map}
-            return { x = p.position.world_x, y = p.position.world_y, z = p.position.world_z }
+            -- New format from compiler: {world_x, world_y, world_z, map}. The recorded Z
+            -- must go through the same plausibility gate as execute_travel's — this
+            -- branch fed the RAW world_z straight to nav, so a bogus baked height (the
+            -- .goto radius bug: z=45, ~35yd underground) wedged pathing in awaiting_path
+            -- forever even though execute_travel itself would have sanitized it.
+            return {
+                x = p.position.world_x,
+                y = p.position.world_y,
+                z = RuntimeAction.resolve_ground_z(
+                    p.position.world_x, p.position.world_y, p.position.world_z),
+            }
         end
     end
 
