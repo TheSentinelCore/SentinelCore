@@ -73,20 +73,11 @@ local MAX_CONDITION_WAIT = 300.0        -- Seconds a Completion-role Condition g
 
 -- Sylvannas `unit:get_class()` returns a numeric class_id, not a string. Map it to the
 -- Title-Case class name so ClassIs conditions (compiled from RestedXP's Title-Case class
--- tails, e.g. "Warrior/Paladin", "!Rogue") compare correctly. IDs match both the injector
--- enums (class_id_to_name) and the tbcmangos DB player_classlevelstats: {1,2,3,4,5,7,8,9,11}.
-local CLASS_ID_TO_NAME = {
-    [1] = "Warrior",
-    [2] = "Paladin",
-    [3] = "Hunter",
-    [4] = "Rogue",
-    [5] = "Priest",
-    [6] = "DeathKnight",  -- not in TBC, included for forward-compat
-    [7] = "Shaman",
-    [8] = "Mage",
-    [9] = "Warlock",
-    [11] = "Druid",
-}
+-- tails, e.g. "Warrior/Paladin", "!Rogue") compare correctly. B8: this used to be a private
+-- copy of the map; it now defers to shared/class_names.lua, the one authority shared with
+-- combat (which upper-cases at its own boundary for `player.class_name`).
+local ClassNames = require("shared/class_names")
+local CLASS_ID_TO_NAME = ClassNames.CLASS_ID_TO_NAME
 
 local RuntimeProfile = {}
 RuntimeProfile.__index = RuntimeProfile
