@@ -6,6 +6,8 @@ local MaintenanceTree = require("modules/combat/profiles/mage/maintenance_tree")
 local FrostCombatState = require("modules/combat/profiles/mage/frost_combat_state")
 local KiteController = require("modules/combat/profiles/mage/kite_controller")
 local PetController = require("modules/combat/profiles/mage/pet_controller")
+local PriorityBuilder = require("modules/combat/priority_builder")
+local ActionLibrary = require("modules/combat/action_library")
 
 local Profile = {}
 Profile.__index = Profile
@@ -99,229 +101,222 @@ local function build_off_gcd_root()
 end
 
 -- ---------------------------------------------------------------------------
--- GCD tree (priority_selector, 75ms tick)
--- Always evaluates from top for preemption (interrupts, emergencies, etc.)
+-- GCD tree (PriorityBuilder, 75ms tick)
+-- Always evaluates from top for preemption (interrupts, emergencies, etc.).
+-- Priority numbers are index*10 to preserve the original source order exactly
+-- (PriorityBuilder:build sorts ascending — priority_builder.lua:99).
 -- ---------------------------------------------------------------------------
-local function build_gcd_root()
-    return BT.priority_selector("frost_mage_gcd", {
-        -- 1. INTERRUPT: Counterspell
-        BT.sequence("counterspell", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("target_casting", Cond.target_casting_interruptible),
-            BT.condition("counterspell_ready", Cond.spell_ready("counterspell")),
-            BT.action("queue_counterspell", Act.queue_counterspell),
-        }),
-        -- 2. EMERGENCY: Ice Block (health < 15%)
-        BT.sequence("ice_block_emergency", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("health_below_15", Cond.health_below(0.15)),
-            BT.condition("ice_block_ready", Cond.spell_ready("ice_block", nil, "self")),
-            BT.action("queue_ice_block", Act.queue_ice_block),
-        }),
-        -- 3. EMERGENCY: Mana Shield (health < 30%, mana > 30%, not already active)
-        BT.sequence("mana_shield_emergency", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("health_below_30", Cond.health_below(0.30)),
-            BT.condition("mana_above_30", Cond.mana_above(0.30)),
-            BT.condition("missing_mana_shield", Cond.missing_mana_shield),
-            BT.condition("mana_shield_ready", Cond.spell_ready("mana_shield", nil, "self")),
-            BT.action("queue_mana_shield", Act.queue_mana_shield),
-        }),
-        -- 4. EMERGENCY: Hard flee (all defensives exhausted, HP critical)
-        BT.sequence("emergency_escape", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("should_escape", Cond.should_emergency_escape),
-            BT.action("escape", Act.emergency_escape),
-        }),
-        -- 5. CC (PvE): Polymorph second hostile (2+ enemies, not AoE mode)
-        BT.sequence("polymorph_pve", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("level_at_least_8", Cond.level_at_least(8)),
-            BT.condition("2_plus_enemies", Cond.hostile_count_at_least(2, 30)),
-            BT.condition("not_aoe_mode", function(bb) return not Cond.should_use_aoe(bb) end),
-            BT.condition("polymorph_ready", Cond.spell_ready("polymorph")),
-            BT.action("queue_polymorph", Act.queue_polymorph),
-        }),
-        -- 5. CC (PvP): Polymorph secondary hostile (level 8+, 2+ enemies)
-        BT.sequence("polymorph_pvp", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("level_at_least_8", Cond.level_at_least(8)),
-            BT.condition("target_is_player", Cond.target_is_player),
-            BT.condition("2_plus_enemies", Cond.hostile_count_at_least(2, 30)),
-            BT.condition("polymorph_ready", Cond.spell_ready("polymorph")),
-            BT.action("queue_polymorph", Act.queue_polymorph),
-        }),
-        -- 6. ADD FINISH: Fire Blast low-HP secondary enemy
-        BT.sequence("finish_low_add", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("has_low_add", Cond.has_low_health_add),
-            BT.condition("not_kiting", Cond.not_kiting),
-            BT.condition("fire_blast_ready", Cond.spell_ready("fire_blast")),
-            BT.action("finish_add", Act.finish_low_add),
-        }),
-        -- 7. KILL-SECURE: Fire Blast (instant finish, 20yd range)
-        BT.sequence("fire_blast_kill", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("not_running_away", Cond.not_running_away),
-            BT.condition("target_killable", Cond.target_killable_instant),
-            BT.condition("in_fire_blast_range", Cond.target_in_range(20)),
-            BT.condition("fire_blast_ready", Cond.spell_ready("fire_blast")),
-            BT.action("queue_fire_blast_kill", Act.queue_fire_blast_kill),
-        }),
-        -- 7. KILL-SECURE: Ice Lance (instant finish, level 66+)
-        BT.sequence("ice_lance_kill", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("not_running_away", Cond.not_running_away),
-            BT.condition("level_at_least_66", Cond.level_at_least(66)),
-            BT.condition("target_killable", Cond.target_killable_instant),
-            BT.condition("ice_lance_ready", Cond.spell_ready("ice_lance")),
-            BT.action("queue_ice_lance_kill", Act.queue_ice_lance_frozen),
-        }),
-        -- 8. KITE: Frost Nova + start kite (2+ melee OR 1 melee + HP < 40%)
-        BT.sequence("frost_nova_kite", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("enemies_melee_or_emergency", function(bb)
-                local count = tonumber(bb:get("combat.enemy_count_10yd", 0)) or 0
-                if count >= 2 then return true end
-                if count >= 1 and (tonumber(bb:get("player.health_pct", 1)) or 1) < 0.40 then return true end
-                return false
-            end),
-            BT.condition("not_kiting", Cond.not_kiting),
-            BT.condition("frost_nova_ready", Cond.spell_ready("frost_nova")),
-            BT.action("queue_frost_nova", Act.queue_frost_nova),
-            BT.action("start_kite", Act.start_kite),
-        }),
-        -- 9. KITE: Blink for instant distance while running away
-        BT.sequence("blink_kite", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("is_running_away", Cond.is_running_away),
-            BT.condition("blink_ready", Cond.spell_ready("blink", nil, "self")),
-            BT.action("queue_blink", Act.queue_blink),
-        }),
-        -- 10. KITE FALLBACK: Cone of Cold (enemy in melee, nova on CD)
-        BT.sequence("cone_of_cold_kite", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("enemies_melee", Cond.enemies_in_melee(1)),
-            BT.condition("cone_of_cold_ready", Cond.spell_ready("cone_of_cold")),
-            BT.action("queue_cone_of_cold", Act.queue_cone_of_cold),
-        }),
-        -- 11. SPELLSTEAL (level 70, target has magic buff)
-        BT.sequence("spellsteal", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("level_70", Cond.level_at_least(70)),
-            BT.condition("target_has_stealable", Cond.target_has_stealable_buff),
-            BT.condition("mana_above_20", Cond.mana_above(0.20)),
-            BT.condition("spellsteal_ready", Cond.spell_ready("spellsteal")),
-            BT.action("queue_spellsteal", Act.queue_spellsteal),
-        }),
-        -- 12. SHATTER: Ice Lance on frozen target (3x damage, level 66+)
-        BT.sequence("ice_lance_shatter", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("not_running_away", Cond.not_running_away),
-            BT.condition("level_at_least_66", Cond.level_at_least(66)),
-            BT.condition("target_frozen", Cond.target_is_frozen),
-            BT.condition("ice_lance_ready", Cond.spell_ready("ice_lance")),
-            BT.action("queue_ice_lance_frozen", Act.queue_ice_lance_frozen),
-        }),
-        -- 13. SHATTER: Fire Blast on frozen target (20yd range)
-        BT.sequence("fire_blast_shatter", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("not_running_away", Cond.not_running_away),
-            BT.condition("target_frozen", Cond.target_is_frozen),
-            BT.condition("in_fire_blast_range", Cond.target_in_range(20)),
-            BT.condition("fire_blast_ready", Cond.spell_ready("fire_blast")),
-            BT.action("queue_fire_blast", Act.queue_fire_blast),
-        }),
-        -- 14. PVP BURST: Frostbolt on frozen player (shatter combo)
-        BT.sequence("frostbolt_pvp_shatter", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("target_is_player", Cond.target_is_player),
-            BT.condition("target_frozen", Cond.target_is_frozen),
-            BT.condition("not_moving", function(bb) return not Cond.player_is_moving(bb) end),
-            BT.condition("frostbolt_ready", Cond.spell_ready("frostbolt")),
-            BT.action("queue_frostbolt", Act.queue_frostbolt),
-        }),
-        -- 15. AOE: Blizzard > Arcane Explosion > Cone of Cold (3+ enemies)
-        BT.sequence("aoe_rotation", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("should_aoe", Cond.should_use_aoe),
-            BT.condition("not_kiting", Cond.not_kiting),
-            BT.selector("aoe_spells", {
-                BT.sequence("blizzard", {
-                    BT.condition("blizzard_ready", Cond.spell_ready("blizzard")),
-                    BT.action("queue_blizzard", Act.queue_blizzard),
-                }),
-                BT.sequence("arcane_explosion", {
-                    BT.condition("ae_ready", Cond.spell_ready("arcane_explosion")),
-                    BT.action("queue_ae", Act.queue_arcane_explosion),
-                }),
-                BT.sequence("cone_of_cold_aoe", {
-                    BT.condition("coc_ready", Cond.spell_ready("cone_of_cold")),
-                    BT.action("queue_coc", Act.queue_cone_of_cold),
-                }),
-            }),
-        }),
-        -- 16. MANA: Use mana gem (mana < 40%)
-        BT.sequence("use_mana_gem", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("mana_below_40", Cond.mana_below(0.40)),
-            BT.condition("has_mana_gem", Cond.has_mana_gem),
-            BT.action("use_mana_gem", Act.use_mana_gem),
-        }),
-        -- 17. MANA: Evocation (mana < 20%, safe)
-        BT.sequence("evocation", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("mana_below_20", Cond.mana_below(0.20)),
-            BT.condition("safe_to_evocate", Cond.safe_to_evocate),
-            BT.condition("evocation_ready", Cond.spell_ready("evocation", nil, "self")),
-            BT.action("queue_evocation", Act.queue_evocation),
-        }),
-        -- 18. SUMMON: Water Elemental (level 50+, pet absent)
-        BT.sequence("summon_water_elemental", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("level_at_least_50", Cond.level_at_least(50)),
-            BT.condition("missing_water_elemental", Cond.missing_water_elemental),
-            BT.condition("not_moving", function(bb) return not Cond.player_is_moving(bb) end),
-            BT.condition("summon_ready", Cond.spell_ready("summon_water_elemental", nil, "self")),
-            BT.action("queue_summon", Act.queue_summon_water_elemental),
-        }),
-        -- 19. MOVEMENT: Fire Blast (moving but NOT kite-running — can't face target)
-        BT.sequence("fire_blast_moving", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("moving_not_kiting", function(bb)
-                return Cond.player_is_moving(bb) and not Cond.is_running_away(bb)
-            end),
-            BT.condition("in_fire_blast_range", Cond.target_in_range(20)),
-            BT.condition("fire_blast_ready", Cond.spell_ready("fire_blast")),
-            BT.action("queue_fire_blast", Act.queue_fire_blast),
-        }),
-        -- 20. MOVEMENT: Ice Lance (moving but NOT kite-running, level 66+)
-        BT.sequence("ice_lance_moving", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("level_at_least_66", Cond.level_at_least(66)),
-            BT.condition("moving_not_kiting", function(bb)
-                return Cond.player_is_moving(bb) and not Cond.is_running_away(bb)
-            end),
-            BT.condition("ice_lance_ready", Cond.spell_ready("ice_lance")),
-            BT.action("queue_ice_lance", Act.queue_ice_lance),
-        }),
-        -- 21. FILLER: Frostbolt (standing still)
-        BT.sequence("frostbolt", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("not_moving", function(bb) return not Cond.player_is_moving(bb) end),
-            BT.condition("frostbolt_ready", Cond.spell_ready("frostbolt")),
-            BT.action("queue_frostbolt", Act.queue_frostbolt),
-        }),
-        -- 22. FALLBACK: Fireball (levels 1-3 before Frostbolt)
-        BT.sequence("fireball_fallback", {
-            BT.condition("gcd_ready", Cond.gcd_ready),
-            BT.condition("not_moving", function(bb) return not Cond.player_is_moving(bb) end),
-            BT.condition("fireball_ready", Cond.spell_ready("fireball")),
-            BT.action("queue_fireball", Act.queue_fireball),
-        }),
-        -- 23. NOOP
-        BT.action("fallback_noop", Act.noop),
-    })
+local function not_aoe_mode(bb) return not Cond.should_use_aoe(bb) end
+local function not_moving(bb) return not Cond.player_is_moving(bb) end
+local function moving_not_kiting(bb)
+    return Cond.player_is_moving(bb) and not Cond.is_running_away(bb)
+end
+local function enemies_melee_or_emergency(bb)
+    local count = tonumber(bb:get("combat.enemy_count_10yd", 0)) or 0
+    if count >= 2 then return true end
+    if count >= 1 and (tonumber(bb:get("player.health_pct", 1)) or 1) < 0.40 then return true end
+    return false
+end
+
+local function build_gcd_root(blackboard)
+    local builder = PriorityBuilder.new("MAGE", "FROST")
+
+    -- 1. INTERRUPT: Counterspell
+    builder:add_priority("counterspell", {
+        Cond.gcd_ready,
+        Cond.target_casting_interruptible,
+        Cond.spell_ready("counterspell"),
+    }, Act.queue_counterspell, nil, 10)
+
+    -- 2. EMERGENCY: Ice Block (health < 15%)
+    builder:add_priority("ice_block_emergency", {
+        Cond.gcd_ready,
+        Cond.health_below(0.15),
+        Cond.spell_ready("ice_block", nil, "self"),
+    }, Act.queue_ice_block, nil, 20)
+
+    -- 3. EMERGENCY: Mana Shield (health < 30%, mana > 30%, not already active)
+    builder:add_priority("mana_shield_emergency", {
+        Cond.gcd_ready,
+        Cond.health_below(0.30),
+        Cond.mana_above(0.30),
+        Cond.missing_mana_shield,
+        Cond.spell_ready("mana_shield", nil, "self"),
+    }, Act.queue_mana_shield, nil, 30)
+
+    -- 4. EMERGENCY: Hard flee (all defensives exhausted, HP critical)
+    builder:add_priority("emergency_escape", {
+        Cond.gcd_ready,
+        Cond.should_emergency_escape,
+    }, Act.emergency_escape, nil, 40)
+
+    -- 5. CC (PvE): Polymorph second hostile (2+ enemies, not AoE mode)
+    builder:add_priority("polymorph_pve", {
+        Cond.gcd_ready,
+        Cond.level_at_least(8),
+        Cond.hostile_count_at_least(2, 30),
+        not_aoe_mode,
+        Cond.spell_ready("polymorph"),
+    }, Act.queue_polymorph, nil, 50)
+
+    -- 5. CC (PvP): Polymorph secondary hostile (level 8+, 2+ enemies)
+    builder:add_priority("polymorph_pvp", {
+        Cond.gcd_ready,
+        Cond.level_at_least(8),
+        Cond.target_is_player,
+        Cond.hostile_count_at_least(2, 30),
+        Cond.spell_ready("polymorph"),
+    }, Act.queue_polymorph, nil, 60)
+
+    -- 6. ADD FINISH: Fire Blast low-HP secondary enemy
+    builder:add_priority("finish_low_add", {
+        Cond.gcd_ready,
+        Cond.has_low_health_add,
+        Cond.not_kiting,
+        Cond.spell_ready("fire_blast"),
+    }, Act.finish_low_add, nil, 70)
+
+    -- 7. KILL-SECURE: Fire Blast (instant finish, 20yd range)
+    builder:add_priority("fire_blast_kill", {
+        Cond.gcd_ready,
+        Cond.not_running_away,
+        Cond.target_killable_instant,
+        Cond.target_in_range(20),
+        Cond.spell_ready("fire_blast"),
+    }, Act.queue_fire_blast_kill, nil, 80)
+
+    -- 7. KILL-SECURE: Ice Lance (instant finish, level 66+)
+    builder:add_priority("ice_lance_kill", {
+        Cond.gcd_ready,
+        Cond.not_running_away,
+        Cond.level_at_least(66),
+        Cond.target_killable_instant,
+        Cond.spell_ready("ice_lance"),
+    }, Act.queue_ice_lance_frozen, nil, 90)
+
+    -- 8. KITE: Frost Nova + start kite (2+ melee OR 1 melee + HP < 40%)
+    builder:add_priority("frost_nova_kite", {
+        Cond.gcd_ready,
+        enemies_melee_or_emergency,
+        Cond.not_kiting,
+        Cond.spell_ready("frost_nova"),
+    }, ActionLibrary.sequence({ Act.queue_frost_nova, Act.start_kite }), nil, 100)
+
+    -- 9. KITE: Blink for instant distance while running away
+    builder:add_priority("blink_kite", {
+        Cond.gcd_ready,
+        Cond.is_running_away,
+        Cond.spell_ready("blink", nil, "self"),
+    }, Act.queue_blink, nil, 110)
+
+    -- 10. KITE FALLBACK: Cone of Cold (enemy in melee, nova on CD)
+    builder:add_priority("cone_of_cold_kite", {
+        Cond.gcd_ready,
+        Cond.enemies_in_melee(1),
+        Cond.spell_ready("cone_of_cold"),
+    }, Act.queue_cone_of_cold, nil, 120)
+
+    -- 11. SPELLSTEAL (level 70, target has magic buff)
+    builder:add_priority("spellsteal", {
+        Cond.gcd_ready,
+        Cond.level_at_least(70),
+        Cond.target_has_stealable_buff,
+        Cond.mana_above(0.20),
+        Cond.spell_ready("spellsteal"),
+    }, Act.queue_spellsteal, nil, 130)
+
+    -- 12. SHATTER: Ice Lance on frozen target (3x damage, level 66+)
+    builder:add_priority("ice_lance_shatter", {
+        Cond.gcd_ready,
+        Cond.not_running_away,
+        Cond.level_at_least(66),
+        Cond.target_is_frozen,
+        Cond.spell_ready("ice_lance"),
+    }, Act.queue_ice_lance_frozen, nil, 140)
+
+    -- 13. SHATTER: Fire Blast on frozen target (20yd range)
+    builder:add_priority("fire_blast_shatter", {
+        Cond.gcd_ready,
+        Cond.not_running_away,
+        Cond.target_is_frozen,
+        Cond.target_in_range(20),
+        Cond.spell_ready("fire_blast"),
+    }, Act.queue_fire_blast, nil, 150)
+
+    -- 14. PVP BURST: Frostbolt on frozen player (shatter combo)
+    builder:add_priority("frostbolt_pvp_shatter", {
+        Cond.gcd_ready,
+        Cond.target_is_player,
+        Cond.target_is_frozen,
+        not_moving,
+        Cond.spell_ready("frostbolt"),
+    }, Act.queue_frostbolt, nil, 160)
+
+    -- 15. AOE: Blizzard > Arcane Explosion > Cone of Cold (3+ enemies)
+    builder:add_priority("aoe_rotation", {
+        Cond.gcd_ready,
+        Cond.should_use_aoe,
+        Cond.not_kiting,
+    }, ActionLibrary.selector({ Act.queue_blizzard, Act.queue_arcane_explosion, Act.queue_cone_of_cold }), nil, 170)
+
+    -- 16. MANA: Use mana gem (mana < 40%)
+    builder:add_priority("use_mana_gem", {
+        Cond.gcd_ready,
+        Cond.mana_below(0.40),
+        Cond.has_mana_gem,
+    }, Act.use_mana_gem, nil, 180)
+
+    -- 17. MANA: Evocation (mana < 20%, safe)
+    builder:add_priority("evocation", {
+        Cond.gcd_ready,
+        Cond.mana_below(0.20),
+        Cond.safe_to_evocate,
+        Cond.spell_ready("evocation", nil, "self"),
+    }, Act.queue_evocation, nil, 190)
+
+    -- 18. SUMMON: Water Elemental (level 50+, pet absent)
+    builder:add_priority("summon_water_elemental", {
+        Cond.gcd_ready,
+        Cond.level_at_least(50),
+        Cond.missing_water_elemental,
+        not_moving,
+        Cond.spell_ready("summon_water_elemental", nil, "self"),
+    }, Act.queue_summon_water_elemental, nil, 200)
+
+    -- 19. MOVEMENT: Fire Blast (moving but NOT kite-running — can't face target)
+    builder:add_priority("fire_blast_moving", {
+        Cond.gcd_ready,
+        moving_not_kiting,
+        Cond.target_in_range(20),
+        Cond.spell_ready("fire_blast"),
+    }, Act.queue_fire_blast, nil, 210)
+
+    -- 20. MOVEMENT: Ice Lance (moving but NOT kite-running, level 66+)
+    builder:add_priority("ice_lance_moving", {
+        Cond.gcd_ready,
+        Cond.level_at_least(66),
+        moving_not_kiting,
+        Cond.spell_ready("ice_lance"),
+    }, Act.queue_ice_lance, nil, 220)
+
+    -- 21. FILLER: Frostbolt (standing still)
+    builder:add_priority("frostbolt", {
+        Cond.gcd_ready,
+        not_moving,
+        Cond.spell_ready("frostbolt"),
+    }, Act.queue_frostbolt, nil, 230)
+
+    -- 22. FALLBACK: Fireball (levels 1-3 before Frostbolt)
+    builder:add_priority("fireball_fallback", {
+        Cond.gcd_ready,
+        not_moving,
+        Cond.spell_ready("fireball"),
+    }, Act.queue_fireball, nil, 240)
+
+    -- 23. NOOP
+    builder:add_priority("fallback_noop", nil, Act.noop, nil, 250)
+
+    return builder:build(blackboard)
 end
 
 -- ---------------------------------------------------------------------------
@@ -340,7 +335,7 @@ function Profile.build(blackboard, event_bus)
     o._off_gcd = Runner:new(BT.cooldown("frost_offgcd_cd", 75,
         build_off_gcd_root(), { key = "combat_frost_offgcd" }))
     o._gcd = Runner:new(BT.cooldown("frost_gcd_cd", 75,
-        build_gcd_root(), { key = "combat_frost_gcd" }))
+        build_gcd_root(blackboard), { key = "combat_frost_gcd" }))
     blackboard:set("rotation.profile_id", o.id)
     blackboard:set("module.combat.combat_range", 28)
     event_bus:publish("rotation:profile_loaded", {

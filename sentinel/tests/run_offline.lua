@@ -334,9 +334,13 @@ local test_modules = {
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
+    "tests/modules/combat/test_spell_catalog_known_rank",
+    "tests/modules/combat/test_condition_spell_available",
+    "tests/modules/combat/test_registry",
     "tests/modules/combat/test_spell_dispatcher",
     "tests/modules/combat/test_target_selector",
     "tests/modules/combat/test_module",
+    "tests/modules/combat/test_module_unsupported_class",
     "tests/modules/combat/test_helper_call_shapes",
     "tests/modules/combat/test_seal_policy",
     "tests/modules/combat/test_seal_availability",
@@ -344,6 +348,7 @@ local test_modules = {
     "tests/modules/combat/test_combat_zone_detector",
     "tests/modules/combat/test_pvp_target_selector",
     "tests/modules/combat/test_retribution_tbc",
+    "tests/modules/combat/test_warlock_affliction_tbc",
     "tests/modules/combat/test_context_builder_distance",
 
     -- Combat profiles
@@ -352,6 +357,7 @@ local test_modules = {
     "tests/modules/combat/profiles/mage/test_maintenance_tree",
     "tests/modules/combat/profiles/mage/test_aoe_tree",
     "tests/modules/combat/profiles/mage/test_frost_tbc",
+    "tests/modules/combat/profiles/mage/test_frost_gcd_priority",
     "tests/modules/combat/profiles/mage/test_pet_controller",
 
     -- Questing module

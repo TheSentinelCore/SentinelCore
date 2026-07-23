@@ -74,6 +74,29 @@ local SPELLS = {
     conjure_mana_citrine = { key = "conjure_mana_citrine", id = 10053, gcd = true, description = "Conjure Mana Citrine" },
     conjure_mana_ruby = { key = "conjure_mana_ruby", id = 10054, gcd = true, description = "Conjure Mana Ruby" },
     conjure_mana_emerald = { key = "conjure_mana_emerald", id = 27101, gcd = true, description = "Conjure Mana Emerald" },
+
+    -- Warlock: Affliction TBC leveling (Unit D)
+    -- Rank arrays extracted from tbcmangos.sqlite via the regen query documented above
+    -- (SELECT spell_id, rank FROM spell_chain WHERE first_spell = <base_id> ORDER BY rank),
+    -- run per-spell as:
+    --   SELECT c.spell_id, c.rank FROM spell_chain c JOIN spell_template t ON t.Id=c.spell_id
+    --   WHERE t.SpellName='<NAME>' ORDER BY c.rank;
+    -- Corruption anchor verified: 172,6222,6223,7648,11671,11672,25311,27216 (rank 1..8).
+    corruption = { key = "corruption", ranks = { 172, 6222, 6223, 7648, 11671, 11672, 25311, 27216 }, gcd = true, description = "Corruption" },
+    curse_of_agony = { key = "curse_of_agony", ranks = { 980, 1014, 6217, 11711, 11712, 11713, 27218 }, gcd = true, description = "Curse of Agony" },
+    immolate = { key = "immolate", ranks = { 348, 707, 1094, 2941, 11665, 11667, 11668, 25309, 27215 }, gcd = true, description = "Immolate" },
+    shadow_bolt = { key = "shadow_bolt", ranks = { 686, 695, 705, 1088, 1106, 7641, 11659, 11660, 11661, 25307, 27209 }, gcd = true, description = "Shadow Bolt" },
+    drain_life = { key = "drain_life", ranks = { 689, 699, 709, 7651, 11699, 11700, 27219, 27220 }, gcd = true, description = "Drain Life" },
+    drain_soul = { key = "drain_soul", ranks = { 1120, 8288, 8289, 11675, 27217 }, gcd = true, description = "Drain Soul" },
+    life_tap = { key = "life_tap", ranks = { 1454, 1455, 1456, 11687, 11688, 11689, 27222 }, gcd = true, description = "Life Tap" },
+    curse_of_weakness = { key = "curse_of_weakness", ranks = { 702, 1108, 6205, 7646, 11707, 11708, 27224, 30909 }, gcd = true, description = "Curse of Weakness" },
+    -- No spell_chain row (single-rank pet summon); confirmed via spell_template directly
+    -- (SELECT Id, SpellName, BaseLevel FROM spell_template WHERE SpellName='Summon Voidwalker'),
+    -- id 697 is the player-trained rank-1 (BaseLevel 10); other ids returned by that query are
+    -- NPC/quest-script duplicates (BaseLevel 1), not the trainer-taught spell.
+    summon_voidwalker = { key = "summon_voidwalker", id = 697, gcd = true, description = "Summon Voidwalker" },
+    -- Ranged auto-attack finisher shared by all classes with a wand equipped.
+    shoot = { key = "shoot", id = 5019, gcd = false, description = "Shoot (wand)" },
 }
 
 local function shallow_copy(src)
@@ -170,6 +193,58 @@ function SpellCatalog:resolve_lowest_rank(key)
             return nil
         end
         return spell.ranks[1]
+    end
+    return nil
+end
+
+-- Extraction query used to (re)generate rank arrays from tbcmangos.sqlite at authoring time
+-- (offline-only; the runtime never touches sqlite -- see design D-rank-resolution):
+--   SELECT spell_id, rank FROM spell_chain WHERE first_spell = <base_id> ORDER BY rank;
+-- Cross-check level curve via spell_template.SpellName/BaseLevel. Regeneration is manual,
+-- not a build step.
+
+-- Returns true iff `spell_id` is currently TRAINED, per core.spell_book. Checks
+-- is_spell_learned first (spellbook.md:227 -- the reliable signal for talent-modified ranks),
+-- falling back to is_spell_known. When core.spell_book is unavailable (offline/legacy harness),
+-- treat as known -- mirrors resolve_best_rank/resolve_lowest_rank's existing fallback behavior.
+local function is_trained(spell_id)
+    if not (core and core.spell_book) then
+        return true
+    end
+    if core.spell_book.is_spell_learned then
+        local ok, learned = pcall(core.spell_book.is_spell_learned, spell_id)
+        if ok and learned then
+            return true
+        end
+    end
+    if core.spell_book.is_spell_known then
+        local ok, known = pcall(core.spell_book.is_spell_known, spell_id)
+        if ok and known then
+            return true
+        end
+    end
+    return false
+end
+
+-- Kept SEPARATE from resolve_best_rank (which gates on core.spell_book.has_spell, line 125) to
+-- avoid Mage/Paladin blast radius -- resolve_best_rank has other callers this change must not
+-- touch. Walks the rank array HIGH -> LOW and returns the first TRAINED id, or nil if none is
+-- known yet (graceful 1-70 degradation).
+function SpellCatalog:resolve_known_rank(key)
+    local spell = self:get(key)
+    if not spell then
+        return nil
+    end
+    if spell.id then
+        return is_trained(spell.id) and spell.id or nil
+    end
+    if spell.ranks and #spell.ranks > 0 then
+        for i = #spell.ranks, 1, -1 do
+            if is_trained(spell.ranks[i]) then
+                return spell.ranks[i]
+            end
+        end
+        return nil
     end
     return nil
 end

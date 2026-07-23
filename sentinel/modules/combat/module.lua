@@ -105,7 +105,19 @@ function SentinelCombat:initialize()
     self._class_id = class_id
     local spec_id = core and core.spell_book and core.spell_book.get_specialization_id and core.spell_book.get_specialization_id() or 0
     local profile_module = ProfileRegistry.resolve(class_id, spec_id)
-    self._profile = profile_module.build(self._blackboard, self._event_bus)
+    if not profile_module then
+        -- Unit C: no profile registered for this class_id (registry.lua fails
+        -- loud instead of silently falling back to Paladin). Disable combat
+        -- cleanly rather than crash the ModuleRegistry lifecycle or run the
+        -- wrong rotation.
+        if core and type(core.log) == "function" then
+            pcall(core.log, "[Combat] class_id=" .. tostring(class_id) .. " has no registered profile; combat disabled")
+        end
+        self._profile = nil
+        self._unsupported_class = true
+    else
+        self._profile = profile_module.build(self._blackboard, self._event_bus)
+    end
     self._blackboard:set("module.combat.profile", self._profile)
 
     self._blackboard:set("player.class_id", class_id)
@@ -142,6 +154,11 @@ function SentinelCombat:initialize()
     }
     for _, kv in ipairs(STATIC_DEFAULTS) do
         self._blackboard:set(kv[1], kv[2])
+    end
+    if self._unsupported_class then
+        -- Must win over the STATIC_DEFAULTS "module.combat.enabled = true"
+        -- entry above -- an unsupported class_id stays disabled.
+        self._blackboard:set("module.combat.enabled", false)
     end
     self._cooldown_enter_ms = 0
 
@@ -533,7 +550,12 @@ function SentinelCombat:disengage(reason)
         local now_ms = self._blackboard:get("system.now_ms", 0)
         self._outnumbered_backoff_until_ms = now_ms + OUTNUMBERED_BACKOFF_MS
     end
-    self._profile:reset()
+    -- Unit C: self._profile can be nil when the class_id has no registered
+    -- profile (combat disabled) -- guard so a stray disengage() (event
+    -- handlers are wired regardless of resolve outcome) can't crash.
+    if self._profile then
+        self._profile:reset()
+    end
     self._state_machine:transition("IDLE", reason or "disengage")
     if active then
         self._event_bus:publish(Events.DISENGAGED, {
@@ -574,6 +596,21 @@ function SentinelCombat:_confirm_class_detection(blackboard)
     self._class_id = class_id
     local spec_id = core and core.spell_book and core.spell_book.get_specialization_id and core.spell_book.get_specialization_id() or 0
     local profile_module = ProfileRegistry.resolve(class_id, spec_id)
+    if not profile_module then
+        -- Unit C: same fail-loud guard as initialize() -- the confirmed class_id
+        -- has no registered profile. Disable combat cleanly instead of crashing
+        -- on a nil `.build` or silently keeping/running the previous rotation.
+        self._profile = nil
+        self._unsupported_class = true
+        self._blackboard:set("module.combat.profile", nil)
+        self._blackboard:set("player.class_id", class_id)
+        self._blackboard:set("player.class_name", CLASS_ID_TO_NAME[class_id] or "WARRIOR")
+        self._blackboard:set("module.combat.enabled", false)
+        if core and type(core.log) == "function" then
+            pcall(core.log, "[Combat] confirmed class_id=" .. tostring(class_id) .. " has no registered profile; combat disabled")
+        end
+        return
+    end
     self._profile = profile_module.build(self._blackboard, self._event_bus)
     self._blackboard:set("module.combat.profile", self._profile)
     self._blackboard:set("player.class_id", class_id)

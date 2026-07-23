@@ -266,6 +266,39 @@ function ConditionLibrary.spell_ready(spell_key, mode, cast_target)
     end
 end
 
+-- Distinct from spell_ready (above): spell_ready only checks cooldown/castability/LoS on a
+-- spell already assumed trained. spell_available gates on TRAINED status instead, via
+-- SpellCatalog:resolve_known_rank (spell_catalog.lua) -- so a priority entry gated on a
+-- catalog key auto-resolves to the highest known rank and auto-skips when nothing is known
+-- (graceful 1-70 degradation, no hand-typed level checks). `mode`:
+--   "known" (default) -- trained status only (resolve_known_rank already checks
+--       is_spell_learned then is_spell_known internally).
+--   "usable" -- trained status AND core.spell_book.is_usable_spell(id) (e.g. mana/reagents).
+-- Returns false (never errors) when the catalog/blackboard/key don't resolve, exactly like an
+-- untrained spell, so it composes safely into PriorityBuilder condition arrays and with
+-- ConditionLibrary.and_/not_ (see COMPOUND CONDITIONS below).
+function ConditionLibrary.spell_available(spell_key, mode)
+    mode = mode or "known"
+    return function(blackboard)
+        local catalog = blackboard:get("module.combat.catalog")
+        if not catalog then
+            return false
+        end
+        local spell_id = catalog:resolve_known_rank(spell_key)
+        if not spell_id then
+            return false
+        end
+        if mode == "usable" then
+            if not (core and core.spell_book and core.spell_book.is_usable_spell) then
+                return false
+            end
+            local ok, usable = pcall(core.spell_book.is_usable_spell, spell_id)
+            return ok and usable == true
+        end
+        return true
+    end
+end
+
 -- ============================================================================
 -- COMBAT STATE CONDITIONS
 -- ============================================================================
