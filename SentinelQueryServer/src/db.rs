@@ -94,6 +94,85 @@ impl Db {
             }
         }
 
+        // Structured objectives (ADR 06 Level-1 enrichment): what each slot actually requires, so
+        // the compiler can synthesise a satisfying action rather than emit an unreachable gate.
+        let mut structured_objectives = Vec::new();
+
+        // Creature/GO kill-or-interact slots. A NEGATIVE ReqCreatureOrGOId is a gameobject entry.
+        let creature_rows = self.query_map::<_, _>(
+            "SELECT ReqCreatureOrGOId1, ReqCreatureOrGOCount1, ReqCreatureOrGOId2, ReqCreatureOrGOCount2, \
+                    ReqCreatureOrGOId3, ReqCreatureOrGOCount3, ReqCreatureOrGOId4, ReqCreatureOrGOCount4 \
+             FROM quest_template WHERE entry = ?1",
+            [id],
+            |row| {
+                Ok([
+                    (row.get::<_, i64>(0)?, row.get::<_, i64>(1)?),
+                    (row.get::<_, i64>(2)?, row.get::<_, i64>(3)?),
+                    (row.get::<_, i64>(4)?, row.get::<_, i64>(5)?),
+                    (row.get::<_, i64>(6)?, row.get::<_, i64>(7)?),
+                ])
+            },
+        )?;
+        if let Some(slots) = creature_rows.first() {
+            for (i, &(target, count)) in slots.iter().enumerate() {
+                if target == 0 || count <= 0 {
+                    continue;
+                }
+                let (kind, entry) = if target > 0 {
+                    (ObjectiveKind::KillCreature, target as u32)
+                } else {
+                    (ObjectiveKind::InteractObject, (-target) as u32)
+                };
+                structured_objectives.push(QuestObjective {
+                    index: (i + 1) as u8,
+                    kind,
+                    target_entry: entry,
+                    required: count as u32,
+                    sources: Vec::new(),
+                });
+            }
+        }
+
+        // Item slots, plus the creatures whose loot table yields each item.
+        let item_rows = self.query_map::<_, _>(
+            "SELECT ReqItemId1, ReqItemCount1, ReqItemId2, ReqItemCount2, \
+                    ReqItemId3, ReqItemCount3, ReqItemId4, ReqItemCount4 \
+             FROM quest_template WHERE entry = ?1",
+            [id],
+            |row| {
+                Ok([
+                    (row.get::<_, i64>(0)?, row.get::<_, i64>(1)?),
+                    (row.get::<_, i64>(2)?, row.get::<_, i64>(3)?),
+                    (row.get::<_, i64>(4)?, row.get::<_, i64>(5)?),
+                    (row.get::<_, i64>(6)?, row.get::<_, i64>(7)?),
+                ])
+            },
+        )?;
+        if let Some(slots) = item_rows.first() {
+            for (i, &(item, count)) in slots.iter().enumerate() {
+                if item <= 0 || count <= 0 {
+                    continue;
+                }
+                let sources = self
+                    .query_map::<_, _>(
+                        "SELECT entry FROM creature_loot_template WHERE item = ?1",
+                        [item],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e as u32)
+                    .collect::<Vec<u32>>();
+                structured_objectives.push(QuestObjective {
+                    index: (i + 1) as u8,
+                    kind: ObjectiveKind::CollectItem,
+                    target_entry: item as u32,
+                    required: count as u32,
+                    sources,
+                });
+            }
+        }
+
         Ok(Some(QuestDetail {
             id: entry as u32,
             title,
@@ -112,6 +191,7 @@ impl Db {
             giver_entry,
             finisher_entry,
             objectives,
+            structured_objectives,
         }))
     }
 

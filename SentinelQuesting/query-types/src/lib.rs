@@ -40,6 +40,36 @@ pub struct QuestDetail {
     pub finisher_entry: Option<u32>,
     #[serde(default)]
     pub objectives: Vec<String>,
+    /// Structured objective requirements (ADR 06 Level-1 enrichment).
+    ///
+    /// `objectives` above is a lossy human string (`"Objective 6"`) that cannot drive execution.
+    /// This carries what an objective actually *requires*, so the compiler can synthesise the
+    /// action that satisfies it instead of emitting a gate the bot can never clear.
+    #[serde(default)]
+    pub structured_objectives: Vec<QuestObjective>,
+}
+
+/// What an objective needs, and what can produce it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestObjective {
+    /// 1-based slot, matching the runtime's `ObjectiveComplete[quest, index]`.
+    pub index: u8,
+    pub kind: ObjectiveKind,
+    /// Creature entry, item id, or gameobject entry depending on `kind`.
+    pub target_entry: u32,
+    pub required: u32,
+    /// For `CollectItem`: creature entries whose loot table yields `target_entry`. Empty when the
+    /// item has no loot row (script-driven — an ADR 06 Level 2/3 case, not derivable here).
+    #[serde(default)]
+    pub sources: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum ObjectiveKind {
+    KillCreature,
+    CollectItem,
+    InteractObject,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
