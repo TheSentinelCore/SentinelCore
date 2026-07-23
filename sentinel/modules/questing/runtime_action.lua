@@ -478,7 +478,11 @@ function RuntimeAction.execute_kill(payload, ctx)
                     ctx._chase_dest = { x = npc_pos.x, y = npc_pos.y, z = npc_pos.z }
                 end
             end
-            return "blocked" -- Navigate to target first
+            -- "waiting", NOT "blocked". Blocked hands control to the profile's NAVIGATING state,
+            -- where this action stops running — so the chase above could never re-issue and the bot
+            -- walked to a stale position and stopped. Waiting keeps the Kill action in control of
+            -- its own pursuit every tick, still bounded by MAX_CONDITION_WAIT.
+            return "waiting"
         end
         ctx._chase_dest = nil
 
