@@ -301,15 +301,95 @@ function M.test_execute_condition_gate_passes()
 end
 
 function M.test_execute_condition_gate_skips()
+    -- PR5b: role now selects the gating semantics. Applicability-role gates skip on unmet
+    -- conditions (best-effort). See test_execute_condition_missing_role_defaults_to_completion
+    -- below for the no-role back-compat case, which now waits instead of skipping.
     local ctx = mock_context({
         is_quest_completed = function(self, entry) return false end,
     })
     local action = {
         type = "Condition",
-        payload = { condition = { type = "QuestCompleted", payload = 99 } },
+        payload = { condition = { type = "QuestCompleted", payload = 99 }, role = "Applicability" },
     }
     local result = RuntimeAction.execute(action, ctx)
     assert(result == "skipped", "Condition gate should skip when condition is false")
+end
+
+-- ============================================================================
+-- PR5b — execute_condition role gating (Completion vs Applicability)
+-- ============================================================================
+
+function M.test_execute_condition_completion_role_unmet_waits()
+    local ctx = mock_context({
+        is_quest_completed = function(self, entry) return false end,
+    })
+    local action = {
+        type = "Condition",
+        payload = {
+            condition = { type = "QuestCompleted", payload = 99 },
+            role = "Completion",
+        },
+    }
+    local result = RuntimeAction.execute(action, ctx)
+    assert(result == "waiting", "Completion-role gate should wait when condition is unmet")
+end
+
+function M.test_execute_condition_completion_role_met_succeeds()
+    local ctx = mock_context({
+        is_quest_completed = function(self, entry) return entry == 33 end,
+    })
+    local action = {
+        type = "Condition",
+        payload = {
+            condition = { type = "QuestCompleted", payload = 33 },
+            role = "Completion",
+        },
+    }
+    local result = RuntimeAction.execute(action, ctx)
+    assert(result == "success", "Completion-role gate should succeed when condition is met")
+end
+
+function M.test_execute_condition_applicability_role_unmet_skips()
+    local ctx = mock_context({
+        is_quest_active = function(self, entry) return false end,
+    })
+    local action = {
+        type = "Condition",
+        payload = {
+            condition = { type = "QuestAccepted", payload = 99 },
+            role = "Applicability",
+        },
+    }
+    local result = RuntimeAction.execute(action, ctx)
+    assert(result == "skipped", "Applicability-role gate should skip (best-effort) when condition is unmet")
+end
+
+function M.test_execute_condition_applicability_role_met_succeeds()
+    local ctx = mock_context({
+        is_quest_active = function(self, entry) return true end,
+    })
+    local action = {
+        type = "Condition",
+        payload = {
+            condition = { type = "QuestAccepted", payload = 33 },
+            role = "Applicability",
+        },
+    }
+    local result = RuntimeAction.execute(action, ctx)
+    assert(result == "success", "Applicability-role gate should succeed when condition is met")
+end
+
+function M.test_execute_condition_missing_role_defaults_to_completion()
+    -- Back-compat: profiles compiled before PR5a carry no `role` field at all.
+    local ctx = mock_context({
+        is_quest_completed = function(self, entry) return false end,
+    })
+    local action = {
+        type = "Condition",
+        payload = { condition = { type = "QuestCompleted", payload = 99 } }, -- no role field
+    }
+    local result = RuntimeAction.execute(action, ctx)
+    assert(result == "waiting", "Condition action with no role field should default to Completion (waiting, not skipped)")
 end
 
 -- ============================================================================
@@ -357,6 +437,11 @@ local tests = {
 
     test_execute_condition_gate_passes = M.test_execute_condition_gate_passes,
     test_execute_condition_gate_skips = M.test_execute_condition_gate_skips,
+    test_execute_condition_completion_role_unmet_waits = M.test_execute_condition_completion_role_unmet_waits,
+    test_execute_condition_completion_role_met_succeeds = M.test_execute_condition_completion_role_met_succeeds,
+    test_execute_condition_applicability_role_unmet_skips = M.test_execute_condition_applicability_role_unmet_skips,
+    test_execute_condition_applicability_role_met_succeeds = M.test_execute_condition_applicability_role_met_succeeds,
+    test_execute_condition_missing_role_defaults_to_completion = M.test_execute_condition_missing_role_defaults_to_completion,
 
     test_execute_unknown_type = M.test_execute_unknown_type,
     test_evaluate_condition_unknown_type = M.test_evaluate_condition_unknown_type,

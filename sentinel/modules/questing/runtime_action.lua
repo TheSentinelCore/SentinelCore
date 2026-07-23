@@ -555,11 +555,23 @@ function RuntimeAction.evaluate_condition(ctx, cond)
 end
 
 --- Execute a Condition action (gate).
---- Returns "success" if condition met, "skipped" if not.
+--- `payload.role` (PR5a, compiler-tagged) selects the gating semantics; absent role defaults
+--- to "Completion" for back-compat with pre-PR5a profiles.
+---   Completion (wait-until-true): met -> "success"; unmet -> "waiting" (hold this action and
+---     re-poll — the caller, RuntimeProfile:_execute_running, must not advance on "waiting").
+---   Applicability (best-effort gate): met -> "success"; unmet -> "skipped" (advance past it).
 function RuntimeAction.execute_condition(payload, ctx)
     local cond = payload.condition
     local ok = RuntimeAction.evaluate_condition(ctx, cond)
-    return ok and "success" or "skipped"
+    if ok then
+        return "success"
+    end
+
+    local role = payload.role or "Completion"
+    if role == "Applicability" then
+        return "skipped"
+    end
+    return "waiting"
 end
 
 -- ============================================================================
