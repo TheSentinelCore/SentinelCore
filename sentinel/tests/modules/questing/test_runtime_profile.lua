@@ -383,6 +383,31 @@ function M.test_reset_clears_wait_timer_loop_safety()
     if not ok then error(err) end
 end
 
+-- ClassIs integration: Sylvannas `player:get_class()` returns a numeric class_id
+-- (Priest = 5, per the injector enums and the tbcmangos DB: {1,2,3,4,5,7,8,9,11}),
+-- NOT a string. The real ctx:get_player_class() must map that id to the Title-Case
+-- class name so the ClassIs handler (which compares against RestedXP's Title-Case
+-- class strings) actually matches. Without the mapping, ClassIs is always false.
+function M.test_classis_maps_numeric_class_id_to_name()
+    local profile = create_profile(make_profile_ops("Condition", {
+        condition = { type = "ClassIs", payload = "Priest" },
+        role = "Completion", -- met -> "next action"; unmet -> "waiting for completion"
+    }))
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return false end,
+            get_class = function() return 5 end, -- Priest (numeric class_id)
+        }
+    end
+
+    local status, msg = profile:execute()
+    T.assert_equal(msg, "next action",
+        "ClassIs(Priest) must be MET when get_class() returns the Priest class_id (5)")
+    T.assert_equal(profile._current_operation_idx, 2,
+        "A met ClassIs gate should advance past the operation")
+end
+
 -- ============================================================================
 -- W4.4 — Consecutive failure tests
 -- ============================================================================
@@ -529,6 +554,7 @@ local tests = {
     test_condition_missing_role_defaults_to_completion_wait = M.test_condition_missing_role_defaults_to_completion_wait,
     test_completion_gate_bounded_wait_times_out_and_advances = M.test_completion_gate_bounded_wait_times_out_and_advances,
     test_reset_clears_wait_timer_loop_safety = M.test_reset_clears_wait_timer_loop_safety,
+    test_classis_maps_numeric_class_id_to_name = M.test_classis_maps_numeric_class_id_to_name,
 
     -- W4.4
     test_consecutive_failures_stops_profile = M.test_consecutive_failures_stops_profile,

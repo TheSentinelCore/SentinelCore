@@ -31,6 +31,23 @@ local GHOST_TIMEOUT = 120.0             -- Seconds before ghost recovery is aban
 local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks
 local MAX_CONDITION_WAIT = 300.0        -- Seconds a Completion-role Condition gate may hold before forced advance
 
+-- Sylvannas `unit:get_class()` returns a numeric class_id, not a string. Map it to the
+-- Title-Case class name so ClassIs conditions (compiled from RestedXP's Title-Case class
+-- tails, e.g. "Warrior/Paladin", "!Rogue") compare correctly. IDs match both the injector
+-- enums (class_id_to_name) and the tbcmangos DB player_classlevelstats: {1,2,3,4,5,7,8,9,11}.
+local CLASS_ID_TO_NAME = {
+    [1] = "Warrior",
+    [2] = "Paladin",
+    [3] = "Hunter",
+    [4] = "Rogue",
+    [5] = "Priest",
+    [6] = "DeathKnight",  -- not in TBC, included for forward-compat
+    [7] = "Shaman",
+    [8] = "Mage",
+    [9] = "Warlock",
+    [11] = "Druid",
+}
+
 local RuntimeProfile = {}
 RuntimeProfile.__index = RuntimeProfile
 
@@ -519,11 +536,16 @@ function RuntimeProfile:create_context()
     end
 
     function ctx:get_player_class()
-        -- Use get_local_player():get_class() (Sylvannas API)
+        -- get_local_player():get_class() returns a numeric class_id (Sylvannas API);
+        -- map it to the Title-Case class name that ClassIs conditions compare against.
         local player = UnitHelper.get_local_player()
         if player and player.get_class then
             local ok, class = pcall(player.get_class, player)
-            if ok and class then
+            if ok and class ~= nil then
+                if type(class) == "number" then
+                    return CLASS_ID_TO_NAME[class] or "Unknown"
+                end
+                -- Defensive: some builds/mocks may already return a name string.
                 return class
             end
         end
