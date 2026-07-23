@@ -373,6 +373,29 @@ function SentinelCombat:_auto_engage_target()
     })
 end
 
+--- A forced (quest) target is usually NEUTRAL — Elwynn's Young Wolves never aggro — and
+--- every consumer of GrindTargetStrategy:is_valid_enemy (the rotation's own target
+--- validity checks included) rejects neutral units unless module.grind.attack_neutral is
+--- set. Scope that flag to the LIFETIME of the forced engagement: set on engage, restored
+--- to its previous value when the forced target dies or combat disengages. Without this
+--- the bot held the wolf as target, transitioned to ENGAGING, and queued no spell at all
+--- (live-verified: ENGAGING → COOLDOWN, zero casts).
+function SentinelCombat:_set_forced_target(target)
+    if self._attack_neutral_prev == nil then
+        self._attack_neutral_prev = self._blackboard:get("module.grind.attack_neutral") == true
+    end
+    self._forced_target = target
+    self._blackboard:set("module.grind.attack_neutral", true)
+end
+
+function SentinelCombat:_clear_forced_target()
+    self._forced_target = nil
+    if self._attack_neutral_prev ~= nil then
+        self._blackboard:set("module.grind.attack_neutral", self._attack_neutral_prev)
+        self._attack_neutral_prev = nil
+    end
+end
+
 function SentinelCombat:_ensure_target()
     if self:_target_is_valid(self._current_target) then
         self._blackboard:set("combat.target", self._current_target)
@@ -386,7 +409,7 @@ function SentinelCombat:_ensure_target()
             self._blackboard:set("combat.target", self._current_target)
             return self._current_target
         end
-        self._forced_target = nil
+        self:_clear_forced_target()
     end
     local selected = self._target_selector:get_best_target({
         require_player = self:_require_player_targets(),
@@ -513,7 +536,11 @@ function SentinelCombat:engage(target, opts)
         -- bg/auto and every other source alike: drop it and let the selector choose.
         target = nil
     end
-    self._forced_target = forced and target or nil
+    if forced then
+        self:_set_forced_target(target)
+    else
+        self:_clear_forced_target()
+    end
 
     self._current_target = target or self._target_selector:get_best_target({
         require_player = self:_require_player_targets(),
@@ -542,6 +569,7 @@ function SentinelCombat:disengage(reason)
     end
     self._current_target = nil
     self._source = nil
+    self:_clear_forced_target()
     self._blackboard:set("combat.target", nil)
     self._blackboard:set("combat.source", nil)
     self._blackboard:set("rotation.after_judgement_reseal", false)

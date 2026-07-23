@@ -272,6 +272,29 @@ function M.run()
     combat8:_find_attacker()
     T.assert_equal(scan_count, 2, "a lookup on a new tick (system.now_ms changed) must get a fresh scan")
     core = prev_core8
+
+    -- Test 9: a forced quest engagement must scope module.grind.attack_neutral to the
+    -- engagement's lifetime. Quest mobs are frequently neutral, and every consumer of
+    -- GrindTargetStrategy:is_valid_enemy — including the rotation's target checks —
+    -- rejects neutral units unless that flag is set; without it the bot held the target,
+    -- entered ENGAGING, and queued no spell. The flag must be restored on disengage so
+    -- questing kills don't permanently flip grinding into attack-neutral mode.
+    local bb9 = make_blackboard()
+    local bus9 = EventBus:new()
+    local combat9 = SentinelCombat:new(bus9, bb9, nav)
+    combat9:initialize()
+    T.assert_false(bb9:get("module.grind.attack_neutral") == true, "sanity: flag starts unset")
+    combat9:engage(friendly_target, { source = "questing" })
+    T.assert_equal(combat9:get_state(), "ENGAGING",
+        "forced quest engage should enter combat even on a neutral target")
+    T.assert_true(bb9:get("module.grind.attack_neutral") == true,
+        "forced engage must enable attack_neutral so the rotation accepts the neutral target")
+    -- Re-publishing engage every tick (execute_kill does) must not corrupt the saved
+    -- previous value.
+    combat9:engage(friendly_target, { source = "questing" })
+    combat9:disengage("test")
+    T.assert_false(bb9:get("module.grind.attack_neutral") == true,
+        "disengage must restore attack_neutral to its pre-engagement value")
 end
 
 return M

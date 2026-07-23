@@ -173,6 +173,133 @@ function M.test_no_save_file_returns_false()
 end
 
 -- ============================================================================
+-- Per-character saves + route reconciliation
+-- ============================================================================
+
+function M.test_save_is_keyed_per_character()
+    written_files = {}
+    mock_globals()
+    _G.core.object_manager.get_local_player = function()
+        return { get_name = function() return "Alice" end }
+    end
+    local profile = create_profile(make_profile_ops())
+    profile._current_operation_idx = 7
+    profile:_save()
+    T.assert_not_nil(written_files["test_profile.alice.save.json"],
+        "save path must include the character name")
+    T.assert_true(written_files["test_profile.alice.save.json"]:find('"character"') ~= nil,
+        "save content must carry the character identity")
+    _G.core.object_manager.get_local_player = nil
+end
+
+function M.test_save_from_other_character_rejected()
+    written_files = {}
+    mock_globals()
+    _G.core.object_manager.get_local_player = function()
+        return { get_name = function() return "Alice" end }
+    end
+    local profile = create_profile(make_profile_ops())
+    profile._current_operation_idx = 7
+    profile:_save()
+
+    -- Log in as a different character on the same account. Even if alice's save bytes
+    -- somehow land on bob's path, the identity field must reject them.
+    _G.core.object_manager.get_local_player = function()
+        return { get_name = function() return "Bob" end }
+    end
+    local profile2 = create_profile(make_profile_ops())
+    written_files["test_profile.bob.save.json"] = written_files["test_profile.alice.save.json"]
+    local restored = profile2:_load_save()
+    T.assert_false(restored, "a save written by another character must be rejected")
+    T.assert_equal(profile2._current_operation_idx, 1,
+        "bob must start fresh, not at alice's step")
+    _G.core.object_manager.get_local_player = nil
+end
+
+function M.test_legacy_shared_save_rejected_when_character_known()
+    written_files = {}
+    mock_globals()
+    -- A pre-fix character-less save exists on the legacy shared path.
+    local legacy = create_profile(make_profile_ops())
+    legacy._current_operation_idx = 9
+    legacy:_save()
+    T.assert_not_nil(written_files["test_profile.save.json"], "sanity: legacy save written")
+
+    _G.core.object_manager.get_local_player = function()
+        return { get_name = function() return "Bob" end }
+    end
+    local profile = create_profile(make_profile_ops())
+    -- Even pointed straight at the legacy bytes, a character-less save is untrusted.
+    written_files["test_profile.bob.save.json"] = written_files["test_profile.save.json"]
+    local restored = profile:_load_save()
+    T.assert_false(restored, "a character-less legacy save must not drive a known character")
+    _G.core.object_manager.get_local_player = nil
+end
+
+function M.test_reconcile_starts_after_last_satisfied_anchor()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            { id = 1, actions = { { type = "TurnInQuest", payload = { quest_id = 10, npc_entry = 1 } } }, next_condition = "auto" },
+            { id = 2, actions = { { type = "Kill", payload = { creature_entries = { 5 } } } }, next_condition = "auto" },
+            { id = 3, actions = { { type = "TurnInQuest", payload = { quest_id = 20, npc_entry = 1 } } }, next_condition = "auto" },
+        },
+    })
+    _G.core.quests = {
+        is_quest_flagged_completed = function(qid) return qid == 10 end,
+        is_on_quest = function() return false end,
+    }
+    T.assert_equal(profile:_reconcile_start_operation(), 2,
+        "start after the rewarded turn-in but BEFORE the kills for the unrewarded quest")
+
+    _G.core.quests.is_quest_flagged_completed = function() return true end
+    T.assert_equal(profile:_reconcile_start_operation(), 4,
+        "all anchors satisfied -> start past the end")
+    _G.core.quests = nil
+end
+
+function M.test_operation_with_kills_skipped_when_quest_rewarded()
+    written_files = {}
+    local profile = create_profile(make_profile_ops())
+    _G.core.quests = {
+        is_quest_flagged_completed = function(qid) return qid == 10 end,
+        is_on_quest = function() return false end,
+    }
+    local op_done = {
+        actions = {
+            { type = "Kill", payload = { creature_entries = { 5 } } },
+            { type = "TurnInQuest", payload = { quest_id = 10, npc_entry = 1 } },
+        },
+    }
+    T.assert_true(profile:_operation_already_done(op_done),
+        "kills riding with a rewarded turn-in are served by it and must not block the skip")
+    local op_kill_only = { actions = { { type = "Kill", payload = { creature_entries = { 5 } } } } }
+    T.assert_false(profile:_operation_already_done(op_kill_only),
+        "a kill-only operation has no observable quest work and must never be skipped")
+    _G.core.quests = nil
+end
+
+function M.test_load_reconciles_with_no_save_at_all()
+    written_files = {}
+    mock_globals()
+    _G.core.quests = {
+        is_quest_flagged_completed = function(qid) return qid == 10 end,
+        is_on_quest = function() return false end,
+    }
+    written_files["test_profile.json"] =
+        '{"content_hash":"abc","operations":['
+        .. '{"id":1,"actions":[{"type":"TurnInQuest","payload":{"quest_id":10,"npc_entry":1}}],"next_condition":"auto"},'
+        .. '{"id":2,"actions":[{"type":"Comment","payload":{"text":"x"}}],"next_condition":"auto"}]}'
+    local profile = RuntimeProfile:new("test_profile.json")
+    local ok = profile:load()
+    T.assert_true(ok, "load should succeed")
+    T.assert_equal(profile._current_operation_idx, 2,
+        "with no save file, the rewarded turn-in alone must place us at operation 2")
+    _G.core.quests = nil
+end
+
+-- ============================================================================
 -- W5.2 — Serialization tests
 -- ============================================================================
 
@@ -235,6 +362,12 @@ end
 -- ============================================================================
 
 local tests = {
+    test_save_is_keyed_per_character = M.test_save_is_keyed_per_character,
+    test_save_from_other_character_rejected = M.test_save_from_other_character_rejected,
+    test_legacy_shared_save_rejected_when_character_known = M.test_legacy_shared_save_rejected_when_character_known,
+    test_reconcile_starts_after_last_satisfied_anchor = M.test_reconcile_starts_after_last_satisfied_anchor,
+    test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
+    test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,
     test_restore_state_from_save = M.test_restore_state_from_save,
     test_fingerprint_mismatch_rejects_save = M.test_fingerprint_mismatch_rejects_save,

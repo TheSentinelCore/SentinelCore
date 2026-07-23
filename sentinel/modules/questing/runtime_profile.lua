@@ -136,20 +136,48 @@ end
 -- Persistence helpers (W5.2)
 -- ====================================================================
 
---- Derive the save file path from the profile JSON path.
---- e.g. "profiles/mage.json" → "profiles/mage.save.json"
+--- Identify the logged-in character, so save state never crosses characters. Two characters
+--- running the same profile used to share ONE save file keyed only by profile path, so
+--- logging into character B resumed at character A's step. Returns a filesystem-safe
+--- lowercase name, or nil when no player is readable (offline harness, load screens).
+--- Cached once seen — a character cannot change mid-session.
+function RuntimeProfile:_character_key()
+    if self._char_key then return self._char_key end
+    local player = UnitHelper.get_local_player()
+    if player and player.get_name then
+        local ok, name = pcall(player.get_name, player)
+        if ok and type(name) == "string" then
+            local key = name:lower():gsub("[^%w]", "")
+            if key ~= "" then
+                self._char_key = key
+                return key
+            end
+        end
+    end
+    return nil
+end
+
+--- Derive the save file path from the profile JSON path AND the character identity.
+--- e.g. "profiles/mage.json" → "profiles/mage.arthas.save.json"
+--- Falls back to the legacy character-less name only when no player is readable
+--- (offline tests); in-game, saves are always per-character.
 function RuntimeProfile:_compute_save_path()
     local path = self._json_path or "questing"
+    local char = self:_character_key()
+    local suffix = char and ("." .. char .. ".save.json") or ".save.json"
     if path:match("%.json$") then
-        return path:gsub("%.json$", ".save.json")
+        return path:gsub("%.json$", suffix)
     end
-    return path .. ".save.json"
+    return path .. suffix
 end
 
 --- Serialize current execution state for persistence.
 function RuntimeProfile:_serialize_state()
     return {
         version = 2,
+        -- Identity of the character this save belongs to; _load_save refuses saves
+        -- written by anyone else.
+        character = self:_character_key(),
         profile_fingerprint = (self._profile and self._profile.content_hash) or "",
         current_operation_idx = self._current_operation_idx,
         variables = self._variables,
@@ -169,6 +197,9 @@ end
 --- Called on operation advance, variable change, stop, and reset.
 function RuntimeProfile:_save()
     if self._dry_run then return false end
+    -- Recompute: the constructor may have run before the player object was readable
+    -- (load screen), leaving a character-less legacy path cached.
+    self._save_path = self:_compute_save_path()
     local data = self:_serialize_state()
     local json = json_stringify(data)
     if not json then
@@ -221,6 +252,7 @@ function RuntimeProfile:_load_save()
     if not (core and core.read_data_file) then
         return false
     end
+    self._save_path = self:_compute_save_path()
     local json, err = core.read_data_file(self._save_path)
     if not json then
         return false
@@ -234,6 +266,19 @@ function RuntimeProfile:_load_save()
     local save_fingerprint = decoded.profile_fingerprint or ""
     if profile_hash == "" or save_fingerprint == "" or save_fingerprint ~= profile_hash then
         return false -- Fingerprint mismatch or empty → start fresh
+    end
+    -- Per-character guard: a save written by another character must never drive this
+    -- one's route position. When the current character is known, the save must name the
+    -- SAME character — a legacy save with no character field is equally untrusted, since
+    -- it may belong to any character on the account. Only the offline harness (no player
+    -- readable) accepts character-less saves.
+    local me = self:_character_key()
+    if me and decoded.character ~= me then
+        self:_log_event("save_rejected_wrong_character", {
+            save_character = decoded.character,
+            current_character = me,
+        })
+        return false
     end
     -- Restore state
     if type(decoded.current_operation_idx) == "number" then
@@ -355,44 +400,93 @@ function RuntimeProfile:load()
             self:_log_event("load_fresh", {})
         end
 
+        -- ADR 06 §8.1 route reconciliation: the game's per-character quest flags decide
+        -- WHERE WE ARE; the save is at best a hint. The save may legitimately be AHEAD of
+        -- what the flags can prove (kill-only progress is unobservable), never behind —
+        -- so take whichever points further. With no save (fresh login, new character)
+        -- this alone lands on the right step.
+        local reconciled = self:_reconcile_start_operation()
+        if reconciled > self._current_operation_idx then
+            self:_log_event("route_reconciled", {
+                from_operation = self._current_operation_idx,
+                to_operation = reconciled,
+            })
+            self._current_operation_idx = reconciled
+            self._current_action_idx = 1
+        end
+
         return true
     end
     return nil, "no data file API"
 end
 
---- Runtime context with helper methods and Sylvanas API facade.
---- Is every piece of quest work in this operation already satisfied?
+--- Classify one operation's observable quest work against LIVE game state.
+--- The server persists quest flags per character across sessions, so these answers are
+--- trustworthy for any character at any time (ADR 06 §8.1: reconcile, don't count).
 ---
---- Returns false unless the operation actually CONTAINS quest work — a pure travel/kill step is
---- never "already done", because nothing here can observe that. Conservative on purpose: wrongly
---- skipping a step breaks the route, while wrongly doing one only costs time.
-function RuntimeProfile:_operation_already_done(op)
-    if not (core and core.quests) then return false end
+--- Returns:
+---   "satisfied"    — has quest work and ALL of it is done (accept: active or rewarded;
+---                    turn-in: rewarded). Kill/Loot/etc. riding in the same operation are
+---                    considered served by those quests and do not block.
+---   "unsatisfied"  — has quest work that is provably not done yet.
+---   "unobservable" — no quest work to check (travel/kill/comment-only operation), or the
+---                    quest APIs are unavailable.
+function RuntimeProfile:_op_quest_status(op)
+    if not (core and core.quests and core.quests.is_quest_flagged_completed) then
+        return "unobservable"
+    end
     local rewarded = core.quests.is_quest_flagged_completed
     local on_quest = core.quests.is_on_quest
-    if not rewarded then return false end
 
     local saw_quest_work = false
     for _, a in ipairs(op.actions or {}) do
         local p = a.payload or {}
-        if a.type == "AcceptQuest" then
+        if a.type == "AcceptQuest" and p.quest_id ~= nil then
             saw_quest_work = true
             local ok_r, done = pcall(rewarded, p.quest_id)
-            local ok_o, active = true, false
+            local ok_o, active = false, false
             if on_quest then ok_o, active = pcall(on_quest, p.quest_id) end
             -- Not yet accepted and not yet rewarded ⇒ there is real work here.
-            if not ((ok_r and done) or (ok_o and active)) then return false end
-        elseif a.type == "TurnInQuest" then
+            if not ((ok_r and done) or (ok_o and active)) then return "unsatisfied" end
+        elseif a.type == "TurnInQuest" and p.quest_id ~= nil then
             saw_quest_work = true
             local ok_r, done = pcall(rewarded, p.quest_id)
-            if not (ok_r and done) then return false end
-        elseif a.type == "Kill" or a.type == "Loot" or a.type == "UseItem"
-            or a.type == "InteractNpc" or a.type == "Grind" then
-            -- Real world work whose completion this cannot observe; never skip on its account.
-            return false
+            if not (ok_r and done) then return "unsatisfied" end
         end
     end
-    return saw_quest_work
+    return saw_quest_work and "satisfied" or "unobservable"
+end
+
+--- Is every piece of quest work in this operation already satisfied?
+--- Used as the per-tick skip check before an operation's first action runs. Operations
+--- without quest work are never "already done" — nothing here can observe kill-only or
+--- travel-only progress, and wrongly skipping a step breaks the route while wrongly doing
+--- one only costs time.
+function RuntimeProfile:_operation_already_done(op)
+    return self:_op_quest_status(op) == "satisfied"
+end
+
+--- Derive the starting operation from the character's REAL quest state instead of
+--- trusting a save file. Guides are linear, so quest anchors dominate: an operation whose
+--- Accept/TurnIn work is all satisfied proves every earlier operation done, and
+--- unobservable operations (travel/kill-only) between two satisfied anchors ride along.
+--- The scan stops at the first provably-unsatisfied anchor because unobservable work
+--- before it (e.g. kills for that not-yet-turned-in quest) may still be needed.
+---
+--- This is what makes a relog — or a DIFFERENT character — land on the right step with no
+--- save file at all: the server's per-character quest flags are the source of truth.
+function RuntimeProfile:_reconcile_start_operation()
+    local operations = (self._profile and self._profile.operations) or {}
+    local start_idx = 1
+    for i, op in ipairs(operations) do
+        local status = self:_op_quest_status(op)
+        if status == "satisfied" then
+            start_idx = i + 1
+        elseif status == "unsatisfied" then
+            break
+        end
+    end
+    return start_idx
 end
 
 -- ============================================================================
