@@ -52,5 +52,7 @@ testing:
     formatter: false
   mock_framework: custom (sentinel/tests/harness/mocks/sylvannas_api.lua)
   test_count:
-    offline: 30+ (across core, combat, questing, shared, integration)
+    offline: 64 passed, 0 failed (verified 2026-07-23; CLAUDE.md's "31 passed" note is stale)
     in_game: available via _G.SentinelCore.run_tests()
+  binary_note: "Only luajit is installed on this environment (no `lua` binary). Never use `lua` as the interpreter."
+  strict_tdd_conflict: "Claude Code session config declares 'Strict TDD Mode: enabled' while this file sets tdd:false/strict_tdd:false. The offline harness is characterization-style (pcall + assertions), not TDD-driven. Unresolved — flagged for user decision."

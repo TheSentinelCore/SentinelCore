@@ -146,7 +146,11 @@ budgets, nav/ghost timeouts, and progress persisted alongside the profile as
 | `sentinel/integrations/nav_client/adapter.lua` | SentinelNavClient (`_G.SentinelNavClient.client`) | — | in-process Lua |
 | SentinelNavClient | SentinelNavServer | 47110 | HTTP GET only |
 
-NavServer is GET-only by design: the Lua client can only issue `core.http_get`.
+NavServer exposes 18 GET endpoints and `SentinelNavClient` only ever issues `core.http_get`.
+This is a convention, **not** an SDK limitation — `core.http_post` exists
+(`docs/SylvannasAPI/dev/api/core.md`) and is used by `mcp/ext_plugin_lx_debug` to return
+results. Keep NavServer GET-only unless you deliberately change that contract on both sides;
+parameters go in the query string.
 
 ## Sylvannas constraints
 
