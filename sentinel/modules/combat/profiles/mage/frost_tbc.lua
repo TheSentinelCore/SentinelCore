@@ -3,11 +3,9 @@ local Runner = require("core/bt/runner")
 local Cond = require("modules/combat/profiles/mage/frost_conditions")
 local Act = require("modules/combat/profiles/mage/frost_actions")
 local MaintenanceTree = require("modules/combat/profiles/mage/maintenance_tree")
-local AoeTree = require("modules/combat/profiles/mage/aoe_tree")
 local FrostCombatState = require("modules/combat/profiles/mage/frost_combat_state")
 local KiteController = require("modules/combat/profiles/mage/kite_controller")
 local PetController = require("modules/combat/profiles/mage/pet_controller")
-local Status = require("core/bt/status")
 
 local Profile = {}
 Profile.__index = Profile
@@ -343,7 +341,6 @@ function Profile.build(blackboard, event_bus)
         build_off_gcd_root(), { key = "combat_frost_offgcd" }))
     o._gcd = Runner:new(BT.cooldown("frost_gcd_cd", 75,
         build_gcd_root(), { key = "combat_frost_gcd" }))
-    o._aoe_tree = Runner:new(AoeTree.build())
     blackboard:set("rotation.profile_id", o.id)
     blackboard:set("module.combat.combat_range", 28)
     event_bus:publish("rotation:profile_loaded", {
@@ -411,68 +408,11 @@ function Profile:reset()
     self._maintenance:reset()
     self._off_gcd:reset()
     self._gcd:reset()
-    self._aoe_tree:reset()
     self._combat_state:reset()
     self._kite_controller:reset()
     if self._pet_controller then
         self._pet_controller:reset()
     end
-end
-
-function Profile:get_pull_strategy(bb)
-    local spot = bb:get("module.grind.current_spot")
-    if spot and spot.aoe_enabled then
-        local level = bb:get("player.level", 1)
-        if level >= 20 then
-            return "aoe"
-        end
-    end
-    return "single"
-end
-
-function Profile:tick_pull(bb, _target)
-    if self:get_pull_strategy(bb) == "aoe" then
-        return self._aoe_tree:tick(bb)
-    end
-    local result = Act.queue_frostbolt(bb)
-    if result ~= Status.SUCCESS then
-        result = Act.queue_fireball(bb)
-    end
-    return result
-end
-
-function Profile:prepare_rest(bb)
-    -- Skip maintenance during WoW combat linger (5-6s post-kill).
-    -- Buff re-applications (Ice Armor, Arcane Intellect) would race with
-    -- use_item(food), causing cast-while-sitting or silent food-use failure.
-    -- Conjure sequences already gate on not_in_combat so can't fire anyway.
-    -- Maintenance runs from combat IDLE handler after rest completes.
-    if bb:get("player.in_combat", false) ~= true then
-        self._maintenance:tick(bb)
-    end
-
-    -- Stay in rest when missing conjured consumables we'll need.
-    -- Spirit regen will eventually provide enough mana to conjure them.
-    -- Only block when mana is low — if mana >= 0.95 the bot can proceed
-    -- (either it doesn't need the consumable or maintenance just conjured it).
-    local mana = bb:get("player.mana_pct", 1)
-    if mana < 0.95 then
-        local water_count = bb:get("module.grind.water_count", 0)
-        local food_count  = bb:get("module.grind.food_count", 0)
-        local hp          = bb:get("player.health_pct", 1)
-
-        local need_water = water_count == 0
-        -- Use 0.95 (matching sit_and_consume's target when food exists) instead
-        -- of eat_pct — frost mage hp is typically 70-90% after combat (shields),
-        -- well above eat_pct (50%), so that check never triggered.
-        local need_food  = food_count == 0 and hp < 0.95
-
-        if need_water or need_food then
-            return Status.RUNNING
-        end
-    end
-
-    return Status.SUCCESS
 end
 
 return Profile

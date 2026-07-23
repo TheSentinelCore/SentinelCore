@@ -97,29 +97,13 @@ function M.run()
     T.assert_true(type(profile.tick_gcd) == "function", "should have tick_gcd method")
     T.assert_true(type(profile.reset) == "function", "should have reset method")
 
-    -- Has grind hooks: prepare_rest, tick_pull, get_pull_strategy
-    T.assert_true(type(profile.prepare_rest) == "function", "should have prepare_rest method")
-    T.assert_true(type(profile.tick_pull) == "function", "should have tick_pull method")
-    T.assert_true(type(profile.get_pull_strategy) == "function", "should have get_pull_strategy method")
-
-    -- get_pull_strategy returns "single" by default
-    T.assert_equal(profile:get_pull_strategy(bb), "single",
-        "get_pull_strategy should return single by default")
-
-    -- get_pull_strategy returns "aoe" when spot.aoe_enabled=true and level >= 20
-    bb:set("module.grind.current_spot", { aoe_enabled = true })
-    bb:set("player.level", 70)
-    T.assert_equal(profile:get_pull_strategy(bb), "aoe",
-        "get_pull_strategy should return aoe when spot.aoe_enabled and level >= 20")
-
-    -- get_pull_strategy returns "single" when aoe_enabled but level < 20
-    bb:set("player.level", 15)
-    T.assert_equal(profile:get_pull_strategy(bb), "single",
-        "get_pull_strategy should return single when level < 20 even with aoe_enabled")
+    -- Grind-era hooks (prepare_rest, tick_pull, get_pull_strategy, _aoe_tree)
+    -- were removed with ADR-001 (audit E3) — they had no caller left.
+    T.assert_nil(profile.prepare_rest, "prepare_rest should be removed (dead grind-era hook)")
+    T.assert_nil(profile.tick_pull, "tick_pull should be removed (dead grind-era hook)")
+    T.assert_nil(profile.get_pull_strategy, "get_pull_strategy should be removed (dead grind-era hook)")
 
     -- reset() doesn't error
-    bb:set("player.level", 70)
-    bb:set("module.grind.current_spot", nil)
     local ok, err = pcall(function() profile:reset() end)
     T.assert_true(ok, "reset() should not error: " .. tostring(err))
 
