@@ -156,7 +156,7 @@ fn pipeline_validate_detects_broken_npc_ref() {
 }
 
 #[test]
-fn pipeline_compile_fails_with_unresolved_npc() {
+fn pipeline_compile_degrades_unresolved_npc_to_comment() {
     let mut project = load_sample_project();
     // Add a Vendor action referencing an NPC not in the library
     let missing_npc_id = uuid::Uuid::new_v4();
@@ -188,11 +188,16 @@ fn pipeline_compile_fails_with_unresolved_npc() {
         }],
         notes: None,
     });
-    let result = sentinel_compiler::Compiler::compile(&project);
+    let (profile, report) = sentinel_compiler::Compiler::compile(&project)
+        .expect("unresolved NPC reference must not abort the whole guide compile");
+    let last_op = profile.operations.last().expect("appended operation present");
+    let last_action = last_op.actions.last().expect("appended action present");
     assert!(
-        result.is_err(),
-        "Compiler should fail with unresolved NPC reference"
+        matches!(&last_action.action, sentinel_models::runtime::RuntimeAction::Comment(_)),
+        "expected unresolved NPC action to degrade to a Comment, got: {:?}",
+        last_action.action
     );
+    assert!(report.unresolved >= 1, "expected unresolved to be reported, got: {:?}", report);
 }
 
 #[test]

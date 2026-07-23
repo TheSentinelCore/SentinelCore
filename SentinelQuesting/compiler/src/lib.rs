@@ -77,10 +77,49 @@ fn parse_class_guard(
 /// Compiler errors that prevent profile generation.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CompilerError {
+    /// Retained for API compatibility. An unresolvable NPC reference is no longer fatal — it is
+    /// degraded to a `RuntimeAction::Comment` plus an `UNRESOLVED_NPC` diagnostic (mirroring
+    /// `LootObject`'s `UNRESOLVED_OBJECT` precedent) so a single bad reference never aborts an
+    /// entire guide compile (IF7 never-drop philosophy). Nothing in this crate returns this
+    /// variant anymore.
     #[error("NPC reference could not be resolved to an entry")]
     UnresolvedNpc,
     #[error("Quest reference could not be resolved")]
     UnresolvedQuest,
+}
+
+/// Resolve an (optionally present) NPC UUID reference to a concrete entry. On any failure to
+/// resolve — either the reference itself is absent (`None`) or it does not appear in the
+/// project's NPC library — this is a NON-FATAL degradation: `*unresolved` is bumped and an
+/// `UNRESOLVED_NPC` diagnostic is recorded, mirroring the existing `LootObject` /
+/// `UNRESOLVED_OBJECT` precedent. Returns `None` on failure so the caller can lower the action to
+/// a `RuntimeAction::Comment` instead of aborting the whole guide compile.
+fn resolve_npc_or_report(
+    npc: Option<Uuid>,
+    npc_uuid_to_entry: &HashMap<Uuid, u32>,
+    action_id: Uuid,
+    action_kind: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    unresolved: &mut u32,
+) -> Option<u32> {
+    let entry = npc.and_then(|u| npc_uuid_to_entry.get(&u).copied());
+    if entry.is_none() {
+        *unresolved += 1;
+        let message = match npc {
+            Some(u) => format!(
+                "{action_kind} NPC reference '{u}' could not be resolved to an entry"
+            ),
+            None => format!("{action_kind} action has no NPC reference"),
+        };
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            code: "UNRESOLVED_NPC".to_string(),
+            message,
+            entity: npc.map(|u| u.to_string()),
+            action: Some(action_id.to_string()),
+        });
+    }
+    entry
 }
 
 /// Non-fatal compile-time findings, kept out of `RuntimeProfile` (clean runtime artifact).
@@ -91,8 +130,10 @@ pub enum CompilerError {
 #[derive(Debug, Clone, Default)]
 pub struct CompileReport {
     pub unmapped_conditions: Vec<Diagnostic>,
-    /// Count of references (currently: `LootObject`) that could not be resolved to a
-    /// concrete entry. Mirrored as an `UNRESOLVED_OBJECT` diagnostic in `unmapped_conditions`.
+    /// Count of references (`LootObject`, and any of the NPC-bearing actions) that could not be
+    /// resolved to a concrete entry. Mirrored as an `UNRESOLVED_OBJECT` or `UNRESOLVED_NPC`
+    /// diagnostic in `unmapped_conditions`; the action itself is lowered to a
+    /// `RuntimeAction::Comment` rather than aborting the whole guide compile.
     pub unresolved: u32,
 }
 
@@ -154,24 +195,30 @@ fn resolve_action(
 ) -> Result<GuardedAction, CompilerError> {
     let runtime_action = match &action.payload {
         ActionPayload::AcceptQuest(a) => {
-            let npc_entry = a.npc.and_then(|u| npc_uuid_to_entry.get(&u).copied())
-                .ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::AcceptQuest(RuntimeAcceptQuest {
-                quest_id: a.quest,
-                npc_entry,
-                auto_complete_dialog: a.auto_complete_dialog,
-                optional: a.optional,
-            })
+            match resolve_npc_or_report(a.npc, npc_uuid_to_entry, action.id, "AcceptQuest", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::AcceptQuest(RuntimeAcceptQuest {
+                    quest_id: a.quest,
+                    npc_entry,
+                    auto_complete_dialog: a.auto_complete_dialog,
+                    optional: a.optional,
+                }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".AcceptQuest {} (unresolved NPC)", a.quest),
+                }),
+            }
         }
         ActionPayload::TurnInQuest(t) => {
-            let npc_entry = t.npc.and_then(|u| npc_uuid_to_entry.get(&u).copied())
-                .ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::TurnInQuest(RuntimeTurnInQuest {
-                quest_id: t.quest,
-                npc_entry,
-                choose_reward: t.choose_reward,
-                optional: t.optional,
-            })
+            match resolve_npc_or_report(t.npc, npc_uuid_to_entry, action.id, "TurnInQuest", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::TurnInQuest(RuntimeTurnInQuest {
+                    quest_id: t.quest,
+                    npc_entry,
+                    choose_reward: t.choose_reward,
+                    optional: t.optional,
+                }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".TurnInQuest {} (unresolved NPC)", t.quest),
+                }),
+            }
         }
         ActionPayload::Travel(tr) => {
             // Pass through .goto coordinates from importer as waypoint
@@ -187,30 +234,42 @@ fn resolve_action(
             })
         }
         ActionPayload::Vendor(v) => {
-            let npc_entry = *npc_uuid_to_entry.get(&v.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::Vendor(RuntimeVendor {
-                npc_entry,
-                sell_grey: v.sell_grey,
-                repair: v.repair,
-                buy_items: v.buy_items.clone(),
-                minimum_free_slots: v.minimum_free_slots,
-            })
+            match resolve_npc_or_report(Some(v.npc), npc_uuid_to_entry, action.id, "Vendor", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::Vendor(RuntimeVendor {
+                    npc_entry,
+                    sell_grey: v.sell_grey,
+                    repair: v.repair,
+                    buy_items: v.buy_items.clone(),
+                    minimum_free_slots: v.minimum_free_slots,
+                }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".Vendor npc={} (unresolved NPC)", v.npc),
+                }),
+            }
         }
         ActionPayload::Train(tr) => {
-            let npc_entry = *npc_uuid_to_entry.get(&tr.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::Train(RuntimeTrain {
-                npc_entry,
-                spells: tr.spells.clone(),
-                trainer_type: tr.trainer_type.clone(),
-                minimum_level: tr.minimum_level,
-            })
+            match resolve_npc_or_report(Some(tr.npc), npc_uuid_to_entry, action.id, "Train", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::Train(RuntimeTrain {
+                    npc_entry,
+                    spells: tr.spells.clone(),
+                    trainer_type: tr.trainer_type.clone(),
+                    minimum_level: tr.minimum_level,
+                }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".Train npc={} spells={:?} (unresolved NPC)", tr.npc, tr.spells),
+                }),
+            }
         }
         ActionPayload::Flight(f) => {
-            let npc_entry = *npc_uuid_to_entry.get(&f.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::Flight(RuntimeFlight {
-                npc_entry,
-                destination: f.destination.clone(),
-            })
+            match resolve_npc_or_report(Some(f.npc), npc_uuid_to_entry, action.id, "Flight", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::Flight(RuntimeFlight {
+                    npc_entry,
+                    destination: f.destination.clone(),
+                }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".Flight npc={} destination={} (unresolved NPC)", f.npc, f.destination),
+                }),
+            }
         }
         ActionPayload::Hearth(h) => {
             RuntimeAction::Hearth(RuntimeHearth {
@@ -239,12 +298,20 @@ fn resolve_action(
         }
         // Additional action types (Wave 3 completions)
         ActionPayload::Repair(r) => {
-            let npc_entry = *npc_uuid_to_entry.get(&r.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::Repair(RuntimeRepair { npc_entry })
+            match resolve_npc_or_report(Some(r.npc), npc_uuid_to_entry, action.id, "Repair", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::Repair(RuntimeRepair { npc_entry }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".Repair npc={} (unresolved NPC)", r.npc),
+                }),
+            }
         }
         ActionPayload::LearnFlightPath(fp) => {
-            let npc_entry = *npc_uuid_to_entry.get(&fp.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::LearnFlightPath(RuntimeLearnFlightPath { npc_entry })
+            match resolve_npc_or_report(Some(fp.npc), npc_uuid_to_entry, action.id, "LearnFlightPath", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::LearnFlightPath(RuntimeLearnFlightPath { npc_entry }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".LearnFlightPath npc={} (unresolved NPC)", fp.npc),
+                }),
+            }
         }
         ActionPayload::Condition(cond) => {
             // §23 DSL -> typed RuntimeCondition; unmappable: diagnostic first, THEN fail open to
@@ -271,12 +338,16 @@ fn resolve_action(
             })
         }
         ActionPayload::Escort(e) => {
-            let npc_entry = *npc_uuid_to_entry.get(&e.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::Escort(RuntimeEscort {
-                npc_entry,
-                area: e.area,
-                timeout: e.timeout,
-            })
+            match resolve_npc_or_report(Some(e.npc), npc_uuid_to_entry, action.id, "Escort", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::Escort(RuntimeEscort {
+                    npc_entry,
+                    area: e.area,
+                    timeout: e.timeout,
+                }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".Escort npc={} area={:?} (unresolved NPC)", e.npc, e.area),
+                }),
+            }
         }
         ActionPayload::Patrol(p) => {
             RuntimeAction::Patrol(RuntimePatrol {
@@ -321,19 +392,31 @@ fn resolve_action(
             })
         }
         ActionPayload::Bank(b) => {
-            let npc_entry = *npc_uuid_to_entry.get(&b.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::Bank(RuntimeBank { npc_entry })
+            match resolve_npc_or_report(Some(b.npc), npc_uuid_to_entry, action.id, "Bank", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::Bank(RuntimeBank { npc_entry }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".Bank npc={} (unresolved NPC)", b.npc),
+                }),
+            }
         }
         ActionPayload::Mailbox(m) => {
-            let npc_entry = *npc_uuid_to_entry.get(&m.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::Mailbox(RuntimeMailbox { npc_entry })
+            match resolve_npc_or_report(Some(m.npc), npc_uuid_to_entry, action.id, "Mailbox", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::Mailbox(RuntimeMailbox { npc_entry }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".Mailbox npc={} (unresolved NPC)", m.npc),
+                }),
+            }
         }
         ActionPayload::InteractNPC(i) => {
-            let npc_entry = *npc_uuid_to_entry.get(&i.npc).ok_or(CompilerError::UnresolvedNpc)?;
-            RuntimeAction::InteractNpc(RuntimeInteractNpc {
-                npc_entry,
-                gossip: i.gossip.clone(),
-            })
+            match resolve_npc_or_report(Some(i.npc), npc_uuid_to_entry, action.id, "InteractNpc", diagnostics, unresolved) {
+                Some(npc_entry) => RuntimeAction::InteractNpc(RuntimeInteractNpc {
+                    npc_entry,
+                    gossip: i.gossip.clone(),
+                }),
+                None => RuntimeAction::Comment(RuntimeComment {
+                    text: format!(".InteractNpc npc={} gossip={:?} (unresolved NPC)", i.npc, i.gossip),
+                }),
+            }
         }
         ActionPayload::Wait(w) => {
             RuntimeAction::Wait(RuntimeWait { duration: w.duration })

@@ -92,11 +92,11 @@ fn compiles_project_to_runtime_profile() {
 }
 
 #[test]
-fn fails_on_unresolved_npc_reference() {
+fn unresolved_npc_reference_degrades_to_comment_and_is_reported() {
     let mut project = new_project("test");
-    
+
     let mut op = Operation::new("test-op".to_string());
-    op.actions.push(Action {
+    let action = Action {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
@@ -109,11 +109,64 @@ fn fails_on_unresolved_npc_reference() {
             buy_items: vec![],
             minimum_free_slots: None,
         }),
-    });
+    };
+    let action_id = action.id;
+    op.actions.push(action);
     project.operations.push(op);
-    
-    let result = Compiler::compile(&project);
-    assert!(result.is_err(), "unresolved NPC should cause compile error");
+
+    let (profile, report) = Compiler::compile(&project)
+        .expect("unresolved NPC must not abort the whole guide compile");
+    let RuntimeAction::Comment(c) = &profile.operations[0].actions[0].action else {
+        panic!("expected unresolved NPC to lower to a Comment, got: {:?}", profile.operations[0].actions[0].action)
+    };
+    assert!(c.text.contains("unresolved NPC"), "got: {}", c.text);
+    assert_eq!(report.unresolved, 1);
+    assert!(
+        report.unmapped_conditions.iter().any(|d| {
+            d.code == "UNRESOLVED_NPC" && d.action.as_deref() == Some(&action_id.to_string())
+        }),
+        "got: {:?}", report.unmapped_conditions
+    );
+}
+
+#[test]
+fn missing_npc_reference_option_degrades_to_comment_and_is_reported() {
+    // AcceptQuest.npc is Option<Uuid> — the importer leaves it `None` when it cannot resolve a
+    // quest giver at all (the exact shape seen on the real corpus). This must degrade the same
+    // way as an unresolvable-but-present Uuid, not abort the whole guide compile.
+    let mut project = new_project("test");
+
+    let mut op = Operation::new("test-op".to_string());
+    let action = Action {
+        id: Uuid::new_v4(),
+        enabled: true,
+        condition: None,
+        class_restriction: None,
+        note: None,
+        payload: ActionPayload::AcceptQuest(sentinel_models::authoring::AcceptQuestAction {
+            quest: 1234,
+            npc: None,
+            auto_complete_dialog: false,
+            optional: false,
+        }),
+    };
+    let action_id = action.id;
+    op.actions.push(action);
+    project.operations.push(op);
+
+    let (profile, report) = Compiler::compile(&project)
+        .expect("missing NPC reference must not abort the whole guide compile");
+    let RuntimeAction::Comment(c) = &profile.operations[0].actions[0].action else {
+        panic!("expected missing NPC reference to lower to a Comment, got: {:?}", profile.operations[0].actions[0].action)
+    };
+    assert!(c.text.contains("unresolved NPC"), "got: {}", c.text);
+    assert_eq!(report.unresolved, 1);
+    assert!(
+        report.unmapped_conditions.iter().any(|d| {
+            d.code == "UNRESOLVED_NPC" && d.action.as_deref() == Some(&action_id.to_string())
+        }),
+        "got: {:?}", report.unmapped_conditions
+    );
 }
 
 #[test]
