@@ -182,7 +182,103 @@ graph must still complete quests 783 → 7 → 5261 → 33 in Northshire.
 **7.3 `.deathskip` is kept.** The review groups it with human-judgment tricks, but it is purely
 mechanical (die → release → resurrect nearer the destination) and fully executable.
 
-## 8. Build order
+## 8. Runtime contract (what makes this production-grade, not just a plan format)
+
+§1–7 describe a *plan*. A plan alone is not production-ready; these five contracts are what stop an
+unattended run from silently wedging or lying about its progress.
+
+### 8.1 Reconcile, never count
+
+**Objective progress is DERIVED from observed world state, never accumulated locally.**
+
+A local counter (`current: 7 of 10`) drifts the moment reality diverges: death mid-fight, a kill
+landing during a disconnect, another player tagging the mob, or simply logging in with the quest
+already half-done. The bot then believes something false and waits forever — the exact class of
+failure the cockpit's quest-log desync panel exists to catch.
+
+Every objective therefore declares how to *observe* itself:
+
+```jsonc
+{
+  "id": "7-1",
+  "observe": { "type": "ObjectiveComplete", "payload": [7, 1] },   // authoritative: the quest log
+  "estimate": { "type": "KillCredit", "creature_entries": [6], "required": 10 }
+}
+```
+
+`observe` is truth and is re-read every tick. `estimate` exists only to *choose* work (scheduling
+and ETA) and carries no authority. Where the two disagree, `observe` wins and the divergence is
+reported. This is a desired-state/observed-state reconciler, not a script.
+
+### 8.2 World state model
+
+The scheduler reads one explicit, versioned snapshot; nothing reads the game API ad hoc:
+
+```
+WorldState {
+  player   { position, map, level, class, race, health, in_combat, is_dead }
+  quests   { log[], completed[], objective_progress{} }     // authoritative source for 8.1
+  bags     { free_slots, items{} }
+  travel   { known_flight_paths[], hearth_location }
+  time     { now, session_elapsed }
+}
+```
+
+"Which objectives are executable right now" is defined purely as a function of this snapshot, which
+makes scheduling deterministic and unit-testable offline.
+
+### 8.3 Failure taxonomy
+
+Every action failure classifies, and the class determines the response:
+
+| Class | Meaning | Response |
+| --- | --- | --- |
+| `Transient` | path blocked, mob tapped, target moved | retry with backoff, bounded by attempts + time |
+| `Permanent` | quest already turned in, objective already met, item gone | mark satisfied/skip, advance |
+| `Blocked` | bags full, level too low, missing prerequisite | resolve the blocker (vendor/level) then resume |
+| `Fatal` | profile/schema invalid, unresolvable reference | stop and surface; never spin |
+
+Unclassified failures default to `Transient` with a low attempt cap, so an unknown fault degrades
+to a bounded retry rather than an infinite loop.
+
+### 8.4 Humanization is a first-class field
+
+Pacing is part of the plan, not a wrapper bolted on afterwards. Actions carry pacing hints the
+runtime applies through `shared/humanization.lua`:
+
+```jsonc
+"pacing": { "pre_delay_ms": [80, 240], "post_delay_ms": [120, 400], "path_jitter_yd": 1.5 }
+```
+
+Route level: session length, break cadence, and per-action jitter are declared, not hardcoded, so
+behaviour is tunable and auditable rather than emergent.
+
+### 8.5 Versioning and telemetry
+
+- **Compatibility.** `schema_version` is semver with a stated policy: a profile whose MAJOR differs
+  from the runtime's MUST be rejected loudly at load, never partially executed. MINOR additions are
+  backward compatible (unknown fields ignored). `content_hash` continues to invalidate *saved
+  progress* only — it is not a schema-compatibility signal, and the two must not be conflated.
+- **Telemetry.** Each objective emits `attempts`, `time_spent_s`, `blocked_reason`, and
+  `derivation_level` (§5). This is the cockpit's data source and the basis for replaying an
+  overnight run from the event log.
+
+## 9. Known open questions
+
+Recorded honestly rather than resolved by assertion:
+
+1. **Spawn locations as centroids.** `locations` currently uses the mean of spawn rows (31 Kobold
+   Vermin → one point). If spawns straddle a road or cliff the centroid is a poor waypoint;
+   clustering is likely needed, but is unproven.
+2. **Exact-vs-family name resolution.** `.mob Young Wolf` resolves to entry 299 only, while quest
+   33's item drops from 299/69/704/705. Kill targeting and loot targeting therefore want *different*
+   breadths from the same name, and only enrichment can widen it.
+3. **Contested objectives.** No model yet for another player farming the same camp; the scheduler
+   phase-2 "nearest executable" heuristic may thrash between camps.
+4. **Escort/timed/vehicle quests** are assumed to be Level 4 manual overrides; the 2–5% estimate is
+   unvalidated against this corpus.
+
+## 10. Build order
 
 1. **Coordinates** — zone% → world XYZ. Nothing can move until this lands. Schema-independent.
 2. **Objective graph + effects** — quests/objectives/actions with `emits`/`satisfied_by`.
