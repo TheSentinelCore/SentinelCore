@@ -148,7 +148,7 @@ function ModuleRegistry:register_all(blackboard, event_bus)
 		end
 	end
 	table.sort(sorted, function(a, b)
-		return (a.config.configuration.priority or 0) > (b.config.configuration.priority or 0)
+		return (a.config.configuration.priority or 0) < (b.config.configuration.priority or 0)
 	end)
 
 	for _, entry in ipairs(sorted) do
@@ -228,7 +228,15 @@ function ModuleRegistry:tick_all(delta)
 			if module_def and module_def._instance then
 				local instance = module_def._instance
 				if type(instance.tick) == "function" then
-					instance:tick(delta)
+					local ok, err = pcall(instance.tick, instance, delta)
+					if not ok then
+						if self._event_bus then
+							self._event_bus:publish("module:fault", {
+								module = name,
+								error = tostring(err),
+							})
+						end
+					end
 				end
 			end
 		end
