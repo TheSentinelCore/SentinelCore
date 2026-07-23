@@ -482,7 +482,12 @@ function RuntimeAction.execute_kill(payload, ctx)
                 leash_radius = 40.0,
             })
         end
-        return "blocked" -- combat module drives the rotation; poll again next tick
+        -- "waiting", NOT "blocked": blocked drives the profile into its NAVIGATING state, which
+        -- then polls the nav adapter forever while the kill action never runs again. "waiting"
+        -- holds this action and re-polls each tick without burning the retry budget, which is what
+        -- a fight needs — and it is still bounded by MAX_CONDITION_WAIT so a hopeless kill cannot
+        -- wedge the run.
+        return "waiting"
     end
 
     -- No targets found — check if we should navigate to a known spawn area
