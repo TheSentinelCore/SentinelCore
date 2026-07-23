@@ -180,6 +180,12 @@ impl QueryClient for HttpQueryClient {
         serde_json::from_str(&text).map_err(QueryClientError::from)
     }
 
+    async fn get_item_sources(&self, item: u32) -> Result<Vec<u32>, QueryClientError> {
+        let u = self.endpoint(&format!("/item/{item}/sources"))?;
+        let text = self.get_cached(&u).await?;
+        serde_json::from_str(&text).map_err(QueryClientError::from)
+    }
+
     async fn creatures_polygon(
         &self,
         creature_entry: u32,

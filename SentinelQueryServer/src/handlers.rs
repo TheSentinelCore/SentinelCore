@@ -146,6 +146,16 @@ pub async fn get_flight(
     }))
 }
 
+pub async fn get_item_sources(
+    Extension(db): Extension<Db>,
+    Path(item): Path<u32>,
+) -> Result<AxumJson<Vec<u32>>, (StatusCode, Json<serde_json::Value>)> {
+    match db.get_item_sources(item) {
+        Ok(sources) => Ok(AxumJson(sources)),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })))),
+    }
+}
+
 pub async fn get_object(
     Extension(db): Extension<Db>,
     Path(entry): Path<u32>,

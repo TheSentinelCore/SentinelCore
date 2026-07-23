@@ -318,6 +318,105 @@ step
     );
 }
 
+#[tokio::test]
+async fn completion_gate_without_a_satisfying_action_is_enriched_from_the_quest() {
+    // ADR 06 invariant 1. A step that says "walk here, then this objective completes" is a human
+    // instruction — the person sees the mobs and kills them. Transcribed literally the bot waits
+    // forever; measured 185 such gates in the Elwynn profile. Level-1 enrichment derives the
+    // missing action from the quest's structured objectives.
+    //
+    // Quest 7 "Kobold Camp Cleanup" requires killing creature 6 ten times.
+    const GUIDE: &str = r#"RXPGuides.RegisterGuide([[
+#version 1
+#name Enrichment Test
+step
+    .goto Elwynn Forest,48.2,42.9
+    .complete 7,1
+]])"#;
+
+    let guide = parse_guide(GUIDE).expect("parses");
+    let client = MemoryQueryClient::new().with_quest(sentinel_queryclient::QuestDetail {
+        id: 7,
+        title: "Kobold Camp Cleanup".into(),
+        level: 2,
+        min_level: 1,
+        required_quests: vec![],
+        next_quests: vec![],
+        giver_entry: Some(197),
+        finisher_entry: Some(197),
+        objectives: vec![],
+        structured_objectives: vec![sentinel_queryclient::QuestObjective {
+            index: 1,
+            kind: sentinel_queryclient::ObjectiveKind::KillCreature,
+            target_entry: 6,
+            required: 10,
+            sources: vec![],
+        }],
+    });
+    let project = sentinel_importer::ProjectBuilder::build(&guide, "enrich.lua", &client)
+        .await
+        .expect("builds");
+
+    let actions = &project.operations[0].actions;
+    let kill = actions
+        .iter()
+        .find_map(|a| match &a.payload {
+            sentinel_models::authoring::ActionPayload::Kill(k) => Some(k),
+            _ => None,
+        })
+        .expect("an unsatisfiable Completion gate must gain a synthesised Kill action");
+    assert_eq!(kill.creature_entries, vec![6], "kill target comes from the quest requirement");
+    assert_eq!(kill.quantity, Some(10), "kill count comes from the quest requirement");
+
+    // and it must come BEFORE the gate, or the gate is still unsatisfiable on first evaluation
+    let kill_at = actions.iter().position(|a| matches!(a.payload, sentinel_models::authoring::ActionPayload::Kill(_))).unwrap();
+    let gate_at = actions.iter().position(|a| matches!(a.payload, sentinel_models::authoring::ActionPayload::Condition(_))).unwrap();
+    assert!(kill_at < gate_at, "the satisfying action must precede its gate");
+}
+
+#[tokio::test]
+async fn completion_gate_with_an_existing_kill_is_not_duplicated() {
+    // The guide usually DOES name the mob (`.mob Young Wolf`). Enrichment must fill gaps, never
+    // double up on work the guide already specified.
+    const GUIDE: &str = r#"RXPGuides.RegisterGuide([[
+#version 1
+#name No Duplicate Test
+step
+    .mob 6
+    .complete 7,1
+]])"#;
+
+    let guide = parse_guide(GUIDE).expect("parses");
+    let client = MemoryQueryClient::new().with_quest(sentinel_queryclient::QuestDetail {
+        id: 7,
+        title: "Kobold Camp Cleanup".into(),
+        level: 2,
+        min_level: 1,
+        required_quests: vec![],
+        next_quests: vec![],
+        giver_entry: Some(197),
+        finisher_entry: Some(197),
+        objectives: vec![],
+        structured_objectives: vec![sentinel_queryclient::QuestObjective {
+            index: 1,
+            kind: sentinel_queryclient::ObjectiveKind::KillCreature,
+            target_entry: 6,
+            required: 10,
+            sources: vec![],
+        }],
+    });
+    let project = sentinel_importer::ProjectBuilder::build(&guide, "nodup.lua", &client)
+        .await
+        .expect("builds");
+
+    let kills = project.operations[0]
+        .actions
+        .iter()
+        .filter(|a| matches!(a.payload, sentinel_models::authoring::ActionPayload::Kill(_)))
+        .count();
+    assert_eq!(kills, 1, "a step that already kills must not gain a second Kill");
+}
+
 #[test]
 fn standalone_and_bundled_parse_are_invariant_modulo_line_offset() {
     // The same guide text, parsed standalone vs. embedded as the second block of a bundle, must

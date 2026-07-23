@@ -30,6 +30,7 @@ async fn main() {
         .route("/trainer/:entry", get(handlers::get_trainer))
         .route("/flight/:entry", get(handlers::get_flight))
         .route("/object/:entry", get(handlers::get_object))
+        .route("/item/:item/sources", get(handlers::get_item_sources))
         .route("/creatures/polygon", get(handlers::creatures_polygon))
         .route("/validate", post(handlers::validate))
         .route("/travel/estimate", post(handlers::travel_estimate))

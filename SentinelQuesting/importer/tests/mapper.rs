@@ -930,6 +930,9 @@ impl sentinel_queryclient::QueryClient for UnreachableQueryClient {
     async fn get_npc(&self, _entry: u32) -> Result<NpcDetail, sentinel_queryclient::QueryClientError> {
         Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
     }
+    async fn get_item_sources(&self, _item: u32) -> Result<Vec<u32>, sentinel_queryclient::QueryClientError> {
+        Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
+    }
     async fn get_vendor(&self, _entry: u32) -> Result<sentinel_queryclient::VendorInfo, sentinel_queryclient::QueryClientError> {
         Err(sentinel_queryclient::QueryClientError::Transport("connection refused".to_string()))
     }

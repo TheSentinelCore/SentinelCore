@@ -17,6 +17,7 @@ pub struct MemoryQueryClient {
     flights: Vec<FlightInfo>,
     objects: Vec<ObjectInfo>,
     creature_polygons: Vec<CreaturePolygon>,
+    item_sources: Vec<(u32, Vec<u32>)>,
 }
 
 impl MemoryQueryClient {
@@ -57,6 +58,12 @@ impl MemoryQueryClient {
 
     pub fn with_creature_polygon(mut self, p: CreaturePolygon) -> Self {
         self.creature_polygons.push(p);
+        self
+    }
+
+    /// Register the creatures whose loot yields `item` (Level-1 enrichment fixture).
+    pub fn with_item_sources(mut self, item: u32, sources: Vec<u32>) -> Self {
+        self.item_sources.push((item, sources));
         self
     }
 }
@@ -138,6 +145,16 @@ impl QueryClient for MemoryQueryClient {
             .find(|d| d.entry == entry)
             .cloned()
             .ok_or_else(|| QueryClientError::NotFound(format!("object {entry}")))
+    }
+
+    async fn get_item_sources(&self, item: u32) -> Result<Vec<u32>, QueryClientError> {
+        // An unknown item legitimately has no sources; that is data, not an error.
+        Ok(self
+            .item_sources
+            .iter()
+            .find(|(i, _)| *i == item)
+            .map(|(_, s)| s.clone())
+            .unwrap_or_default())
     }
 
     async fn creatures_polygon(

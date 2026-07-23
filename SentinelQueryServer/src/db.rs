@@ -195,6 +195,22 @@ impl Db {
         }))
     }
 
+    /// Creature entries whose loot table yields `item`.
+    ///
+    /// Level-1 enrichment turns a bare `.collect item,n` gate into a Kill on these creatures. An
+    /// empty result means the item has no loot row (script-driven) — data, not an error.
+    pub fn get_item_sources(&self, item: u32) -> Result<Vec<u32>, String> {
+        Ok(self
+            .query_map::<_, _>(
+                "SELECT DISTINCT entry FROM creature_loot_template WHERE item = ?1",
+                [item],
+                |row| row.get::<_, i64>(0),
+            )?
+            .into_iter()
+            .map(|e| e as u32)
+            .collect())
+    }
+
     pub fn search_quests(&self, query: &str) -> Result<Vec<QuestSummary>, String> {
         let db = self.0.lock().unwrap();
         let like = format!("%{}%", query);

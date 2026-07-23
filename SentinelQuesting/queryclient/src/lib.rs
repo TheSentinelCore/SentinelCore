@@ -39,6 +39,12 @@ pub trait QueryClient: Send + Sync {
     async fn get_flight(&self, entry: u32) -> Result<FlightInfo, QueryClientError>;
     /// `GET /object/{entry}`
     async fn get_object(&self, entry: u32) -> Result<ObjectInfo, QueryClientError>;
+    /// `GET /item/{id}/sources` — creature entries whose loot table yields this item.
+    ///
+    /// Level-1 enrichment (ADR 06 §5) uses this to turn a bare `.collect item,n` gate into a
+    /// concrete Kill on the creatures that actually drop it. An empty result means the item has no
+    /// loot row (script-driven), which is a Level 2/3 case rather than an error.
+    async fn get_item_sources(&self, item: u32) -> Result<Vec<u32>, QueryClientError>;
     /// `GET /creatures/polygon?entry=`
     async fn creatures_polygon(
         &self,

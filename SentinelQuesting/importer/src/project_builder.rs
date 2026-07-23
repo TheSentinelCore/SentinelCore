@@ -12,7 +12,9 @@ use sentinel_models::authoring::{
     NpcRole, NPCReference, Operation, Position, Project, QuestReference, Severity, TrainerAction,
     TravelAction, TurnInQuestAction, UseItemAction, VendorAction, Diagnostic,
 };
-use sentinel_queryclient::{NpcDetail, QuestDetail, QueryClient, QueryClientError, WorldPos};
+use sentinel_queryclient::{
+    NpcDetail, ObjectiveKind, QuestDetail, QueryClient, QueryClientError, WorldPos,
+};
 
 use crate::{ParsedGuide, Step};
 
@@ -350,6 +352,209 @@ const ZONE_TABLE: &[(u32, &[&str], ZoneMap)] = &[
     (1439, &["Darkshore"],
      ZoneMap { continent: 1, top: 8333.333, left: 2941.6665, bottom: 3966.6665, right: -3608.3333 }),
 ];
+
+/// Does this action have any chance of progressing a quest objective?
+fn is_satisfying_action(action: &Action) -> bool {
+    matches!(
+        action.payload,
+        ActionPayload::Kill(_)
+            | ActionPayload::UseItem(_)
+            | ActionPayload::InteractNPC(_)
+            | ActionPayload::LootObject(_)
+            | ActionPayload::GrindArea(_)
+    )
+}
+
+/// Pull `(quest, objective_index)` out of a `.complete`-derived gate expression.
+///
+/// Only the bare `Objective(q,i)` form is handled; compound expressions are left alone rather than
+/// guessed at.
+fn parse_objective_expr(expression: &str) -> Option<(u32, u32)> {
+    let inner = expression.trim().strip_prefix("Objective(")?.strip_suffix(')')?;
+    let (q, i) = inner.split_once(',')?;
+    Some((q.trim().parse().ok()?, i.trim().parse().ok()?))
+}
+
+/// Pull `(item, count)` out of a `.collect`/`.itemcount`-derived gate expression.
+///
+/// Bare `ItemCount(item,n)` only. A negated `NOT ItemCount(...)` is deliberately NOT matched: it
+/// asserts the player has FEWER than n, so synthesising a Kill to gather more would drive the run
+/// away from the gate rather than toward it.
+fn parse_item_count_expr(expression: &str) -> Option<(u32, u32)> {
+    let inner = expression.trim().strip_prefix("ItemCount(")?.strip_suffix(')')?;
+    let (item, count) = inner.split_once(',')?;
+    Some((item.trim().parse().ok()?, count.trim().parse().ok()?))
+}
+
+/// Level-1 enrichment (ADR 06 §5) enforcing invariant 1 (satisfiability).
+///
+/// A guide step that reads `.goto <coords>` + `.complete 7,1` means *"walk here, then you'll kill
+/// the kobolds"* — the human sees them and acts. Transcribed literally the bot travels and then
+/// waits forever; that shape occurred 185 times in the Elwynn profile. Where a Completion gate has
+/// no action before it that could ever satisfy it, synthesise one from the quest's structured
+/// objectives.
+///
+/// Gaps only: a step that already kills keeps exactly what the guide specified.
+async fn enrich_unsatisfiable_gates(
+    state: &mut MapperState<'_>,
+    step_index: usize,
+    actions: &mut Vec<Action>,
+) -> Result<(), QueryClientError> {
+    /// What a gate needs satisfying: a quest objective slot, or a raw item count.
+    enum Gate {
+        Objective { quest: u32, index: u32 },
+        Item { item: u32, count: u32 },
+    }
+
+    let mut gates: Vec<(usize, Gate)> = Vec::new();
+    for (i, a) in actions.iter().enumerate() {
+        if let ActionPayload::Condition(c) = &a.payload {
+            if c.role == ConditionRole::Completion {
+                if let Some((quest, index)) = parse_objective_expr(&c.expression) {
+                    gates.push((i, Gate::Objective { quest, index }));
+                } else if let Some((item, count)) = parse_item_count_expr(&c.expression) {
+                    gates.push((i, Gate::Item { item, count }));
+                }
+            }
+        }
+    }
+
+    // Insert back-to-front so earlier gate indices stay valid.
+    for (gate_at, gate) in gates.into_iter().rev() {
+        if actions[..gate_at].iter().any(is_satisfying_action) {
+            continue; // the guide already said how
+        }
+
+        // A raw `.collect item,n` names no quest, so the requirement comes from the item's own
+        // loot sources rather than a quest row.
+        let (quest_id, obj_index) = match gate {
+            Gate::Objective { quest, index } => (quest, index),
+            Gate::Item { item, count } => {
+                let sources = state.client.get_item_sources(item).await.unwrap_or_default();
+                if sources.is_empty() {
+                    state.diagnostics.push(Diagnostic {
+                        severity: Severity::Warning,
+                        code: "UNSATISFIABLE_GATE".to_string(),
+                        message: format!(
+                            "item {item} has no loot source; the collect gate was left \
+                             unsatisfiable (script-driven — ADR 06 Level 2/3)"
+                        ),
+                        entity: Some(format!("item:{item}")),
+                        action: None,
+                    });
+                    continue;
+                }
+                state.diagnostics.push(Diagnostic {
+                    severity: Severity::Info,
+                    code: "GATE_ENRICHED".to_string(),
+                    message: format!("synthesised a Kill for collect gate on item {item}"),
+                    entity: Some(format!("step:{step_index}")),
+                    action: None,
+                });
+                actions.insert(
+                    gate_at,
+                    Action {
+                        id: Uuid::new_v4(),
+                        enabled: true,
+                        condition: None,
+                        class_restriction: None,
+                        note: None,
+                        payload: ActionPayload::Kill(KillTargetAction {
+                            // Drop chance means `count` kills will not yield `count` items; see the
+                            // overshoot rationale below.
+                            creature_entries: sources,
+                            quantity: Some(count.saturating_mul(5).max(1)),
+                            loot: true,
+                            ignore_elites: false,
+                        }),
+                    },
+                );
+                continue;
+            }
+        };
+        let detail = match state.client.get_quest(quest_id).await {
+            Ok(d) => d,
+            Err(_) => continue, // transport/not-found already diagnosed elsewhere
+        };
+        let Some(obj) = detail
+            .structured_objectives
+            .iter()
+            .find(|o| o.index as u32 == obj_index)
+        else {
+            state.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "UNSATISFIABLE_GATE".to_string(),
+                message: format!(
+                    "quest {quest_id} objective {obj_index} has no derivable requirement; the gate \
+                     was left unsatisfiable (script-driven objective — ADR 06 Level 2/3)"
+                ),
+                entity: Some(format!("quest:{quest_id}")),
+                action: None,
+            });
+            continue;
+        };
+
+        let payload = match obj.kind {
+            ObjectiveKind::KillCreature => Some(ActionPayload::Kill(KillTargetAction {
+                creature_entries: vec![obj.target_entry],
+                quantity: Some(obj.required),
+                loot: true,
+                ignore_elites: false,
+            })),
+            ObjectiveKind::CollectItem if !obj.sources.is_empty() => {
+                // The item drops at a chance, so `required` kills will not reliably yield
+                // `required` items. Overshoot deliberately: the gate after this action is the real
+                // stop condition, but in a linear profile an earlier action never re-runs once it
+                // succeeds, so undershooting strands the gate forever. The objective graph removes
+                // this heuristic by re-deriving executable work every tick.
+                Some(ActionPayload::Kill(KillTargetAction {
+                    creature_entries: obj.sources.clone(),
+                    quantity: Some(obj.required.saturating_mul(5).max(1)),
+                    loot: true,
+                    ignore_elites: false,
+                }))
+            }
+            _ => {
+                state.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "UNSATISFIABLE_GATE".to_string(),
+                    message: format!(
+                        "quest {quest_id} objective {obj_index} ({:?}) has no synthesisable action \
+                         (no loot source, or an object interaction needing a library reference)",
+                        obj.kind
+                    ),
+                    entity: Some(format!("quest:{quest_id}")),
+                    action: None,
+                });
+                None
+            }
+        };
+
+        if let Some(payload) = payload {
+            state.diagnostics.push(Diagnostic {
+                severity: Severity::Info,
+                code: "GATE_ENRICHED".to_string(),
+                message: format!(
+                    "synthesised a satisfying action for quest {quest_id} objective {obj_index}"
+                ),
+                entity: Some(format!("step:{step_index}")),
+                action: None,
+            });
+            actions.insert(
+                gate_at,
+                Action {
+                    id: Uuid::new_v4(),
+                    enabled: true,
+                    condition: None,
+                    class_restriction: None,
+                    note: None,
+                    payload,
+                },
+            );
+        }
+    }
+    Ok(())
+}
 
 /// Class names the compiler's `parse_class_guard` can lower (kept in sync with its KNOWN_CLASSES).
 const CLASS_TOKENS: &[&str] = &[
@@ -1114,6 +1319,10 @@ impl ProjectBuilder {
                 }
             }
             op.actions = build_step_actions(&mut state, step).await?;
+
+            // Level-1 enrichment before class stamping, so a synthesised action inherits the
+            // step's class restriction like any other.
+            enrich_unsatisfiable_gates(&mut state, step.index, &mut op.actions).await?;
 
             // Step-level class gating (`step << Warlock`, `step << Priest/Mage/Warlock`).
             // IF3 already stamps COMMAND-level suffixes (`.turnin 33,2 << Rogue`), but a step
