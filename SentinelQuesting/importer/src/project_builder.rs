@@ -869,8 +869,16 @@ async fn build_step_actions(
                 }
             }
             "fp" => {
-                // .fp - flight point (learn)
-                if let Some(npc) = last_target {
+                // .fp - flight point (learn). Corpus measurement of The Burning Crusade.lua showed
+                // `.fp` was 135 of the 514 unresolved commands because it only consulted a
+                // preceding `.target`. Fall back to the step's |cRXP_FRIENDLY_...|r name hints,
+                // exactly as `.vendor` and `.train` already do.
+                let npc = if let Some(npc) = last_target {
+                    Some(npc)
+                } else {
+                    resolve_npc_with_hints(state, step, None).await?
+                };
+                if let Some(npc) = npc {
                     actions.push(Action {
                         id: Uuid::new_v4(),
                         enabled: true,

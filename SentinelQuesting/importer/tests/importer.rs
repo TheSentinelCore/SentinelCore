@@ -155,6 +155,42 @@ async fn multi_registerguide_bundle_yields_one_project_per_guide() {
     assert_eq!(projects[1].metadata.name, "DM East");
 }
 
+#[tokio::test]
+async fn fp_without_target_resolves_flight_master_from_step_name_hints() {
+    // Corpus measurement of The Burning Crusade.lua (253 guides, 86,073 commands) showed `.fp`
+    // producing 135 unresolved actions — 26% of ALL 514 unresolved commands — because, unlike its
+    // siblings `.vendor`/`.train`, it only consulted a preceding `.target` and had no
+    // `resolve_npc_with_hints` fallback to the step's |cRXP_FRIENDLY_...|r name hints.
+    const GUIDE: &str = r#"RXPGuides.RegisterGuide([[
+#version 1
+#name FP Hint Test
+step
+    .fp >> Get the flight path from |cRXP_FRIENDLY_Thalia Amberhide|r
+]])"#;
+
+    let guide = parse_guide(GUIDE).expect("parses");
+    let client = MemoryQueryClient::new().with_npc(sentinel_queryclient::NpcDetail {
+        entry: 4321,
+        name: "Thalia Amberhide".to_string(),
+        faction: "Alliance".to_string(),
+        positions: vec![],
+        roles: vec![],
+    });
+    let project = sentinel_importer::ProjectBuilder::build(&guide, "fp.lua", &client)
+        .await
+        .expect("builds");
+
+    let typed_fp = project
+        .operations
+        .iter()
+        .flat_map(|o| &o.actions)
+        .any(|a| matches!(a.payload, sentinel_models::authoring::ActionPayload::LearnFlightPath(_)));
+    assert!(
+        typed_fp,
+        ".fp must resolve its flight master from the step's NPC name hints when no .target precedes it"
+    );
+}
+
 #[test]
 fn standalone_and_bundled_parse_are_invariant_modulo_line_offset() {
     // The same guide text, parsed standalone vs. embedded as the second block of a bundle, must
