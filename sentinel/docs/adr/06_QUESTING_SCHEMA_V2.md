@@ -1,161 +1,191 @@
-# ADR 06 — Questing Runtime Schema v2 (raw questing)
+# ADR 06 — Questing Schema v2: objective graph with action effects
 
-Status: proposed
+Status: proposed (revision 2 — supersedes the linear-step model in revision 1)
 Scope: **raw questing only** — class quests, professions, dailies, dungeons, grouping, and UI/meta
 directives are explicitly out of scope.
 
+> **Revision note.** Revision 1 specified a linear list of steps (`applicability → actions →
+> completion`). That model is **withdrawn**: it structurally cannot let one kill credit several
+> quests, which is the single most important behaviour of an efficient leveling bot. A design
+> review raised the objective-graph alternative and it is correct. This revision adopts it, with
+> two deliberate departures noted in §7.
+
 ## 1. Evidence
 
-Command census across `A-1-11-Human.lua` + `The Burning Crusade.lua` (~130k commands):
+Command census across `A-1-11-Human.lua` + `The Burning Crusade.lua` (~130k commands), scoped to
+raw questing:
 
 | Command | Count | In scope | Role |
 | --- | ---: | :---: | --- |
 | `.goto` | 32,790 | ✅ | navigation (dominates the corpus) |
 | `.target` | 11,419 | ✅ | **names the NPC/mob for the following action** |
-| `.turnin` | 6,658 | ✅ | quest turn-in |
+| `.turnin` / `.accept` | 13,130 | ✅ | quest lifecycle |
 | `.mob` | 6,585 | ✅ | kill target, **by name** |
-| `.accept` | 6,472 | ✅ | quest accept |
 | `.complete` | 6,374 | ✅ | objective completion gate |
-| `.isOnQuest` / `.isQuestTurnedIn` / `.isQuestComplete` / `.isQuestAvailable` / `.isNotOnQuest` | 6,339 | ✅ | applicability gates |
-| `.collect` / `.itemcount` / `.collectmultiple` | 4,362 | ✅ | item objective gates |
-| `.zoneskip` / `.zone` / `.subzone` / `.subzoneskip` | 4,175 | ✅ | route context + skip |
+| `.isOnQuest` / `.isQuestTurnedIn` / `.isQuestComplete` / `.isQuestAvailable` / `.isNotOnQuest` | 6,339 | ✅ | applicability |
+| `.collect` / `.itemcount` / `.collectmultiple` | 4,362 | ✅ | item objectives |
+| `.zone` / `.subzone` / `.zoneskip` / `.subzoneskip` | 4,175 | ✅ | route context + skip |
 | `.use` | 1,505 | ✅ | use quest item |
 | `.fly` / `.bindlocation` / `.hs` / `.fp` | 1,641 | ✅ | travel network |
-| `.unitscan` | 674 | ✅ | watch for a specific/rare mob |
+| `.unitscan` | 674 | ✅ | watch for a specific mob |
 | `.waypoint` / `.groundgoto` | 466 | ✅ | navigation variants |
-| `.vendor` | 287 | ✅ | sell/repair (keeps bags open for quest items) |
-| `.skipgossip` / `.clicknext` / `.gossip` / `.gossipoption` | 341 | ✅ | dialogue interaction |
-| `.deathskip` | 28 | ✅ | intentional-death travel |
+| `.vendor` | 287 | ✅ | sell/repair (bag space for quest items) |
+| `.skipgossip` / `.clicknext` / `.gossip` / `.gossipoption` | 341 | ✅ | dialogue |
+| `.deathskip` | 28 | ✅ | mechanical travel optimisation (see §7.3) |
 | `.train` / `.trainer` / `.skill` / `.cast` / `.usespell` / `.aura` | 3,045 | ❌ | class + profession |
 | `.xp` / `.line` / `.link` / `.itemStat` / `.disablecheckbox` | 2,947 | ❌ | UI / meta |
 | `.dungeon` / `.group` / `.solo` | 1,136 | ❌ | grouping |
 | `.reputation` / `.money` / `.stable` / `.bank*` / `.daily*` | ~800 | ❌ | QoL / dailies |
 
-## 2. The core problem this schema fixes
+## 2. The core problem
 
-RestedXP guides are **instructions for a human**. A step that reads
+RestedXP guides are **instructions for a human**:
 
 ```
 .goto Elwynn Forest,56.7,44.0
 .complete 1598,1
 ```
 
-means *"walk here, then you'll pick up the tome"* — the human sees the object and clicks it. A
-literal transcription produces a step that travels and then **waits forever**, because nothing in
-it can satisfy the gate.
+means *"walk here, then you'll pick up the tome"* — a human sees the object and clicks it. A
+literal transcription travels and then **waits forever**, because nothing in it can satisfy the
+gate.
 
 Measured on the v1 compiled Elwynn profile (1,393 actions):
 
-- **53 of 53** `Kill` actions had an **empty** `creature_entries` list (`.mob` is name-based)
+- **53 of 53** `Kill` actions had an empty `creature_entries` list (`.mob` is name-based)
+  — *fixed: name resolution now yields 0 of 53 empty*
 - **0** loot/interact actions existed at all
-- **185** Completion gates had no preceding action that could satisfy them
-- **522** Travel actions carried *zone percentages* in world-coordinate fields, paired with a
-  *continent id* — two incompatible coordinate systems in one struct
+- **185** Completion gates had no action able to satisfy them
+- **522** Travel actions carried zone percentages in world-coordinate fields, paired with a
+  continent id
 
-The schema vocabulary was not the problem; the **lowering** was. v2 therefore specifies both the
-shape *and* the invariants a profile must satisfy to be executable.
+The vocabulary was never the problem. The **lowering** was, and the *structure* prevented the fix.
 
-## 3. Invariants (a profile is invalid without these)
+## 3. Model: objectives subscribe to actions
 
-1. **Satisfiability** — every `Completion` gate MUST be preceded, within the same step, by at least
-   one action that can satisfy it (`Kill`, `Loot`, `UseItem`, `InteractNpc`, `AcceptQuest`).
-2. **Resolution** — no names at runtime. Every reference is a numeric entry
-   (`npc_entry`, `creature_entries[]`, `item_id`, `quest_id`, `object_entry`). Name→entry
-   resolution happens at compile time, against the game DB.
-3. **Coordinates** — `position` is always a **world** coordinate triple plus the **continent**
-   `map` id (Eastern Kingdoms `0`, Kalimdor `1`, Outland `530`). Guide percentages are converted at
-   compile time; a percentage MUST NOT survive into a profile.
-4. **No inert executables** — a command with executable meaning is either lowered to a typed action
-   or recorded as a diagnostic. It is never silently demoted to a `Comment`.
-5. **Adjacent tagging** — every enum crossing into the runtime serializes as `{type, payload}`,
-   because the Lua runtime dispatches on `.type`.
+The inversion that makes the whole thing work:
 
-## 4. Schema
+> **Actions emit effects. Objectives consume them. Objectives never own actions.**
 
-```jsonc
-{
-  "schema_version": "2.0.0",
-  "name": "Human 1-11",
-  "game": "2.4.3",
-  "content_hash": "…",          // invalidates saved progress when the route changes
-  "faction": "Alliance",         // route-level applicability
-  "level_range": [1, 11],
-  "steps": [
-    {
-      "id": 42,
-      "name": "Kobold Camp Cleanup",
-      "zone": { "map": 0, "area_id": 1429, "name": "Elwynn Forest" },
-      "quest_id": 7,             // the quest this step advances (nullable for pure travel)
-      "applicability": {          // evaluated ONCE on entry; false ⇒ skip whole step
-        "type": "All",
-        "payload": [
-          { "type": "QuestAccepted", "payload": 7 },
-          { "type": "Not", "payload": { "type": "QuestRewarded", "payload": 7 } }
-        ]
-      },
-      "actions": [ /* … */ ],
-      "completion": {             // step is done when this is true
-        "type": "ObjectiveComplete", "payload": [7, 1]
-      },
-      "on_failure": "skip",      // skip | abort | retry
-      "budget_s": 900             // hard cap; prevents an unattended wedge
-    }
-  ]
-}
+A single `Kill{creature: 299}` emits effects that any number of objectives may consume:
+
+```
+Action  Kill Young Wolf (299)
+   │
+   ├─► kill credit  creature 299        ─► Objective 7-1   (kill 10 Kobold Vermin)   ✗ no match
+   ├─► kill credit  creature 299        ─► Objective 107-2 (kill 8 wolves)           ✓ +1
+   ├─► loot roll    item 750 @ 80%      ─► Objective 33-1  (collect 8 Tough Wolf Meat) ✓ +1
+   └─► xp / vendor trash                ─► (no objective)
 ```
 
-### 4.1 Why `steps` replace flat `operations`
+Under the v1 step model this required three separate kill steps that could not share progress.
 
-v1 emitted one operation per guide line, so a single logical objective spread across many
-operations and the *gate* landed in a different operation than the *action* that satisfies it —
-structurally guaranteeing invariant 1 could not hold. A step is the atomic unit of intent:
-**applicability → actions → completion**, with a time budget.
+### 3.1 Node types
 
-### 4.2 Action set (raw questing)
+```jsonc
+// Guide metadata — preserves author intent and route ordering. NOT executable.
+"guide_blocks": [
+  { "id": 12, "zone": {"map": 0, "area_id": 1429}, "sequence": 12, "recommended_level": [1, 6] }
+]
 
-| Action | Payload | Lowered from |
+// Quest node — lifecycle, resolved to entries
+"quests": [
+  { "id": 7, "accept_npc": 197, "turnin_npc": 197, "min_level": 1, "prerequisites": [783] }
+]
+
+// Objective node — what must become true, and what can make it true
+"objectives": [
+  {
+    "id": "7-1",
+    "quest_id": 7,
+    "type": "KillCredit",
+    "required": 10,
+    "completion": { "type": "ObjectiveComplete", "payload": [7, 1] },
+    "satisfied_by": [ { "effect": "KillCredit", "creature_entries": [6] } ],
+    "locations": [ { "map": 0, "x": -8779.0, "y": -173.8, "z": 83.5, "weight": 31 } ],
+    "guide_sequence": 12,
+    "depends_on": ["quest:7:accepted"]
+  }
+]
+
+// Action template — the ONLY executable things
+"actions": [
+  {
+    "id": "kill-kobold-vermin",
+    "type": "Kill",
+    "payload": { "creature_entries": [6], "loot": true },
+    "emits": [ { "effect": "KillCredit", "creature_entries": [6] },
+               { "effect": "LootRoll", "items": [{ "item": 750, "chance": 0.8 }] } ]
+  }
+]
+```
+
+### 3.2 Executable action set
+
+`Travel`, `Kill`, `Loot`, `InteractNpc`, `UseItem`, `AcceptQuest`, `TurnInQuest`, `Vendor`,
+`Flight`, `LearnFlightPath`, `Hearth`, `SetHearth`, `DeathSkip`. Everything else is metadata.
+
+## 4. Invariants
+
+1. **Satisfiability** — every objective MUST have ≥1 action template whose `emits` can satisfy it.
+   (Revision 1's invariant, relocated from step to objective. This is the check that fails 185
+   times today, and it is enforceable at compile time.)
+2. **Resolution** — no names at runtime. All references are numeric entries.
+3. **Coordinates** — world XYZ + continent `map`. A guide percentage MUST NOT survive compilation.
+4. **No inert executables** — an executable command is lowered or diagnosed, never demoted to a
+   `Comment`.
+5. **Adjacent tagging** — every enum crossing into the runtime serialises as `{type, payload}`.
+6. **Effect provenance** — every `emits` entry records its derivation level (§5), so a route can be
+   audited for how much rests on inference.
+
+## 5. Objective derivation — fallback hierarchy
+
+| Level | Source | Example |
 | --- | --- | --- |
-| `Travel` | `{position{map,x,y,z}, tolerance, allow_flight}` | `.goto`, `.groundgoto`, `.waypoint` |
-| `AcceptQuest` | `{quest_id, npc_entry, auto_complete_dialog}` | `.accept` (+`.target`) |
-| `TurnInQuest` | `{quest_id, npc_entry, choose_reward}` | `.turnin` (+`.target`) |
-| `Kill` | `{creature_entries[], quantity, loot, ignore_elites}` | `.mob`, `.unitscan` |
-| `Loot` | `{object_entry \| item_id, quantity}` | derived from objective |
-| `UseItem` | `{item_id, target_entry?}` | `.use` |
-| `InteractNpc` | `{npc_entry, gossip_path[]}` | `.gossip`, `.clicknext`, `.skipgossip` |
-| `Vendor` | `{npc_entry, sell_grey, repair, buy_items[]}` | `.vendor` |
-| `Flight` | `{npc_entry, destination_node}` | `.fly` |
-| `LearnFlightPath` | `{npc_entry}` | `.fp` |
-| `Hearth` | `{}` / `SetHearth {npc_entry}` | `.hs` / `.bindlocation` |
-| `DeathSkip` | `{target_position}` | `.deathskip` |
+| 1 | Server DB (`quest_template`, `creature_loot_template`, `gameobject_loot_template`) | quest 7 → kill creature 6 ×10; quest 33 → item 750 from creatures 299/69/704/705 |
+| 2 | Creature/GO scripts (`smart_scripts`, `conditions`) | interact → spawn → credit chains |
+| 3 | Guide metadata | guide says "click the crate, kill the pirate, loot the map" |
+| 4 | Manual override file | genuinely irregular quests (escort, vehicle, timed) |
 
-### 4.3 Condition set
+Level 1 covers the common case; quest 1598's item 6785 has **no** loot row anywhere in the DB and
+is a Level 2/3 case. Expect Level 4 to be ~2–5% of quests. Each objective records the level it was
+derived at.
 
-`QuestAccepted`, `QuestCompleted`, `QuestRewarded`, `ObjectiveComplete[quest,idx]`,
-`ItemCountAtLeast[item,n]`, `HasItem`, `LevelAtLeast`, `LevelBelow`, `ZoneIs`, `ClassIs`, `RaceIs`,
-`FactionIs`, plus `All` / `Any` / `Not`. All adjacently tagged.
+## 6. Scheduler
 
-## 5. Required compiler passes (this is the work)
+The scheduler answers *"which objectives are executable right now?"* rather than *"what is the next
+line?"* — this is what gives recovery after death, disconnect, mob competition, path failure, and
+full bags.
 
-1. **Name resolution** — `.target <name>` and `.mob <name>` → entries via `creature_template`.
-   This alone fixes all 53 empty kill lists. Ambiguous names resolve by proximity to the step's
-   zone; unresolved names become a blocking diagnostic, never an empty list.
-2. **Objective enrichment** — for each `.complete q,i` / `.collect item,n`, read the quest's real
-   requirement from `quest_template` (`ReqCreatureOrGOId*`, `ReqItemId*`) and **synthesize the
-   satisfying action**. Example: quest 7 → `Kill{creature_entries:[6], quantity:10}`; quest 33 →
-   item 750 ×8, which `creature_loot_template` attributes to creatures 299/69/704/705 → a `Kill`
-   on those with `loot:true`.
-3. **Coordinate conversion** — zone percentage + zone → world XYZ. Two verified sources agree to
-   ~1 yard: the client API `core.game_ui.get_world_pos_from_map_pos(1429,{x,y})` returned
-   `(-8932.5,-137.5)` for `48.2,42.9`, and the DB has Deputy Willem at `(-8933.5,-136.5)`.
-   Prefer DB spawn coordinates for NPC/creature targets; use conversion for open-world waypoints.
-4. **Step assembly** — group guide lines into steps so the gate and its satisfying action land
-   together, then assert invariant 1 at compile time.
-5. **Zone-context tracking** — carry `.zone`/`.subzone` so `.zoneskip`/`.subzoneskip` lower to
-   `ZoneIs` applicability rather than being dropped.
+**Phasing (deliberate — see §7.1):**
 
-## 6. Validation
+- **Phase 1** — no scheduler. Execute objectives in `guide_sequence` order, skipping any whose
+  `depends_on` is unmet or whose completion is already true. Behaviourally equal to the guide, but
+  on the graph, and objectives already share progress via effects.
+- **Phase 2** — *nearest executable objective, guide order as tiebreak*. Recovers from being out of
+  position without re-deriving the route.
+- **Phase 3** — scoring (objectives satisfied, travel saved, spawn density, drop chance, respawn),
+  adopted **only** where it measurably beats guide order on time-to-level.
 
-`sentinel/docs/reference-profiles/northshire-1-6.json` is the hand-authored gold reference for
-Human 1–6: 8 steps, real DB world coordinates, real creature entries, **0 empty kill lists and 0
-unsatisfiable gates**. It is the executable target the compiler must reproduce; a compiler change
-is "done" when its output for the same guide range is behaviourally equivalent to this file.
+## 7. Deliberate departures from the design review
+
+**7.1 Guide order is a prior, not a score term.** RestedXP's routing is hand-optimised over years
+and is the main value of the corpus. An eight-term scoring function that treats guide priority as
+one input among many will, in its first iterations, produce worse routes than simply following the
+guide. Guide order is therefore the default and the scheduler earns deviations.
+
+**7.2 Testability.** A linear route diffs trivially against its guide; a scheduler's behaviour is
+emergent. `sentinel/docs/reference-profiles/northshire-1-6.json` (8 steps, real DB coordinates and
+entries, 0 empty kill lists, 0 unsatisfiable gates) is retained as a **behavioural gold test**: the
+graph must still complete quests 783 → 7 → 5261 → 33 in Northshire.
+
+**7.3 `.deathskip` is kept.** The review groups it with human-judgment tricks, but it is purely
+mechanical (die → release → resurrect nearer the destination) and fully executable.
+
+## 8. Build order
+
+1. **Coordinates** — zone% → world XYZ. Nothing can move until this lands. Schema-independent.
+2. **Objective graph + effects** — quests/objectives/actions with `emits`/`satisfied_by`.
+3. **Level 1 enrichment** — derive `satisfied_by` from the DB. Kills the 185 unsatisfiable gates.
+4. **Phase 1 execution** — guide-ordered traversal of the graph. Ship a bot that levels.
+5. **Phase 2 scheduler**, then Levels 2–4 enrichment, then Phase 3 scoring if it earns its place.
