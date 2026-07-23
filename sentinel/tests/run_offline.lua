@@ -362,6 +362,7 @@ local test_modules = {
     -- Shared libs
     "tests/shared/test_compat",
     "tests/shared/test_humanization",
+    "tests/shared/test_class_names",
 
     -- Integration
     "tests/integration/test_combat_dummy",

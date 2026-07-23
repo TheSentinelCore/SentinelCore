@@ -28,11 +28,17 @@ local function same_guid(a, b)
     return ok_a and ok_b and tostring(guid_a) == tostring(guid_b)
 end
 
-local CLASS_ID_TO_NAME = {
-    [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE",
-    [5] = "PRIEST", [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE",
-    [9] = "WARLOCK", [11] = "DRUID",
-}
+-- B8: the Title-Case class_id -> name map now lives in shared/class_names.lua as the one
+-- authority (questing's ClassIs conditions need Title-Case). Combat's `player.class_name`
+-- blackboard key has always been UPPER-CASE, so upper-case here at combat's own boundary
+-- rather than exposing a second casing from the shared module.
+local ClassNames = require("shared/class_names")
+local CLASS_ID_TO_NAME = setmetatable({}, {
+    __index = function(_, class_id)
+        local name = ClassNames.resolve(class_id)
+        return name and name:upper() or nil
+    end,
+})
 
 -- Reads a real numeric class_id off the local player, or nil when the player
 -- object isn't available yet (e.g. during a loading screen) or get_class()
@@ -108,25 +114,36 @@ function SentinelCombat:initialize()
     self._blackboard:set("module.combat.catalog", self._spell_catalog)
     self._blackboard:set("module.combat.dispatcher", self._dispatcher)
     self._blackboard:set("module.combat.cooldowns", self._cooldowns)
-    self._blackboard:set("module.combat.twist_mode", "auto")
-    self._blackboard:set("module.combat.allow_estimated_twist", false)
-    self._blackboard:set("module.combat.twist_window_ms", 350)
-    self._blackboard:set("module.combat.enable_burst", true)
-    self._blackboard:set("module.combat.preferred_blessing", "might")
-    self._blackboard:set("module.combat.enabled", true)
-    self._blackboard:set("module.combat.auto_engage", true)
-    self._blackboard:set("module.combat.auto_engage_world", false)
-    self._blackboard:set("module.combat.low_health_threshold", 0.35)
-    self._blackboard:set("module.combat.retreat_outnumber_delta", 2)
-    self._blackboard:set("module.combat.session_blood_unavailable", false)
-    self._blackboard:set("module.combat.primary_seal_preference", "blood")
-    self._blackboard:set("rotation.primary_seal", "blood")
-    self._blackboard:set("rotation.desired_seal", nil)
-    self._blackboard:set("rotation.desired_seal_reason", "ooc_no_seal")
+
+    -- F12: static scalar defaults (no live objects, no computed values) collected in one
+    -- place so the real, still-in-use config surface is unambiguous. This used to be ~30
+    -- inline `self._blackboard:set(...)` calls, a dozen of which seeded the deleted grind
+    -- subsystem (removed in Wave 1 / ADR-001) with no way to tell live keys from dead ones
+    -- at a glance. Values and set order are unchanged from before this pass.
+    local STATIC_DEFAULTS = {
+        { "module.combat.twist_mode", "auto" },
+        { "module.combat.allow_estimated_twist", false },
+        { "module.combat.twist_window_ms", 350 },
+        { "module.combat.enable_burst", true },
+        { "module.combat.preferred_blessing", "might" },
+        { "module.combat.enabled", true },
+        { "module.combat.auto_engage", true },
+        { "module.combat.auto_engage_world", false },
+        { "module.combat.low_health_threshold", 0.35 },
+        { "module.combat.retreat_outnumber_delta", 2 },
+        { "module.combat.session_blood_unavailable", false },
+        { "module.combat.primary_seal_preference", "blood" },
+        { "rotation.primary_seal", "blood" },
+        { "rotation.desired_seal", nil },
+        { "rotation.desired_seal_reason", "ooc_no_seal" },
+        { "combat.burst_context", false },
+        { "combat.gcd_until_ms", 0 },
+        { "combat.leash_radius", 25 },
+    }
+    for _, kv in ipairs(STATIC_DEFAULTS) do
+        self._blackboard:set(kv[1], kv[2])
+    end
     self._cooldown_enter_ms = 0
-    self._blackboard:set("combat.burst_context", false)
-    self._blackboard:set("combat.gcd_until_ms", 0)
-    self._blackboard:set("combat.leash_radius", 25)
 
     self:_subscribe(Events.ENGAGE_REQUESTED, function(payload)
         self:_handle_engage_requested(payload)

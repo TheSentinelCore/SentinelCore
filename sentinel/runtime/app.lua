@@ -46,13 +46,12 @@ end
 
 function SentinelApp:shutdown()
     self._sensor_hub:shutdown()
-    local modules = self._registry:all()
-    for _, module in pairs(modules) do
-        if module and type(module.shutdown) == "function" then
-            module:shutdown()
-        end
-    end
-    -- Shutdown modules via the registry
+    -- B7: registry:shutdown_all() already calls module:shutdown() on every
+    -- registered module. A redundant manual loop here used to shut every
+    -- module down TWICE per SentinelApp:shutdown() -- e.g. combat's
+    -- shutdown re-ran a full disengage (chase stop -> nav stop -> profile
+    -- reset -> DISENGAGED publish) a second time on every reload. The
+    -- registry is now the single shutdown path.
     self._registry:shutdown_all()
 end
 

@@ -96,4 +96,30 @@ function M.test_module_error_does_not_break_the_loop()
     T.assert_equal(sensor_refreshes, 1)
 end
 
+--- B7: SentinelApp:shutdown() used to call module:shutdown() once via a manual
+--- loop over registry:all(), THEN call registry:shutdown_all() which shuts
+--- every module down again -- e.g. combat's shutdown would re-run a full
+--- disengage a second time on every reload. shutdown_all() must be the SINGLE
+--- shutdown path.
+function M.test_shutdown_shuts_down_each_module_exactly_once()
+    local shutdown_counts = {}
+    local app = make_app({
+        all = function()
+            return {
+                combat = { shutdown = function() shutdown_counts.combat = (shutdown_counts.combat or 0) + 1 end },
+                questing = { shutdown = function() shutdown_counts.questing = (shutdown_counts.questing or 0) + 1 end },
+            }
+        end,
+        shutdown_all = function(_self)
+            shutdown_counts.combat = (shutdown_counts.combat or 0) + 1
+            shutdown_counts.questing = (shutdown_counts.questing or 0) + 1
+        end,
+    })
+
+    app:shutdown()
+
+    T.assert_equal(shutdown_counts.combat, 1, "combat:shutdown must run exactly once")
+    T.assert_equal(shutdown_counts.questing, 1, "questing:shutdown must run exactly once")
+end
+
 return M
