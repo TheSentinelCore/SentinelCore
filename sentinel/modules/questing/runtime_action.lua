@@ -470,8 +470,14 @@ function RuntimeAction.execute_turnin_quest(payload, ctx)
     if core.quests.complete_quest then
         pcall(core.quests.complete_quest)
     end
-    local choice = payload.choose_reward or payload.reward_choice
-    if choice and core.quests.get_quest_reward then
+    -- ALWAYS claim: complete_quest lands on the reward frame, and the turn-in is not
+    -- final until get_quest_reward confirms it — even for quests with a single fixed
+    -- reward. Only claiming when the guide specified a choice left choice-reward quests
+    -- stalled on the frame through the whole retry budget (live: quest 33 burned all 5
+    -- attempts and only completed on the trailing edge). Slot 1 is the default when the
+    -- guide does not care.
+    if core.quests.get_quest_reward then
+        local choice = payload.choose_reward or payload.reward_choice or 1
         pcall(core.quests.get_quest_reward, choice)
     end
 
