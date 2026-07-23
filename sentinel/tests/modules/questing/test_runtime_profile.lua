@@ -37,14 +37,13 @@ end
 local function mock_globals()
     _G.core = _G.core or {}
     _G.core.object_manager = _G.core.object_manager or {}
-    _G.core.unit = _G.core.unit or {}
     _G.core.input = _G.core.input or {}
     _G.core.quests = _G.core.quests or {}
     _G.core.inventory = _G.core.inventory or {}
 
-    -- Reset global state
-    _G.core.unit.is_dead = nil
-    _G.core.unit.get_health = nil
+    -- Reset global state. Death/health state is read off the game_object
+    -- returned by get_local_player() (is_dead()/get_health() methods), not a
+    -- fictional core.unit.* namespace — see sylvannas_api.lua mock header.
     _G.core.object_manager.get_local_player = nil
     _G.core.object_manager.get_all_objects = nil
     _G.core.quests.is_on_quest = nil

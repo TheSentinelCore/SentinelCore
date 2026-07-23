@@ -1,5 +1,12 @@
 -- sentinel/tests/harness/mocks/sylvannas_api.lua
--- Mocks for Sylvannas API (core.*, _G.SentinelNavClient, spell_queue)
+-- Mocks for documented Sylvannas API surface (core.object_manager, core.input,
+-- core.log/core.log_error, _G.SentinelNavClient) plus a game_object-shaped mock
+-- unit/player factory. Does NOT mock core.player / core.unit / core.spell /
+-- core.spell_queue — those namespaces do not exist in the real Sylvannas API
+-- (see docs/SylvannasAPI/dev/api/{object-manager,game-object,spellbook,
+-- spellbook-helper}.md); real per-unit state is read via colon methods on the
+-- game_object itself (e.g. unit:get_health()), and spell state via
+-- core.spell_book.* / common/utility/spell_helper.
 -- Used by out-of-game test harness
 
 local Mock = {}
@@ -91,380 +98,6 @@ function Mock.clear_objects()
 end
 
 -- ============================================================================
--- core.player
--- ============================================================================
-Mock.core.player = Mock.core.player or {}
-
-function Mock.core.player.get_class()
-    if _local_player and _local_player.get_class then
-        return _local_player:get_class()
-    end
-    return 8 -- Mage
-end
-
-function Mock.core.player.get_level()
-    if _local_player and _local_player.get_level then
-        return _local_player:get_level()
-    end
-    return 60
-end
-
-function Mock.core.player.is_moving()
-    if _local_player and _local_player.is_moving then
-        return _local_player:is_moving()
-    end
-    return false
-end
-
-function Mock.core.player.get_position()
-    if _local_player and _local_player.get_position then
-        return _local_player:get_position()
-    end
-    return { x = 0, y = 0, z = 0 }
-end
-
-function Mock.core.player.get_health()
-    if _local_player and _local_player.get_health then
-        return _local_player:get_health()
-    end
-    return 100
-end
-
-function Mock.core.player.get_max_health()
-    if _local_player and _local_player.get_max_health then
-        return _local_player:get_max_health()
-    end
-    return 100
-end
-
-function Mock.core.player.get_power()
-    if _local_player and _local_player.get_power then
-        return _local_player:get_power()
-    end
-    return 100
-end
-
-function Mock.core.player.get_max_power()
-    if _local_player and _local_player.get_max_power then
-        return _local_player:get_max_power()
-    end
-    return 100
-end
-
-function Mock.core.player.get_power_type()
-    if _local_player and _local_player.get_power_type then
-        return _local_player:get_power_type()
-    end
-    return 0 -- Mana
-end
-
-function Mock.core.player.is_dead()
-    if _local_player and _local_player.is_dead then
-        return _local_player:is_dead()
-    end
-    return false
-end
-
-function Mock.core.player.is_ghost()
-    if _local_player and _local_player.is_ghost then
-        return _local_player:is_ghost()
-    end
-    return false
-end
-
-function Mock.core.player.is_mounted()
-    if _local_player and _local_player.is_mounted then
-        return _local_player:is_mounted()
-    end
-    return false
-end
-
-function Mock.core.player.in_combat()
-    if _local_player and _local_player.in_combat then
-        return _local_player:in_combat()
-    end
-    return false
-end
-
--- ============================================================================
--- core.unit
--- ============================================================================
-Mock.core.unit = Mock.core.unit or {}
-
-function Mock.core.unit.get_guid(unit)
-    if unit and unit.get_guid then
-        return unit:get_guid()
-    end
-    return nil
-end
-
-function Mock.core.unit.get_position(unit)
-    if unit and unit.get_position then
-        return unit:get_position()
-    end
-    return { x = 0, y = 0, z = 0 }
-end
-
-function Mock.core.unit.get_health(unit)
-    if unit and unit.get_health then
-        return unit:get_health()
-    end
-    return 100
-end
-
-function Mock.core.unit.get_max_health(unit)
-    if unit and unit.get_max_health then
-        return unit:get_max_health()
-    end
-    return 100
-end
-
-function Mock.core.unit.get_power(unit)
-    if unit and unit.get_power then
-        return unit:get_power()
-    end
-    return 100
-end
-
-function Mock.core.unit.get_max_power(unit)
-    if unit and unit.get_max_power then
-        return unit:get_max_power()
-    end
-    return 100
-end
-
-function Mock.core.unit.get_power_type(unit)
-    if unit and unit.get_power_type then
-        return unit:get_power_type()
-    end
-    return 0
-end
-
-function Mock.core.unit.get_distance(unit)
-    if unit and unit.get_distance then
-        return unit:get_distance()
-    end
-    local player_pos = Mock.core.player.get_position()
-    local unit_pos = Mock.core.unit.get_position(unit)
-    local dx = unit_pos.x - player_pos.x
-    local dy = unit_pos.y - player_pos.y
-    local dz = unit_pos.z - player_pos.z
-    return math.sqrt(dx*dx + dy*dy + dz*dz)
-end
-
-function Mock.core.unit.is_enemy(unit)
-    if unit and unit.is_enemy then
-        return unit:is_enemy()
-    end
-    return true
-end
-
-function Mock.core.unit.is_friendly(unit)
-    if unit and unit.is_friendly then
-        return unit:is_friendly()
-    end
-    return false
-end
-
-function Mock.core.unit.is_dead(unit)
-    if unit and unit.is_dead then
-        return unit:is_dead()
-    end
-    return false
-end
-
-function Mock.core.unit.get_target(unit)
-    if unit and unit.get_target then
-        return unit:get_target()
-    end
-    return nil
-end
-
-function Mock.core.unit.get_casting_spell(unit)
-    if unit and unit.get_casting_spell then
-        return unit:get_casting_spell()
-    end
-    return nil
-end
-
-function Mock.core.unit.get_channeling_spell(unit)
-    if unit and unit.get_channeling_spell then
-        return unit:get_channeling_spell()
-    end
-    return nil
-end
-
-function Mock.core.unit.get_name(unit)
-    if unit and unit.get_name then
-        return unit:get_name()
-    end
-    return "Unknown"
-end
-
-function Mock.core.unit.get_level(unit)
-    if unit and unit.get_level then
-        return unit:get_level()
-    end
-    return 1
-end
-
-function Mock.core.unit.get_creature_type(unit)
-    if unit and unit.get_creature_type then
-        return unit:get_creature_type()
-    end
-    return "Humanoid"
-end
-
-function Mock.core.unit.get_faction(unit)
-    if unit and unit.get_faction then
-        return unit:get_faction()
-    end
-    return 0
-end
-
-function Mock.core.unit.get_reaction(unit)
-    if unit and unit.get_reaction then
-        return unit:get_reaction()
-    end
-    return 4 -- Neutral
-end
-
-function Mock.core.unit.get_casting_time_left(unit)
-    if unit and unit.get_casting_time_left then
-        return unit:get_casting_time_left()
-    end
-    return 0
-end
-
-function Mock.core.unit.get_channeling_time_left(unit)
-    if unit and unit.get_channeling_time_left then
-        return unit:get_channeling_time_left()
-    end
-    return 0
-end
-
-function Mock.core.unit.get_aura(unit, spell_id)
-    if unit and unit.get_aura then
-        return unit:get_aura(spell_id)
-    end
-    return nil
-end
-
-function Mock.core.unit.get_all_auras(unit)
-    if unit and unit.get_all_auras then
-        return unit:get_all_auras()
-    end
-    return {}
-end
-
--- ============================================================================
--- core.spell
--- ============================================================================
-Mock.core.spell = Mock.core.spell or {}
-
-local _spell_data = {}
-
-function Mock.core.spell.get_spell_cooldown(spell_id)
-    if _spell_data[spell_id] and _spell_data[spell_id].cooldown then
-        return _spell_data[spell_id].cooldown
-    end
-    return 0
-end
-
-function Mock.core.spell.get_spell_charges(spell_id)
-    if _spell_data[spell_id] and _spell_data[spell_id].charges then
-        return _spell_data[spell_id].charges
-    end
-    return 0
-end
-
-function Mock.core.spell.get_spell_max_charges(spell_id)
-    if _spell_data[spell_id] and _spell_data[spell_id].max_charges then
-        return _spell_data[spell_id].max_charges
-    end
-    return 0
-end
-
-function Mock.core.spell.get_spell_charge_cooldown(spell_id)
-    if _spell_data[spell_id] and _spell_data[spell_id].charge_cooldown then
-        return _spell_data[spell_id].charge_cooldown
-    end
-    return 0
-end
-
-function Mock.core.spell.is_spell_known(spell_id)
-    if _spell_data[spell_id] ~= nil then
-        return true
-    end
-    -- Default known spells for testing
-    local known_spells = {
-        [116] = true, -- Frostbolt
-        [122] = true, -- Frost Nova
-        [120] = true, -- Cone of Cold
-        [12472] = true, -- Icy Veins
-        [45438] = true, -- Ice Block
-        [1953] = true, -- Blink
-        [31687] = true, -- Summon Water Elemental
-        [84714] = true, -- Frozen Orb
-        [44614] = true, -- Flurry
-        [205021] = true, -- Ray of Frost
-        [257541] = true, -- Glacial Spike
-        [30455] = true, -- Ice Lance
-        [228597] = true, -- Frostbolt (Brain Freeze)
-        [190356] = true, -- Blizzard
-        [157997] = true, -- Ice Nova
-        [214634] = true, -- Ebonbolt
-        [228354] = true, -- Flurry (Winter's Chill)
-    }
-    return known_spells[spell_id] == true
-end
-
-function Mock.core.spell.get_spell_range(spell_id)
-    if _spell_data[spell_id] and _spell_data[spell_id].range then
-        return _spell_data[spell_id].range
-    end
-    local ranges = {
-        [116] = 40, -- Frostbolt
-        [30455] = 40, -- Ice Lance
-        [84714] = 40, -- Frozen Orb
-        [122] = 10, -- Frost Nova
-        [120] = 10, -- Cone of Cold
-        [1953] = 20, -- Blink
-        [45438] = 0, -- Ice Block
-    }
-    return ranges[spell_id] or 40
-end
-
-function Mock.core.spell.get_spell_gcd(spell_id)
-    if _spell_data[spell_id] and _spell_data[spell_id].gcd then
-        return _spell_data[spell_id].gcd
-    end
-    return 1.5
-end
-
-function Mock.core.spell.get_spell_cast_time(spell_id)
-    if _spell_data[spell_id] and _spell_data[spell_id].cast_time then
-        return _spell_data[spell_id].cast_time
-    end
-    local cast_times = {
-        [116] = 1.5, -- Frostbolt
-        [30455] = 0, -- Ice Lance (instant)
-        [84714] = 0, -- Frozen Orb
-        [122] = 0, -- Frost Nova
-        [120] = 0, -- Cone of Cold
-        [1953] = 0, -- Blink
-        [45438] = 0, -- Ice Block
-        [12472] = 0, -- Icy Veins
-        [31687] = 2.5, -- Water Elemental
-    }
-    return cast_times[spell_id] or 0
-end
-
-function Mock.set_spell_data(spell_id, data)
-    _spell_data[spell_id] = data
-end
-
--- ============================================================================
 -- core.input
 -- ============================================================================
 Mock.core.input = Mock.core.input or {}
@@ -517,43 +150,6 @@ end
 function Mock.core.input.jump()
     print("[MOCK] Jump")
     return true
-end
-
--- ============================================================================
--- core.spell_queue
--- ============================================================================
-Mock.core.spell_queue = Mock.core.spell_queue or {}
-
-local _queued_spells = {}
-
-function Mock.core.spell_queue.queue_spell(spell_id, target_guid, x, y, z)
-    table.insert(_queued_spells, {
-        spell_id = spell_id,
-        target_guid = target_guid,
-        x = x, y = y, z = z,
-        time = Mock._game_time
-    })
-    return true
-end
-
-function Mock.core.spell_queue.clear_queue()
-    _queued_spells = {}
-end
-
-function Mock.core.spell_queue.get_queue()
-    return _queued_spells
-end
-
-function Mock.core.spell_queue.get_queued_count()
-    return #_queued_spells
-end
-
-function Mock.get_queued_spells()
-    return _queued_spells
-end
-
-function Mock.clear_queued_spells()
-    _queued_spells = {}
 end
 
 -- ============================================================================
@@ -656,7 +252,18 @@ function Mock.create_mock_unit(guid, data)
     function unit:get_channeling_spell() return self._channeling_spell end
     function unit:get_aura(spell_id) return self._auras[spell_id] end
     function unit:get_all_auras() return self._auras end
-    function unit:get_distance() return Mock.core.unit.get_distance(self) end
+    function unit:get_distance()
+        local player = Mock.core.object_manager.get_local_player()
+        if not player or not player.get_position then
+            return 0
+        end
+        local player_pos = player:get_position()
+        local unit_pos = self:get_position()
+        local dx = unit_pos.x - player_pos.x
+        local dy = unit_pos.y - player_pos.y
+        local dz = unit_pos.z - player_pos.z
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
+    end
     function unit:get_casting_time_left() return 0 end
     function unit:get_channeling_time_left() return 0 end
 
@@ -703,8 +310,6 @@ end
 function Mock.reset()
     Mock.reset_time()
     Mock.clear_objects()
-    Mock.clear_queued_spells()
-    _spell_data = {}
     _nav_path = {}
     _nav_state = "IDLE"
     _local_player = nil
