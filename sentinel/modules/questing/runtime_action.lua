@@ -7,6 +7,13 @@
 -- ============================================================================
 local NAV_RETRY_DELAY = 1.0    -- Seconds between navigation retries
 
+-- Nil-safe distance (returns infinity on bad input) — used to notice a chased target drifting.
+local Geometry = (function()
+    local ok, mod = pcall(require, "core/geometry")
+    if ok and type(mod) == "table" and mod.distance then return mod end
+    return nil
+end)()
+
 local RuntimeAction = {}
 
 -- ============================================================================
@@ -456,17 +463,24 @@ function RuntimeAction.execute_kill(payload, ctx)
         end
         -- Check proximity — if out of combat range, initiate navigation (W3.6)
         if not ctx:is_at_npc(entries[1], 30.0) then
-            -- Start navigation to target's position
-            if ctx.nav and not ctx.nav:is_active() then
-                local npc_pos = nil
-                local ok, pos = pcall(target.get_position, target)
-                if ok then npc_pos = pos end
-                if npc_pos then
+            -- Chase: mobs wander, so the destination must track the target rather than being
+            -- captured once. The old guard only issued move_to when nav was IDLE, which locked
+            -- onto a stale position — the bot walked to where the mob used to be and stopped.
+            local ok_pos, npc_pos = pcall(target.get_position, target)
+            if ok_pos and npc_pos then
+                local last = ctx._chase_dest
+                local drifted = (not last)
+                    or (Geometry and Geometry.distance
+                        and Geometry.distance(last, npc_pos) > 3.0)
+                    or false
+                if ctx.nav and (drifted or not ctx.nav:is_active()) then
                     ctx.nav:move_to(npc_pos, { tolerance = 5.0 })
+                    ctx._chase_dest = { x = npc_pos.x, y = npc_pos.y, z = npc_pos.z }
                 end
             end
             return "blocked" -- Navigate to target first
         end
+        ctx._chase_dest = nil
 
         -- In range. Nothing here previously did anything at all — it returned "blocked" and
         -- assumed "the combat loop" would notice, but the combat module's world auto-engage is off
