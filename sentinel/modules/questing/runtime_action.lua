@@ -6,6 +6,9 @@
 -- Named constants for navigation and proximity (W3.1, W3.6)
 -- ============================================================================
 local NAV_RETRY_DELAY = 1.0    -- Seconds between navigation retries
+local CORPSE_LOOT_RANGE = 4.0  -- Must stand this close to loot a corpse
+local LOOT_ATTEMPTS = 3        -- Bound per corpse so an unlootable one cannot wedge the run
+local ABANDON_RANGE = 50.0     -- Give up on a committed target that has run this far away
 
 -- Nil-safe distance (returns infinity on bad input) — used to notice a chased target drifting.
 local Geometry = (function()
@@ -13,6 +16,33 @@ local Geometry = (function()
     if ok and type(mod) == "table" and mod.distance then return mod end
     return nil
 end)()
+
+--- Stable per-corpse identity, used both to dedupe kill counting and to bound
+--- loot attempts. Prefers the GUID; falls back to rounded position + npc id so a
+--- client without get_guid still distinguishes two corpses lying side by side.
+local function corpse_key(unit)
+    if not unit then
+        return nil
+    end
+    if type(unit.get_guid) == "function" then
+        local ok, guid = pcall(unit.get_guid, unit)
+        if ok and guid ~= nil and guid ~= "" then
+            return "guid:" .. tostring(guid)
+        end
+    end
+    local npc_id = "?"
+    if type(unit.get_npc_id) == "function" then
+        local ok, id = pcall(unit.get_npc_id, unit)
+        if ok then npc_id = tostring(id) end
+    end
+    if type(unit.get_position) == "function" then
+        local ok, pos = pcall(unit.get_position, unit)
+        if ok and pos and pos.x then
+            return string.format("pos:%s:%.1f:%.1f:%.1f", npc_id, pos.x, pos.y, pos.z)
+        end
+    end
+    return nil
+end
 
 local RuntimeAction = {}
 
@@ -37,8 +67,9 @@ end
 --- Find nearest creature by entry ID(s)
 --- Uses core.object_manager.get_all_objects() + filtering (per Sylvannas API docs)
 --- @param entries table|number List of NPC entries or single entry
+--- @param filter function|nil Optional predicate(obj) -> boolean; false rejects the candidate
 --- @return game_object|nil Nearest matching creature
-function UnitHelper.get_nearest_creature(entries)
+function UnitHelper.get_nearest_creature(entries, filter)
     if type(entries) ~= "table" then
         entries = { entries }
     end
@@ -78,7 +109,13 @@ function UnitHelper.get_nearest_creature(entries)
                 npc_id = ok and tostring(id) or nil
             end
 
-            if npc_id and entry_set[npc_id] then
+            local accepted = npc_id and entry_set[npc_id]
+            if accepted and filter then
+                local ok_filter, keep = pcall(filter, obj)
+                accepted = ok_filter and keep ~= false
+            end
+
+            if accepted then
                 -- Check distance if we have player position
                 local dist_sq = nearest_dist_sq
                 if player_pos and obj.get_position then
@@ -497,6 +534,27 @@ function RuntimeAction.execute_travel(payload, ctx)
     return "blocked" -- Navigation unavailable
 end
 
+--- Distance from the local player to a unit, or nil if it cannot be measured.
+--- Declared after UnitHelper so it captures the local, not a nil global.
+local function distance_to_unit(unit)
+    if not unit or type(unit.get_position) ~= "function" or not Geometry then
+        return nil
+    end
+    local ok_t, tpos = pcall(unit.get_position, unit)
+    if not (ok_t and tpos) then
+        return nil
+    end
+    local player = UnitHelper.get_local_player()
+    if not player or type(player.get_position) ~= "function" then
+        return nil
+    end
+    local ok_p, ppos = pcall(player.get_position, player)
+    if not (ok_p and ppos) then
+        return nil
+    end
+    return Geometry.distance(ppos, tpos)
+end
+
 function RuntimeAction.execute_kill(payload, ctx)
     local entries = payload.creature_entries or {}
     local quantity = payload.quantity or 1
@@ -522,16 +580,131 @@ function RuntimeAction.execute_kill(payload, ctx)
         return trace("success_count", "success")
     end
 
-    -- Find and target nearest creature using UnitHelper (Sylvannas API compliant)
-    local target = UnitHelper.get_nearest_creature(entries)
+    -- Find the nearest creature, SKIPPING corpses that are already looted and
+    -- counted. Without this the loop wedges: a finished corpse two yards away
+    -- stays "nearest" forever, so every tick returned next_target while a live
+    -- wolf nine yards out was ignored -- and next_target used to return "blocked",
+    -- which burned the retry budget until the Kill action was skipped entirely.
+    P._counted_corpses = P._counted_corpses or {}
+    P._loot_attempts = P._loot_attempts or {}
+    local function is_unfinished(obj)
+        local ok_dead, dead = pcall(obj.is_dead, obj)
+        if not (ok_dead and dead == true) then
+            return true -- alive: always a candidate
+        end
+        local id = corpse_key(obj)
+        if not id then
+            return true
+        end
+        -- A corpse is still interesting while it has loot attempts left or has
+        -- not been tallied yet.
+        return (P._loot_attempts[id] or 0) < LOOT_ATTEMPTS or not P._counted_corpses[id]
+    end
+
+    -- STICKY TARGET.
+    --
+    -- Re-picking "nearest" every tick makes the bot thrash: two wolves at similar
+    -- range keep swapping places as the player moves, so it targets one, issues
+    -- move_to toward the other, and oscillates between them without ever arriving.
+    -- Commit to a target and keep it until it is finished, gone, or has run beyond
+    -- ABANDON_RANGE.
+    local target = nil
+    if P._target_key then
+        target = UnitHelper.get_nearest_creature(entries, function(obj)
+            return corpse_key(obj) == P._target_key
+        end)
+        if target then
+            local dist_to_sticky = distance_to_unit(target)
+            local ok_d, is_dead_now = pcall(target.is_dead, target)
+            local finished = ok_d and is_dead_now == true
+                and (P._loot_attempts[P._target_key] or 0) >= LOOT_ATTEMPTS
+                and P._counted_corpses[P._target_key] == true
+            if finished or (dist_to_sticky and dist_to_sticky > ABANDON_RANGE) then
+                target = nil
+            end
+        end
+        if not target then
+            P._target_key = nil
+            P._chase_dest = nil -- drop the stale destination with the target
+        end
+    end
+
+    if not target then
+        target = UnitHelper.get_nearest_creature(entries, is_unfinished)
+        local new_key = target and corpse_key(target) or nil
+        if new_key ~= P._target_key then
+            P._chase_dest = nil -- new target, so the old chase destination is stale
+        end
+        P._target_key = new_key
+    end
+
     if target and target.get_position then
-        -- Check if target is dead — count it toward quantity
+        -- Check if target is dead — loot the corpse, then count it toward quantity.
         if target:is_dead() then
+            local corpse_id = corpse_key(target)
+
+            -- Count each corpse ONCE. This used to increment on every tick the same
+            -- corpse was still the nearest creature, inflating kill_counts far past
+            -- the number of mobs actually killed and satisfying `quantity` early.
+            P._counted_corpses = P._counted_corpses or {}
+
+            -- Loot before counting. Kill objectives are frequently item drops
+            -- ("Tough Wolf Meat: 0/8"), and walking off without looting can never
+            -- satisfy them. Bounded by LOOT_ATTEMPTS so an unlootable corpse
+            -- (already skinned, no drops, tap-denied) cannot wedge the run.
+            P._loot_attempts = P._loot_attempts or {}
+            local attempts = P._loot_attempts[corpse_id] or 0
+            if corpse_id and attempts < LOOT_ATTEMPTS then
+                local dist_to_corpse = nil
+                local ok_cpos, cpos = pcall(target.get_position, target)
+                local looter = UnitHelper.get_local_player()
+                if ok_cpos and cpos and looter and looter.get_position then
+                    local ok_lp, lpos = pcall(looter.get_position, looter)
+                    if ok_lp and lpos and Geometry and Geometry.distance then
+                        dist_to_corpse = Geometry.distance(lpos, cpos)
+                    end
+                end
+
+                if dist_to_corpse and dist_to_corpse > CORPSE_LOOT_RANGE then
+                    -- Walk onto the corpse before looting.
+                    if ctx.nav and cpos then
+                        local last = P._chase_dest
+                        local drifted = (not last)
+                            or (Geometry and Geometry.distance
+                                and Geometry.distance(last, cpos) > 2.0)
+                            or false
+                        if drifted or not ctx.nav:is_active() then
+                            ctx.nav:move_to(cpos, { tolerance = 2.0 })
+                            P._chase_dest = { x = cpos.x, y = cpos.y, z = cpos.z }
+                        end
+                    end
+                    return trace("looting_approach", "waiting")
+                end
+
+                P._loot_attempts[corpse_id] = attempts + 1
+                if core and core.input and type(core.input.loot_object) == "function" then
+                    pcall(core.input.loot_object, target)
+                end
+                -- Give the loot window a tick to open and auto-loot to run.
+                return trace("looting", "waiting")
+            end
+
+            if corpse_id and P._counted_corpses[corpse_id] then
+                -- Already tallied; the filter above will stop offering this corpse.
+                return trace("next_target", "waiting")
+            end
+            if corpse_id then
+                P._counted_corpses[corpse_id] = true
+            end
+
             P.kill_counts[key] = P.kill_counts[key] + 1
             if P.kill_counts[key] >= quantity then
                 return trace("success_killed", "success")
             end
-            return trace("next_target", "blocked")
+            -- "waiting", NOT "blocked": there are 39 more wolves to kill and this
+            -- action must keep running. "blocked" burns the retry budget and gets
+            -- the whole Kill skipped after a handful of corpses.
+            return trace("next_target", "waiting")
         end
 
         -- Range is measured against the TARGET WE FOUND, not entries[1].
@@ -540,6 +713,31 @@ function RuntimeAction.execute_kill(payload, ctx)
         -- [299, 69, 704, 705], the nearest creature can be a Timber Wolf (69) while no Young Wolf
         -- (299) is within 30 yards — so the check failed and the bot navigated forever while
         -- standing next to a perfectly valid target.
+        -- Pursue until the target is inside the range the COMBAT module will
+        -- actually act at, not merely "nearby".
+        --
+        -- This used to be a flat 30 yards, which opened a dead band: the Kill
+        -- action called 18 yd "in range" and stopped chasing, while combat's own
+        -- guard skips the rotation beyond `combat_range + 10` (15 yd for a melee
+        -- Paladin). Between 15 and 30 yards nobody moved and nobody swung — the
+        -- bot stood and watched wolves wander off. Measured live 2026-07-23:
+        -- target drifted 11.6 -> 14.6 -> 18.1 yd with the player stationary.
+        --
+        -- combat_range is published by the class profile (5 melee, ~28 ranged),
+        -- so this closes the gap for casters without dragging them into melee.
+        -- 4.5 matches the fallback in SentinelCombat:update and ChaseController,
+        -- so all three agree when no class profile has published a range yet.
+        local combat_range = 4.5
+        if ctx.blackboard and ctx.blackboard.get then
+            combat_range = tonumber(ctx.blackboard:get("module.combat.combat_range")) or 4.5
+        end
+        -- Close to well INSIDE the class's range, not merely to its edge. Stopping
+        -- at the boundary leaves a melee character hovering ~5-7 yd out, where a
+        -- wandering mob steps out of swing range constantly and the corpse is out
+        -- of loot range. `combat_range - 2` puts a Paladin at ~3 yd and still lets
+        -- a 28 yd caster fire from ~26 without being dragged into melee.
+        local engage_range = math.max(2.5, combat_range - 2.0)
+
         local in_range = false
         local dist = nil
         local ok_pos, tpos = pcall(target.get_position, target)
@@ -548,12 +746,12 @@ function RuntimeAction.execute_kill(payload, ctx)
             local ok_p, ppos = pcall(player.get_position, player)
             if ok_p and ppos and Geometry and Geometry.distance then
                 dist = Geometry.distance(ppos, tpos)
-                in_range = dist <= 30.0
+                in_range = dist <= engage_range
             end
         end
         if dist == nil then
             -- Could not measure; fall back to the old per-entry proximity check.
-            in_range = ctx:is_at_npc(entries[1], 30.0)
+            in_range = ctx:is_at_npc(entries[1], engage_range)
         end
         P._kill_trace.dist = dist
 
@@ -564,12 +762,16 @@ function RuntimeAction.execute_kill(payload, ctx)
             local ok_pos, npc_pos = pcall(target.get_position, target)
             if ok_pos and npc_pos then
                 local last = P._chase_dest
+                -- Re-issue on 2 yd of drift, not 3, and arrive within 2 yd, not 5.
+                -- A 5 yd tolerance is wider than a melee engage range, so nav
+                -- reported "arrived" while still out of swing range and the chase
+                -- never closed the last few yards on a wandering mob.
                 local drifted = (not last)
                     or (Geometry and Geometry.distance
-                        and Geometry.distance(last, npc_pos) > 3.0)
+                        and Geometry.distance(last, npc_pos) > 2.0)
                     or false
                 if ctx.nav and (drifted or not ctx.nav:is_active()) then
-                    ctx.nav:move_to(npc_pos, { tolerance = 5.0 })
+                    ctx.nav:move_to(npc_pos, { tolerance = 2.0 })
                     P._chase_dest = { x = npc_pos.x, y = npc_pos.y, z = npc_pos.z }
                 end
             end
@@ -580,6 +782,12 @@ function RuntimeAction.execute_kill(payload, ctx)
             return trace("chasing", "waiting")
         end
         P._chase_dest = nil
+        -- Inside engage range: hand movement back. Leaving the chase nav running
+        -- makes it fight the fight — the character keeps sliding toward a stale
+        -- destination while the rotation is trying to swing.
+        if ctx.nav and ctx.nav.is_active and ctx.nav:is_active() then
+            pcall(function() ctx.nav:stop() end)
+        end
 
         -- In range. Nothing here previously did anything at all — it returned "blocked" and
         -- assumed "the combat loop" would notice, but the combat module's world auto-engage is off

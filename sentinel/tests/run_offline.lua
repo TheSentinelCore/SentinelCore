@@ -324,6 +324,7 @@ local test_modules = {
     "tests/runtime/test_sensor_hub",
     "tests/runtime/test_nav_adapter",
     "tests/runtime/test_module_registry",
+    "tests/runtime/test_app_tick",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
@@ -332,6 +333,7 @@ local test_modules = {
     "tests/modules/combat/test_module",
     "tests/modules/combat/test_helper_call_shapes",
     "tests/modules/combat/test_seal_policy",
+    "tests/modules/combat/test_seal_availability",
     "tests/modules/combat/test_swing_tracker",
     "tests/modules/combat/test_combat_zone_detector",
     "tests/modules/combat/test_pvp_target_selector",
@@ -353,6 +355,8 @@ local test_modules = {
     "tests/modules/questing/test_runtime_persistence",
     "tests/modules/questing/test_runtime_nav",
     "tests/modules/questing/test_runtime_arch_polish",
+    "tests/modules/questing/test_quest_objectives",
+    "tests/modules/questing/test_kill_pursuit",
 
     -- Shared libs
     "tests/shared/test_compat",

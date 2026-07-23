@@ -29,12 +29,15 @@ local function build_gcd_root(blackboard)
         Cond.target_casting_interruptible,
         Cond.spell_ready("hammer_of_justice"),
     }, Act.queue_hammer_of_justice, nil, 10)
+    -- Level-aware: queues whichever seal the character actually knows
+    -- (blood > command > righteousness). Hardcoding Seal of Blood here meant no
+    -- Paladin below level 64 ever put up a seal, which killed judgement too.
     builder:add_priority("apply_seal_before_combat", {
         Cond.gcd_ready,
         Cond.target_valid,
         Cond.baseline_seal_missing,
-        Cond.spell_ready("seal_of_blood", nil, "self"),
-    }, function(blackboard) return Act.queue_seal_of_blood(blackboard) end, nil, 15)
+        Cond.primary_seal_castable,
+    }, Act.queue_desired_seal, nil, 15)
     builder:add_priority("seal_twist_prime", {
         Cond.gcd_ready,
         Cond.target_valid,

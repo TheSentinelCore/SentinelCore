@@ -67,6 +67,25 @@ function Act.queue_seal_of_righteousness(blackboard)
     return H.queue_target(blackboard, "seal_of_righteousness", "seal_of_righteousness", player, QueuePriorities.DEFAULT)
 end
 
+---Queue whichever seal the context builder resolved as castable.
+---
+---`rotation.primary_seal` is level-aware (blood > command > righteousness, filtered
+---by what the spell book actually knows), so this is the one entry point that works
+---for a Paladin at any level from 3 to 70. Falls back to the in-combat desired seal
+---when no primary is published.
+function Act.queue_desired_seal(blackboard)
+    local seal = blackboard:get("rotation.primary_seal")
+        or blackboard:get("rotation.desired_seal")
+    if seal == "blood" then
+        return Act.queue_seal_of_blood(blackboard)
+    elseif seal == "command" then
+        return Act.queue_seal_of_command(blackboard)
+    elseif seal == "righteousness" then
+        return Act.queue_seal_of_righteousness(blackboard)
+    end
+    return Status.FAILURE
+end
+
 function Act.queue_crusader_strike(blackboard)
     local _, target = H.player_and_target(blackboard)
     return H.queue_target(blackboard, "crusader_strike", "crusader_strike", target, QueuePriorities.DEFAULT)

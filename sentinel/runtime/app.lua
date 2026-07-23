@@ -32,16 +32,14 @@ function SentinelApp:initialize()
     -- Register modules declaratively via ModuleRegistry
     self._registry:register_all(self._blackboard, self._event_bus)
 
-    -- Get module reference for direct access
+    -- Get module reference for direct access. NOTE: this is the registry's module
+    -- WRAPPER (modules/combat/init.lua), whose interface is init/tick/shutdown --
+    -- not a raw SentinelCombat. Use :get_combat() to reach the engine itself.
     self._combat = self._registry:get("combat")
 
-    -- Initialize modules
+    -- Initialize modules. register_all/initialize_all already drives each wrapper's
+    -- init(), which is what calls SentinelCombat:initialize().
     self._registry:initialize_all(self)
-
-    -- Combat module has its own initialize method
-    if self._combat and self._combat.initialize then
-        self._combat:initialize()
-    end
 end
 
 function SentinelApp:shutdown()
@@ -68,11 +66,26 @@ function SentinelApp:on_update()
     -- Poll nav adapter so all modules see fresh nav state
     self._nav_adapter:poll()
 
-    if self._combat and self._combat.update then
-        self._error_boundary:wrap("combat", "update", function()
-            self._combat:update(self._blackboard)
-        end)
+    -- Drive every registered module (combat, questing) AFTER sensors and nav are
+    -- fresh, so a tick always sees the current frame.
+    --
+    -- This used to special-case combat with `if self._combat.update then ...`.
+    -- self._combat is the registry WRAPPER, which has no `update` method -- the
+    -- guard was always false, so combat never ticked; and tick_all was never
+    -- called, so questing never ticked either. Nothing in the registry had ever
+    -- run: questing would engage combat, the state machine would sit at ENGAGING
+    -- forever, and no spell was ever cast. SensorHub refreshes directly above,
+    -- so system.now_ms kept advancing and the loop looked alive.
+    local delta_ms = 0
+    if core and type(core.delta_time) == "function" then
+        local ok, delta = pcall(core.delta_time)
+        if ok and tonumber(delta) then
+            delta_ms = math.floor(tonumber(delta) * 1000)
+        end
     end
+    self._error_boundary:wrap("registry", "tick_all", function()
+        self._registry:tick_all(delta_ms)
+    end)
 end
 
 function SentinelApp:on_render()

@@ -198,19 +198,38 @@ function Cond.missing_kings(blackboard)
     return not AuraCatalog.has_any(player, AuraCatalog.blessing_of_kings)
 end
 
+---True when no seal at all is up. Any seal satisfies the baseline — a level-3
+---Paladin only has Righteousness, and refusing it would leave the character
+---permanently sealless, which in turn kills judgement (active_seal_present).
 function Cond.baseline_seal_missing(blackboard)
-    local active = blackboard:get("rotation.active_seal")
-    if active == "command" then
+    return blackboard:get("rotation.active_seal") == nil
+end
+
+-- Maps the seal names published on the blackboard to spell catalog keys.
+local SEAL_SPELL_KEYS = {
+    blood = "seal_of_blood",
+    command = "seal_of_command",
+    righteousness = "seal_of_righteousness",
+}
+
+---True when the level-aware primary seal is known, off cooldown, and castable.
+---Replaces the hardcoded spell_ready("seal_of_blood") gate, which could never
+---pass below level 64 and so stranded the whole levelling rotation.
+function Cond.primary_seal_castable(blackboard)
+    local seal = blackboard:get("rotation.primary_seal")
+        or blackboard:get("rotation.desired_seal")
+    local spell_key = SEAL_SPELL_KEYS[seal]
+    if not spell_key then
         return false
     end
-    if active == "righteousness" then
-        return false
-    end
-    local desired = blackboard:get("rotation.desired_seal", "blood")
-    if desired == "command" then
-        return active ~= "command"
-    end
-    return active ~= "blood"
+    return Cond.spell_ready(spell_key, nil, "self")(blackboard)
+end
+
+---True when the seal the rotation wants is not the one currently up.
+function Cond.primary_seal_not_active(blackboard)
+    local seal = blackboard:get("rotation.primary_seal")
+        or blackboard:get("rotation.desired_seal")
+    return seal ~= nil and blackboard:get("rotation.active_seal") ~= seal
 end
 
 return Cond

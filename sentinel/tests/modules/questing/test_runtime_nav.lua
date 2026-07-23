@@ -305,8 +305,17 @@ function M.test_kill_npc_dead_and_in_range()
         }
     end
     local action = { type = "Kill", payload = { creature_entries = { 1234 }, quantity = 1 } }
-    local result = RuntimeAction.execute(action, ctx)
-    T.assert_equal(result, "success", "Kill should succeed when NPC dead and quantity met")
+
+    -- A dead target is now LOOTED before it is counted -- kill objectives are
+    -- often item drops, so counting without looting can never satisfy them. The
+    -- first ticks return "waiting" while looting is attempted (bounded), then the
+    -- corpse is tallied and the action succeeds.
+    local result
+    for _ = 1, 6 do
+        result = RuntimeAction.execute(action, ctx)
+        if result == "success" then break end
+    end
+    T.assert_equal(result, "success", "Kill should succeed once the dead NPC has been looted")
 end
 
 function M.test_kill_npc_out_of_range()

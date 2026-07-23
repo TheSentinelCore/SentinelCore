@@ -103,7 +103,7 @@ function ContextBuilder:refresh(event_bus)
         preferred_primary_seal = "blood"
     end
 
-    local primary_seal = preferred_primary_seal
+    local primary_seal = self:_best_known_seal(preferred_primary_seal)
     self._blackboard:set("rotation.primary_seal", primary_seal)
 
     local desired_seal = nil
@@ -119,7 +119,9 @@ function ContextBuilder:refresh(event_bus)
                 end
             end
             if worth_switching then
-                desired_seal = "command"
+                -- AoE wants Command, but never ask for a seal the character has
+                -- not learned — below the Ret talent it degrades to what it has.
+                desired_seal = self:_best_known_seal("command")
                 desired_reason = "aoe"
             else
                 desired_seal = primary_seal
@@ -133,6 +135,58 @@ function ContextBuilder:refresh(event_bus)
 
     self._blackboard:set("rotation.desired_seal", desired_seal)
     self._blackboard:set("rotation.desired_seal_reason", desired_reason)
+end
+
+-- Seal catalog keys in descending power order. A Paladin levelling 1->70 learns
+-- them in reverse: Righteousness at 3, Command via the Ret talent, Blood at 64.
+local SEAL_SPELL_KEYS = {
+    blood = "seal_of_blood",
+    command = "seal_of_command",
+    righteousness = "seal_of_righteousness",
+}
+local SEAL_FALLBACK_ORDER = { "blood", "command", "righteousness" }
+
+---Resolve `preferred` down to the strongest seal the character can actually cast.
+---
+---The spell catalog resolves ranks through core.spell_book.has_spell, so an
+---unlearned seal returns nil. Publishing a desired seal the character does not
+---know is what stranded the low-level rotation: apply_seal_before_combat required
+---Seal of Blood, no seal ever went up, and judgement (gated on active_seal_present)
+---never fired.
+---
+---With no catalog on the blackboard (offline tests, early boot) availability is
+---unknowable, so the preference is returned unchanged rather than guessed at.
+---@param preferred string
+---@return string|nil the best castable seal, or nil if none are known
+function ContextBuilder:_best_known_seal(preferred)
+    local catalog = self._blackboard:get("module.combat.catalog")
+    if not catalog or type(catalog.resolve_best_rank) ~= "function" then
+        return preferred
+    end
+
+    local function is_known(seal)
+        local key = SEAL_SPELL_KEYS[seal]
+        if not key then
+            return false
+        end
+        local ok, spell_id = pcall(catalog.resolve_best_rank, catalog, key)
+        return ok and spell_id ~= nil
+    end
+
+    if is_known(preferred) then
+        return preferred
+    end
+
+    -- Walk down from the preference: never upgrade past what was asked for.
+    local below_preference = false
+    for _, seal in ipairs(SEAL_FALLBACK_ORDER) do
+        if seal == preferred then
+            below_preference = true
+        elseif below_preference and is_known(seal) then
+            return seal
+        end
+    end
+    return nil
 end
 
 return ContextBuilder

@@ -601,12 +601,26 @@ function RuntimeProfile:create_context()
                 if info and info.quest_id == quest_entry then
                     local num_obj = core.quests.get_num_quest_leader_boards(i)
                     if objective_idx <= num_obj then
-                        local text = core.quests.get_quest_log_leader_board(objective_idx, i)
-                        -- Parse "Wolves slain: 3/10" format - check if complete
-                        if text and string.match(text, "%((%d+)/(%d+)%)") then
-                            local cur, max = string.match(text, "%((%d+)/(%d+)%)")
-                            if tonumber(cur) >= tonumber(max) then
-                                return true
+                        -- Sylvannas returns a TABLE, not a string:
+                        --   { objective_type = "item",
+                        --     description = "Tough Wolf Meat: 0/8",
+                        --     is_completed = false }
+                        local board = core.quests.get_quest_log_leader_board(objective_idx, i)
+                        if type(board) ~= "table" then
+                            return false
+                        end
+                        -- is_completed is the client's own verdict — reconcile,
+                        -- never count (ADR 06 §8.1). Trust it when it says done.
+                        if board.is_completed == true then
+                            return true
+                        end
+                        -- Otherwise derive from the "Name: cur/need" counter. Note
+                        -- there are NO parentheses in the live format.
+                        local description = board.description
+                        if type(description) == "string" then
+                            local cur, max = string.match(description, "(%d+)%s*/%s*(%d+)")
+                            if cur and tonumber(max) and tonumber(max) > 0 then
+                                return tonumber(cur) >= tonumber(max)
                             end
                         end
                         return false
