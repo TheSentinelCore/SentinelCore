@@ -461,8 +461,11 @@ function M.test_v2_round_trip_save_and_load()
     T.assert_true(restored, "v2 save should restore successfully")
 
     -- Verify all fields
-    T.assert_equal(profile2._current_action_idx, 3,
-        "current_action_idx should be restored")
+    -- Resume deliberately restarts the operation rather than restoring the action index: actions
+    -- run Travel-then-work, so resuming mid-operation drops the character onto (say) a Kill while
+    -- standing wherever the last session ended. Re-running the leading Travels is cheap.
+    T.assert_equal(profile2._current_action_idx, 1,
+        "resume restarts the operation so its positioning Travels re-run")
     T.assert_equal(profile2._current_operation_idx, 2,
         "current_operation_idx should be restored")
     T.assert_equal(profile2._variables.my_var, "hello",
