@@ -273,28 +273,31 @@ function M.run()
     T.assert_equal(scan_count, 2, "a lookup on a new tick (system.now_ms changed) must get a fresh scan")
     core = prev_core8
 
-    -- Test 9: a forced quest engagement must scope module.grind.attack_neutral to the
-    -- engagement's lifetime. Quest mobs are frequently neutral, and every consumer of
-    -- GrindTargetStrategy:is_valid_enemy — including the rotation's target checks —
-    -- rejects neutral units unless that flag is set; without it the bot held the target,
-    -- entered ENGAGING, and queued no spell. The flag must be restored on disengage so
-    -- questing kills don't permanently flip grinding into attack-neutral mode.
+    -- Test 9: a forced quest engagement must expose the forced target's GUID (the
+    -- strategy's neutral exemption is scoped to exactly that unit) WITHOUT flipping the
+    -- global attack_neutral grind flag — the blanket flag made every neutral mob a valid
+    -- idle auto-engage target while a quest kill was in flight.
     local bb9 = make_blackboard()
     local bus9 = EventBus:new()
     local combat9 = SentinelCombat:new(bus9, bb9, nav)
     combat9:initialize()
-    T.assert_false(bb9:get("module.grind.attack_neutral") == true, "sanity: flag starts unset")
     combat9:engage(friendly_target, { source = "questing" })
     T.assert_equal(combat9:get_state(), "ENGAGING",
         "forced quest engage should enter combat even on a neutral target")
-    T.assert_true(bb9:get("module.grind.attack_neutral") == true,
-        "forced engage must enable attack_neutral so the rotation accepts the neutral target")
-    -- Re-publishing engage every tick (execute_kill does) must not corrupt the saved
-    -- previous value.
-    combat9:engage(friendly_target, { source = "questing" })
-    combat9:disengage("test")
+    T.assert_equal(bb9:get("combat.forced_target_guid"), "friendly",
+        "forced engage must publish the forced target's guid for the strategy exemption")
     T.assert_false(bb9:get("module.grind.attack_neutral") == true,
-        "disengage must restore attack_neutral to its pre-engagement value")
+        "the global attack_neutral grind flag must NOT be flipped by quest engagements")
+
+    -- While the forced target lives, a non-forced engage (idle auto-engage, bg) must not
+    -- steal the current target.
+    combat9:engage(target, { source = "auto" })
+    T.assert_equal(combat9._current_target, friendly_target,
+        "an auto engage must not preempt a live forced quest target")
+
+    combat9:disengage("test")
+    T.assert_equal(bb9:get("combat.forced_target_guid"), nil,
+        "disengage must clear the forced-target guid")
 end
 
 return M

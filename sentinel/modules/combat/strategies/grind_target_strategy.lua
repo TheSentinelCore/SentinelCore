@@ -67,6 +67,20 @@ function GrindTargetStrategy:is_valid_enemy(unit, opts)
         return opts.require_player == true
     end
 
+    -- A forced (quest) target is exempt from the hostility filter — but ONLY that one
+    -- unit, matched by GUID. The old approach flipped module.grind.attack_neutral for the
+    -- whole engagement, which made EVERY neutral mob on screen a valid idle auto-engage
+    -- target while a quest kill was in flight — live-caught as combat auto-engaging a
+    -- Kobold Vermin 23yd away and swinging at air while the kill action chased its own
+    -- target at 13yd.
+    local forced_guid = self._blackboard:get("combat.forced_target_guid")
+    if forced_guid ~= nil then
+        local ok_guid, guid = safe_call(unit, "get_guid")
+        if ok_guid and guid == forced_guid then
+            return true
+        end
+    end
+
     -- Check attack_neutral setting - if enabled, accept neutral (yellow) mobs
     local attack_neutral = self._blackboard:get("module.grind.attack_neutral") == true
     if attack_neutral then

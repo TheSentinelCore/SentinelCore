@@ -375,25 +375,25 @@ end
 
 --- A forced (quest) target is usually NEUTRAL — Elwynn's Young Wolves never aggro — and
 --- every consumer of GrindTargetStrategy:is_valid_enemy (the rotation's own target
---- validity checks included) rejects neutral units unless module.grind.attack_neutral is
---- set. Scope that flag to the LIFETIME of the forced engagement: set on engage, restored
---- to its previous value when the forced target dies or combat disengages. Without this
---- the bot held the wolf as target, transitioned to ENGAGING, and queued no spell at all
---- (live-verified: ENGAGING → COOLDOWN, zero casts).
+--- validity checks included) rejects neutral units. The exemption is scoped to EXACTLY
+--- this unit via combat.forced_target_guid: the strategy accepts a neutral unit only
+--- when its GUID matches. (The first fix flipped module.grind.attack_neutral for the
+--- whole engagement, which made every neutral mob on screen a valid idle auto-engage
+--- target — live-caught as combat stealing the player target for a kobold 23yd away
+--- while the quest kill chased its own mob.)
 function SentinelCombat:_set_forced_target(target)
-    if self._attack_neutral_prev == nil then
-        self._attack_neutral_prev = self._blackboard:get("module.grind.attack_neutral") == true
-    end
     self._forced_target = target
-    self._blackboard:set("module.grind.attack_neutral", true)
+    local guid = nil
+    if target and target.get_guid then
+        local ok, g = pcall(target.get_guid, target)
+        if ok then guid = g end
+    end
+    self._blackboard:set("combat.forced_target_guid", guid)
 end
 
 function SentinelCombat:_clear_forced_target()
     self._forced_target = nil
-    if self._attack_neutral_prev ~= nil then
-        self._blackboard:set("module.grind.attack_neutral", self._attack_neutral_prev)
-        self._attack_neutral_prev = nil
-    end
+    self._blackboard:set("combat.forced_target_guid", nil)
 end
 
 function SentinelCombat:_ensure_target()
@@ -511,6 +511,18 @@ function SentinelCombat:engage(target, opts)
         return
     end
     opts = opts or {}
+    -- Questing owns combat while its forced target lives: an idle auto-engage or bg
+    -- engage must not steal the player target mid-kill (live-caught: the kill action
+    -- chased its mob at 13yd while an auto engage re-targeted a kobold 23yd away and the
+    -- rotation swung at air). A forced request may always replace a forced target.
+    local incoming_forced = target ~= nil
+        and (opts.force == true or (opts.source or opts.bg_key) == "questing")
+    if self._forced_target and not incoming_forced then
+        local ok_fd, forced_dead = pcall(self._forced_target.is_dead, self._forced_target)
+        if ok_fd and forced_dead ~= true then
+            return
+        end
+    end
     -- combat.leash_center anchors the "don't chase mobs too far" check in
     -- _check_safety. It must only be set on entry into combat from IDLE —
     -- setting it on every engage() call (audit B3) tracks the player's own
