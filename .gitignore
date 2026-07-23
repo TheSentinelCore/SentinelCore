@@ -47,3 +47,14 @@ Database/
 .scratch
 .superpowers
 skill-obvervations
+# Generated questing goldens (regenerate via import-guides against a live QueryServer)
+SentinelQuesting/.questing/projects/*.json
+!SentinelQuesting/.questing/projects/coverage_report.json
+
+# SQLite WAL/SHM side files (QueryServer runtime)
+tbcmangos.sqlite
+tbcmangos.sqlite-shm
+tbcmangos.sqlite-wal
+
+# graphify output
+graphify-out/

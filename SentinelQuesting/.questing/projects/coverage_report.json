@@ -1,0 +1,344 @@
+{
+  "per_command": {
+    "abandon": {
+      "typed": 0,
+      "inert_preserved": 0,
+      "unresolved": 140
+    },
+    "accept": {
+      "typed": 7025,
+      "inert_preserved": 0,
+      "unresolved": 0
+    },
+    "addquestitem": {
+      "typed": 0,
+      "inert_preserved": 32,
+      "unresolved": 0
+    },
+    "aura": {
+      "typed": 0,
+      "inert_preserved": 169,
+      "unresolved": 0
+    },
+    "bankdeposit": {
+      "typed": 0,
+      "inert_preserved": 22,
+      "unresolved": 0
+    },
+    "bankwithdraw": {
+      "typed": 0,
+      "inert_preserved": 51,
+      "unresolved": 0
+    },
+    "bindlocation": {
+      "typed": 0,
+      "inert_preserved": 532,
+      "unresolved": 0
+    },
+    "blastedLands": {
+      "typed": 0,
+      "inert_preserved": 7,
+      "unresolved": 0
+    },
+    "bronzetube": {
+      "typed": 0,
+      "inert_preserved": 19,
+      "unresolved": 0
+    },
+    "cast": {
+      "typed": 0,
+      "inert_preserved": 559,
+      "unresolved": 0
+    },
+    "clicknext": {
+      "typed": 0,
+      "inert_preserved": 53,
+      "unresolved": 0
+    },
+    "collect": {
+      "typed": 0,
+      "inert_preserved": 0,
+      "unresolved": 1
+    },
+    "collectmultiple": {
+      "typed": 0,
+      "inert_preserved": 210,
+      "unresolved": 0
+    },
+    "complete": {
+      "typed": 0,
+      "inert_preserved": 0,
+      "unresolved": 2
+    },
+    "condition": {
+      "typed": 18030,
+      "inert_preserved": 0,
+      "unresolved": 0
+    },
+    "cooldown": {
+      "typed": 0,
+      "inert_preserved": 515,
+      "unresolved": 0
+    },
+    "daily": {
+      "typed": 0,
+      "inert_preserved": 35,
+      "unresolved": 0
+    },
+    "dailyturnin": {
+      "typed": 0,
+      "inert_preserved": 40,
+      "unresolved": 0
+    },
+    "deathskip": {
+      "typed": 0,
+      "inert_preserved": 75,
+      "unresolved": 0
+    },
+    "destroy": {
+      "typed": 0,
+      "inert_preserved": 70,
+      "unresolved": 0
+    },
+    "disablecheckbox": {
+      "typed": 0,
+      "inert_preserved": 187,
+      "unresolved": 0
+    },
+    "dungeon": {
+      "typed": 0,
+      "inert_preserved": 1252,
+      "unresolved": 0
+    },
+    "equip": {
+      "typed": 0,
+      "inert_preserved": 27,
+      "unresolved": 0
+    },
+    "fly": {
+      "typed": 687,
+      "inert_preserved": 0,
+      "unresolved": 14
+    },
+    "flygoto": {
+      "typed": 0,
+      "inert_preserved": 1,
+      "unresolved": 0
+    },
+    "fp": {
+      "typed": 5,
+      "inert_preserved": 0,
+      "unresolved": 175
+    },
+    "gossip": {
+      "typed": 0,
+      "inert_preserved": 15,
+      "unresolved": 0
+    },
+    "gossipoption": {
+      "typed": 0,
+      "inert_preserved": 5,
+      "unresolved": 0
+    },
+    "goto": {
+      "typed": 36240,
+      "inert_preserved": 0,
+      "unresolved": 0
+    },
+    "groundgoto": {
+      "typed": 0,
+      "inert_preserved": 104,
+      "unresolved": 0
+    },
+    "group": {
+      "typed": 0,
+      "inert_preserved": 188,
+      "unresolved": 0
+    },
+    "home": {
+      "typed": 0,
+      "inert_preserved": 172,
+      "unresolved": 0
+    },
+    "hs": {
+      "typed": 356,
+      "inert_preserved": 0,
+      "unresolved": 0
+    },
+    "isNotOnQuest": {
+      "typed": 0,
+      "inert_preserved": 27,
+      "unresolved": 0
+    },
+    "isQuestNotComplete": {
+      "typed": 0,
+      "inert_preserved": 1,
+      "unresolved": 0
+    },
+    "item": {
+      "typed": 1601,
+      "inert_preserved": 0,
+      "unresolved": 0
+    },
+    "itemStat": {
+      "typed": 0,
+      "inert_preserved": 327,
+      "unresolved": 0
+    },
+    "line": {
+      "typed": 0,
+      "inert_preserved": 442,
+      "unresolved": 0
+    },
+    "link": {
+      "typed": 0,
+      "inert_preserved": 159,
+      "unresolved": 0
+    },
+    "maxlevel": {
+      "typed": 0,
+      "inert_preserved": 166,
+      "unresolved": 0
+    },
+    "mob": {
+      "typed": 7159,
+      "inert_preserved": 0,
+      "unresolved": 0
+    },
+    "money": {
+      "typed": 0,
+      "inert_preserved": 257,
+      "unresolved": 0
+    },
+    "reputation": {
+      "typed": 0,
+      "inert_preserved": 264,
+      "unresolved": 0
+    },
+    "requires": {
+      "typed": 0,
+      "inert_preserved": 445,
+      "unresolved": 0
+    },
+    "setquestdb": {
+      "typed": 0,
+      "inert_preserved": 1,
+      "unresolved": 0
+    },
+    "setturninhs": {
+      "typed": 0,
+      "inert_preserved": 2,
+      "unresolved": 0
+    },
+    "setturninroute": {
+      "typed": 0,
+      "inert_preserved": 1,
+      "unresolved": 0
+    },
+    "show25quests": {
+      "typed": 0,
+      "inert_preserved": 1,
+      "unresolved": 0
+    },
+    "showtotalxp": {
+      "typed": 0,
+      "inert_preserved": 2,
+      "unresolved": 0
+    },
+    "skill": {
+      "typed": 0,
+      "inert_preserved": 492,
+      "unresolved": 0
+    },
+    "skipgossip": {
+      "typed": 0,
+      "inert_preserved": 256,
+      "unresolved": 0
+    },
+    "solo": {
+      "typed": 0,
+      "inert_preserved": 13,
+      "unresolved": 0
+    },
+    "stable": {
+      "typed": 0,
+      "inert_preserved": 42,
+      "unresolved": 0
+    },
+    "subzone": {
+      "typed": 0,
+      "inert_preserved": 932,
+      "unresolved": 0
+    },
+    "subzoneskip": {
+      "typed": 0,
+      "inert_preserved": 777,
+      "unresolved": 0
+    },
+    "tbcWBF": {
+      "typed": 0,
+      "inert_preserved": 11,
+      "unresolved": 0
+    },
+    "timer": {
+      "typed": 0,
+      "inert_preserved": 181,
+      "unresolved": 0
+    },
+    "train": {
+      "typed": 1363,
+      "inert_preserved": 0,
+      "unresolved": 208
+    },
+    "turnin": {
+      "typed": 7262,
+      "inert_preserved": 0,
+      "unresolved": 0
+    },
+    "unitscan": {
+      "typed": 0,
+      "inert_preserved": 711,
+      "unresolved": 0
+    },
+    "usespell": {
+      "typed": 0,
+      "inert_preserved": 194,
+      "unresolved": 0
+    },
+    "vehicle": {
+      "typed": 0,
+      "inert_preserved": 2,
+      "unresolved": 0
+    },
+    "vendor": {
+      "typed": 367,
+      "inert_preserved": 0,
+      "unresolved": 4
+    },
+    "waypoint": {
+      "typed": 0,
+      "inert_preserved": 585,
+      "unresolved": 0
+    },
+    "xp": {
+      "typed": 0,
+      "inert_preserved": 2069,
+      "unresolved": 0
+    },
+    "zone": {
+      "typed": 0,
+      "inert_preserved": 1005,
+      "unresolved": 0
+    },
+    "zoneskip": {
+      "typed": 0,
+      "inert_preserved": 1921,
+      "unresolved": 0
+    }
+  },
+  "totals": {
+    "typed": 80095,
+    "inert_preserved": 15626,
+    "unresolved": 544
+  }
+}

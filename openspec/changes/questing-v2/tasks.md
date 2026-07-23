@@ -122,11 +122,11 @@ Maintainer decision (2026-07-22, superseding the ClassIs-into-Condition-payload 
 
 ## PR3: Re-import Golden Artifacts
 
-- [ ] 5.1 RED `SentinelQuesting/tests/src/lib.rs`: re-import of previously-broken Elwynn sample against live QueryServer → resolved `AcceptQuest`/`TurnInQuest`, not blanket `Comment` (CL3)
-- [ ] 5.2 GREEN Run `SentinelQuesting/editor/src/bin/import-guides.rs` against live `SentinelQueryServer` (`SENTINEL_DB=tbcmangos.sqlite`); regenerate all 8 `.questing/projects/*.json` goldens (CL3) — excluded from authored-line budget, called out in PR body
-- [ ] 5.3 RED `SentinelQuesting/tests/src/lib.rs`: full corpus re-import → `CoverageReport` percentages match/exceed fidelity bar; zero bare-`Comment` recognized commands (CL5)
-- [ ] 5.4 GREEN `SentinelQuesting/editor/src/bin/import-guides.rs`: emit `CoverageReport` JSON + human summary alongside regenerated projects (CL5)
-- [ ] 5.5 Verify: manually inspect coverage report vs `The Burning Crusade.lua` fidelity bar (~70 commands/~45 directives) (CL5)
+- [x] 5.1 RED `SentinelQuesting/tests/src/lib.rs`: re-import of previously-broken Elwynn sample against live QueryServer → resolved `AcceptQuest`/`TurnInQuest`, not blanket `Comment` (CL3) — implemented as `reimport_against_resolving_client_yields_typed_actions_not_comments` + `reimport_with_unresolvable_reference_stays_a_diagnostic_not_a_silent_default`, using a pre-populated `MemoryQueryClient` to prove the resolution path in CI (mirrors the live-`HttpQueryClient` path exactly)
+- [x] 5.2 GREEN `SentinelQuesting/editor/src/bin/import-guides.rs` now builds an `HttpQueryClient` (default `http://127.0.0.1:3030`, override via `SENTINEL_QUERY_URL` env or 3rd CLI arg) instead of an empty `MemoryQueryClient`; `run_import`/`import_guide` generalized to `&dyn QueryClient`. Manually run against live `SentinelQueryServer` (`SENTINEL_DB=tbcmangos.sqlite`); regenerated ALL corpus projects (proposal.md "Re-import scope": ALL sample projects, fidelity bar = full `The Burning Crusade.lua`) — 271 project JSONs (up from the stale pre-IF6-bundle-splitting 7) + `coverage_report.json` under `.questing/projects/`, `MyQuestProfile.json` (hand-authored, non-guide-derived) untouched (CL3) — goldens excluded from authored-line budget, called out in PR body
+- [x] 5.3 RED `SentinelQuesting/tests/src/lib.rs`: `coverage_report_aggregates_typed_actions_across_a_resolving_corpus` — full corpus re-import → `CoverageReport` percentages match/exceed fidelity bar; zero bare-`Comment` recognized commands for the resolvable fixture (CL5)
+- [x] 5.4 GREEN `SentinelQuesting/editor/src/bin/import-guides.rs`: emits `CoverageReport` JSON (`coverage_report.json`) + `text_summary()` to stdout alongside regenerated projects (CL5)
+- [x] 5.5 Verify: manually inspected coverage report vs `The Burning Crusade.lua` fidelity bar (~70 commands/~45 directives) — 67 distinct commands tallied, 83.2% typed / 16.2% inert-preserved / 0.6% unresolved of 96,265 commands corpus-wide; Elwynn regression check: 0/0 AcceptQuest/npc_library → 84 AcceptQuest, 96 TurnInQuest, 94 npc_library, 74 quest_library (CL5)
 
 ## PR4a: Runtime — Wiring, Payload, Perf, Recovery Mechanics
 

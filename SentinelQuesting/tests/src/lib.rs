@@ -238,4 +238,121 @@ fn pipeline_end_to_end_success() {
         "Content hash must be deterministic across compilations"
     );
 }
+
+    // ==================================================================
+    // PR3 (CL3, CL5): re-import against a resolving QueryClient
+    // ==================================================================
+    //
+    // These tests stand in for the live-QueryServer re-import: a `MemoryQueryClient`
+    // pre-populated with known NPC/quest facts exercises the exact same `ProjectBuilder::build`
+    // resolution path `import-guides` now drives with `HttpQueryClient` against the real server.
+    // They prove the wiring (CL3) and the coverage aggregation (CL5) without requiring a live
+    // server in CI; the corresponding manual verified run is documented in apply-progress.
+
+    fn elwynn_style_guide_source() -> &'static str {
+        "RXPGuides.RegisterGuide([[\n\
+         #name Elwynn Sample\n\
+         step\n\
+         .accept 26\n\
+         .turnin 26\n\
+         ]]);"
+    }
+
+    fn resolving_client() -> sentinel_queryclient::MemoryQueryClient {
+        sentinel_queryclient::MemoryQueryClient::new().with_quest(sentinel_queryclient::QuestDetail {
+            id: 26,
+            title: "A Lesson to Learn".to_string(),
+            level: 3,
+            min_level: 1,
+            required_quests: vec![],
+            next_quests: vec![],
+            giver_entry: Some(448),
+            finisher_entry: Some(448),
+            objectives: vec![],
+        })
+    }
+
+    #[tokio::test]
+    async fn reimport_against_resolving_client_yields_typed_actions_not_comments() {
+        // CL3 regression check (Elwynn sample was previously 777 Comments / 0 AcceptQuest with
+        // the empty offline client): a quest known to the QueryClient must resolve to typed
+        // AcceptQuest/TurnInQuest actions, never a blanket Comment downgrade.
+        let client = resolving_client();
+        let parsed = sentinel_importer::parse_guide_bundle(elwynn_style_guide_source())
+            .into_iter()
+            .next()
+            .expect("one guide block")
+            .expect("guide block parses");
+
+        let project = sentinel_importer::ProjectBuilder::build(&parsed, "elwynn_sample.lua", &client)
+            .await
+            .expect("build should succeed");
+
+        let actions: Vec<_> = project.operations.iter().flat_map(|op| &op.actions).collect();
+        assert!(
+            actions.iter().any(|a| matches!(
+                a.payload,
+                sentinel_models::authoring::ActionPayload::AcceptQuest(_)
+            )),
+            "expected a resolved AcceptQuest action, got: {:?}",
+            actions.iter().map(|a| &a.payload).collect::<Vec<_>>()
+        );
+        assert!(
+            actions.iter().any(|a| matches!(
+                a.payload,
+                sentinel_models::authoring::ActionPayload::TurnInQuest(_)
+            )),
+            "expected a resolved TurnInQuest action, got: {:?}",
+            actions.iter().map(|a| &a.payload).collect::<Vec<_>>()
+        );
+        assert!(
+            !actions.iter().any(|a| matches!(
+                a.payload,
+                sentinel_models::authoring::ActionPayload::Comment(_)
+            )),
+            "a resolvable quest must not fall back to a Comment downgrade"
+        );
+        assert!(!project.quest_library.is_empty(), "quest_library must be populated on resolution");
+    }
+
+    #[tokio::test]
+    async fn reimport_with_unresolvable_reference_stays_a_diagnostic_not_a_silent_default() {
+        // CL3: a reference that stays unresolved even against a live client must surface as a
+        // diagnostic, never as a silently zeroed/defaulted value.
+        let client = sentinel_queryclient::MemoryQueryClient::new(); // empty: nothing resolves
+        let parsed = sentinel_importer::parse_guide_bundle(elwynn_style_guide_source())
+            .into_iter()
+            .next()
+            .expect("one guide block")
+            .expect("guide block parses");
+
+        let project = sentinel_importer::ProjectBuilder::build(&parsed, "elwynn_sample.lua", &client)
+            .await
+            .expect("build should succeed even with unresolved refs");
+
+        assert!(
+            project.diagnostics.iter().any(|d| d.code == "UNRESOLVED_QUEST"),
+            "expected an UNRESOLVED_QUEST diagnostic when the quest cannot be resolved"
+        );
+    }
+
+    #[tokio::test]
+    async fn coverage_report_aggregates_typed_actions_across_a_resolving_corpus() {
+        // CL5: the CoverageReport over a corpus built with a resolving client must reflect the
+        // improved fidelity (typed accept/turnin, not unresolved comments).
+        let client = resolving_client();
+        let parsed = sentinel_importer::parse_guide_bundle(elwynn_style_guide_source())
+            .into_iter()
+            .next()
+            .expect("one guide block")
+            .expect("guide block parses");
+        let project = sentinel_importer::ProjectBuilder::build(&parsed, "elwynn_sample.lua", &client)
+            .await
+            .expect("build should succeed");
+
+        let report = sentinel_importer::CoverageReport::from_projects([&project]);
+        assert_eq!(report.per_command.get("accept").map(|t| t.typed), Some(1));
+        assert_eq!(report.per_command.get("turnin").map(|t| t.typed), Some(1));
+        assert_eq!(report.totals.unresolved, 0);
+    }
 }

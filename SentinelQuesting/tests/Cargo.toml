@@ -10,5 +10,10 @@ publish = false
 sentinel-models = { path = "../shared" }
 sentinel-validator = { path = "../validator" }
 sentinel-compiler = { path = "../compiler" }
+sentinel-importer = { path = "../importer" }
+sentinel-queryclient = { path = "../queryclient" }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
