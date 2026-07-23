@@ -189,6 +189,12 @@ function RuntimeProfile:_save()
     -- first argument made every save fail, fall through to a non-existent core.write_file, and then
     -- to io.open, which does not exist in the sandbox: "attempt to index global 'io'" on every save.
     if core and core.write_data_file then
+        -- The loader requires the data file to EXIST before it can be written; without this the
+        -- save silently never lands, every run starts fresh, and the bot walks the whole route
+        -- back to step 1. create_data_file is a no-op when the file is already there.
+        if core.create_data_file then
+            pcall(core.create_data_file, self._save_path)
+        end
         local ok = pcall(core.write_data_file, self._save_path, json)
         if ok then
             self._dirty = false
