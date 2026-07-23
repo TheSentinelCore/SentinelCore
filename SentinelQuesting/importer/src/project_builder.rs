@@ -143,6 +143,55 @@ impl<'a> MapperState<'a> {
         self.resolve_npc_by_entry(summary.entry).await
     }
 
+    /// Resolve a creature NAME to concrete entry ids for a `Kill` target.
+    ///
+    /// `.mob` is overwhelmingly name-based (6,585 corpus uses, e.g. `.mob Young Wolf`), but the
+    /// lowering previously kept only numeric args — so every named `.mob` produced an EMPTY
+    /// `creature_entries` list and a Kill the runtime could never satisfy. Exact (case-insensitive)
+    /// name matches are preferred; a search that only returns partial matches keeps them, because
+    /// RestedXP frequently names a family ("Young Wolf") that maps to several spawn entries.
+    /// Unresolvable names emit a diagnostic and contribute nothing — never a silent empty list.
+    async fn resolve_creature_entries_by_name(
+        &mut self,
+        name: &str,
+    ) -> Result<Vec<u32>, QueryClientError> {
+        let results = match self.client.search_npcs(name).await {
+            Ok(r) => r,
+            Err(e) => {
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "QUERY_UNREACHABLE".to_string(),
+                    message: format!("creature search '{name}' failed: {e}"),
+                    entity: Some(name.to_string()),
+                    action: None,
+                });
+                return Ok(Vec::new());
+            }
+        };
+
+        let exact: Vec<u32> = results
+            .iter()
+            .filter(|s| s.name.eq_ignore_ascii_case(name))
+            .map(|s| s.entry)
+            .collect();
+        let entries = if exact.is_empty() {
+            results.iter().map(|s| s.entry).collect::<Vec<u32>>()
+        } else {
+            exact
+        };
+
+        if entries.is_empty() {
+            self.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "UNRESOLVED_MOB".to_string(),
+                message: format!("creature '{name}' not found; Kill target left unresolved"),
+                entity: Some(name.to_string()),
+                action: None,
+            });
+        }
+        Ok(entries)
+    }
+
     async fn resolve_quest(
         &mut self,
         id: u32,
@@ -718,10 +767,25 @@ async fn build_step_actions(
                 });
             }
             "mob" => {
-                // .mob <entry> or .mob <name> - kill target
-                let entries: Vec<u32> = cmd.args.iter()
-                    .filter_map(|a| a.parse::<u32>().ok())
-                    .collect();
+                // .mob <entry> or .mob <name> - kill target. Names dominate the corpus, so they
+                // must resolve to entries here; keeping only numerics made every named .mob an
+                // unsatisfiable Kill (measured 53 of 53 empty in the Elwynn profile).
+                let mut entries: Vec<u32> = Vec::new();
+                for arg in &cmd.args {
+                    let raw = arg.trim();
+                    if raw.is_empty() {
+                        continue;
+                    }
+                    if let Ok(entry) = raw.parse::<u32>() {
+                        entries.push(entry);
+                    } else {
+                        // `.target +Name` style prefixes also appear on mob names.
+                        let name = raw.trim_start_matches('+').trim();
+                        let resolved = state.resolve_creature_entries_by_name(name).await?;
+                        entries.extend(resolved);
+                    }
+                }
+                entries.dedup();
                 actions.push(Action {
                     id: Uuid::new_v4(),
                     enabled: true,

@@ -234,6 +234,46 @@ step
     );
 }
 
+#[tokio::test]
+async fn mob_resolves_creature_names_to_entries() {
+    // `.mob` is name-based in 6,585 of its corpus uses (e.g. `.mob Young Wolf`). The importer only
+    // parsed numeric args, so EVERY name-based .mob produced an empty creature_entries list and a
+    // Kill action the runtime could never satisfy — measured 53 of 53 empty in the Elwynn profile.
+    const GUIDE: &str = r#"RXPGuides.RegisterGuide([[
+#version 1
+#name Mob Name Test
+step
+    .mob Young Wolf
+    .mob 69
+]])"#;
+
+    let guide = parse_guide(GUIDE).expect("parses");
+    let client = MemoryQueryClient::new().with_npc(sentinel_queryclient::NpcDetail {
+        entry: 299,
+        name: "Young Wolf".to_string(),
+        faction: "Beast".to_string(),
+        positions: vec![],
+        roles: vec![],
+    });
+    let project = sentinel_importer::ProjectBuilder::build(&guide, "mob.lua", &client)
+        .await
+        .expect("builds");
+
+    let kills: Vec<Vec<u32>> = project
+        .operations
+        .iter()
+        .flat_map(|o| &o.actions)
+        .filter_map(|a| match &a.payload {
+            sentinel_models::authoring::ActionPayload::Kill(k) => Some(k.creature_entries.clone()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(kills.len(), 2, "both .mob commands lower to Kill actions");
+    assert_eq!(kills[0], vec![299], "a named .mob must resolve to its creature entry");
+    assert_eq!(kills[1], vec![69], "a numeric .mob keeps working unchanged");
+}
+
 #[test]
 fn standalone_and_bundled_parse_are_invariant_modulo_line_offset() {
     // The same guide text, parsed standalone vs. embedded as the second block of a bundle, must
