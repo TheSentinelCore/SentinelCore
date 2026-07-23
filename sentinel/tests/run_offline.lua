@@ -319,6 +319,7 @@ local test_modules = {
     -- Questing module
     "tests/modules/questing/test_runtime_action",
     "tests/modules/questing/test_runtime_profile",
+    "tests/modules/questing/test_runner_state",
     "tests/modules/questing/test_runtime_persistence",
     "tests/modules/questing/test_runtime_nav",
     "tests/modules/questing/test_runtime_arch_polish",
