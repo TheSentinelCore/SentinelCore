@@ -105,7 +105,9 @@ function RuntimeProfile:new(json_path, dry_run, event_bus, blackboard)
     o._current_op_id = nil              -- Tracks identity for retry reset
     o._variables = {}
     o._event_bus = event_bus or EventBus:new()  -- W3.3 (shared bus when injected)
-    o._nav = NavAdapter:new(o._event_bus) -- W3.3
+    -- B4: shared adapter keyed by event_bus -- same instance SentinelApp/combat hold
+    -- when this event_bus is the shared app bus (see integrations/nav_client/adapter.lua).
+    o._nav = NavAdapter.get_shared(o._event_bus) -- W3.3
 
     -- Recovery state machine (W4.1–W4.5)
     o._state = "running"                -- "running" | "navigating" | "ghost" | "failed" | "finished"

@@ -43,7 +43,32 @@ function NavAdapter:new(event_bus)
     o._last_state = "idle"
     o._last_progress = nil
     o._last_full_state = "idle"
+    o._owner = nil -- B4: whichever caller (e.g. "combat") currently holds this adapter
     return o
+end
+
+-- B4: three call sites (app.lua, combat/init.lua, runtime_profile.lua) each used to
+-- construct their own private NavAdapter wrapping the single _G.SentinelNavClient.client,
+-- so each kept its own belief about whether nav was active and questing/combat stole the
+-- client from each other silently. All three now share ONE adapter instance per EventBus:
+-- production always threads the same event_bus down from SentinelApp, so this collapses
+-- them onto a single adapter without changing any constructor signatures. Distinct
+-- EventBus instances (as most offline tests construct) naturally get distinct adapters,
+-- so tests stay isolated. The cache is keyed weakly so unreferenced buses can be GC'd.
+local _shared_by_bus = setmetatable({}, { __mode = "k" })
+
+function NavAdapter.get_shared(event_bus)
+    if event_bus == nil then
+        -- No bus to key on -- caller gets its own private instance (matches old behavior).
+        return NavAdapter:new(event_bus)
+    end
+    local existing = _shared_by_bus[event_bus]
+    if existing then
+        return existing
+    end
+    local instance = NavAdapter:new(event_bus)
+    _shared_by_bus[event_bus] = instance
+    return instance
 end
 
 function NavAdapter:_client()
@@ -51,7 +76,40 @@ function NavAdapter:_client()
     return root and root.client or nil
 end
 
+-- B4: ownership gate shared by move_to/follow_path/plan_route. `nil` means "unowned" --
+-- once a caller claims the adapter with `opts.owner`, every other caller (including one
+-- that passes no owner at all) is rejected until the owner calls `release`, unless the
+-- new caller sets `opts.preempt` (e.g. combat interrupting an in-flight questing Travel).
+-- VERIFY-IN-GAME: with a live SentinelNavClient, confirm that while combat holds
+-- ownership (chase_controller preempted a questing Travel), a subsequent unowned
+-- questing move_to (ctx.nav:move_to in runtime_action.lua / runtime_profile.lua) is
+-- rejected at the ADAPTER level (returns false, "owned_by_other") *and* the underlying
+-- client:move_to is never dispatched -- i.e. combat's in-flight path is not silently
+-- overwritten by questing re-issuing its Travel mid-chase.
+local function can_claim(current_owner, new_owner, preempt)
+    if current_owner == nil then
+        return true
+    end
+    if current_owner == new_owner then
+        return true
+    end
+    return preempt == true
+end
+
+function NavAdapter:_claim_or_reject(opts)
+    opts = opts or {}
+    if not can_claim(self._owner, opts.owner, opts.preempt) then
+        return false, "owned_by_other"
+    end
+    self._owner = opts.owner
+    return true
+end
+
 function NavAdapter:move_to(target, opts)
+    local claimed, claim_err = self:_claim_or_reject(opts)
+    if not claimed then
+        return false, claim_err
+    end
     local client = self:_client()
     self._active = {
         command = "move_to",
@@ -60,6 +118,7 @@ function NavAdapter:move_to(target, opts)
         state = "requesting_path",
         started = false,
         failures = 0,
+        owner = self._owner,
     }
     if not client then
         self._active.state = "failed"
@@ -74,6 +133,10 @@ function NavAdapter:move_to(target, opts)
 end
 
 function NavAdapter:follow_path(nodes, opts)
+    local claimed, claim_err = self:_claim_or_reject(opts)
+    if not claimed then
+        return false, claim_err
+    end
     local client = self:_client()
     self._active = {
         command = "follow_path",
@@ -82,6 +145,7 @@ function NavAdapter:follow_path(nodes, opts)
         state = "requesting_path",
         started = false,
         failures = 0,
+        owner = self._owner,
     }
     if not client then
         self._active.state = "failed"
@@ -101,6 +165,10 @@ function NavAdapter:follow_path(nodes, opts)
 end
 
 function NavAdapter:plan_route(nodes, opts)
+    local claimed, claim_err = self:_claim_or_reject(opts)
+    if not claimed then
+        return false, claim_err
+    end
     local client = self:_client()
     self._active = {
         command = "plan_route",
@@ -109,6 +177,7 @@ function NavAdapter:plan_route(nodes, opts)
         state = "requesting_path",
         started = false,
         failures = 0,
+        owner = self._owner,
     }
     if not client then
         self._active.state = "failed"
@@ -129,13 +198,39 @@ function NavAdapter:plan_route(nodes, opts)
     return true, nil
 end
 
-function NavAdapter:stop(reason)
+-- B4: owner-scoped stop -- a non-owner cannot stop another owner's motion. `owner` is
+-- optional for backward compatibility: when nobody currently owns the adapter, any
+-- caller may stop it (matches pre-B4 behavior for callers that never declare an owner).
+-- VERIFY-IN-GAME: with a live client, confirm that while combat owns the adapter, a
+-- questing `ctx.nav:stop(reason)` call (no owner arg, so `owner == nil ~= "combat"`)
+-- returns false and does NOT call the real client's stop() -- i.e. questing arriving
+-- at a stale waypoint cannot halt combat's chase movement out from under it.
+function NavAdapter:stop(reason, owner)
+    if self._owner ~= nil and self._owner ~= owner then
+        return false, "owned_by_other"
+    end
     local client = self:_client()
     invoke(client, "stop")
     if self._active then
         self._active.state = "idle"
         self._active.stop_reason = reason or "stop"
     end
+    return true
+end
+
+-- B4: release ownership. Only the current owner can clear it -- this is what lets the
+-- next tick's questing Travel (or any other caller) re-claim the adapter after combat
+-- is done chasing.
+function NavAdapter:release(owner)
+    if self._owner ~= owner then
+        return false, "owned_by_other"
+    end
+    self._owner = nil
+    return true
+end
+
+function NavAdapter:get_owner()
+    return self._owner
 end
 
 function NavAdapter:poll()

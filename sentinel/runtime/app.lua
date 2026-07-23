@@ -23,7 +23,9 @@ function SentinelApp:new()
     o._registry = ModuleRegistry:new()
     o._sensor_hub = SensorHub:new(o._blackboard, o._event_bus)
     o._callback_bridge = CallbackBridge:new(o._event_bus)
-    o._nav_adapter = NavAdapter:new(o._event_bus)
+    -- B4: shared adapter (see integrations/nav_client/adapter.lua) so combat and
+    -- questing stop stealing the nav client from each other via private instances.
+    o._nav_adapter = NavAdapter.get_shared(o._event_bus)
     o._izi_bridge = IziBridge:new()
     return o
 end

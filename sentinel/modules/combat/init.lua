@@ -13,7 +13,9 @@ function CombatModule:new(blackboard, event_bus)
     local o = setmetatable({}, CombatModule)
     o._blackboard = blackboard
     o._event_bus = event_bus
-    o._nav_adapter = NavAdapter:new(event_bus)
+    -- B4: shared adapter keyed by event_bus -- same instance SentinelApp holds when
+    -- this event_bus is the shared app bus (see integrations/nav_client/adapter.lua).
+    o._nav_adapter = NavAdapter.get_shared(event_bus)
     o._izi_bridge = IziBridge:new()
     o._combat = SentinelCombat:new(event_bus, blackboard, o._nav_adapter, o._izi_bridge)
     return o

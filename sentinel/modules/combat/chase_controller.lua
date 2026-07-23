@@ -61,8 +61,15 @@ function ChaseController:update(target)
         -- Stop any active navigation — including stale grind phase nav
         -- that wasn't started by the chase controller (nav.owner unset).
         if self._nav_adapter:is_active() then
-            self._nav_adapter:stop("combat_in_range")
+            self._nav_adapter:stop("combat_in_range", "combat")
         end
+        -- B4: release the shared adapter so questing can re-claim it on its next
+        -- tick instead of staying rejected with "owned_by_other" forever.
+        -- VERIFY-IN-GAME: confirm questing's Travel action actually resumes (issues
+        -- a fresh move_to that the adapter accepts) on the tick right after combat
+        -- releases here, rather than staying wedged waiting on a nav state that will
+        -- never change because its original move_to was rejected while combat held it.
+        self._nav_adapter:release("combat")
         self._blackboard:set("nav.owner", nil)
         return false
     end
@@ -91,7 +98,10 @@ function ChaseController:update(target)
         self._blackboard:set("nav.owner", "combat")
         self._blackboard:set("nav.command", "move_to")
         self._blackboard:set("nav.destination", target_pos)
-        self._nav_adapter:move_to(target_pos, { use_navmesh = true })
+        -- B4: combat preempts an in-flight questing Travel on the shared adapter --
+        -- questing re-issues its own move_to (and re-claims the adapter) on its next
+        -- tick after chase releases ownership below.
+        self._nav_adapter:move_to(target_pos, { use_navmesh = true, owner = "combat", preempt = true })
         self._last_target_position = target_pos
         self._last_move_ms = now_ms
         return true
@@ -102,7 +112,8 @@ end
 
 function ChaseController:stop(reason)
     if self._blackboard:get("nav.owner") == "combat" then
-        self._nav_adapter:stop(reason or "combat_stop")
+        self._nav_adapter:stop(reason or "combat_stop", "combat")
+        self._nav_adapter:release("combat")
         self._blackboard:set("nav.owner", nil)
     end
     self._last_target_position = nil
