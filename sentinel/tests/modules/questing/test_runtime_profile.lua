@@ -346,7 +346,7 @@ function M.test_completion_gate_waits_then_advances_on_met()
     T.assert_equal(status, "running", "Waiting should return running")
     T.assert_equal(msg, "waiting for completion", "Waiting message should say so")
     T.assert_equal(profile._current_action_idx, 1, "Waiting should not advance the action index")
-    T.assert_equal(profile._blackboard:get("questing.current_status"), "waiting",
+    T.assert_equal(profile._blackboard:get("module.questing.current_status"), "waiting",
         "Blackboard should reflect waiting status")
 
     status, msg = profile:execute()
@@ -697,7 +697,78 @@ end
 -- Run all tests
 -- ============================================================================
 
+-- ============================================================================
+-- F3 — per-tick context churn
+-- ============================================================================
+
+--- create_context() used to allocate a brand-new ctx table (plus ~20 fresh method closures)
+--- on EVERY call. It must now reuse the same cached table across calls on one profile
+--- instance, while still refreshing the fields that legitimately change per call.
+function M.test_create_context_reuses_the_same_table_across_calls()
+    local profile = create_profile(make_profile_ops("Comment", {}))
+    local ctx1 = profile:create_context()
+    local ctx2 = profile:create_context()
+    T.assert_true(ctx1 == ctx2, "create_context() must reuse the same table, not allocate a new one each call")
+end
+
+--- `persist` must still be the SAME table across create_context() calls -- this is the escape
+--- hatch that keeps action state (kill tallies, in-flight chase target) alive across ticks.
+--- Reusing the cached ctx table must not accidentally break that identity.
+function M.test_create_context_persist_field_is_stable_across_calls()
+    local profile = create_profile(make_profile_ops("Comment", {}))
+    local ctx1 = profile:create_context()
+    ctx1.persist.marker = "still here"
+    local ctx2 = profile:create_context()
+    T.assert_true(ctx2.persist == ctx1.persist, "persist must be the same table across calls")
+    T.assert_equal(ctx2.persist.marker, "still here", "persist contents must survive context reuse")
+end
+
+--- The quest-log cache must still be reset every call so a stale answer from a previous tick
+--- is never silently reused -- reusing the ctx TABLE must not also reuse stale quest state.
+function M.test_create_context_resets_quest_log_cache_each_call()
+    local profile = create_profile(make_profile_ops("Comment", {}))
+    local ctx1 = profile:create_context()
+    ctx1._completed_quests["123"] = true
+    ctx1._quest_log_dirty = false
+    local ctx2 = profile:create_context()
+    T.assert_true(ctx2._quest_log_dirty == true, "quest log cache must be marked dirty again on each create_context() call")
+    T.assert_true(ctx2._completed_quests["123"] == nil, "stale completed-quest cache must not leak across calls")
+end
+
+--- _resolve_nav_target's zone-destination branch used to call create_context() a SECOND time
+--- in the same tick when reached through _handle_blocked (itself reached from _execute_running,
+--- which had already built one). Prove _handle_blocked, given a pre-built ctx, does not trigger
+--- another create_context() call.
+function M.test_handle_blocked_zone_destination_does_not_double_build_context()
+    local profile = create_profile(make_profile_ops("Travel", { destination = "Elwynn Forest" }))
+    mock_globals()
+
+    local original_create_context = RuntimeProfile.create_context
+    local call_count = 0
+    RuntimeProfile.create_context = function(self)
+        call_count = call_count + 1
+        return original_create_context(self)
+    end
+
+    local ok, err = pcall(function()
+        local ctx = profile:create_context() -- simulates the ctx already built this tick
+        call_count = 0 -- only count calls made DURING _handle_blocked itself
+        profile:_handle_blocked({ type = "Travel", payload = { destination = "Elwynn Forest" } }, ctx)
+        T.assert_equal(call_count, 0,
+            "_handle_blocked must reuse the ctx passed in, not build a second one for a zone destination")
+    end)
+
+    RuntimeProfile.create_context = original_create_context
+    if not ok then error(err, 0) end
+end
+
 local tests = {
+    -- F3
+    test_create_context_reuses_the_same_table_across_calls = M.test_create_context_reuses_the_same_table_across_calls,
+    test_create_context_persist_field_is_stable_across_calls = M.test_create_context_persist_field_is_stable_across_calls,
+    test_create_context_resets_quest_log_cache_each_call = M.test_create_context_resets_quest_log_cache_each_call,
+    test_handle_blocked_zone_destination_does_not_double_build_context = M.test_handle_blocked_zone_destination_does_not_double_build_context,
+
     -- W4.1
     test_retry_counter_increments = M.test_retry_counter_increments,
     test_retry_success_resets_counter = M.test_retry_success_resets_counter,

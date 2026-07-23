@@ -150,11 +150,57 @@ function M.test_wire_diagnostics_is_a_real_subscriber_not_a_noop()
     end)
 end
 
+--- F1: a failed `ensure_initialized()` used to `clear_module_cache()` (nil out ~50
+--- `package.loaded` entries and force a full re-`require`) on EVERY call, since `initialized`
+--- never flips true on failure. Prove that repeated calls after one failure clear the cache
+--- at most once, not once per call.
+function M.test_ensure_initialized_does_not_reclear_cache_every_frame_after_a_failure()
+    with_main_loadable(function()
+        -- Force SentinelApp:initialize() to throw so ensure_initialized() keeps failing,
+        -- without needing the real (injector-only) module tree to boot successfully.
+        local saved_app_mod = package.loaded["runtime/app"]
+        package.loaded["runtime/app"] = {
+            new = function()
+                return {
+                    initialize = function()
+                        error("forced init failure for F1 regression test")
+                    end,
+                }
+            end,
+        }
+        package.loaded["main"] = nil
+
+        local ok, err = pcall(function()
+            local main_mod = require("main")
+            T.assert_true(type(main_mod._ensure_initialized_for_test) == "function",
+                "main.lua must export ensure_initialized for offline testing")
+            T.assert_true(type(main_mod._cache_clear_count_for_test) == "function",
+                "main.lua must export the cache-clear counter for offline testing")
+
+            capture_logs(function()
+                for _ = 1, 10 do
+                    local initialized_ok = main_mod._ensure_initialized_for_test()
+                    T.assert_false(initialized_ok, "forced failure must keep reporting not-initialized")
+                end
+            end)
+
+            T.assert_equal(main_mod._cache_clear_count_for_test(), 1,
+                "the module cache must be cleared at most once across repeated failed retries (F1)")
+        end)
+
+        package.loaded["runtime/app"] = saved_app_mod
+        package.loaded["main"] = nil
+
+        if not ok then error(err, 0) end
+    end)
+end
+
 local tests = {
     test_module_fault_is_observed_by_the_diagnostics_sink = M.test_module_fault_is_observed_by_the_diagnostics_sink,
     test_questing_error_is_observed_by_the_diagnostics_sink = M.test_questing_error_is_observed_by_the_diagnostics_sink,
     test_module_state_changed_is_observed_by_the_diagnostics_sink = M.test_module_state_changed_is_observed_by_the_diagnostics_sink,
     test_wire_diagnostics_is_a_real_subscriber_not_a_noop = M.test_wire_diagnostics_is_a_real_subscriber_not_a_noop,
+    test_ensure_initialized_does_not_reclear_cache_every_frame_after_a_failure = M.test_ensure_initialized_does_not_reclear_cache_every_frame_after_a_failure,
 }
 
 function M.run()

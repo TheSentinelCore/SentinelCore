@@ -270,6 +270,35 @@ function SentinelCombat:_allow_idle_auto_engage()
     return self._blackboard:get("module.combat.auto_engage_world", false) == true
 end
 
+-- ============================================================================
+-- F4: per-tick object snapshot
+-- ============================================================================
+-- get_all_objects is the most expensive Sylvannas call available (object-manager.md:45).
+-- _find_attacker used to scan it fresh on every call; if a future call site needs the same
+-- data within the same tick (e.g. a second lookup during the same update()), it would silently
+-- pay for a second full scan the module has no way to know about. Cache the scan against the
+-- tick clock the module already reads everywhere else (`system.now_ms`, set once per frame by
+-- system_sensor.lua) so repeated lookups within one tick share a single scan, while a genuinely
+-- new tick still gets a fresh one.
+SentinelCombat._object_scan_count = 0 -- exposed for offline testing only (F4 regression guard)
+
+---Full object-manager scan, cached for the duration of the current tick (keyed by
+---blackboard `system.now_ms`, the module's existing per-frame clock).
+---@return table|nil objects
+function SentinelCombat:_get_all_objects_this_tick()
+    if not core or not core.object_manager then return nil end
+    local now_ms = self._blackboard and self._blackboard:get("system.now_ms", 0) or 0
+    local cache = self._tick_object_cache
+    if cache and cache.tick == now_ms then
+        return cache.objects
+    end
+    SentinelCombat._object_scan_count = SentinelCombat._object_scan_count + 1
+    local ok, objects = pcall(core.object_manager.get_all_objects)
+    local result = (ok and type(objects) == "table") and objects or nil
+    self._tick_object_cache = { tick = now_ms, objects = result }
+    return result
+end
+
 ---Find a mob that is actively targeting (attacking) the player.
 ---Only returns NPC mobs that have the player as their target.
 ---@return table|nil unit The attacker, or nil
@@ -281,8 +310,8 @@ function SentinelCombat:_find_attacker()
     if not ok_guid then return nil end
     local player_guid_str = tostring(player_guid)
 
-    local ok, objects = pcall(core.object_manager.get_all_objects)
-    if not ok or type(objects) ~= "table" then return nil end
+    local objects = self:_get_all_objects_this_tick()
+    if type(objects) ~= "table" then return nil end
 
     for _, obj in ipairs(objects) do
         if self._target_selector:is_valid_enemy(obj, { require_player = false }) then

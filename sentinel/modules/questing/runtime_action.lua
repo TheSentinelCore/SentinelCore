@@ -68,9 +68,55 @@ local RuntimeAction = {}
 -- ============================================================================
 local UnitHelper = {}
 
+-- ============================================================================
+-- F4: per-execute_kill object snapshot
+-- ============================================================================
+-- The docs flag get_all_objects as the most expensive call available (object-manager.md:45).
+-- A single Kill tick used to trigger 3+ full scans: the sticky-target re-check, the
+-- fresh-target reacquire, and any nested UnitHelper lookups they touch. Scoped tightly to ONE
+-- execute_kill invocation (not a wall-clock/game-tick key) so every other caller — every other
+-- action type, and Kill's own nested calls made OUTSIDE the wrapper below — is completely
+-- unaffected and still gets a fresh scan every time, matching prior behavior exactly.
+UnitHelper._snapshot_active = false
+UnitHelper._snapshot_objects = nil
+UnitHelper._snapshot_scan_count = 0 -- exposed for offline testing only (F4 regression guard)
+
+--- Begin a snapshot window: the next call(s) to _get_all_objects() while active share one scan.
+function UnitHelper._begin_snapshot()
+    UnitHelper._snapshot_active = true
+    UnitHelper._snapshot_objects = nil
+end
+
+--- End the snapshot window and drop the cached scan.
+function UnitHelper._end_snapshot()
+    UnitHelper._snapshot_active = false
+    UnitHelper._snapshot_objects = nil
+end
+
 --- Get all objects from object manager (Sylvannas API)
 --- @return table|nil Array of game_object items
 function UnitHelper._get_all_objects()
+    if UnitHelper._snapshot_active then
+        if UnitHelper._snapshot_objects == nil then
+            -- Lazily populate once per snapshot window; `false` marks "queried, nothing usable"
+            -- so a missing/erroring API doesn't get re-queried on every lookup within the window.
+            UnitHelper._snapshot_scan_count = UnitHelper._snapshot_scan_count + 1
+            local objs = nil
+            if core and core.object_manager and core.object_manager.get_all_objects then
+                local ok, result = pcall(core.object_manager.get_all_objects, core.object_manager)
+                if ok and type(result) == "table" then
+                    objs = result
+                end
+            end
+            UnitHelper._snapshot_objects = objs or false
+        end
+        if UnitHelper._snapshot_objects == false then
+            return nil
+        end
+        return UnitHelper._snapshot_objects
+    end
+
+    UnitHelper._snapshot_scan_count = UnitHelper._snapshot_scan_count + 1
     if core and core.object_manager and core.object_manager.get_all_objects then
         local ok, objs = pcall(core.object_manager.get_all_objects, core.object_manager)
         if ok and type(objs) == "table" then
@@ -550,7 +596,10 @@ local function distance_to_unit(unit)
     return Geometry.distance(ppos, tpos)
 end
 
-function RuntimeAction.execute_kill(payload, ctx)
+--- F4: real implementation of Kill, wrapped below by RuntimeAction.execute_kill in an object
+--- snapshot. Extracted to its own local function so the wrapper can guarantee the snapshot is
+--- always closed (even on error) without touching every early `return` in the body.
+local function _execute_kill_impl(payload, ctx)
     local entries = payload.creature_entries or {}
     local quantity = payload.quantity or 1
     -- A4: RuntimeKill carries loot/ignore_elites (SentinelQuesting/shared/src/runtime/action.rs
@@ -843,6 +892,21 @@ function RuntimeAction.execute_kill(payload, ctx)
     -- branch here was permanently dead code (payload.destination always nil). Removed rather
     -- than left as misleading unreachable navigation logic.
     return "blocked" -- No targets nearby or no API
+end
+
+--- F4: public entry point. Wraps _execute_kill_impl in an object snapshot window so its
+--- multiple UnitHelper lookups (sticky-target re-check, fresh reacquire) share ONE
+--- get_all_objects() scan instead of one each. The snapshot is always closed, even if the
+--- implementation errors, so a thrown error can never leave a stale snapshot active for a
+--- later, unrelated action.
+function RuntimeAction.execute_kill(payload, ctx)
+    UnitHelper._begin_snapshot()
+    local ok, a, b = pcall(_execute_kill_impl, payload, ctx)
+    UnitHelper._end_snapshot()
+    if not ok then
+        error(a, 0)
+    end
+    return a, b
 end
 
 function RuntimeAction.execute_vendor(payload, ctx)

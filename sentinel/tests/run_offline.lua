@@ -330,6 +330,7 @@ local test_modules = {
     "tests/runtime/test_module_registry",
     "tests/runtime/test_tick_isolation",
     "tests/runtime/test_app_tick",
+    "tests/runtime/test_callback_bridge",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",

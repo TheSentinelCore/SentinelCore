@@ -411,11 +411,84 @@ function M.test_evaluate_condition_unknown_type()
 end
 
 -- ============================================================================
+-- F4 — per-execute_kill object snapshot
+-- ============================================================================
+
+--- Two UnitHelper lookups made INSIDE one snapshot window must share a single
+--- get_all_objects() scan.
+function M.test_f4_snapshot_window_shares_one_scan()
+    local UnitHelper = RuntimeAction.UnitHelper
+    local scan_count = 0
+    _G.core = _G.core or {}
+    _G.core.object_manager = _G.core.object_manager or {}
+    local saved = _G.core.object_manager.get_all_objects
+    _G.core.object_manager.get_all_objects = function()
+        scan_count = scan_count + 1
+        return {}
+    end
+
+    UnitHelper._begin_snapshot()
+    UnitHelper.get_nearest_creature({ 123 })
+    UnitHelper.get_nearest_creature({ 456 })
+    UnitHelper.get_nearest_game_object({ 789 })
+    UnitHelper._end_snapshot()
+
+    _G.core.object_manager.get_all_objects = saved
+    assert(scan_count == 1,
+        "expected exactly one get_all_objects scan inside one snapshot window, got " .. tostring(scan_count))
+end
+
+--- Outside a snapshot window (the default, unaffected state) every lookup still gets its own
+--- fresh scan — F4 must not change behavior for any caller other than execute_kill.
+function M.test_f4_lookups_outside_a_snapshot_scan_independently()
+    local UnitHelper = RuntimeAction.UnitHelper
+    local scan_count = 0
+    _G.core = _G.core or {}
+    _G.core.object_manager = _G.core.object_manager or {}
+    local saved = _G.core.object_manager.get_all_objects
+    _G.core.object_manager.get_all_objects = function()
+        scan_count = scan_count + 1
+        return {}
+    end
+
+    assert(UnitHelper._snapshot_active == false, "no snapshot should be active outside execute_kill")
+    UnitHelper.get_nearest_creature({ 123 })
+    UnitHelper.get_nearest_creature({ 456 })
+
+    _G.core.object_manager.get_all_objects = saved
+    assert(scan_count == 2,
+        "expected each lookup to scan independently outside a snapshot window, got " .. tostring(scan_count))
+end
+
+--- execute_kill itself must open and always close the snapshot, including when its
+--- implementation errors, so a thrown error can never leave a later, unrelated action sharing
+--- a stale snapshot.
+function M.test_f4_execute_kill_closes_snapshot_even_on_error()
+    local UnitHelper = RuntimeAction.UnitHelper
+    local original_impl = RuntimeAction.execute_kill
+
+    -- Force the real implementation to error by handing it a payload that makes
+    -- table.concat(entries, ",") explode (entries must be an array of strings/numbers).
+    local ok = pcall(function()
+        RuntimeAction.execute_kill({ creature_entries = { {} } }, { persist = {} })
+    end)
+
+    assert(ok == false, "a bad payload should still surface as an error from execute_kill")
+    assert(UnitHelper._snapshot_active == false,
+        "the snapshot must be closed even when execute_kill's implementation errors")
+
+    RuntimeAction.execute_kill = original_impl
+end
+
+-- ============================================================================
 -- Run all tests
 -- ============================================================================
 
 local tests = {
     test_runtime_action_table = M.test_runtime_action_table,
+    test_f4_snapshot_window_shares_one_scan = M.test_f4_snapshot_window_shares_one_scan,
+    test_f4_lookups_outside_a_snapshot_scan_independently = M.test_f4_lookups_outside_a_snapshot_scan_independently,
+    test_f4_execute_kill_closes_snapshot_even_on_error = M.test_f4_execute_kill_closes_snapshot_even_on_error,
     test_execute_comment = M.test_execute_comment,
     test_execute_set_variable = M.test_execute_set_variable,
 

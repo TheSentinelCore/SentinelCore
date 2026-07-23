@@ -35,7 +35,26 @@ function CallbackBridge:new(event_bus)
     return o
 end
 
+-- F6: publish_engine used to build a 5-field payload (5 SDK calls: core.game_time,
+-- core.delta_time, core.get_ping, core.get_map_id, core.get_map_name) 3x/frame
+-- (pre_tick/update/render), even for events with ZERO subscribers -- roughly 900 wasted SDK
+-- calls/second. EventBus:publish() already early-returns with no subscribers, but only AFTER
+-- the payload was built. This reaches into EventBus's internal `_subs` field (not a public
+-- API -- core/event_bus.lua is out of scope for this change) defensively: if that field is
+-- ever missing or renamed, treat it as "has subscribers" and build the payload anyway, exactly
+-- like before F6.
+local function event_bus_has_subscribers(event_bus, event_name)
+    if type(event_bus) ~= "table" or type(event_bus._subs) ~= "table" then
+        return true -- can't tell; never suppress a real publish
+    end
+    local list = event_bus._subs[event_name]
+    return type(list) == "table" and #list > 0
+end
+
 function CallbackBridge:publish_engine(event_name)
+    if not event_bus_has_subscribers(self._event_bus, event_name) then
+        return
+    end
     local payload = {
         now_ms = core and core.game_time and core.game_time() or 0,
         delta_ms = math.floor(((core and core.delta_time and core.delta_time()) or 0) * 1000),

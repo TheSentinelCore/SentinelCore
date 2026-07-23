@@ -395,378 +395,406 @@ function RuntimeProfile:_operation_already_done(op)
     return saw_quest_work
 end
 
-function RuntimeProfile:create_context()
-    local ctx = {
-        variables = self._variables,
-        query = self._query,
-        nav = self._nav,           -- W3.3: NavAdapter for movement
-        -- Shared app bus, so a Kill action can request engagement from the combat module.
-        event_bus = self._event_bus,
-        blackboard = self._blackboard,
-        -- Action state that must SURVIVE context recreation. create_context() runs fresh on every
-        -- execution, so anything an action stored directly on ctx was destroyed each tick: kill
-        -- tallies never accumulated, and the chase re-issued move_to every tick, restarting the
-        -- path continuously so the bot could never actually close on a mob.
-        persist = (function()
-            self._action_state = self._action_state or { kill_counts = {} }
-            return self._action_state
-        end)(),
+-- ============================================================================
+-- F3: context methods, defined ONCE at module load (shared prototype)
+-- ============================================================================
+-- These used to be defined INSIDE create_context() as `function ctx:method() end`
+-- closures, which meant every call to create_context() (once or twice per tick, see
+-- below) allocated ~20 fresh function objects — per-tick garbage on the hot path, purely
+-- from method definitions that never actually vary between calls. None of them close over
+-- the RuntimeProfile instance (they only ever touch their own `self`, i.e. the ctx table),
+-- so they can be shared via a metatable __index instead of rebuilt every time.
+local ContextMethods = {}
+ContextMethods.__index = ContextMethods
 
-        -- Quest log tracking caches (W2.3, W2.4)
-        _completed_quests = {},   -- { [quest_entry] = true }
-        _active_quests = {},      -- { [quest_entry] = true }
-        _quest_log_dirty = true,  -- refresh on next query
-    }
+-- ====================================================================
+-- Navigation helpers (W3.1, W3.2, W3.3)
+-- ====================================================================
 
-    -- ====================================================================
-    -- Navigation helpers (W3.1, W3.2, W3.3)
-    -- ====================================================================
-
-    --- Resolve player's current position.
-    --- Returns {x, y, z} table or nil.
-    function ctx:_get_player_pos()
-        if core and core.object_manager and core.object_manager.get_local_player then
-            local player = core.object_manager.get_local_player()
-            if player and player.get_position then
-                local ok, pos = pcall(player.get_position, player)
-                if ok and type(pos) == "table" then
-                    return pos
-                end
+--- Resolve player's current position.
+--- Returns {x, y, z} table or nil.
+function ContextMethods:_get_player_pos()
+    if core and core.object_manager and core.object_manager.get_local_player then
+        local player = core.object_manager.get_local_player()
+        if player and player.get_position then
+            local ok, pos = pcall(player.get_position, player)
+            if ok and type(pos) == "table" then
+                return pos
             end
         end
-        return nil
     end
+    return nil
+end
 
-    --- Check if a specific NPC entry is within interaction range.
-    --- @param entry number|string NPC ID
-    --- @param range number Override distance (default INTERACT_RANGE)
-    --- @return boolean
-    function ctx:is_at_npc(entry, range)
-        range = range or INTERACT_RANGE
-        -- Use UnitHelper to find creature (Sylvannas API compliant)
-        local npc = UnitHelper.get_nearest_creature({ entry })
-        if npc and npc:is_valid() then
-            -- Try precise distance check
-            local player_pos = self:_get_player_pos()
-            if player_pos and npc.get_position then
-                local ok, npc_pos = pcall(npc.get_position, npc)
-                if ok and npc_pos then
-                    return Geometry.distance(player_pos, npc_pos) <= range
-                end
+--- Check if a specific NPC entry is within interaction range.
+--- @param entry number|string NPC ID
+--- @param range number Override distance (default INTERACT_RANGE)
+--- @return boolean
+function ContextMethods:is_at_npc(entry, range)
+    range = range or INTERACT_RANGE
+    -- Use UnitHelper to find creature (Sylvannas API compliant)
+    local npc = UnitHelper.get_nearest_creature({ entry })
+    if npc and npc:is_valid() then
+        -- Try precise distance check
+        local player_pos = self:_get_player_pos()
+        if player_pos and npc.get_position then
+            local ok, npc_pos = pcall(npc.get_position, npc)
+            if ok and npc_pos then
+                return Geometry.distance(player_pos, npc_pos) <= range
             end
-            -- A10: get_nearest_creature scans the FULL visible range (get_all_objects), not just
-            -- nearby — an NPC found here can be ~90yd away. Without an actual distance check
-            -- there is no basis to claim "at" the NPC, so this must fail closed (routes callers
-            -- to "blocked" -> navigate) instead of failing open into a doomed interaction retry.
-            return false
         end
+        -- A10: get_nearest_creature scans the FULL visible range (get_all_objects), not just
+        -- nearby — an NPC found here can be ~90yd away. Without an actual distance check
+        -- there is no basis to claim "at" the NPC, so this must fail closed (routes callers
+        -- to "blocked" -> navigate) instead of failing open into a doomed interaction retry.
         return false
     end
+    return false
+end
 
-    --- Check if a specific game object entry is within loot range.
-    --- @param entry number|string Object ID
-    --- @param range number Override distance (default LOOT_RANGE)
-    --- @return boolean
-    function ctx:is_at_object(entry, range)
-        range = range or LOOT_RANGE
-        -- Use UnitHelper to find game object (Sylvannas API compliant)
-        local obj = UnitHelper.get_nearest_game_object({ entry })
-        if obj and obj:is_valid() then
-            local player_pos = self:_get_player_pos()
-            if player_pos and obj.get_position then
-                local ok, obj_pos = pcall(obj.get_position, obj)
-                if ok and obj_pos then
-                    return Geometry.distance(player_pos, obj_pos) <= range
+--- Check if a specific game object entry is within loot range.
+--- @param entry number|string Object ID
+--- @param range number Override distance (default LOOT_RANGE)
+--- @return boolean
+function ContextMethods:is_at_object(entry, range)
+    range = range or LOOT_RANGE
+    -- Use UnitHelper to find game object (Sylvannas API compliant)
+    local obj = UnitHelper.get_nearest_game_object({ entry })
+    if obj and obj:is_valid() then
+        local player_pos = self:_get_player_pos()
+        if player_pos and obj.get_position then
+            local ok, obj_pos = pcall(obj.get_position, obj)
+            if ok and obj_pos then
+                return Geometry.distance(player_pos, obj_pos) <= range
+            end
+        end
+        return true
+    end
+    return false
+end
+
+--- Check if player is at a destination position.
+--- Accepts {x, y, z} table or a zone name string (resolved via get_zone_waypoint).
+--- @param dest table|string Position or zone name
+--- @param tolerance number Yards (default ARRIVAL_TOLERANCE)
+--- @return boolean
+function ContextMethods:is_at_destination(dest, tolerance)
+    tolerance = tolerance or ARRIVAL_TOLERANCE
+    local target_pos = dest
+    if type(dest) == "string" then
+        target_pos = self:get_zone_waypoint(dest)
+        if not target_pos then
+            return false -- Can't resolve zone to a position
+        end
+    end
+    if type(target_pos) ~= "table" then
+        return false
+    end
+    local player_pos = self:_get_player_pos()
+    if not player_pos then
+        return false
+    end
+    local dist = Geometry.distance(player_pos, target_pos)
+    return dist <= tolerance
+end
+
+--- Resolve a zone name to a waypoint position.
+--- Returns {x, y, z} or nil.
+function ContextMethods:get_zone_waypoint(zone_name)
+    -- Attempt to resolve via QueryServer
+    if self.query and self.query.resolve_zone then
+        local ok, result = pcall(self.query.resolve_zone, self.query, zone_name)
+        if ok and type(result) == "table" then
+            return result
+        end
+    end
+    -- Fallback: check hardcoded zone centroids (small set of common zones)
+    local zone_centroids = {
+        ["Elwynn Forest"] = { x = -8949.95, y = -132.49, z = 83.53 },
+        ["Dun Morogh"]    = { x = -5401.32, y = -2403.51, z = 400.09 },
+        ["Teldrassil"]    = { x = 9947.52, y = 2054.02, z = 1329.63 },
+        ["Mulgore"]       = { x = -2237.03, y = -438.46, z = -5.74 },
+        ["Tirisfal Glades"] = { x = 1810.12, y = 227.96, z = -8.99 },
+        ["Durotar"]       = { x = 259.65, y = -4749.60, z = 10.97 },
+    }
+    local centroid = zone_centroids[zone_name]
+    if centroid then
+        return { x = centroid.x, y = centroid.y, z = centroid.z }
+    end
+    return nil
+end
+
+-- ====================================================================
+-- Quest log tracking (W2.3, W2.4)
+-- ====================================================================
+
+--- Refresh the quest log caches from Sylvannas APIs.
+--- Called automatically on first access; can be called manually to force.
+function ContextMethods:_refresh_quest_log()
+    self._completed_quests = {}
+    self._active_quests = {}
+
+    -- Use core.quests.is_quest_flagged_completed for completed quests (Sylvannas API)
+    if core and core.quests and core.quests.get_num_quest_log_entries then
+        local num_entries = core.quests.get_num_quest_log_entries()
+        for i = 1, num_entries do
+            local info = core.quests.get_quest_log_title(i)
+            if info and not info.is_header then
+                if info.is_complete then
+                    self._completed_quests[tostring(info.quest_id)] = true
+                else
+                    self._active_quests[tostring(info.quest_id)] = true
                 end
             end
+        end
+    end
+
+    self._quest_log_dirty = false
+end
+
+function ContextMethods:is_quest_completed(quest_entry)
+    if self._quest_log_dirty then
+        self:_refresh_quest_log()
+    end
+    return self._completed_quests[tostring(quest_entry)] == true
+end
+
+function ContextMethods:is_quest_active(quest_entry)
+    if self._quest_log_dirty then
+        self:_refresh_quest_log()
+    end
+    -- Also directly check Sylvannas API for active quests
+    if core and core.quests and core.quests.is_on_quest then
+        local ok, is_on = pcall(core.quests.is_on_quest, quest_entry)
+        if ok and is_on then
             return true
         end
-        return false
     end
+    return self._active_quests[tostring(quest_entry)] == true
+end
 
-    --- Check if player is at a destination position.
-    --- Accepts {x, y, z} table or a zone name string (resolved via get_zone_waypoint).
-    --- @param dest table|string Position or zone name
-    --- @param tolerance number Yards (default ARRIVAL_TOLERANCE)
-    --- @return boolean
-    function ctx:is_at_destination(dest, tolerance)
-        tolerance = tolerance or ARRIVAL_TOLERANCE
-        local target_pos = dest
-        if type(dest) == "string" then
-            target_pos = self:get_zone_waypoint(dest)
-            if not target_pos then
-                return false -- Can't resolve zone to a position
-            end
-        end
-        if type(target_pos) ~= "table" then
-            return false
-        end
-        local player_pos = self:_get_player_pos()
-        if not player_pos then
-            return false
-        end
-        local dist = Geometry.distance(player_pos, target_pos)
-        return dist <= tolerance
-    end
-
-    --- Resolve a zone name to a waypoint position.
-    --- Returns {x, y, z} or nil.
-    function ctx:get_zone_waypoint(zone_name)
-        -- Attempt to resolve via QueryServer
-        if self.query and self.query.resolve_zone then
-            local ok, result = pcall(self.query.resolve_zone, self.query, zone_name)
-            if ok and type(result) == "table" then
-                return result
-            end
-        end
-        -- Fallback: check hardcoded zone centroids (small set of common zones)
-        local zone_centroids = {
-            ["Elwynn Forest"] = { x = -8949.95, y = -132.49, z = 83.53 },
-            ["Dun Morogh"]    = { x = -5401.32, y = -2403.51, z = 400.09 },
-            ["Teldrassil"]    = { x = 9947.52, y = 2054.02, z = 1329.63 },
-            ["Mulgore"]       = { x = -2237.03, y = -438.46, z = -5.74 },
-            ["Tirisfal Glades"] = { x = 1810.12, y = 227.96, z = -8.99 },
-            ["Durotar"]       = { x = 259.65, y = -4749.60, z = 10.97 },
-        }
-        local centroid = zone_centroids[zone_name]
-        if centroid then
-            return { x = centroid.x, y = centroid.y, z = centroid.z }
-        end
-        return nil
-    end
-
-    -- ====================================================================
-    -- Quest log tracking (W2.3, W2.4)
-    -- ====================================================================
-
-    --- Refresh the quest log caches from Sylvannas APIs.
-    --- Called automatically on first access; can be called manually to force.
-    function ctx:_refresh_quest_log()
-        self._completed_quests = {}
-        self._active_quests = {}
-
-        -- Use core.quests.is_quest_flagged_completed for completed quests (Sylvannas API)
-        if core and core.quests and core.quests.get_num_quest_log_entries then
-            local num_entries = core.quests.get_num_quest_log_entries()
-            for i = 1, num_entries do
-                local info = core.quests.get_quest_log_title(i)
-                if info and not info.is_header then
-                    if info.is_complete then
-                        self._completed_quests[tostring(info.quest_id)] = true
-                    else
-                        self._active_quests[tostring(info.quest_id)] = true
-                    end
-                end
-            end
-        end
-
-        self._quest_log_dirty = false
-    end
-
-    function ctx:is_quest_completed(quest_entry)
+function ContextMethods:is_objective_complete(quest_entry, objective_idx)
+    -- Use core.quests.get_num_quest_leader_boards and get_quest_log_leader_board (Sylvannas API)
+    if core and core.quests and core.quests.get_num_quest_leader_boards then
+        -- Find quest log index for this quest
         if self._quest_log_dirty then
             self:_refresh_quest_log()
         end
-        return self._completed_quests[tostring(quest_entry)] == true
-    end
-
-    function ctx:is_quest_active(quest_entry)
-        if self._quest_log_dirty then
-            self:_refresh_quest_log()
-        end
-        -- Also directly check Sylvannas API for active quests
-        if core and core.quests and core.quests.is_on_quest then
-            local ok, is_on = pcall(core.quests.is_on_quest, quest_entry)
-            if ok and is_on then
-                return true
-            end
-        end
-        return self._active_quests[tostring(quest_entry)] == true
-    end
-
-    function ctx:is_objective_complete(quest_entry, objective_idx)
-        -- Use core.quests.get_num_quest_leader_boards and get_quest_log_leader_board (Sylvannas API)
-        if core and core.quests and core.quests.get_num_quest_leader_boards then
-            -- Find quest log index for this quest
-            if self._quest_log_dirty then
-                self:_refresh_quest_log()
-            end
-            -- Try to find quest by ID in our cached log
-            local num_entries = core.quests.get_num_quest_log_entries()
-            for i = 1, num_entries do
-                local info = core.quests.get_quest_log_title(i)
-                if info and info.quest_id == quest_entry then
-                    local num_obj = core.quests.get_num_quest_leader_boards(i)
-                    if objective_idx <= num_obj then
-                        -- Sylvannas returns a TABLE, not a string:
-                        --   { objective_type = "item",
-                        --     description = "Tough Wolf Meat: 0/8",
-                        --     is_completed = false }
-                        local board = core.quests.get_quest_log_leader_board(objective_idx, i)
-                        if type(board) ~= "table" then
-                            return false
-                        end
-                        -- is_completed is the client's own verdict — reconcile,
-                        -- never count (ADR 06 §8.1). Trust it when it says done.
-                        if board.is_completed == true then
-                            return true
-                        end
-                        -- Otherwise derive from the "Name: cur/need" counter. Note
-                        -- there are NO parentheses in the live format.
-                        local description = board.description
-                        if type(description) == "string" then
-                            local cur, max = string.match(description, "(%d+)%s*/%s*(%d+)")
-                            if cur and tonumber(max) and tonumber(max) > 0 then
-                                return tonumber(cur) >= tonumber(max)
-                            end
-                        end
+        -- Try to find quest by ID in our cached log
+        local num_entries = core.quests.get_num_quest_log_entries()
+        for i = 1, num_entries do
+            local info = core.quests.get_quest_log_title(i)
+            if info and info.quest_id == quest_entry then
+                local num_obj = core.quests.get_num_quest_leader_boards(i)
+                if objective_idx <= num_obj then
+                    -- Sylvannas returns a TABLE, not a string:
+                    --   { objective_type = "item",
+                    --     description = "Tough Wolf Meat: 0/8",
+                    --     is_completed = false }
+                    local board = core.quests.get_quest_log_leader_board(objective_idx, i)
+                    if type(board) ~= "table" then
                         return false
                     end
-                    break
+                    -- is_completed is the client's own verdict — reconcile,
+                    -- never count (ADR 06 §8.1). Trust it when it says done.
+                    if board.is_completed == true then
+                        return true
+                    end
+                    -- Otherwise derive from the "Name: cur/need" counter. Note
+                    -- there are NO parentheses in the live format.
+                    local description = board.description
+                    if type(description) == "string" then
+                        local cur, max = string.match(description, "(%d+)%s*/%s*(%d+)")
+                        if cur and tonumber(max) and tonumber(max) > 0 then
+                            return tonumber(cur) >= tonumber(max)
+                        end
+                    end
+                    return false
+                end
+                break
+            end
+        end
+    end
+    -- Fallback: check if quest is completed
+    return self:is_quest_completed(quest_entry)
+end
+
+-- ====================================================================
+-- Player stats facade (W2.5) - Sylvannas API compliant
+-- ====================================================================
+
+function ContextMethods:get_player_level()
+    -- Use get_local_player():get_level() (Sylvannas API)
+    local player = UnitHelper.get_local_player()
+    if player and player.get_level then
+        local ok, level = pcall(player.get_level, player)
+        if ok and tonumber(level) then
+            return level
+        end
+    end
+    return 1
+end
+
+function ContextMethods:get_player_class()
+    -- get_local_player():get_class() returns a numeric class_id (Sylvannas API);
+    -- map it to the Title-Case class name that ClassIs conditions compare against.
+    local player = UnitHelper.get_local_player()
+    if player and player.get_class then
+        local ok, class = pcall(player.get_class, player)
+        if ok and class ~= nil then
+            if type(class) == "number" then
+                return CLASS_ID_TO_NAME[class] or "Unknown"
+            end
+            -- Defensive: some builds/mocks may already return a name string.
+            return class
+        end
+    end
+    return "Unknown"
+end
+
+function ContextMethods:get_player_race()
+    -- Use get_local_player():get_race() (Sylvannas API)
+    local player = UnitHelper.get_local_player()
+    if player and player.get_race then
+        local ok, race = pcall(player.get_race, player)
+        if ok and race then
+            return race
+        end
+    end
+    return "Unknown"
+end
+
+function ContextMethods:get_player_faction()
+    -- Fallback: derive from race
+    local race = self:get_player_race()
+    local alliance_races = { Human = true, Dwarf = true, NightElf = true, Gnome = true, Draenei = true }
+    local horde_races = { Orc = true, Undead = true, Tauren = true, Troll = true, BloodElf = true }
+    if alliance_races[race] then return "Alliance" end
+    if horde_races[race] then return "Horde" end
+    return "Neutral"
+end
+
+-- ====================================================================
+-- Inventory facade (W2.5) - Sylvannas API compliant
+-- ====================================================================
+
+function ContextMethods:get_item_count(item_entry)
+    -- Check player's equipped items for item count (Sylvannas API)
+    local player = UnitHelper.get_local_player()
+    if player and player.get_equipped_items then
+        local ok, items = pcall(player.get_equipped_items, player)
+        if ok and items then
+            local count = 0
+            for _, slot_info in ipairs(items) do
+                if slot_info.object and slot_info.object.get_item_id then
+                    local ok2, id = pcall(slot_info.object.get_item_id, slot_info.object)
+                    if ok2 and tostring(id) == tostring(item_entry) then
+                        count = count + 1
+                    end
                 end
             end
+            return count
         end
-        -- Fallback: check if quest is completed
-        return self:is_quest_completed(quest_entry)
     end
-
-    -- ====================================================================
-    -- Player stats facade (W2.5) - Sylvannas API compliant
-    -- ====================================================================
-
-    function ctx:get_player_level()
-        -- Use get_local_player():get_level() (Sylvannas API)
-        local player = UnitHelper.get_local_player()
-        if player and player.get_level then
-            local ok, level = pcall(player.get_level, player)
-            if ok and tonumber(level) then
-                return level
-            end
-        end
-        return 1
-    end
-
-    function ctx:get_player_class()
-        -- get_local_player():get_class() returns a numeric class_id (Sylvannas API);
-        -- map it to the Title-Case class name that ClassIs conditions compare against.
-        local player = UnitHelper.get_local_player()
-        if player and player.get_class then
-            local ok, class = pcall(player.get_class, player)
-            if ok and class ~= nil then
-                if type(class) == "number" then
-                    return CLASS_ID_TO_NAME[class] or "Unknown"
-                end
-                -- Defensive: some builds/mocks may already return a name string.
-                return class
-            end
-        end
-        return "Unknown"
-    end
-
-    function ctx:get_player_race()
-        -- Use get_local_player():get_race() (Sylvannas API)
-        local player = UnitHelper.get_local_player()
-        if player and player.get_race then
-            local ok, race = pcall(player.get_race, player)
-            if ok and race then
-                return race
-            end
-        end
-        return "Unknown"
-    end
-
-    function ctx:get_player_faction()
-        -- Fallback: derive from race
-        local race = ctx:get_player_race()
-        local alliance_races = { Human = true, Dwarf = true, NightElf = true, Gnome = true, Draenei = true }
-        local horde_races = { Orc = true, Undead = true, Tauren = true, Troll = true, BloodElf = true }
-        if alliance_races[race] then return "Alliance" end
-        if horde_races[race] then return "Horde" end
-        return "Neutral"
-    end
-
-    -- ====================================================================
-    -- Inventory facade (W2.5) - Sylvannas API compliant
-    -- ====================================================================
-
-    function ctx:get_item_count(item_entry)
-        -- Check player's equipped items for item count (Sylvannas API)
-        local player = UnitHelper.get_local_player()
-        if player and player.get_equipped_items then
-            local ok, items = pcall(player.get_equipped_items, player)
+    -- Check bags for item count
+    if core and core.inventory and core.inventory.get_items_in_bag then
+        -- A2: docs/SylvannasAPI/dev/api/core.md:990 documents get_items_in_bag(id: integer)
+        -- with NO self/method-call convention. Passing core.inventory as a leading arg put
+        -- it in the `id` parameter and dropped bag_id, so bag item counts were always 0 and
+        -- HasItem/ItemCountAtLeast blocked for the full MAX_CONDITION_WAIT.
+        for bag_id = 0, 4 do
+            local ok, items = pcall(core.inventory.get_items_in_bag, bag_id)
             if ok and items then
-                local count = 0
                 for _, slot_info in ipairs(items) do
                     if slot_info.object and slot_info.object.get_item_id then
                         local ok2, id = pcall(slot_info.object.get_item_id, slot_info.object)
                         if ok2 and tostring(id) == tostring(item_entry) then
-                            count = count + 1
-                        end
-                    end
-                end
-                return count
-            end
-        end
-        -- Check bags for item count
-        if core and core.inventory and core.inventory.get_items_in_bag then
-            -- A2: docs/SylvannasAPI/dev/api/core.md:990 documents get_items_in_bag(id: integer)
-            -- with NO self/method-call convention. Passing core.inventory as a leading arg put
-            -- it in the `id` parameter and dropped bag_id, so bag item counts were always 0 and
-            -- HasItem/ItemCountAtLeast blocked for the full MAX_CONDITION_WAIT.
-            for bag_id = 0, 4 do
-                local ok, items = pcall(core.inventory.get_items_in_bag, bag_id)
-                if ok and items then
-                    for _, slot_info in ipairs(items) do
-                        if slot_info.object and slot_info.object.get_item_id then
-                            local ok2, id = pcall(slot_info.object.get_item_id, slot_info.object)
-                            if ok2 and tostring(id) == tostring(item_entry) then
-                                return 1
-                            end
+                            return 1
                         end
                     end
                 end
             end
         end
-        return 0
     end
+    return 0
+end
 
-    function ctx:get_money()
-        -- Use core.inventory.get_gold() (Sylvannas API)
-        if core and core.inventory and core.inventory.get_gold then
-            local ok, copper = pcall(core.inventory.get_gold, core.inventory)
-            if ok and tonumber(copper) then
-                return copper
-            end
+function ContextMethods:get_money()
+    -- Use core.inventory.get_gold() (Sylvannas API)
+    if core and core.inventory and core.inventory.get_gold then
+        local ok, copper = pcall(core.inventory.get_gold, core.inventory)
+        if ok and tonumber(copper) then
+            return copper
         end
-        return 0
     end
+    return 0
+end
 
-    -- ====================================================================
-    -- Skill / Reputation / Cooldown facade (W2.5) - Sylvannas API compliant
-    -- ====================================================================
+-- ====================================================================
+-- Skill / Reputation / Cooldown facade (W2.5) - Sylvannas API compliant
+-- ====================================================================
 
-    function ctx:get_skill_level(skill_name)
-        -- Sylvannas doesn't have a direct skill level API, return 0
-        return 0
-    end
+function ContextMethods:get_skill_level(skill_name)
+    -- Sylvannas doesn't have a direct skill level API, return 0
+    return 0
+end
 
-    function ctx:is_item_ready(item_entry)
-        -- Use object's get_item_cooldown method (Sylvannas API)
-        local player = UnitHelper.get_local_player()
-        if player and player.get_item_cooldown then
-            local ok, cd = pcall(player.get_item_cooldown, player, item_entry)
-            if ok and cd and tonumber(cd) and cd > 0 then
-                return false
-            end
+function ContextMethods:is_item_ready(item_entry)
+    -- Use object's get_item_cooldown method (Sylvannas API)
+    local player = UnitHelper.get_local_player()
+    if player and player.get_item_cooldown then
+        local ok, cd = pcall(player.get_item_cooldown, player, item_entry)
+        if ok and cd and tonumber(cd) and cd > 0 then
+            return false
         end
-        return true -- Assume ready if no API or no cooldown
+    end
+    return true -- Assume ready if no API or no cooldown
+end
+
+function ContextMethods:get_reputation(faction_id)
+    -- Sylvannas doesn't have a direct reputation getter in core.quests
+    -- Would need to use quest APIs or return 0
+    return 0
+end
+
+--- Build (or refresh) this profile's execution context.
+---
+--- F3: this used to allocate a brand-new ctx table AND ~20 fresh method closures on every
+--- call — once per tick from `_execute_running`/`_execute_dry_run`/`_confirm_nav_arrival`, and
+--- a SECOND time in the same tick from `_resolve_nav_target`'s zone-destination branch when
+--- called via `_handle_blocked`. The closures are now a shared prototype (`ContextMethods`,
+--- above) attached once via metatable. The ctx table itself is now cached on the profile
+--- instance (`self._ctx`) and reused across calls — only the fields that can legitimately
+--- change are refreshed on each call:
+---   - `persist` semantics are UNCHANGED: still `self._action_state`, lazily created once and
+---     never replaced, so action state (e.g. kill tallies, in-flight chase target) still
+---     survives across every call exactly as before.
+---   - the quest-log cache (`_completed_quests`/`_active_quests`/`_quest_log_dirty`) is reset
+---     to force a fresh `_refresh_quest_log()` on first access THIS call, preserving the
+---     original "refresh at most once per execution" behavior.
+function RuntimeProfile:create_context()
+    self._action_state = self._action_state or { kill_counts = {} }
+
+    local ctx = self._ctx
+    if not ctx then
+        ctx = setmetatable({}, ContextMethods)
+        self._ctx = ctx
     end
 
-    function ctx:get_reputation(faction_id)
-        -- Sylvannas doesn't have a direct reputation getter in core.quests
-        -- Would need to use quest APIs or return 0
-        return 0
-    end
+    ctx.variables = self._variables
+    ctx.query = self._query
+    ctx.nav = self._nav                 -- W3.3: NavAdapter for movement
+    -- Shared app bus, so a Kill action can request engagement from the combat module.
+    ctx.event_bus = self._event_bus
+    ctx.blackboard = self._blackboard
+    -- Action state that must SURVIVE context recreation/reuse (see docstring above).
+    ctx.persist = self._action_state
+
+    -- Quest log tracking caches (W2.3, W2.4) — reset every call so a stale answer from a
+    -- previous tick is never reused; _refresh_quest_log() lazily repopulates on first access.
+    ctx._completed_quests = {}  -- { [quest_entry] = true }
+    ctx._active_quests = {}     -- { [quest_entry] = true }
+    ctx._quest_log_dirty = true -- refresh on next query
 
     return ctx
 end
@@ -1046,7 +1074,7 @@ function RuntimeProfile:_log_event(event_type, data)
         self._event_bus:publish("questing:log", entry)
     end
     -- Update blackboard
-    self._blackboard:set("questing.last_log", entry)
+    self._blackboard:set("module.questing.last_log", entry)
 end
 
 -- ====================================================================
@@ -1114,9 +1142,9 @@ function RuntimeProfile:_execute_running()
         status, msg = RuntimeAction.execute(action, ctx)
     end
 
-    self._blackboard:set("questing.current_operation", self._current_operation_idx)
-    self._blackboard:set("questing.current_status", status)
-    self._blackboard:set("questing.current_action", action and action.type or "unknown")
+    self._blackboard:set("module.questing.current_operation", self._current_operation_idx)
+    self._blackboard:set("module.questing.current_status", status)
+    self._blackboard:set("module.questing.current_action", action and action.type or "unknown")
 
     if status == "success" then
         self:_log_event("action_success", { action_type = action and action.type, msg = msg })
@@ -1205,8 +1233,9 @@ function RuntimeProfile:_execute_running()
     elseif status == "blocked" then
         self:_log_event("action_blocked", { action_type = action and action.type, msg = msg })
 
-        -- Enter navigation recovery (W4.2)
-        return self:_handle_blocked(action)
+        -- Enter navigation recovery (W4.2). Pass the ctx already built above for this tick so
+        -- _resolve_nav_target's zone-destination branch does not build a second one (F3).
+        return self:_handle_blocked(action, ctx)
 
     elseif status == "failed" then
         self:_log_event("action_failed", { action_type = action and action.type, msg = msg })
@@ -1296,7 +1325,7 @@ function RuntimeProfile:_execute_navigating()
 
     -- Poll nav
     local state, progress = self._nav:poll()
-    self._blackboard:set("questing.nav_state", state)
+    self._blackboard:set("module.questing.nav_state", state)
 
     if state == "arrived" then
         self._nav:stop("arrived")
@@ -1407,7 +1436,10 @@ end
 --- Called when an action returns "blocked".
 --- Attempts to resolve a navigation target from the action payload
 --- and starts NavAdapter movement. Transitions to "navigating" state.
-function RuntimeProfile:_handle_blocked(action)
+--- @param ctx table|nil Optional pre-built context for this tick (F3: avoids a redundant
+---        create_context() call inside _resolve_nav_target's zone-destination branch when
+---        the caller already built one this tick).
+function RuntimeProfile:_handle_blocked(action, ctx)
     -- If nav is already active (action handler started it), just poll
     if self._nav:is_active() then
         self._state = "navigating"
@@ -1418,7 +1450,7 @@ function RuntimeProfile:_handle_blocked(action)
     end
 
     -- Resolve target position from action payload
-    local target_pos = self:_resolve_nav_target(action)
+    local target_pos = self:_resolve_nav_target(action, ctx)
     if not target_pos then
         -- Can't navigate: increment retries
         self._current_action_retries = self._current_action_retries + 1
@@ -1458,7 +1490,9 @@ end
 
 --- Resolve a navigation target from an action's payload.
 --- Returns {x, y, z} or nil.
-function RuntimeProfile:_resolve_nav_target(action)
+--- @param ctx table|nil Optional pre-built context (F3) — reused for zone-destination lookups
+---        instead of calling create_context() a second time in the same tick.
+function RuntimeProfile:_resolve_nav_target(action, ctx)
     if not action or not action.payload then return nil end
     local p = action.payload
 
@@ -1490,8 +1524,10 @@ function RuntimeProfile:_resolve_nav_target(action)
 
     -- 5. Zone destination string (e.g. "Elwynn Forest")
     if p.destination and type(p.destination) == "string" then
-        -- Create a temporary context for zone waypoint resolution
-        local ctx = self:create_context()
+        -- F3: reuse the caller-provided context when available instead of building a second
+        -- one for this same tick; only fall back to create_context() when called standalone
+        -- (e.g. from _confirm_nav_arrival, a different tick/state than the "blocked" handler).
+        ctx = ctx or self:create_context()
         return ctx:get_zone_waypoint(p.destination)
     end
 

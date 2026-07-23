@@ -29,8 +29,8 @@ end
 -- Quest-log desync sync (C5)
 --
 -- The cockpit's "is it lying to me?" panel (runner_state.lua sync) compares
--- questing.tracked_quests against questing.quest_log, but nothing ever wrote either
--- blackboard key: both defaulted to {} and the panel always reported ok=true. This
+-- module.questing.tracked_quests against module.questing.quest_log, but nothing ever wrote
+-- either blackboard key: both defaulted to {} and the panel always reported ok=true. This
 -- module owns writing them from data the executor already exposes, WITHOUT editing
 -- runtime_profile.lua:
 --   - tracked_quests: replayed from the compiled profile's own AcceptQuest/TurnInQuest
@@ -130,15 +130,15 @@ function QuestingModule:initialize(profile_json_path)
         return false
     end
     self._enabled = true
-    self._blackboard:set("questing.enabled", true)
+    self._blackboard:set("module.questing.enabled", true)
     return true
 end
 
 --- Refresh the quest-log desync inputs (C5) so the cockpit's sync panel reflects reality
 --- instead of two blackboard keys nothing ever wrote.
 function QuestingModule:_refresh_quest_sync()
-    self._blackboard:set("questing.tracked_quests", tracked_quests_from_profile(self._executor))
-    self._blackboard:set("questing.quest_log", real_quest_log(self._executor))
+    self._blackboard:set("module.questing.tracked_quests", tracked_quests_from_profile(self._executor))
+    self._blackboard:set("module.questing.quest_log", real_quest_log(self._executor))
 end
 
 function QuestingModule:tick(delta)
@@ -156,8 +156,8 @@ function QuestingModule:tick(delta)
     end
 
     local status, message = self._executor:execute()
-    self._blackboard:set("questing.status", status)
-    self._blackboard:set("questing.message", message)
+    self._blackboard:set("module.questing.status", status)
+    self._blackboard:set("module.questing.message", message)
 
     -- Liveness marker: record when the run last actually moved forward, so the cockpit can tell
     -- a healthy wait from a wedged one.
@@ -175,7 +175,7 @@ function QuestingModule:tick(delta)
 
     if status == "finished" then
         self._enabled = false
-        self._blackboard:set("questing.enabled", false)
+        self._blackboard:set("module.questing.enabled", false)
         self._event_bus:publish("questing:finished", {
             path = self._executor._json_path
         })
@@ -184,7 +184,7 @@ end
 
 function QuestingModule:shutdown()
     self._enabled = false
-    self._blackboard:set("questing.enabled", false)
+    self._blackboard:set("module.questing.enabled", false)
 end
 
 function QuestingModule:is_enabled()
@@ -212,12 +212,12 @@ end
 --- Halt execution while keeping the executor, so progress is not lost.
 function QuestingModule:pause()
     self._paused = true
-    self._blackboard:set("questing.paused", true)
+    self._blackboard:set("module.questing.paused", true)
 end
 
 function QuestingModule:resume()
     self._paused = false
-    self._blackboard:set("questing.paused", false)
+    self._blackboard:set("module.questing.paused", false)
 end
 
 function QuestingModule:is_paused()
@@ -229,7 +229,7 @@ function QuestingModule:stop()
     self._enabled = false
     self._paused = false
     self._executor = nil
-    self._blackboard:set("questing.enabled", false)
+    self._blackboard:set("module.questing.enabled", false)
     self._event_bus:publish("questing:stopped", {})
 end
 
@@ -281,8 +281,8 @@ function QuestingModule:get_view()
         last_progress_at = self._last_progress_at,
         deaths = self._deaths,
         guardrails = self._guardrails,
-        tracked_quests = self._blackboard:get("questing.tracked_quests", nil),
-        quest_log = self._blackboard:get("questing.quest_log", nil),
+        tracked_quests = self._blackboard:get("module.questing.tracked_quests", nil),
+        quest_log = self._blackboard:get("module.questing.quest_log", nil),
     })
 end
 

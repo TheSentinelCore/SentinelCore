@@ -160,7 +160,7 @@ function M.test_get_view_without_executor_reads_idle()
 end
 
 -- ============================================================================
--- Quest-log desync wiring (C5) — questing.tracked_quests / questing.quest_log were read
+-- Quest-log desync wiring (C5) — module.questing.tracked_quests / module.questing.quest_log were read
 -- everywhere and written nowhere, so the cockpit's "is it lying to me?" panel always read
 -- ok=true. These use a REAL RuntimeProfile (not the tick-only fake_executor above) so the
 -- desync is computed from the exact same profile-replay and quest-log-refresh logic the
@@ -229,12 +229,12 @@ function M.test_quest_sync_defaults_are_written_not_left_as_default_ok()
     m._executor = executor_that_accepted_quest_33()
     m:_refresh_quest_sync()
 
-    local tracked = bb:get("questing.tracked_quests", nil)
-    T.assert_true(tracked ~= nil, "questing.tracked_quests must be written by the module")
+    local tracked = bb:get("module.questing.tracked_quests", nil)
+    T.assert_true(tracked ~= nil, "module.questing.tracked_quests must be written by the module")
     T.assert_equal(#tracked, 1, "one accepted quest is tracked")
 
-    local qlog = bb:get("questing.quest_log", nil)
-    T.assert_true(qlog ~= nil, "questing.quest_log must be written by the module")
+    local qlog = bb:get("module.questing.quest_log", nil)
+    T.assert_true(qlog ~= nil, "module.questing.quest_log must be written by the module")
 end
 
 local tests = {

@@ -110,12 +110,28 @@ local function clear_module_cache()
     end
 end
 
+-- F1: `clear_module_cache()` used to run unconditionally at the top of `ensure_initialized`,
+-- BEFORE the pcall, with no state tracking beyond `initialized`. Since `initialized` only
+-- flips true on SUCCESS, a single init failure meant every subsequent frame (this is called
+-- from every registered callback, ~60/s) nil'd out ~50 entries in `package.loaded` and forced
+-- a full re-`require` of the runtime tree before even attempting init again — indistinguishable
+-- from a client hang. The cache only needs clearing ONCE per script load (to pick up a
+-- hot-reloaded source tree), not once per failed retry. `_cache_cleared` tracks that; the
+-- explicit `reload()` path below still clears unconditionally, since that is a deliberate
+-- "pick up new code" request, not a retry loop.
+local _cache_cleared = false
+local _cache_clear_count = 0 -- exposed for offline testing only (F1 regression guard)
+
 local function ensure_initialized()
     if initialized and app then
         return true
     end
 
-    clear_module_cache()
+    if not _cache_cleared then
+        clear_module_cache()
+        _cache_cleared = true
+        _cache_clear_count = _cache_clear_count + 1
+    end
 
     local ok, result = pcall(function()
         local next_app = SentinelApp:new()
@@ -172,6 +188,8 @@ _G.Sentinel = {
         initialized = false
         last_init_error = nil
         clear_module_cache()
+        _cache_cleared = true -- already cleared above; ensure_initialized must not clear again
+        _cache_clear_count = _cache_clear_count + 1
         local ok, result = pcall(function()
             local next_app = SentinelApp:new()
             next_app:initialize()
@@ -294,4 +312,9 @@ return {
     -- Exposed for offline tests only (tests/test_main_diagnostics.lua): lets the diagnostics
     -- sink be exercised against a real EventBus without booting the injector-only IziBridge.
     _wire_diagnostics_for_test = wire_diagnostics,
+    -- Exposed for offline tests only (F1 regression guard, tests/test_main_diagnostics.lua):
+    -- lets a test drive the real ensure_initialized() retry path and observe how many times
+    -- the module cache actually got cleared.
+    _ensure_initialized_for_test = ensure_initialized,
+    _cache_clear_count_for_test = function() return _cache_clear_count end,
 }

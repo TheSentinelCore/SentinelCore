@@ -242,6 +242,36 @@ function M.run()
     end
     sensor:refresh(nil, 0)
     T.assert_equal(recompute_calls, 1, "proximity sensor should recompute counts on the first frame, not the third")
+
+    -- Test 8 (F4): _find_attacker's get_all_objects scan must be cached for the duration of
+    -- one tick (keyed by blackboard system.now_ms, the module's own per-frame clock) so a
+    -- second lookup within the same tick does not pay for a second full scan, while a genuinely
+    -- new tick still gets a fresh one.
+    local bb8 = make_blackboard()
+    local bus8 = EventBus:new()
+    local combat8 = SentinelCombat:new(bus8, bb8, nav)
+    combat8:initialize()
+    bb8:set("system.now_ms", 5000)
+    bb8:set("player.object", player)
+
+    local scan_count = 0
+    local prev_core8 = core
+    core = {
+        object_manager = {
+            get_all_objects = function()
+                scan_count = scan_count + 1
+                return {}
+            end,
+        },
+    }
+    combat8:_find_attacker()
+    combat8:_find_attacker()
+    T.assert_equal(scan_count, 1, "two lookups within the same tick (same system.now_ms) must share one scan")
+
+    bb8:set("system.now_ms", 6000)
+    combat8:_find_attacker()
+    T.assert_equal(scan_count, 2, "a lookup on a new tick (system.now_ms changed) must get a fresh scan")
+    core = prev_core8
 end
 
 return M
