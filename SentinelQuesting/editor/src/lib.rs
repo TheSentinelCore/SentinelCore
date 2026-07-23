@@ -718,7 +718,10 @@ mod tests {
         let mut op = Operation::new("op".to_string());
         op.actions.push(Action {
             id: uuid::Uuid::new_v4(), enabled: true, condition: None, class_restriction: None, note: None,
-            payload: ActionPayload::Condition(ConditionAction { expression: "NotARealPredicate(1)".to_string() }),
+            payload: ActionPayload::Condition(ConditionAction {
+                expression: "NotARealPredicate(1)".to_string(),
+                role: sentinel_models::authoring::ConditionRole::Completion,
+            }),
         });
         project.operations.push(op);
         let result = EditorApi::compile_project_inner(&project).unwrap();

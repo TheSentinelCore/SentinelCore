@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use sentinel_models::authoring::{
-    Action, ActionPayload, AcceptQuestAction, CommentAction, ConditionAction, Faction,
-    FlightAction, HearthAction, ImportMetadata, KillTargetAction, LearnFlightPathAction, NpcRole,
-    NPCReference, Operation, Position, Project, QuestReference, Severity, TrainerAction,
+    Action, ActionPayload, AcceptQuestAction, CommentAction, ConditionAction, ConditionRole,
+    Faction, FlightAction, HearthAction, ImportMetadata, KillTargetAction, LearnFlightPathAction,
+    NpcRole, NPCReference, Operation, Position, Project, QuestReference, Severity, TrainerAction,
     TravelAction, TurnInQuestAction, UseItemAction, VendorAction, Diagnostic,
 };
 use sentinel_queryclient::{NpcDetail, QuestDetail, QueryClient, QueryClientError, WorldPos};
@@ -370,6 +370,19 @@ fn gating_condition_dsl(cmd_name: &str, args: &[String]) -> Option<String> {
     }
 }
 
+/// The role a gating command's condition plays in step progression (PR5a). `complete`/
+/// `collect`/`itemcount` are wait-until-true completion gates; the `isX` family only decides
+/// whether the step applies at all. See [`ConditionRole`].
+fn condition_role_for(cmd_name: &str) -> ConditionRole {
+    match cmd_name {
+        "complete" | "collect" | "itemcount" => ConditionRole::Completion,
+        "isOnQuest" | "isQuestComplete" | "isQuestTurnedIn" | "isQuestAvailable" => {
+            ConditionRole::Applicability
+        }
+        _ => unreachable!("cmd_name checked against GATING_COMMANDS by the caller"),
+    }
+}
+
 /// Parse every comma-separated arg as a quest ID, lowering through `predicate` into a §23
 /// infix-`||` chain: RestedXP quest gates commonly list several IDs read as "any of these"
 /// (round-3 finding); one ID yields the unchanged single string. `||` is the grammar's OR form
@@ -722,7 +735,10 @@ async fn build_step_actions(
                             condition: None,
                             class_restriction: None,
                             note: cmd.note.clone(),
-                            payload: ActionPayload::Condition(ConditionAction { expression }),
+                            payload: ActionPayload::Condition(ConditionAction {
+                                expression,
+                                role: condition_role_for(cmd.name.as_str()),
+                            }),
                         });
                     }
                     None => {

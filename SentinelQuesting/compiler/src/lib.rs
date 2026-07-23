@@ -198,7 +198,7 @@ fn resolve_action(
                 });
                 RuntimeCondition::AlwaysTrue
             });
-            RuntimeAction::Condition(RuntimeConditionAction { condition })
+            RuntimeAction::Condition(RuntimeConditionAction { condition, role: cond.role })
         }
         ActionPayload::SetVariable(sv) => {
             RuntimeAction::SetVariable(RuntimeSetVariable {

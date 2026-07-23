@@ -111,6 +111,27 @@ Rationale: PR1 (7 reqs, 6 importer files + new `coverage.rs`) and PR2 (new DSL p
 - [x] 4.2 GREEN `SentinelQuesting/compiler/src/lib.rs`: resolve via `project.object_library` (uuid→entry map, mirrors the NPC-resolution path) instead of `object_entry: 0`; unresolved → `UNRESOLVED_OBJECT` diagnostic + `CompileReport.unresolved` tally, falls back to `0` (never a guessed entry) (CL2)
 - [ ] 4.3–4.5 MOVED to PR5 (see below) — do not implement here.
 
+## PR5a: Compiler/Importer — Condition ROLE Tagging (Rust half of gating; maintainer decision 2026-07-22)
+
+Design finding during PR5 design pass: the runtime does not actually gate on conditions —
+`execute_condition` returns success/skipped and `_execute_running` advances the step on either
+outcome, so a `Condition` action never blocks progression. Fix, split in two: this unit tags
+each gating condition with a `ConditionRole` (`Completion` | `Applicability`) so a follow-up Lua
+change (PR5b) can branch on it; the Lua execution-order half is out of scope here.
+
+- [x] 9.1 RED `SentinelQuesting/importer/tests/mapper.rs`: `well_formed_gating_commands_lower_to_typed_conditions` extended — `.complete`/`.collect`/`.itemcount` → `ConditionRole::Completion`; `.isOnQuest`/`.isQuestComplete`/`.isQuestTurnedIn`/`.isQuestAvailable` → `ConditionRole::Applicability`
+- [x] 9.2 RED `SentinelQuesting/compiler/tests/compiler.rs`: `condition_role_is_carried_through_to_the_runtime_action` — authoring `ConditionAction.role` survives §23 lowering onto `RuntimeConditionAction.role` unchanged
+- [x] 9.3 RED `SentinelQuesting/shared/src/authoring/action.rs`: `condition_action_without_role_field_deserializes_as_completion` — legacy JSON lacking `role` deserializes to `Completion` (serde `#[serde(default)]` back-compat)
+- [x] 9.4 GREEN `SentinelQuesting/shared/src/authoring/action.rs`: `ConditionRole` enum (`Completion` | `Applicability`, `Default = Completion`) + `ConditionAction.role` field (serde-defaulted), re-exported from `authoring/mod.rs`
+- [x] 9.5 GREEN `SentinelQuesting/shared/src/runtime/action.rs`: mirrored `RuntimeConditionAction.role: ConditionRole` field (serde-defaulted) — what the Lua runtime (PR5b) will read
+- [x] 9.6 GREEN `SentinelQuesting/importer/src/project_builder.rs`: `condition_role_for(cmd_name)` helper + wired into the `GATING_COMMANDS` match arm's `ConditionAction` construction
+- [x] 9.7 GREEN `SentinelQuesting/compiler/src/lib.rs`: `resolve_action`'s `ActionPayload::Condition` arm threads `cond.role` onto the constructed `RuntimeConditionAction` (§23 expression parsing itself untouched — PR2a `condition.rs` stays frozen)
+- [x] 9.8 Verify: full `cargo test` workspace run green (frozen PR2a condition-parser tests + all importer/compiler/editor tests unaffected); `editor/src/lib.rs`'s `compile_surfaces_unmapped_condition_diagnostic` test updated for the new required field, no behavior change
+
+DEFERRED (explicitly out of scope for PR5a):
+- Lua runtime execution of the role (the "waiting" status, `_execute_running` branching on `RuntimeConditionAction.role`) — PR5b, `sentinel/modules/questing/runtime_profile.lua` / `runtime_action.lua`.
+- `Action.class_restriction` → applicability guard (CL4, below) — unrelated concern, per-action-guard semantics need the structural operation/action-guard model designed separately; class_restriction stays captured-but-uncompiled.
+
 ## PR5: Compiler — Class Restriction as an Action-GUARD Field (CL4, maintainer decision 2026-07-22)
 
 Maintainer decision (2026-07-22, superseding the ClassIs-into-Condition-payload approach explored during PR2b apply): class gating is represented as a dedicated action-level GUARD field, not lowered into the `Condition` action's `RuntimeCondition` payload. `Action.class_restriction` remains UNCONSUMED by the compiler until this slice. Design/task details (guard field shape on `RuntimeAction`/`RuntimeOperation`, and any required `sentinel/modules/questing/runtime_action.lua` dispatch change) TBD — this section is a placeholder pending a design pass; do not start implementation from the bullets below without a fresh design review.

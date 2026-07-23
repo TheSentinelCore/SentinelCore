@@ -2,21 +2,25 @@
 
 use sentinel_compiler::Compiler;
 use sentinel_models::authoring::{
-    Action, ActionPayload, ConditionAction, GameObjectReference, LootObjectAction, NPCReference,
-    Operation, Position, VendorAction,
+    Action, ActionPayload, ConditionAction, ConditionRole, GameObjectReference, LootObjectAction,
+    NPCReference, Operation, Position, VendorAction,
 };
 use sentinel_models::authoring::new_project;
 use sentinel_models::runtime::{RuntimeAction, RuntimeCondition};
 use uuid::Uuid;
 
 fn condition_action(expression: &str) -> Action {
+    condition_action_with_role(expression, ConditionRole::Completion)
+}
+
+fn condition_action_with_role(expression: &str, role: ConditionRole) -> Action {
     Action {
         id: Uuid::new_v4(),
         enabled: true,
         condition: None,
         class_restriction: None,
         note: None,
-        payload: ActionPayload::Condition(ConditionAction { expression: expression.to_string() }),
+        payload: ActionPayload::Condition(ConditionAction { expression: expression.to_string(), role }),
     }
 }
 
@@ -105,6 +109,21 @@ fn recognized_condition_expression_lowers_to_typed_runtime_condition() {
     let (profile, _report) = Compiler::compile(&project).expect("compile ok");
     let RuntimeAction::Condition(c) = &profile.operations[0].actions[0] else { panic!("expected Condition") };
     assert_eq!(c.condition, RuntimeCondition::QuestCompleted(1234));
+}
+
+#[test]
+fn condition_role_is_carried_through_to_the_runtime_action() {
+    let mut project = new_project("test");
+    let mut op = Operation::new("test-op".to_string());
+    op.actions.push(condition_action_with_role("QuestCompleted(1234)", ConditionRole::Completion));
+    op.actions.push(condition_action_with_role("QuestAccepted(5624)", ConditionRole::Applicability));
+    project.operations.push(op);
+
+    let (profile, _report) = Compiler::compile(&project).expect("compile ok");
+    let RuntimeAction::Condition(c0) = &profile.operations[0].actions[0] else { panic!("expected Condition") };
+    let RuntimeAction::Condition(c1) = &profile.operations[0].actions[1] else { panic!("expected Condition") };
+    assert_eq!(c0.role, ConditionRole::Completion);
+    assert_eq!(c1.role, ConditionRole::Applicability);
 }
 
 #[test]
