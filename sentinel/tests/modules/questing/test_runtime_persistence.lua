@@ -259,6 +259,57 @@ function M.test_reconcile_starts_after_last_satisfied_anchor()
     _G.core.quests = nil
 end
 
+function M.test_reconcile_jumps_to_ready_turnin()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            { id = 1, actions = { { type = "TurnInQuest", payload = { quest_id = 10, npc_entry = 1 } } }, next_condition = "auto" },
+            { id = 2, actions = { { type = "Kill", payload = { creature_entries = { 5 } } } }, next_condition = "auto" },
+            { id = 3, actions = { { type = "TurnInQuest", payload = { quest_id = 20, npc_entry = 1 } } }, next_condition = "auto" },
+        },
+    })
+    -- Quest 10 rewarded; quest 20 unrewarded but sitting in the log with all
+    -- objectives complete — its kills (op 2) are proven done, only the turn-in remains.
+    _G.core.quests = {
+        is_quest_flagged_completed = function(qid) return qid == 10 end,
+        is_on_quest = function(qid) return qid == 20 end,
+        get_num_quest_log_entries = function() return 1 end,
+        get_quest_log_title = function(_) return { quest_id = 20, is_complete = true } end,
+    }
+    T.assert_equal(profile:_reconcile_start_operation(), 3,
+        "a log-complete quest must place us AT its turn-in, past its finished kills")
+
+    -- Same quest still mid-objectives: the kills are real work, start before them.
+    _G.core.quests.get_quest_log_title = function(_) return { quest_id = 20, is_complete = false } end
+    T.assert_equal(profile:_reconcile_start_operation(), 2,
+        "an incomplete quest must start at its kill operation, not skip it")
+    _G.core.quests = nil
+end
+
+function M.test_advance_reconciles_past_moot_kills()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            { id = 1, actions = { { type = "Comment", payload = { text = "a" } } }, next_condition = "auto" },
+            { id = 2, actions = { { type = "Kill", payload = { creature_entries = { 5 } } } }, next_condition = "auto" },
+            { id = 3, actions = { { type = "TurnInQuest", payload = { quest_id = 20, npc_entry = 1 } } }, next_condition = "auto" },
+        },
+    })
+    _G.core.quests = {
+        is_quest_flagged_completed = function(_) return false end,
+        is_on_quest = function(qid) return qid == 20 end,
+        get_num_quest_log_entries = function() return 1 end,
+        get_quest_log_title = function(_) return { quest_id = 20, is_complete = true } end,
+    }
+    profile._current_operation_idx = 1
+    profile:_advance_operation(profile._profile.operations[1])
+    T.assert_equal(profile._current_operation_idx, 3,
+        "finishing an operation must re-reconcile and jump past kills a log-complete quest already proves done")
+    _G.core.quests = nil
+end
+
 function M.test_operation_with_kills_skipped_when_quest_rewarded()
     written_files = {}
     local profile = create_profile(make_profile_ops())
@@ -366,6 +417,8 @@ local tests = {
     test_save_from_other_character_rejected = M.test_save_from_other_character_rejected,
     test_legacy_shared_save_rejected_when_character_known = M.test_legacy_shared_save_rejected_when_character_known,
     test_reconcile_starts_after_last_satisfied_anchor = M.test_reconcile_starts_after_last_satisfied_anchor,
+    test_reconcile_jumps_to_ready_turnin = M.test_reconcile_jumps_to_ready_turnin,
+    test_advance_reconciles_past_moot_kills = M.test_advance_reconciles_past_moot_kills,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,

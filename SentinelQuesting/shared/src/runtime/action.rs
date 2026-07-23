@@ -11,7 +11,7 @@ use uuid::Uuid;
 use super::{condition::RuntimeCondition, waypoint::RuntimeWaypoint};
 use crate::authoring::{ConditionRole, VariableValue};
 
-/// All 22 runtime action variants (see ADR `05` Part 4).
+/// All 23 runtime action variants (see ADR `05` Part 4).
 ///
 /// DeathSkip and DungeonMarker were removed from the enum because no authoring
 /// ActionPayload path existed to produce them — they were always lowered to
@@ -42,6 +42,7 @@ pub enum RuntimeAction {
     Flight(RuntimeFlight),
     Hearth(RuntimeHearth),
     LearnFlightPath(RuntimeLearnFlightPath),
+    AbandonQuest(RuntimeAbandonQuest),
 }
 
 /// A `RuntimeAction` plus an optional per-action class guard (CL4).
@@ -255,6 +256,14 @@ pub struct RuntimeHearth {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeLearnFlightPath {
     pub npc_entry: u32,
+}
+
+/// Drop a quest from the log. Emitted for guide steps that abandon breadcrumb or
+/// unfinishable quests, and used by the runtime's own recovery (e.g. freeing a slot in a
+/// full quest log before an AcceptQuest).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeAbandonQuest {
+    pub quest_id: u32,
 }
 
 

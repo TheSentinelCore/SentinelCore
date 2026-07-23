@@ -420,6 +420,23 @@ function RuntimeProfile:load()
     return nil, "no data file API"
 end
 
+--- Is this quest sitting in the log with all objectives complete (ready to turn in)?
+--- info.is_complete is the client's own verdict — reconcile, never count (ADR 06 §8.1).
+local function quest_ready_in_log(quest_id)
+    if not (core and core.quests and core.quests.get_num_quest_log_entries
+        and core.quests.get_quest_log_title) then
+        return false
+    end
+    local num = core.quests.get_num_quest_log_entries() or 0
+    for i = 1, num do
+        local ok, info = pcall(core.quests.get_quest_log_title, i)
+        if ok and info and not info.is_header and info.quest_id == quest_id then
+            return info.is_complete == true
+        end
+    end
+    return false
+end
+
 --- Classify one operation's observable quest work against LIVE game state.
 --- The server persists quest flags per character across sessions, so these answers are
 --- trustworthy for any character at any time (ADR 06 §8.1: reconcile, don't count).
@@ -428,6 +445,11 @@ end
 ---   "satisfied"    — has quest work and ALL of it is done (accept: active or rewarded;
 ---                    turn-in: rewarded). Kill/Loot/etc. riding in the same operation are
 ---                    considered served by those quests and do not block.
+---   "ready"        — every quest item is either done OR is a turn-in whose quest sits in
+---                    the log with all objectives complete. The kills BEFORE this op are
+---                    proven done; only the turn-in itself remains, so the route position
+---                    is THIS op, not past it. (Live-caught: quest 7 was 8/8 kobolds but
+---                    unrewarded, and the bot walked back to the kobold camp anyway.)
 ---   "unsatisfied"  — has quest work that is provably not done yet.
 ---   "unobservable" — no quest work to check (travel/kill/comment-only operation), or the
 ---                    quest APIs are unavailable.
@@ -439,6 +461,7 @@ function RuntimeProfile:_op_quest_status(op)
     local on_quest = core.quests.is_on_quest
 
     local saw_quest_work = false
+    local ready_turnin = false
     for _, a in ipairs(op.actions or {}) do
         local p = a.payload or {}
         if a.type == "AcceptQuest" and p.quest_id ~= nil then
@@ -451,9 +474,16 @@ function RuntimeProfile:_op_quest_status(op)
         elseif a.type == "TurnInQuest" and p.quest_id ~= nil then
             saw_quest_work = true
             local ok_r, done = pcall(rewarded, p.quest_id)
-            if not (ok_r and done) then return "unsatisfied" end
+            if not (ok_r and done) then
+                if quest_ready_in_log(p.quest_id) then
+                    ready_turnin = true
+                else
+                    return "unsatisfied"
+                end
+            end
         end
     end
+    if ready_turnin then return "ready" end
     return saw_quest_work and "satisfied" or "unobservable"
 end
 
@@ -482,6 +512,11 @@ function RuntimeProfile:_reconcile_start_operation()
         local status = self:_op_quest_status(op)
         if status == "satisfied" then
             start_idx = i + 1
+        elseif status == "ready" then
+            -- The work feeding this turn-in is done; the turn-in itself is not.
+            -- Jump straight TO this operation (skipping the kill ops before it).
+            start_idx = i
+            break
         elseif status == "unsatisfied" then
             break
         end
@@ -1690,6 +1725,22 @@ function RuntimeProfile:_advance_operation(op)
     else
         self._current_operation_idx = self._current_operation_idx + 1
     end
+
+    -- Re-reconcile at every operation boundary: the turn-in that just landed may prove a
+    -- whole later stretch of the route done (e.g. turning in quest 7 makes ops 5-6's
+    -- accept/turn-in satisfied and quest 33's kills log-complete, so the right next stop
+    -- is op 8's turn-in, not op 7's kobold camp). Forward-only — reconciliation can never
+    -- move the route backwards. Cost is a handful of client flag reads once per operation.
+    local reconciled = self:_reconcile_start_operation()
+    if reconciled > self._current_operation_idx then
+        self:_log_event("route_reconciled", {
+            from_operation = self._current_operation_idx,
+            to_operation = reconciled,
+        })
+        self._current_operation_idx = reconciled
+        self._current_action_idx = 1
+    end
+
     -- W5.3 — Auto-save after operation advance
     self:_save()
 end

@@ -331,6 +331,8 @@ function RuntimeAction.execute(action, ctx)
         return RuntimeAction.execute_escort(payload, ctx)
     elseif action_type == "Patrol" then
         return RuntimeAction.execute_patrol(payload, ctx)
+    elseif action_type == "AbandonQuest" then
+        return RuntimeAction.execute_abandon_quest(payload, ctx)
     else
         return "failed" -- Unknown action type
     end
@@ -1368,6 +1370,44 @@ end
 --- minimum_kills is reached. Delegates target acquisition/engagement to execute_kill so both
 --- paths share the same sticky-target, loot, chase, and engage-request logic (A3/A4/B3 fixes
 --- above apply here too).
+--- Drop a quest from the log via the documented three-step Sylvannas flow:
+--- select_quest_log_entry(index) → set_abandon_quest() → abandon_quest().
+--- Idempotent: not being on the quest (never accepted, or a previous attempt landed)
+--- reports success. "retry" (not "waiting") bounds a silently-failing abandon at
+--- MAX_RETRIES_PER_ACTION ticks instead of a 300s condition wait.
+function RuntimeAction.execute_abandon_quest(payload, ctx)
+    local quest_id = payload and payload.quest_id
+    if quest_id == nil then
+        return "failed", "AbandonQuest without quest_id"
+    end
+    if not (core and core.quests) then
+        return "retry"
+    end
+    if not is_on_quest(quest_id) then
+        return "success"
+    end
+    local q = core.quests
+    if not (q.get_num_quest_log_entries and q.get_quest_log_title
+        and q.select_quest_log_entry and q.set_abandon_quest and q.abandon_quest) then
+        return "retry"
+    end
+    local num = q.get_num_quest_log_entries() or 0
+    for i = 1, num do
+        local ok_t, info = pcall(q.get_quest_log_title, i)
+        if ok_t and info and not info.is_header and info.quest_id == quest_id then
+            pcall(q.select_quest_log_entry, i)
+            pcall(q.set_abandon_quest)
+            pcall(q.abandon_quest)
+            -- The client processes the abandon asynchronously; the retry path
+            -- re-enters here next tick and the is_on_quest check above confirms.
+            return "retry"
+        end
+    end
+    -- On the quest per is_on_quest but not found in the log listing — refresh race;
+    -- try again next tick.
+    return "retry"
+end
+
 function RuntimeAction.execute_grind(payload, ctx)
     local targets = payload.targets or payload.creature_entries
     local minimum_kills = payload.minimum_kills or payload.quantity or 1
