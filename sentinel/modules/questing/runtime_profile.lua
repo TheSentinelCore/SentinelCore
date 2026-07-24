@@ -555,6 +555,35 @@ function RuntimeProfile:_operation_already_done(op)
     return self:_op_quest_status(op) == "satisfied"
 end
 
+--- An ObjectiveComplete gate for a quest the player NEITHER has active NOR has completed is
+--- MOOT: the kills behind it serve a quest that isn't in the log, so the op can never make
+--- progress and must be skipped rather than ground forever (live-caught: after finishing
+--- Skirmish at Echo Ridge, reconciliation routed to a kill op gated on quest 6 — which the
+--- character never accepted — and the bot kept killing entry 103 for a quest it could not
+--- progress). Guides are linear (accept precedes kill), so "at a kill op without the quest"
+--- means the quest was skipped/class-guarded, never that its accept is still ahead. Only
+--- ObjectiveComplete gates can be moot; LevelAtLeast and the like are always relevant.
+function RuntimeProfile:_objective_gate_moot(condition)
+    if type(condition) ~= "table" or condition.type ~= "ObjectiveComplete" then
+        return false
+    end
+    local quest_id = type(condition.payload) == "table" and condition.payload[1] or nil
+    if not quest_id then return false end
+    -- Mootness can only be judged against a live quest API. Without BOTH checks available
+    -- and answering, default to NOT moot — never skip an op on missing information (the
+    -- offline harness has no core.quests, and a cold API read must not fake "never took it").
+    if not (core and core.quests and core.quests.is_on_quest
+        and core.quests.is_quest_flagged_completed) then
+        return false
+    end
+    local ok_on, on = pcall(core.quests.is_on_quest, quest_id)
+    if ok_on and on == true then return false end -- active → not moot
+    local ok_done, done = pcall(core.quests.is_quest_flagged_completed, quest_id)
+    if ok_done and done == true then return false end -- rewarded → handled by the met path
+    -- Only declare moot when BOTH reads succeeded and both were false.
+    return ok_on and ok_done
+end
+
 --- The inverse of _operation_gate_already_met: a farm operation whose Completion gate
 --- evaluates FALSE is provably PENDING — e.g. a kill op sitting at 3/10 that a failure
 --- cascade or wait-timeout advanced past (live-caught: nav/combat deadlock churned op 24
@@ -572,7 +601,9 @@ function RuntimeProfile:_operation_gate_unmet(op, ctx)
             local p = a.payload or {}
             if p.role == "Completion" and p.condition then
                 local ok, met = pcall(RuntimeAction.evaluate_condition, ctx, p.condition)
-                if not (ok and met == true) then
+                -- A moot gate (quest the player never took) is NOT provably-pending — the op
+                -- is skippable, not a rewind target.
+                if not (ok and met == true) and not self:_objective_gate_moot(p.condition) then
                     saw_gate_unmet = true
                 end
             end
@@ -607,7 +638,11 @@ function RuntimeProfile:_operation_gate_already_met(op, ctx)
                 saw_gate = true
                 local ok, met = pcall(RuntimeAction.evaluate_condition, ctx, p.condition)
                 if not (ok and met == true) then
-                    return false
+                    -- Unmet — but a gate for a quest the player never took is moot, and the
+                    -- op should be skipped rather than farmed forever.
+                    if not self:_objective_gate_moot(p.condition) then
+                        return false
+                    end
                 end
             end
         end

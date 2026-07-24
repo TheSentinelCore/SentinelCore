@@ -761,6 +761,70 @@ function M.test_opportunistic_kill_ignores_far_target()
     UH.get_nearest_creature, UH.get_local_player = saved_gnc, saved_glp
 end
 
+function M.test_moot_quest_gate_op_is_skipped()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Kill", payload = { creature_entries = { 103 }, quantity = 5 } },
+                    { type = "Condition", payload = { role = "Completion", condition = { type = "ObjectiveComplete", payload = { 6, 1 } } } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    -- Quest 6 is NEITHER active NOR completed — the character never took it (live-caught:
+    -- reconciliation landed on op 49's kills for quest 6 after finishing quest 21).
+    _G.core.quests = {
+        is_on_quest = function() return false end,
+        is_quest_flagged_completed = function() return false end,
+        get_num_quest_log_entries = function() return 0 end,
+        get_quest_log_title = function() return nil end,
+        get_num_quest_leader_boards = function() return 0 end,
+    }
+    local ctx = profile:create_context()
+    T.assert_true(profile:_operation_gate_already_met(profile._profile.operations[1], ctx),
+        "a kill op gated on a quest the player never took is moot and must skip")
+    T.assert_false(profile:_operation_gate_unmet(profile._profile.operations[1], ctx),
+        "a moot gate must NOT be treated as provably-pending")
+    _G.core.quests = nil
+end
+
+function M.test_active_incomplete_quest_gate_is_not_moot()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Kill", payload = { creature_entries = { 103 }, quantity = 5 } },
+                    { type = "Condition", payload = { role = "Completion", condition = { type = "ObjectiveComplete", payload = { 6, 1 } } } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    -- Quest 6 ACTIVE but incomplete (3/5): real pending work, must NOT skip.
+    _G.core.quests = {
+        is_on_quest = function(qid) return qid == 6 end,
+        is_quest_flagged_completed = function() return false end,
+        get_num_quest_log_entries = function() return 1 end,
+        get_quest_log_title = function() return { quest_id = 6, is_complete = 0 } end,
+        get_num_quest_leader_boards = function() return 1 end,
+        get_quest_log_leader_board = function() return { objective_type = "monster", description = "x: 3/5", is_completed = false } end,
+    }
+    local ctx = profile:create_context()
+    T.assert_false(profile:_operation_gate_already_met(profile._profile.operations[1], ctx),
+        "an active, incomplete quest's kill op must NOT be skipped")
+    T.assert_true(profile:_operation_gate_unmet(profile._profile.operations[1], ctx),
+        "an active, incomplete farm gate IS provably pending")
+    _G.core.quests = nil
+end
+
 -- ============================================================================
 -- W5.2 — Serialization tests
 -- ============================================================================
@@ -1095,6 +1159,8 @@ local tests = {
     test_nav_idle_unconfirmed_exhausts_and_advances = M.test_nav_idle_unconfirmed_exhausts_and_advances,
     test_opportunistic_kill_jumps_to_kill_when_target_in_range = M.test_opportunistic_kill_jumps_to_kill_when_target_in_range,
     test_opportunistic_kill_ignores_far_target = M.test_opportunistic_kill_ignores_far_target,
+    test_moot_quest_gate_op_is_skipped = M.test_moot_quest_gate_op_is_skipped,
+    test_active_incomplete_quest_gate_is_not_moot = M.test_active_incomplete_quest_gate_is_not_moot,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,
