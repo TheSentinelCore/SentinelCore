@@ -978,8 +978,11 @@ async fn build_step_actions(
                         note: cmd.note.clone(),
                         payload: ActionPayload::Vendor(VendorAction {
                             npc,
-                            sell_grey: false,
-                            repair: false,
+                            // A `.vendor` stop in a leveling guide means "offload junk and
+                            // fix gear" — false defaults sent the bot to Goldshire's vendor
+                            // to sell nothing (live-caught).
+                            sell_grey: true,
+                            repair: true,
                             buy_items: vec![],
                             minimum_free_slots: None,
                         }),

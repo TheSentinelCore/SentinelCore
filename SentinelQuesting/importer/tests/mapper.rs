@@ -308,6 +308,15 @@ step
 
     let vendor_action = project.operations[0].actions.iter().find(|a| matches!(a.payload, ActionPayload::Vendor(_)));
     assert!(vendor_action.is_some(), "should have Vendor action");
+    // A `.vendor` stop in a leveling guide means "offload junk and fix gear", not a
+    // sightseeing visit — live-caught as the bot walking to Goldshire's vendor and
+    // selling nothing. Selling greys and repairing must be the default.
+    if let Some(action) = vendor_action {
+        if let ActionPayload::Vendor(v) = &action.payload {
+            assert!(v.sell_grey, "vendor stops must sell greys by default");
+            assert!(v.repair, "vendor stops must repair by default");
+        }
+    }
 }
 
 #[tokio::test]
