@@ -693,6 +693,74 @@ function M.test_nav_idle_unconfirmed_exhausts_and_advances()
     _G.core.object_manager.get_local_player = nil
 end
 
+function M.test_opportunistic_kill_jumps_to_kill_when_target_in_range()
+    written_files = {}
+    local RuntimeAction = require("modules/questing/runtime_action")
+    local UH = RuntimeAction.UnitHelper
+    local saved_gnc, saved_glp = UH.get_nearest_creature, UH.get_local_player
+    -- A target Kobold 10yd from the player: in engage range.
+    UH.get_nearest_creature = function() return { get_position = function() return { x = 10, y = 0, z = 0 } end } end
+    UH.get_local_player = function() return { get_position = function() return { x = 0, y = 0, z = 0 } end } end
+
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Travel", payload = { position = { world_x = 100, world_y = 100, world_z = 0 }, tolerance = 5 } },
+                    { type = "Travel", payload = { position = { world_x = 200, world_y = 200, world_z = 0 }, tolerance = 5 } },
+                    { type = "Kill", payload = { creature_entries = { 80 }, quantity = 12 } },
+                    { type = "Condition", payload = { role = "Completion", condition = { type = "ObjectiveComplete", payload = { 21, 1 } } } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    profile._state = "running"
+    profile._current_operation_idx = 1
+    profile._current_action_idx = 1 -- first lead-in Travel waypoint
+
+    profile:_execute_running()
+    T.assert_equal(profile._current_action_idx, 3,
+        "a target mob in range must make the bot jump to the Kill action, not walk the waypoints")
+
+    UH.get_nearest_creature, UH.get_local_player = saved_gnc, saved_glp
+end
+
+function M.test_opportunistic_kill_ignores_far_target()
+    written_files = {}
+    local RuntimeAction = require("modules/questing/runtime_action")
+    local UH = RuntimeAction.UnitHelper
+    local saved_gnc, saved_glp = UH.get_nearest_creature, UH.get_local_player
+    -- The only target is 200yd away: too far to engage, keep traveling.
+    UH.get_nearest_creature = function() return { get_position = function() return { x = 200, y = 0, z = 0 } end } end
+    UH.get_local_player = function() return { get_position = function() return { x = 0, y = 0, z = 0 } end } end
+
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Travel", payload = { position = { world_x = 100, world_y = 100, world_z = 0 }, tolerance = 5 } },
+                    { type = "Kill", payload = { creature_entries = { 80 }, quantity = 12 } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    profile._state = "running"
+    profile._current_operation_idx = 1
+    profile._current_action_idx = 1
+
+    profile:_execute_running()
+    T.assert_equal(profile._current_action_idx, 1,
+        "a far-away target must not trigger opportunistic engagement; the Travel keeps running")
+
+    UH.get_nearest_creature, UH.get_local_player = saved_gnc, saved_glp
+end
+
 -- ============================================================================
 -- W5.2 — Serialization tests
 -- ============================================================================
@@ -1025,6 +1093,8 @@ local tests = {
     test_unmet_gate_rewinds_save_that_skipped_kills = M.test_unmet_gate_rewinds_save_that_skipped_kills,
     test_gate_met_mid_kill_skips_operation = M.test_gate_met_mid_kill_skips_operation,
     test_nav_idle_unconfirmed_exhausts_and_advances = M.test_nav_idle_unconfirmed_exhausts_and_advances,
+    test_opportunistic_kill_jumps_to_kill_when_target_in_range = M.test_opportunistic_kill_jumps_to_kill_when_target_in_range,
+    test_opportunistic_kill_ignores_far_target = M.test_opportunistic_kill_ignores_far_target,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,

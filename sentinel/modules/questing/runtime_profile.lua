@@ -1459,6 +1459,45 @@ function RuntimeProfile:_log_event(event_type, data)
     self._blackboard:set("module.questing.last_log", entry)
 end
 
+-- Opportunistic engagement range. An operation that patrols a grind area with many Travel
+-- waypoints before its Kill action would otherwise walk right past the mobs it exists to kill
+-- (live-caught: op 44 walked through 20 Kobold Laborers without engaging any). While a Travel
+-- action runs, if the op's later Kill action targets a creature already this close, jump
+-- straight to the Kill — its sticky-target chase takes over from here and the remaining patrol
+-- waypoints are unnecessary.
+local OPPORTUNISTIC_KILL_RANGE = 40.0
+
+--- If `op` has a Kill action after `from_idx` whose target creatures include one within
+--- OPPORTUNISTIC_KILL_RANGE of the player, return that action's index; else nil. Cheap-ish:
+--- one nearest-creature scan, and only for Travel actions in an op that still has pending kills.
+function RuntimeProfile:_opportunistic_kill_index(op, from_idx)
+    if not (UnitHelper and UnitHelper.get_nearest_creature) then return nil end
+    local kill_idx, entries
+    for i = from_idx + 1, #(op.actions or {}) do
+        local a = op.actions[i]
+        if a and a.type == "Kill" then
+            kill_idx = i
+            entries = a.payload and a.payload.creature_entries
+            break
+        end
+    end
+    if not kill_idx or type(entries) ~= "table" or #entries == 0 then return nil end
+    local nearest = UnitHelper.get_nearest_creature(entries)
+    if not nearest or type(nearest.get_position) ~= "function" then return nil end
+    local player = UnitHelper.get_local_player()
+    if not player or type(player.get_position) ~= "function" then return nil end
+    local ok_c, cpos = pcall(nearest.get_position, nearest)
+    local ok_p, ppos = pcall(player.get_position, player)
+    if not (ok_c and ok_p and type(cpos) == "table" and type(ppos) == "table") then return nil end
+    local dx = (tonumber(ppos.x) or 0) - (tonumber(cpos.x) or 0)
+    local dy = (tonumber(ppos.y) or 0) - (tonumber(cpos.y) or 0)
+    local dz = (tonumber(ppos.z) or 0) - (tonumber(cpos.z) or 0)
+    if math.sqrt(dx * dx + dy * dy + dz * dz) <= OPPORTUNISTIC_KILL_RANGE then
+        return kill_idx
+    end
+    return nil
+end
+
 -- ====================================================================
 -- W4.1 — Running state: execute current action, handle outcomes
 -- ====================================================================
@@ -1533,6 +1572,24 @@ function RuntimeProfile:_execute_running()
         self:_advance_operation(op)
         self._current_action_idx = 1
         return "running", "completion gate already met, skipping operation"
+    end
+
+    -- Opportunistic kill: while walking a grind op's lead-in waypoints, if a target mob for
+    -- this op's Kill is already in engage range, stop walking and go kill it (live-caught:
+    -- the bot strolled through 20 Kobold Laborers to finish a 14-waypoint patrol first).
+    if action and action.type == "Travel" then
+        local kidx = self:_opportunistic_kill_index(op, self._current_action_idx)
+        if kidx then
+            self:_log_event("opportunistic_kill", {
+                operation = self._current_operation_idx,
+                from = self._current_action_idx,
+                to = kidx,
+            })
+            self._current_action_idx = kidx
+            self._current_action_retries = 0
+            if self._nav:is_active() then self._nav:stop("opportunistic_kill") end
+            return "running", "target in range, engaging instead of walking past"
+        end
     end
 
     local status, msg
