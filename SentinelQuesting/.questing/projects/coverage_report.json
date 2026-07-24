@@ -71,7 +71,7 @@
       "unresolved": 4
     },
     "condition": {
-      "typed": 18869,
+      "typed": 18951,
       "inert_preserved": 0,
       "unresolved": 0
     },
@@ -327,7 +327,7 @@
     },
     "xp": {
       "typed": 0,
-      "inert_preserved": 2133,
+      "inert_preserved": 2051,
       "unresolved": 0
     },
     "zone": {
@@ -342,8 +342,8 @@
     }
   },
   "totals": {
-    "typed": 90553,
-    "inert_preserved": 16401,
+    "typed": 90635,
+    "inert_preserved": 16319,
     "unresolved": 454
   }
 }
