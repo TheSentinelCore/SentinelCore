@@ -324,6 +324,9 @@ local test_modules = {
     "tests/core/test_bt",
     "tests/core/test_geometry",
 
+    -- Integrations
+    "tests/integrations/test_izi_bridge",
+
     -- Infrastructure (runtime sensors, nav, module registry)
     "tests/runtime/test_sensor_hub",
     "tests/runtime/test_nav_adapter",
