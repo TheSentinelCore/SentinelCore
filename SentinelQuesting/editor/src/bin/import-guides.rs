@@ -168,6 +168,9 @@ fn find_guide_files(dir: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
             }
         }
     }
+    // fs::read_dir order is unspecified; sort so batch imports are reproducible — the
+    // guide-file order decides which of two same-named blocks wins the base filename vs `-2`.
+    files.sort();
     Ok(files)
 }
 
@@ -352,6 +355,32 @@ mod tests {
 
         let files_on_disk = fs::read_dir(&output_dir).unwrap().count();
         assert_eq!(files_on_disk, 3, "written count must equal actual files on disk, no silent overwrite");
+    }
+
+    #[test]
+    fn find_guide_files_is_deterministically_sorted() {
+        // Batch import must be reproducible regardless of the filesystem's directory
+        // enumeration order: when two blocks (across different guide files) sanitize to the
+        // same project name, which one wins the base filename vs `-2` is decided purely by
+        // guide-file processing order. `fs::read_dir` yields entries in an unspecified order,
+        // so the order must be sorted to be stable across machines and runs.
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["c.lua", "a.lua", "b.lua"] {
+            fs::write(dir.path().join(name), "RXPGuides.RegisterGuide([[\n#name X\n]])").unwrap();
+        }
+        // Non-.lua files must be excluded regardless.
+        fs::write(dir.path().join("notes.txt"), "x").unwrap();
+
+        let files = find_guide_files(dir.path()).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["a.lua".to_string(), "b.lua".to_string(), "c.lua".to_string()],
+            "guide files must be processed in a stable, sorted order"
+        );
     }
 
     #[tokio::test]
