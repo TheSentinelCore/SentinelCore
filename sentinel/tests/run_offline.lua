@@ -366,11 +366,14 @@ local test_modules = {
     "tests/modules/questing/test_runner_state",
     "tests/modules/questing/test_module_control",
     "tests/modules/questing/test_runtime_persistence",
+    "tests/modules/questing/test_profile_chain",
     "tests/modules/questing/test_vendor_maintenance",
     "tests/modules/questing/test_runtime_nav",
     "tests/modules/questing/test_runtime_arch_polish",
     "tests/modules/questing/test_quest_objectives",
     "tests/modules/questing/test_kill_pursuit",
+    "tests/modules/questing/test_quest_log_space",
+    "tests/modules/questing/test_effect_verification",
 
     -- Shared libs
     "tests/shared/test_compat",
