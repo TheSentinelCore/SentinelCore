@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 SentinelCore is a monorepo for a World of Warcraft (TBC/retail) automation stack running on the
 **Project Sylvannas** injector. It has two halves: Lua that runs inside the game client
 (`sentinel/`, `SentinelNavClient/`) and Rust services + tooling that run outside it
-(`sentinel-questing/`, `SentinelQueryServer/`, `SentinelNavServer/`). The questing side follows a
+(`SentinelQuesting/`, `SentinelQueryServer/`, `SentinelNavServer/`). The questing side follows a
 **compile-before-execute** architecture — guides are imported, validated, and compiled into a
 resolved Runtime Profile JSON, and only that JSON is ever executed in-game.
 
@@ -37,8 +37,8 @@ Each suite exports either a `run()` function or `test*` functions; the runner ha
 Each Rust tree is its own workspace/package — `cargo` commands must be run from inside it.
 
 ```bash
-cd sentinel-questing && cargo test              # whole questing workspace
-cd sentinel-questing && cargo test -p sentinel-importer   # one crate
+cd SentinelQuesting && cargo test              # whole questing workspace
+cd SentinelQuesting && cargo test -p sentinel-importer   # one crate
 cd SentinelNavServer  && cargo test             # needs clang + C++14 (bindgen/FFI)
 cd SentinelQueryServer && cargo test
 ```
@@ -50,7 +50,7 @@ cd SentinelQueryServer && cargo test
 cd SentinelQueryServer && SENTINEL_DB=../tbcmangos.sqlite cargo run
 
 # Editor API — project CRUD/compile/validate/undo on 0.0.0.0:3031
-cd sentinel-questing && cargo run -p sentinel-editor
+cd SentinelQuesting && cargo run -p sentinel-editor
 #   env: SENTINEL_EDITOR_PORT, SENTINEL_PROJECTS_DIR
 
 # NavServer — pathfinding on 0.0.0.0:47110 (see SentinelNavServer/config.toml)
@@ -62,11 +62,11 @@ cd SentinelNavServer && cargo run --release -- --config config.toml
 ```bash
 # Batch-import RestedXP guides → Project JSON (offline, no QueryServer needed;
 # unresolved NPCs/quests surface as diagnostics to fix in the editor)
-cd sentinel-questing && cargo run -p sentinel-editor --bin import-guides -- \
+cd SentinelQuesting && cargo run -p sentinel-editor --bin import-guides -- \
     "../sentinel/docs/adr/restedxp guides" ".questing/projects"
 
 # Compile a Project JSON → Runtime Profile JSON
-cd sentinel-questing && cargo run -p sentinel-compiler --bin sentinel-compile -- \
+cd SentinelQuesting && cargo run -p sentinel-compiler --bin sentinel-compile -- \
     project.json profile.json
 ```
 
@@ -79,7 +79,7 @@ RestedXP guide → sentinel-importer → Project JSON → sentinel-validator
 ```
 
 The authoritative contracts live in `sentinel/docs/adr/01_ARCHITECTURE.md` and
-`05_Runtime_&_Execution Model.md`. Crate ownership (`sentinel-questing/Cargo.toml`):
+`05_Runtime_&_Execution Model.md`. Crate ownership (`SentinelQuesting/Cargo.toml`):
 
 | Crate (dir) | Package | Owns |
 | --- | --- | --- |
