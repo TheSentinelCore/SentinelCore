@@ -455,7 +455,36 @@ function M.test_finished_with_uncompiled_successor_finalizes()
     T.assert_equal(m:is_enabled(), false, "an uncompiled successor finalizes the run")
 end
 
+-- ============================================================================
+-- Vendor-maintenance known-vendor fallback — bags fill at remote grind spots
+-- where no vendor is visible; the detour must navigate to a known route vendor.
+-- ============================================================================
+
+function M.test_find_known_vendor_picks_nearest_by_route()
+    local m = new_module()
+    local ops = {}
+    for i = 1, 25 do ops[i] = { id = i, actions = {} } end
+    ops[5].actions = { { type = "Vendor", payload = { npc_entry = 100 } } }
+    ops[20].actions = { { type = "Vendor", payload = { npc_entry = 200 } } }
+    m._executor._profile = { operations = ops }
+    m._executor._current_operation_idx = 18
+
+    T.assert_equal(m:_find_known_vendor(), 200,
+        "the vendor whose op is nearest the current route position (op 20) must win over op 5")
+end
+
+function M.test_find_known_vendor_nil_without_any_vendor_action()
+    local m = new_module()
+    m._executor._profile = { operations = {
+        { id = 1, actions = { { type = "Kill", payload = { creature_entries = { 5 } } } } },
+    } }
+    m._executor._current_operation_idx = 1
+    T.assert_equal(m:_find_known_vendor(), nil, "no Vendor action anywhere must yield nil")
+end
+
 local tests = {
+    test_find_known_vendor_picks_nearest_by_route = M.test_find_known_vendor_picks_nearest_by_route,
+    test_find_known_vendor_nil_without_any_vendor_action = M.test_find_known_vendor_nil_without_any_vendor_action,
     test_finished_profile_advances_to_next_in_chain = M.test_finished_profile_advances_to_next_in_chain,
     test_finished_at_chain_end_finalizes_the_run = M.test_finished_at_chain_end_finalizes_the_run,
     test_finished_with_uncompiled_successor_finalizes = M.test_finished_with_uncompiled_successor_finalizes,

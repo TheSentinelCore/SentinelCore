@@ -122,8 +122,8 @@ function M.test_maintenance_fails_safe_without_vendor()
     T.assert_false(q:_run_vendor_maintenance(),
         "no visible vendor must NOT capture the tick — the route keeps moving")
     T.assert_equal(q._maintenance.state, "idle", "detour must stay idle without a vendor")
-    T.assert_equal(bb:get("module.questing.maintenance"), "triggered, no vendor visible",
-        "the cockpit must surface WHY maintenance is pending")
+    T.assert_equal(bb:get("module.questing.maintenance"), "triggered, no vendor known",
+        "the cockpit must surface WHY maintenance is pending (neither visible nor a known route vendor)")
 end
 
 local tests = {

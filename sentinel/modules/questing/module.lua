@@ -407,6 +407,33 @@ function QuestingModule:_find_visible_vendor()
     return best_entry
 end
 
+--- A KNOWN vendor to fall back on when none is visible. Bags fill at remote grind spots
+--- (live-caught: the backpack filled while grinding Kobold Laborers at Echo Ridge, no vendor
+--- in draw distance, so the visible-only detour never triggered and the grind stalled). The
+--- compiled profile carries no Vendor-role NPCs, but it DOES carry Vendor actions with
+--- npc_entry — return the one whose operation is nearest the current route position (a good
+--- proxy for geographically nearest), so the detour can navigate to it via QueryServer.
+function QuestingModule:_find_known_vendor()
+    local ex = self._executor
+    local ops = ex and ex._profile and ex._profile.operations
+    if type(ops) ~= "table" then return nil end
+    local cur = ex._current_operation_idx or 1
+    local best_entry, best_gap = nil, math.huge
+    for idx, op in ipairs(ops) do
+        for _, a in ipairs(op.actions or {}) do
+            if (a.type == "Vendor" or a.type == "Repair")
+                and a.payload and a.payload.npc_entry then
+                local gap = math.abs(idx - cur)
+                if gap < best_gap then
+                    best_gap = gap
+                    best_entry = a.payload.npc_entry
+                end
+            end
+        end
+    end
+    return best_entry
+end
+
 function QuestingModule:_end_maintenance(reason)
     self._maintenance.state = "idle"
     self._maintenance.vendor_entry = nil
@@ -428,11 +455,12 @@ function QuestingModule:_run_vendor_maintenance()
             return false
         end
         m.last_scan_at = now
-        local entry = self:_find_visible_vendor()
+        -- Prefer a vendor already in view; otherwise fall back to a known route vendor and
+        -- navigate to it (the "vendoring" blocked-branch below walks there). Without this
+        -- fallback, bags that fill at a remote grind spot never get sold and the run stalls.
+        local entry = self:_find_visible_vendor() or self:_find_known_vendor()
         if not entry then
-            -- Keep routing: guides pass vendors regularly, and the flag stays set until a
-            -- sale actually frees space.
-            self._blackboard:set("module.questing.maintenance", "triggered, no vendor visible")
+            self._blackboard:set("module.questing.maintenance", "triggered, no vendor known")
             return false
         end
         m.state = "vendoring"
