@@ -343,3 +343,36 @@ fn unknown_class_token_records_diagnostic_and_skips_guard() {
         "got: {:?}", report.unmapped_conditions
     );
 }
+#[test]
+fn level_at_least_condition_lowers_and_serializes_adjacently_tagged() {
+    // `.xp N` importer emission: `LevelAtLeast(N)` must lower to the typed variant — not the
+    // fail-open AlwaysTrue path — and hit the exact adjacently-tagged wire shape the Lua
+    // runtime dispatches on ({type, payload}); externally-tagged shapes fell through silently.
+    let mut project = new_project("test");
+    let mut op = Operation::new("test-op".to_string());
+    op.actions.push(condition_action_with_role("LevelAtLeast(14)", ConditionRole::Completion));
+    project.operations.push(op);
+
+    let (profile, report) = Compiler::compile(&project).expect("compile ok");
+    let guarded = &profile.operations[0].actions[0];
+    let RuntimeAction::Condition(c) = &guarded.action else { panic!("expected Condition") };
+    assert_eq!(c.condition, RuntimeCondition::LevelAtLeast(14));
+    assert_eq!(c.role, ConditionRole::Completion);
+    assert!(
+        !report.unmapped_conditions.iter().any(|d| d.code == "UNMAPPED_CONDITION"),
+        "LevelAtLeast must be a mapped predicate, got: {:?}", report.unmapped_conditions
+    );
+
+    // Pin the wire shape end-to-end (what the Lua runtime actually reads).
+    let wire = serde_json::to_value(guarded).expect("serialize");
+    assert_eq!(
+        wire,
+        serde_json::json!({
+            "type": "Condition",
+            "payload": {
+                "condition": { "type": "LevelAtLeast", "payload": 14 },
+                "role": "Completion"
+            }
+        })
+    );
+}

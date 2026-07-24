@@ -241,6 +241,27 @@ mod tests {
     }
 
     #[test]
+    fn typed_xp_level_gate_counts_as_typed_condition_not_inert() {
+        // `.xp N` now lowers to a Condition action (LevelAtLeast gate); the coverage report must
+        // tally it in the typed "condition" bucket rather than the historical inert-preserved one.
+        let gate = Action {
+            id: Uuid::new_v4(),
+            enabled: true,
+            condition: None,
+            class_restriction: None,
+            note: None,
+            payload: ActionPayload::Condition(sentinel_models::authoring::ConditionAction {
+                expression: "LevelAtLeast(14)".to_string(),
+                role: sentinel_models::authoring::ConditionRole::Completion,
+            }),
+        };
+        let project = project_with(vec![gate], vec![]);
+        let report = CoverageReport::from_project(&project);
+        assert_eq!(report.totals, CommandTally { typed: 1, inert_preserved: 0, unresolved: 0 });
+        assert_eq!(report.per_command.get("condition").unwrap().typed, 1);
+    }
+
+    #[test]
     fn text_summary_reports_percentages_and_per_command_breakdown() {
         let mut report = CoverageReport::default();
         report.totals = CommandTally { typed: 3, inert_preserved: 1, unresolved: 0 };

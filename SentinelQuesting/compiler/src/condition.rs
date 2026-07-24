@@ -4,8 +4,8 @@
 //! Grammar: `expr := or_expr`; `or_expr := and_expr ('||' and_expr)*`; `and_expr := not_expr
 //! ('&&' not_expr)*`; `not_expr := 'NOT' not_expr | primary`; `primary := predicate | '(' expr
 //! ')'`; `predicate := IDENT '(' [NUMBER (',' NUMBER)*] ')'`. Only the §23 subset the importer
-//! currently emits — §23 also documents `Level >= N` -> `LevelAtLeast`, deferred until a guide
-//! form emits it, not implemented here. Precedence (tightest→loosest): `NOT` > `&&` > `||` —
+//! currently emits — including `LevelAtLeast(N)` from `.xp N` level gates.
+//! Precedence (tightest→loosest): `NOT` > `&&` > `||` —
 //! §23 gives no explicit table; corroborated by `NOT X || NOT Y || NOT Z` only parsing sensibly
 //! if `NOT` binds one predicate before `||` combines results.
 
@@ -162,6 +162,7 @@ fn build_predicate(name: &str, args: &[u64]) -> Result<RuntimeCondition, Conditi
         ("ItemCount", [item, n]) => {
             Ok(RuntimeCondition::ItemCountAtLeast(as_u32(*item, "item id")?, as_u32(*n, "count")?))
         }
+        ("LevelAtLeast", [level]) => Ok(RuntimeCondition::LevelAtLeast(as_u8(*level, "level")?)),
         (other, _) => err(format!("unknown predicate '{other}' with {} argument(s)", args.len())),
     }
 }

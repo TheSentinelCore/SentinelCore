@@ -718,6 +718,34 @@ fn gating_condition_dsl(cmd_name: &str, args: &[String]) -> Option<String> {
     }
 }
 
+/// Lower a `.xp` argument list to a §23 `LevelAtLeast(N)` expression, or `None` for the
+/// out-of-scope variants. Corpus shapes (whole `restedxp guides` tree): `<N,1` (1416) and
+/// `>N,1` (603) are RestedXP *skip-step* variants with different semantics — left inert.
+/// `N` (50) and `N+M` (30, level N plus M experience points) are wait-until-level gates;
+/// the sub-level `+M` XP refinement is deliberately dropped (out of scope) and `N+M` gates
+/// on level N alone. Anything else (`N-M` countdown forms etc.) stays inert.
+fn xp_level_dsl(args: &[String]) -> Option<String> {
+    // The lexer comma-splits args; a comparison/skip form (`<50,1`) or any extra arg
+    // means "not a plain level gate".
+    if args.len() != 1 {
+        return None;
+    }
+    let raw = args[0].trim();
+    // `N` or `N+M` — take the level part; reject `N-M`, `<N`, `>N`, `N.N`, `N>>` etc.
+    let level_part = raw.split('+').next()?;
+    let level = level_part.parse::<u8>().ok()?;
+    if let Some(xp_part) = raw.strip_prefix(level_part) {
+        if !xp_part.is_empty() {
+            // Must be exactly `+<digits>` to count as the N+M form.
+            let digits = xp_part.strip_prefix('+')?;
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+        }
+    }
+    Some(format!("LevelAtLeast({level})"))
+}
+
 /// The role a gating command's condition plays in step progression (PR5a). `complete`/
 /// `collect`/`itemcount` are wait-until-true completion gates; the `isX` family only decides
 /// whether the step applies at all. See [`ConditionRole`].
@@ -1113,6 +1141,30 @@ async fn build_step_actions(
                         ignore_elites: false,
                     }),
                 });
+            }
+            "xp" => {
+                // `.xp N` / `.xp N+M`: wait-until-level Completion gate (LevelAtLeast) so the
+                // runtime holds — and grinds — instead of running ahead under-leveled. The
+                // skip-step variants (`<N,1` / `>N,1`) keep the IF7 never-drop inert path,
+                // diagnostic included, until their skip semantics are lowered deliberately.
+                match xp_level_dsl(&cmd.args) {
+                    Some(expression) => {
+                        actions.push(Action {
+                            id: Uuid::new_v4(),
+                            enabled: true,
+                            condition: None,
+                            class_restriction: None,
+                            note: cmd.note.clone(),
+                            payload: ActionPayload::Condition(ConditionAction {
+                                expression,
+                                role: ConditionRole::Completion,
+                            }),
+                        });
+                    }
+                    None => {
+                        actions.push(inert_preserved_action(state, step.index, cmd, true));
+                    }
+                }
             }
             name if GATING_COMMANDS.contains(&name) => {
                 // Gating/completion command (IF2): lower to a typed §23 DSL condition per

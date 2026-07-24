@@ -1044,3 +1044,78 @@ step
         "unresolved-due-to-transport-failure actions fall back to Comment, same as unresolved-due-to-NotFound"
     );
 }
+
+#[tokio::test]
+async fn xp_level_gates_lower_to_completion_level_conditions() {
+    // `.xp N` (and `.xp N+M`, treating the sub-level XP refinement as out of scope) is a
+    // wait-until-true level gate: the bot must not run ahead under-leveled. Corpus shapes:
+    // 50x `N`, 30x `N+M`; the dominant `<N,1`/`>N,1` skip-variants stay inert (separate test).
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .xp 14
+step
+    .xp 14+520
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    let expr = |op_idx: usize| {
+        condition_expression(&project.operations[op_idx].actions[0].payload)
+            .unwrap_or_else(|| panic!("operation {op_idx} should have a Condition action, not Comment"))
+    };
+    let role = |op_idx: usize| {
+        condition_role(&project.operations[op_idx].actions[0].payload)
+            .unwrap_or_else(|| panic!("operation {op_idx} should have a Condition action, not Comment"))
+    };
+
+    assert_eq!(expr(0), "LevelAtLeast(14)", ".xp 14");
+    assert_eq!(role(0), ConditionRole::Completion, ".xp 14 is a wait-until-true gate");
+    assert_eq!(expr(1), "LevelAtLeast(14)", ".xp 14+520 treats the +XP tail as level 14");
+    assert_eq!(role(1), ConditionRole::Completion, ".xp 14+520");
+
+    // No inert-preserve diagnostic: these are typed now.
+    assert!(
+        !project.diagnostics.iter().any(|d| d.code == "COMMAND_PRESERVED_INERT"),
+        "typed .xp gates must not also be inert-preserved: {:?}",
+        project.diagnostics
+    );
+}
+
+#[tokio::test]
+async fn xp_skip_variants_stay_inert_with_a_diagnostic() {
+    // `<N,1` / `>N,1` are RestedXP skip-step variants (1416x / 603x in the corpus) whose
+    // semantics are out of scope for the level-gate work — they must remain never-dropped
+    // inert Comments carrying a diagnostic, exactly as before.
+    let client = MemoryQueryClient::new();
+    let guide = r#"
+RXPGuides.RegisterGuide([[
+#version 7
+#name Test
+step
+    .xp <50,1
+step
+    .xp >42,1
+step
+    .xp 30-1500
+]])"#;
+    let parsed = parse_guide(guide).expect("parse ok");
+    let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
+
+    for op_idx in 0..3 {
+        let action = &project.operations[op_idx].actions[0];
+        assert!(
+            matches!(action.payload, ActionPayload::Comment(_)),
+            "operation {op_idx}: unsupported .xp variant must stay an inert Comment"
+        );
+        let diag = project.diagnostics.iter()
+            .find(|d| d.action.as_deref() == Some(action.id.to_string().as_str()));
+        assert!(
+            diag.is_some(),
+            "operation {op_idx}: inert .xp variant must carry a per-action diagnostic"
+        );
+    }
+}
