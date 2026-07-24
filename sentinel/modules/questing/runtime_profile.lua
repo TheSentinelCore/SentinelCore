@@ -119,6 +119,10 @@ function RuntimeProfile:new(json_path, dry_run, event_bus, blackboard)
                                         -- after the ring buffer drops the oldest entries
     o._wait_started_at = nil            -- When the current Completion-role Condition gate started waiting
     o._wait_action_key = nil            -- Identity of the action currently being waited on
+    o._wait_level_progress = nil        -- "level:xp" snapshot for LevelAtLeast gates (XP1);
+                                        -- any change resets the bounded-wait clock, like kills
+    o._level_gate_grind = false         -- True while WE raised module.combat.auto_engage_world
+                                        -- for a holding LevelAtLeast gate (XP1)
 
     -- Hot reload (T16)
     o._json_mtime = nil                  -- Last known mtime for hot reload polling
@@ -968,6 +972,20 @@ function ContextMethods:get_player_level()
     return 1
 end
 
+function ContextMethods:get_player_xp()
+    -- unit:get_xp() (game-object.md): current experience points toward the next level.
+    -- nil when the API (or a test mock) does not expose it — callers must treat nil as
+    -- "no XP signal", never as zero.
+    local player = UnitHelper.get_local_player()
+    if player and player.get_xp then
+        local ok, xp = pcall(player.get_xp, player)
+        if ok and tonumber(xp) then
+            return tonumber(xp)
+        end
+    end
+    return nil
+end
+
 function ContextMethods:get_player_class()
     -- get_local_player():get_class() returns a numeric class_id (Sylvannas API);
     -- map it to the Title-Case class name that ClassIs conditions compare against.
@@ -1540,6 +1558,8 @@ function RuntimeProfile:_execute_running()
         -- timer so a later action (or a looped re-entry) starts a fresh wait (PR5b loop-safety).
         self._wait_started_at = nil
         self._wait_action_key = nil
+        self._wait_level_progress = nil
+        self:_set_level_gate_grind(false) -- XP1: gate passed — stop grinding-while-gated
         
         -- W1.1: Move to next action within current operation
         self._current_action_idx = self._current_action_idx + 1
@@ -1577,6 +1597,7 @@ function RuntimeProfile:_execute_running()
             self._wait_action_key = key
             self._wait_started_at = now
             self._wait_kill_count = nil
+            self._wait_level_progress = nil
         end
 
         -- A Kill/Grind that is still MAKING PROGRESS must never be timeout-abandoned: a
@@ -1594,11 +1615,38 @@ function RuntimeProfile:_execute_running()
             end
         end
 
+        -- XP1: a LevelAtLeast Completion gate legitimately holds for HOURS. Exactly like the
+        -- rising kill count above, observable leveling progress (level or XP changing since
+        -- the last snapshot) resets the clock — only genuinely frozen progress can time out.
+        -- While the gate holds, raise the combat module's world auto-engage flag so the bot
+        -- grinds nearby hostiles instead of idling under the gate.
+        local cond = action and action.type == "Condition"
+            and action.payload and action.payload.condition
+        if cond and cond.type == "LevelAtLeast" then
+            local level = ctx:get_player_level() or 0
+            local xp = ctx.get_player_xp and ctx:get_player_xp() or nil
+            -- Change-detection, not strictly "rises": on level-up the XP counter drops back
+            -- near zero while the level rises, and both together only ever change when the
+            -- player is actually progressing.
+            local progress = tostring(level) .. ":" .. tostring(xp)
+            if self._wait_level_progress == nil then
+                self._wait_level_progress = progress
+            elseif progress ~= self._wait_level_progress then
+                self._wait_level_progress = progress
+                self._wait_started_at = now
+            end
+            self:_set_level_gate_grind(true)
+        else
+            self:_set_level_gate_grind(false)
+        end
+
         local elapsed = now - self._wait_started_at
         if elapsed >= MAX_CONDITION_WAIT then
             self:_log_event("condition_wait_timeout", { action_type = action and action.type, duration = elapsed })
             self._wait_started_at = nil
             self._wait_action_key = nil
+            self._wait_level_progress = nil
+            self:_set_level_gate_grind(false)
 
             -- Bounded wait exceeded: don't deadlock the bot — advance past the gate.
             -- Through _advance_action, so the next action gets a fresh retry budget (A1).
@@ -2183,6 +2231,24 @@ end
 -- Reset / lifecycle
 -- ====================================================================
 
+--- XP1: raise/lower the combat module's world auto-engage flag for a holding LevelAtLeast
+--- gate. Idempotent and ownership-aware: only touches the blackboard on a real transition,
+--- and only clears a flag THIS profile raised — a user/operator-set auto_engage_world is
+--- never stomped by a gate ending.
+function RuntimeProfile:_set_level_gate_grind(active)
+    if active then
+        if not self._level_gate_grind then
+            self._level_gate_grind = true
+            self._blackboard:set("module.combat.auto_engage_world", true)
+            self:_log_event("level_gate_grind", { enabled = true })
+        end
+    elseif self._level_gate_grind then
+        self._level_gate_grind = false
+        self._blackboard:set("module.combat.auto_engage_world", false)
+        self:_log_event("level_gate_grind", { enabled = false })
+    end
+end
+
 function RuntimeProfile:reset()
     self._current_operation_idx = 1
     self._current_op_id = nil
@@ -2195,6 +2261,8 @@ function RuntimeProfile:reset()
     self._ghost_start_time = nil
     self._wait_started_at = nil
     self._wait_action_key = nil
+    self._wait_level_progress = nil
+    self:_set_level_gate_grind(false) -- XP1: never leave the grind flag latched across a reset
     self._last_blocked_action = nil
     self._execution_log = {}
     self._log_total = 0

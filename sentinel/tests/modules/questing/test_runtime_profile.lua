@@ -817,6 +817,158 @@ function M.test_handle_blocked_zone_destination_does_not_double_build_context()
     if not ok then error(err, 0) end
 end
 
+-- ============================================================================
+-- XP1 — `.xp` LevelAtLeast Completion gates: hours-long holds + grind-while-gated
+-- ============================================================================
+
+--- Level gate helper: a single-op profile holding on LevelAtLeast(level).
+local function make_level_gate_profile(level)
+    return create_profile(make_profile_ops("Condition", {
+        condition = { type = "LevelAtLeast", payload = level },
+        role = "Completion",
+    }))
+end
+
+--- Mock a player whose level (and optionally XP) the test controls.
+local function mock_player_level_xp(get_level_fn, get_xp_fn)
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead = function() return false end,
+            get_level = get_level_fn,
+            get_xp = get_xp_fn,
+        }
+    end
+end
+
+--- A LevelAtLeast gate legitimately holds for HOURS. Rising level must reset the bounded-wait
+--- clock exactly like a rising kill count does — the gate must NOT be force-advanced at
+--- MAX_CONDITION_WAIT while the player is still visibly leveling.
+function M.test_level_gate_holds_past_timeout_while_level_rises()
+    local profile = make_level_gate_profile(10)
+    local player_level = 1
+    mock_player_level_xp(function() return player_level end)
+
+    local fake_now = 1000.0
+    local real_core_time = _G.core.time
+    _G.core.time = function() return fake_now end
+
+    local ok, err = pcall(function()
+        local _, msg = profile:execute() -- snapshot level 1 at t=1000
+        T.assert_equal(msg, "waiting for completion", "Gate should start waiting")
+
+        -- 299s later the level rises: the clock must reset off the progress.
+        fake_now = fake_now + 299.0
+        player_level = 2
+        local _, msg2 = profile:execute()
+        T.assert_equal(msg2, "waiting for completion", "Rising level should keep waiting")
+
+        -- 299s after THAT (598s total — far past MAX_CONDITION_WAIT): still under the
+        -- reset clock, so the gate must still hold instead of force-advancing.
+        fake_now = fake_now + 299.0
+        local _, msg3 = profile:execute()
+        T.assert_equal(msg3, "waiting for completion",
+            "Level gate must hold past 300s total while leveling progress was observed")
+        T.assert_equal(#get_log_events(profile, "condition_wait_timeout"), 0,
+            "No timeout event while the player is making level progress")
+
+        -- Frozen from here on: a full MAX_CONDITION_WAIT with no progress still times out
+        -- (genuinely stuck must never deadlock the bot).
+        fake_now = fake_now + 301.0
+        local _, msg4 = profile:execute()
+        T.assert_equal(msg4, "condition wait timed out, skipping",
+            "A frozen level for a full MAX_CONDITION_WAIT must still force-advance")
+    end)
+
+    _G.core.time = real_core_time
+    if not ok then error(err) end
+end
+
+--- Sub-level progress: XP rising while the level is still frozen must also reset the clock
+--- (a slow grind can take >300s per level; XP is the finer-grained liveness signal).
+function M.test_level_gate_xp_rise_resets_wait_clock()
+    local profile = make_level_gate_profile(10)
+    local player_xp = 100
+    mock_player_level_xp(function() return 5 end, function() return player_xp end)
+
+    local fake_now = 1000.0
+    local real_core_time = _G.core.time
+    _G.core.time = function() return fake_now end
+
+    local ok, err = pcall(function()
+        profile:execute() -- snapshot level 5 / xp 100 at t=1000
+        fake_now = fake_now + 299.0
+        player_xp = 350
+        local _, msg = profile:execute() -- xp rose: clock resets
+        T.assert_equal(msg, "waiting for completion", "Rising XP should keep waiting")
+        fake_now = fake_now + 299.0
+        local _, msg2 = profile:execute()
+        T.assert_equal(msg2, "waiting for completion",
+            "598s total but XP progress at 299s: the gate must still hold")
+    end)
+
+    _G.core.time = real_core_time
+    if not ok then error(err) end
+end
+
+--- While a level gate holds the bot must GRIND, not idle: the combat module's world
+--- auto-engage flag goes up during the hold and comes back down the moment the gate passes.
+function M.test_level_gate_sets_grind_flag_while_holding_and_clears_on_met()
+    local profile = make_level_gate_profile(10)
+    local player_level = 1
+    mock_player_level_xp(function() return player_level end)
+
+    T.assert_true(profile._blackboard:get("module.combat.auto_engage_world", false) ~= true,
+        "Grind flag must start unset")
+
+    profile:execute() -- holding
+    T.assert_equal(profile._blackboard:get("module.combat.auto_engage_world"), true,
+        "Holding level gate must raise the combat world auto-engage (grind) flag")
+
+    player_level = 10
+    local _, msg = profile:execute() -- gate passes
+    T.assert_equal(msg, "next action", "Met gate should advance")
+    T.assert_equal(profile._blackboard:get("module.combat.auto_engage_world"), false,
+        "Grind flag must be cleared as soon as the gate passes")
+end
+
+--- The grind flag must also come down on the force-advance (timeout) exit path, and a
+--- non-level Condition gate must never raise it.
+function M.test_level_gate_grind_flag_cleared_on_timeout_and_not_set_for_other_gates()
+    -- Timeout path.
+    local profile = make_level_gate_profile(10)
+    mock_player_level_xp(function() return 1 end) -- frozen forever
+
+    local fake_now = 1000.0
+    local real_core_time = _G.core.time
+    _G.core.time = function() return fake_now end
+
+    local ok, err = pcall(function()
+        profile:execute()
+        T.assert_equal(profile._blackboard:get("module.combat.auto_engage_world"), true,
+            "Holding level gate must raise the grind flag")
+        fake_now = fake_now + 301.0
+        local _, msg = profile:execute()
+        T.assert_equal(msg, "condition wait timed out, skipping", "Frozen gate should time out")
+        T.assert_equal(profile._blackboard:get("module.combat.auto_engage_world"), false,
+            "Grind flag must be cleared on the timeout exit path")
+    end)
+    _G.core.time = real_core_time
+    if not ok then error(err) end
+
+    -- Non-level gate: never raised.
+    local other = create_profile(make_profile_ops("Condition", {
+        condition = { type = "QuestCompleted", payload = 1234 },
+        role = "Completion",
+    }))
+    _G.core.quests.is_quest_flagged_completed = function() return false end
+    local _, msg = other:execute()
+    T.assert_equal(msg, "waiting for completion", "Quest gate should be waiting")
+    T.assert_true(other._blackboard:get("module.combat.auto_engage_world", false) ~= true,
+        "A non-level Condition gate must not raise the grind flag")
+    _G.core.quests.is_quest_flagged_completed = nil
+end
+
 local tests = {
     -- F3
     test_create_context_reuses_the_same_table_across_calls = M.test_create_context_reuses_the_same_table_across_calls,
@@ -849,6 +1001,12 @@ local tests = {
     test_completion_gate_bounded_wait_times_out_and_advances = M.test_completion_gate_bounded_wait_times_out_and_advances,
     test_reset_clears_wait_timer_loop_safety = M.test_reset_clears_wait_timer_loop_safety,
     test_classis_maps_numeric_class_id_to_name = M.test_classis_maps_numeric_class_id_to_name,
+
+    -- XP1 — `.xp` LevelAtLeast gates
+    test_level_gate_holds_past_timeout_while_level_rises = M.test_level_gate_holds_past_timeout_while_level_rises,
+    test_level_gate_xp_rise_resets_wait_clock = M.test_level_gate_xp_rise_resets_wait_clock,
+    test_level_gate_sets_grind_flag_while_holding_and_clears_on_met = M.test_level_gate_sets_grind_flag_while_holding_and_clears_on_met,
+    test_level_gate_grind_flag_cleared_on_timeout_and_not_set_for_other_gates = M.test_level_gate_grind_flag_cleared_on_timeout_and_not_set_for_other_gates,
 
     -- CL4
     test_action_guard_unmet_skips_action_without_executing_it = M.test_action_guard_unmet_skips_action_without_executing_it,
