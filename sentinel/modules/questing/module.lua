@@ -10,6 +10,7 @@
 
 local RuntimeProfile = require("modules/questing/runtime_profile")
 local RunnerState = require("modules/questing/runner_state")
+local QuestLogSpace = require("modules/questing/quest_log_space")
 local Blackboard = require("core/blackboard")
 local EventBus = require("core/event_bus")
 
@@ -143,10 +144,65 @@ function QuestingModule:new(blackboard, event_bus)
         local msg = tostring(payload and payload.message or ""):lower()
         if msg:find("inventory is full", 1, true) then
             o._blackboard:set("player.bags_full", true)
+        elseif msg:find("quest log is full", 1, true) then
+            o:_handle_quest_log_full()
         end
     end)
 
     return o
+end
+
+--- Quest-log-full recovery: the client error fires while the executor's AcceptQuest is
+--- mid-retry. Sacrifice a quest no operation from the current one forward references
+--- (selection is pure — quest_log_space.lua) via the documented three-step abandon flow;
+--- the accept's own retry then proceeds into the freed slot. A log made entirely of
+--- route-relevant quests abandons nothing — the accept's retry budget bounds advancement.
+function QuestingModule:_handle_quest_log_full()
+    local ex = self._executor
+    if not (ex and ex._profile and type(ex._profile.operations) == "table") then return end
+    local ops = ex._profile.operations
+    local op = ops[ex._current_operation_idx or 1]
+    local action = op and op.actions and op.actions[ex._current_action_idx or 1]
+    if not (action and action.type == "AcceptQuest") then return end
+
+    local q = core and core.quests
+    if not (q and q.get_num_quest_log_entries and q.get_quest_log_title
+        and q.select_quest_log_entry and q.set_abandon_quest and q.abandon_quest) then
+        return
+    end
+
+    local entries = {}
+    local num = q.get_num_quest_log_entries() or 0
+    for i = 1, num do
+        local ok, info = pcall(q.get_quest_log_title, i)
+        if ok and info and not info.is_header and info.quest_id ~= nil then
+            entries[#entries + 1] = {
+                index = i,
+                quest_id = info.quest_id,
+                is_complete = info.is_complete,
+            }
+        end
+    end
+
+    local log_event = function(event, data)
+        if type(ex._log_event) == "function" then
+            ex:_log_event(event, data)
+        else
+            self._event_bus:publish("questing:log", { event = event, quest_id = data and data.quest_id })
+        end
+    end
+
+    local victim = QuestLogSpace.select_sacrificial_quest(
+        entries, ops, ex._current_operation_idx or 1)
+    if not victim then
+        log_event("quest_log_full_unrecoverable", {})
+        return
+    end
+
+    pcall(q.select_quest_log_entry, victim.index)
+    pcall(q.set_abandon_quest)
+    pcall(q.abandon_quest)
+    log_event("quest_abandoned_for_space", { quest_id = victim.quest_id })
 end
 
 function QuestingModule:initialize(profile_json_path)

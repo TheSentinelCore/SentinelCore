@@ -9,6 +9,9 @@ local NAV_RETRY_DELAY = 1.0    -- Seconds between navigation retries
 local CORPSE_LOOT_RANGE = 4.0  -- Must stand this close to loot a corpse
 local LOOT_ATTEMPTS = 3        -- Bound per corpse so an unlootable one cannot wedge the run
 local ABANDON_RANGE = 50.0     -- Give up on a committed target that has run this far away
+local HEARTH_TIMEOUT = 20.0    -- Cast is 10s; a teleport not observed by 20s means it failed
+local HEARTH_JUMP_SQ = 500.0 * 500.0 -- Position jump proving the teleport landed (squared yd)
+local LOOT_VERIFY_TIMEOUT = 5.0 -- Item must appear in bags within this after the loot interaction
 
 -- Nil-safe distance (returns infinity on bad input) — used to notice a chased target drifting.
 local Geometry = (function()
@@ -395,6 +398,18 @@ end
 local function gossip_pace_clear(ctx, pace_key)
     local P = ctx.persist or ctx
     if P._gossip_next_try then P._gossip_next_try[pace_key] = nil end
+end
+
+--- Surface an action-level observation on the shared questing log channel. Actions have no
+--- handle on RuntimeProfile:_log_event; questing:log is the same stream its entries ride.
+local function publish_action_note(ctx, event, data)
+    if ctx and ctx.event_bus and ctx.event_bus.publish then
+        local entry = { event = event }
+        if data then
+            for k, v in pairs(data) do entry[k] = v end
+        end
+        pcall(ctx.event_bus.publish, ctx.event_bus, "questing:log", entry)
+    end
 end
 
 function RuntimeAction.execute_accept_quest(payload, ctx)
@@ -1075,6 +1090,28 @@ function RuntimeAction.execute_vendor(payload, ctx)
     return "success"
 end
 
+--- Total known spells via core.spell_book.get_spells (spell_id -> name map).
+--- nil when the API is unavailable or unreadable — the caller must then not
+--- pretend to verify.
+local function spell_book_count()
+    local sb = core and core.spell_book
+    if not (sb and type(sb.get_spells) == "function") then return nil end
+    local ok, spells = pcall(sb.get_spells)
+    if not ok or type(spells) ~= "table" then return nil end
+    local n = 0
+    for _ in pairs(spells) do n = n + 1 end
+    return n
+end
+
+local function train_interact(npc_entry)
+    if core and core.input and core.input.interact_with_object then
+        local npc = UnitHelper.get_nearest_creature({ npc_entry })
+        if npc then
+            core.input.interact_with_object(npc)
+        end
+    end
+end
+
 function RuntimeAction.execute_train(payload, ctx)
     local npc_entry = payload.npc_entry
 
@@ -1082,16 +1119,37 @@ function RuntimeAction.execute_train(payload, ctx)
         return "blocked"
     end
 
-    -- Interact with trainer NPC, then use core.quests.buy_trainer_service
-    if core and core.input and core.input.interact_with_object then
-        local npc = UnitHelper.get_nearest_creature({ npc_entry })
-        if npc then
-            core.input.interact_with_object(npc)
+    local P = ctx.persist or ctx
+    local count = spell_book_count()
+    if count ~= nil then
+        -- Verifiable path: success only on an observed spell-book change; otherwise the
+        -- interaction retries within the executor's normal per-action budget.
+        P._train_baseline = P._train_baseline or {}
+        local key = tostring(npc_entry)
+        local baseline = P._train_baseline[key]
+        if baseline ~= nil and count > baseline then
+            P._train_baseline[key] = nil
+            gossip_pace_clear(ctx, "train:" .. key)
+            return "success"
         end
+        if baseline == nil then
+            P._train_baseline[key] = count
+        end
+        -- The trainer window opens asynchronously; pace attempts on real time like the
+        -- other gossip interactions instead of burning the retry budget in frames.
+        if not gossip_attempt_due(ctx, "train:" .. key) then
+            return "waiting"
+        end
+        train_interact(npc_entry)
+        return "retry"
     end
 
-    -- Train spells are typically handled by selecting from trainer window
-    -- For now, we just need to be at the NPC and have interacted
+    -- No verifiable signal: keep the historical success, but say so in the log once.
+    train_interact(npc_entry)
+    if not P._train_unverified_logged then
+        P._train_unverified_logged = true
+        publish_action_note(ctx, "train_unverified", { npc_entry = npc_entry })
+    end
     return "success"
 end
 
@@ -1125,12 +1183,41 @@ function RuntimeAction.execute_flight(payload, ctx)
     return "retry"
 end
 
+--- Hearth is a 10s cast followed by a teleport: using the item is not arriving.
+--- Verify by position — the teleport is a jump far beyond anything a cast-length
+--- walk could cover. No jump within HEARTH_TIMEOUT means the cast failed
+--- (interrupted, on cooldown, no stone): "retry" re-casts under the action budget.
 function RuntimeAction.execute_hearth(payload, ctx)
-    -- Use hearthstone via core.input.use_item with hearthstone item ID
+    local P = ctx.persist or ctx
+    local now = (core and core.time and core.time()) or 0
+
+    local player = UnitHelper.get_local_player()
+    local pos = nil
+    if player and player.get_position then
+        local ok, p = pcall(player.get_position, player)
+        if ok and type(p) == "table" then
+            pos = { x = p.x, y = p.y, z = p.z }
+        end
+    end
+
+    local h = P._hearth
+    if h then
+        if pos and h.origin and distance_sq(pos, h.origin) > HEARTH_JUMP_SQ then
+            P._hearth = nil
+            return "success"
+        end
+        if now - h.started_at >= HEARTH_TIMEOUT then
+            P._hearth = nil
+            return "retry"
+        end
+        return "waiting"
+    end
+
     if core and core.input and core.input.use_item then
         local hearthstone_id = 6948 -- Default Hearthstone ID
         core.input.use_item(hearthstone_id)
-        return "success"
+        P._hearth = { started_at = now, origin = pos }
+        return "waiting"
     end
     return "retry"
 end
@@ -1426,6 +1513,33 @@ end
 
 function RuntimeAction.execute_loot(payload, ctx)
     local object_entry = payload.object_entry
+    -- RuntimeLoot carries only object_entry today; an item id, when present, makes the
+    -- loot verifiable against the bags.
+    local item_id = payload.item_id or payload.item or payload.item_entry
+    local P = ctx.persist or ctx
+    local now = (core and core.time and core.time()) or 0
+
+    -- A loot issued on a previous tick is still settling: verify, don't re-interact.
+    local L = P._loot_verify
+    if L then
+        -- Full bags can never receive the item; yield so the vendor-maintenance
+        -- detour (which consumes player.bags_full) gets the tick.
+        if ctx.blackboard and ctx.blackboard.get
+            and ctx.blackboard:get("player.bags_full") == true then
+            P._loot_verify = nil
+            return "retry"
+        end
+        local count = ctx:get_item_count(L.item_id)
+        if count ~= nil and count > L.baseline then
+            P._loot_verify = nil
+            return "success"
+        end
+        if now - L.started_at >= LOOT_VERIFY_TIMEOUT then
+            P._loot_verify = nil
+            return "retry"
+        end
+        return "waiting"
+    end
 
     -- Proximity check (W3.6) — if object not in range, navigate first
     if not ctx:is_at_object(object_entry) then
@@ -1454,8 +1568,23 @@ function RuntimeAction.execute_loot(payload, ctx)
         return "retry"
     end
 
+    if item_id then
+        -- Snapshot BEFORE the interaction; the increase is the observable loot.
+        local baseline = ctx:get_item_count(item_id) or 0
+        if core and core.input and core.input.loot_object then
+            core.input.loot_object(target_obj)
+        end
+        P._loot_verify = { item_id = item_id, baseline = baseline, started_at = now }
+        return "waiting"
+    end
+
     if core and core.input and core.input.loot_object then
         core.input.loot_object(target_obj)
+    end
+    -- No item id to check against: historical success, honestly logged once.
+    if not P._loot_unverified_logged then
+        P._loot_unverified_logged = true
+        publish_action_note(ctx, "loot_unverified", { object_entry = object_entry })
     end
     return "success"
 end
