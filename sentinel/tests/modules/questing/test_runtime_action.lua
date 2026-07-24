@@ -396,6 +396,30 @@ end
 -- Unknown action type
 -- ============================================================================
 
+function M.test_execute_wait_waits_then_succeeds()
+    local ctx = mock_context()
+    local action = { type = "Wait", payload = { duration = 5 } }
+    local now = 100
+    local orig_time = _G.core and _G.core.time
+    _G.core = _G.core or {}
+    _G.core.time = function() return now end
+
+    local first = RuntimeAction.execute(action, ctx)
+    now = 103
+    local mid = RuntimeAction.execute(action, ctx)
+    now = 106
+    local last = RuntimeAction.execute(action, ctx)
+
+    _G.core.time = orig_time
+
+    -- "blocked" routed a plain timer into nav recovery, burned retries, and counted
+    -- spurious failures; a running Wait must hold as "waiting" instead.
+    assert(first == "waiting", "Wait must return waiting when the timer starts, got " .. tostring(first))
+    assert(mid == "waiting", "Wait must return waiting before the duration elapses, got " .. tostring(mid))
+    assert(last == "success", "Wait must succeed once the duration has elapsed, got " .. tostring(last))
+    assert(ctx.wait_start == nil, "the timer must be cleared for the next Wait")
+end
+
 function M.test_execute_unknown_type()
     local ctx = mock_context()
     local action = { type = "NonExistentType", payload = {} }
@@ -597,6 +621,7 @@ local tests = {
 
     test_execute_unknown_type = M.test_execute_unknown_type,
     test_evaluate_condition_unknown_type = M.test_evaluate_condition_unknown_type,
+    test_execute_wait_waits_then_succeeds = M.test_execute_wait_waits_then_succeeds,
 }
 
 function M.run()

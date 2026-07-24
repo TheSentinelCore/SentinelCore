@@ -40,6 +40,7 @@ Database/
 
 # Runtime profile progress files written by the questing runtime / test runs
 *.save.json
+*.save.json.tmp
 .codegraph
 .kilo
 .atl

@@ -710,6 +710,260 @@ function M.test_serialize_state_includes_all_fields()
     T.assert_not_nil(state.saved_at, "saved_at timestamp should be present")
 end
 
+function M.test_wait_timeout_resets_on_kill_progress()
+    written_files = {}
+    local RuntimeAction = require("modules/questing/runtime_action")
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Kill", payload = { creature_entries = { 5 }, quantity = 40 } },
+                    { type = "Comment", payload = { text = "after" } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    local orig_execute = RuntimeAction.execute
+    RuntimeAction.execute = function(_, _) return "waiting" end
+    local now = 0
+    local orig_time = _G.core.time
+    _G.core.time = function() return now end
+
+    profile:execute() -- wait timer starts at t=0
+    -- A grind past the 300s window with RISING kill counts must never force-advance.
+    now = 250
+    profile:create_context()
+    profile._action_state.kill_counts["5"] = 3
+    profile:execute() -- progress observed -> timer resets to t=250
+    now = 520 -- 520s since the wait began, 270s since progress
+    profile:execute()
+    local idx_with_progress = profile._current_action_idx
+    -- Frozen count: the timeout must still fire.
+    now = 851 -- 601s since the last progress
+    profile:execute()
+    local idx_after_freeze = profile._current_action_idx
+
+    -- Restore BEFORE asserting — a failed assert must not leak the patches into other suites.
+    RuntimeAction.execute = orig_execute
+    _G.core.time = orig_time
+
+    T.assert_equal(idx_with_progress, 1,
+        "a Kill with rising kill counts must not be force-advanced by the wait timeout")
+    T.assert_equal(idx_after_freeze, 2,
+        "a Kill with a frozen kill count must still force-advance after the timeout")
+end
+
+function M.test_nav_dispatch_failure_exhausts_and_advances()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Travel", payload = { position = { x = 100, y = 200, z = 0 }, tolerance = 5 } },
+                    { type = "Comment", payload = { text = "after" } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    -- A nav client that rejects every dispatch: without exhaustion this branch retried forever.
+    profile._nav = {
+        is_active = function() return false end,
+        stop = function() end,
+        move_to = function() return false, "no path" end,
+    }
+    profile._current_action_retries = 4 -- one below MAX_RETRIES_PER_ACTION (5)
+    local before_failures = profile._consecutive_failures
+    local action = profile._profile.operations[1].actions[1]
+    profile:_handle_blocked(action)
+    T.assert_equal(profile._current_action_idx, 2,
+        "exhausted dispatch retries must advance the action, not spin forever")
+    T.assert_equal(profile._current_action_retries, 0,
+        "the next action must start with a fresh retry budget")
+    T.assert_equal(profile._consecutive_failures, before_failures + 1,
+        "an abandoned dispatch counts toward the consecutive-failure escalation")
+end
+
+function M.test_advance_operation_clears_kill_tracking()
+    written_files = {}
+    local profile = create_profile(make_profile_ops())
+    local ctx = profile:create_context()
+    ctx.persist.kill_counts["5"] = 3
+    ctx.persist._counted_corpses = { ["5:1:2"] = true }
+    ctx.persist._loot_attempts = { ["5:1:2"] = 2 }
+    ctx.persist._target_key = "5:1:2"
+    ctx.persist._chase_dest = { x = 1, y = 2, z = 3 }
+    profile:_advance_operation(profile._profile.operations[1])
+    local P = profile._action_state
+    T.assert_equal(next(P.kill_counts), nil, "a new operation's Kill must count from zero")
+    T.assert_equal(P._counted_corpses, nil, "corpse tallies must not leak across operations")
+    T.assert_equal(P._loot_attempts, nil, "loot attempts must not leak across operations")
+    T.assert_equal(P._target_key, nil, "the committed target must not leak across operations")
+    T.assert_equal(P._chase_dest, nil, "the chase destination must not leak across operations")
+end
+
+function M.test_reset_clears_action_state()
+    written_files = {}
+    local profile = create_profile(make_profile_ops())
+    local ctx = profile:create_context()
+    ctx.persist.kill_counts["5"] = 3
+    ctx.persist._counted_corpses = { x = true }
+    profile:reset()
+    T.assert_true(profile._action_state == nil
+        or (next(profile._action_state.kill_counts or {}) == nil
+            and profile._action_state._counted_corpses == nil),
+        "reset must discard all per-session action state")
+    local fresh = profile:create_context()
+    T.assert_equal(next(fresh.persist.kill_counts), nil,
+        "a context built after reset must see a clean slate")
+end
+
+function M.test_death_loop_abandons_operation_after_three_deaths()
+    written_files = {}
+    local RuntimeAction = require("modules/questing/runtime_action")
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            { id = 1, actions = { { type = "Kill", payload = { creature_entries = { 5 }, quantity = 10 } } }, next_condition = "auto" },
+            { id = 2, actions = { { type = "Comment", payload = { text = "next" } } }, next_condition = "auto" },
+        },
+    })
+    local orig_execute = RuntimeAction.execute
+    RuntimeAction.execute = function(_, _) return "waiting" end
+    -- The same lethal action kills the character over and over; rez-and-retry forever
+    -- was live-caught. Three deaths at one operation must abandon it.
+    local dead = false
+    _G.core.object_manager.get_local_player = function()
+        return {
+            is_valid = function() return true end,
+            is_dead_or_ghost = function() return dead end,
+        }
+    end
+
+    for _ = 1, 3 do
+        dead = true
+        profile:execute()  -- death detected -> ghost
+        dead = false
+        profile:execute()  -- rezzed -> running
+        profile:execute()  -- retries the same lethal action
+    end
+    local op_idx = profile._current_operation_idx
+    local abandoned = false
+    for _, e in ipairs(profile._execution_log) do
+        if e.event == "death_loop_abandon" then abandoned = true end
+    end
+
+    RuntimeAction.execute = orig_execute
+    _G.core.object_manager.get_local_player = nil
+
+    T.assert_equal(op_idx, 2, "three deaths at one operation must advance past it")
+    T.assert_true(abandoned, "the abandonment must be logged as death_loop_abandon")
+end
+
+function M.test_hot_reload_check_is_throttled()
+    written_files = {}
+    local profile = create_profile(make_profile_ops())
+    written_files["test_profile.json"] = '{"content_hash":"abc123hash","operations":[]}'
+    local reads = 0
+    _G.core.read_data_file = function(path)
+        if path == "test_profile.json" then reads = reads + 1 end
+        return written_files[path]
+    end
+    local now = 1000
+    local orig_time = _G.core.time
+    _G.core.time = function() return now end
+
+    profile:_check_hot_reload()
+    local first = reads
+    profile:_check_hot_reload() -- same instant: must not re-read/hash the profile
+    local immediate = reads
+    now = 1006 -- past the 5s throttle window
+    profile:_check_hot_reload()
+    local after_window = reads
+
+    _G.core.time = orig_time
+    T.assert_true(first > 0, "the first check must read the profile")
+    T.assert_equal(immediate, first, "an immediate second check must be a no-op")
+    T.assert_true(after_window > first, "checks must resume once the window passes")
+end
+
+function M.test_wait_timeout_advance_resets_retry_budget()
+    written_files = {}
+    local RuntimeAction = require("modules/questing/runtime_action")
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Condition", payload = { role = "Completion", condition = { type = "AlwaysFalse", payload = {} } } },
+                    { type = "Comment", payload = { text = "after" } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    local orig_execute = RuntimeAction.execute
+    RuntimeAction.execute = function(_, _) return "waiting" end
+    local now = 0
+    local orig_time = _G.core.time
+    _G.core.time = function() return now end
+
+    profile:execute() -- wait timer starts
+    profile._current_action_retries = 4 -- nearly-exhausted budget from earlier recovery
+    now = 301 -- past MAX_CONDITION_WAIT
+    profile:execute() -- force-advance
+    local idx = profile._current_action_idx
+    local retries = profile._current_action_retries
+
+    RuntimeAction.execute = orig_execute
+    _G.core.time = orig_time
+
+    T.assert_equal(idx, 2, "the wait timeout must advance past the gated action")
+    T.assert_equal(retries, 0,
+        "the next action must not inherit a nearly-exhausted retry budget")
+end
+
+function M.test_corrupt_save_falls_back_to_tmp_journal()
+    written_files = {}
+    local profile = create_profile(make_profile_ops())
+    profile._current_operation_idx = 6
+    T.assert_true(profile:_save(), "save should succeed")
+    local save_path = profile._save_path
+    T.assert_not_nil(written_files[save_path .. ".tmp"],
+        "the save must land in the .tmp journal before the real file")
+
+    -- A crash mid-write truncates the main save; the journal holds the full contents.
+    written_files[save_path] = '{"version":2,"truncat'
+    local profile2 = create_profile(make_profile_ops())
+    local restored = profile2:_load_save()
+    T.assert_true(restored, "a corrupt main save with a parseable tmp journal must restore")
+    T.assert_equal(profile2._current_operation_idx, 6,
+        "state must come from the tmp journal")
+end
+
+function M.test_execution_log_is_ring_buffered()
+    written_files = {}
+    local profile = create_profile(make_profile_ops())
+    for i = 1, 600 do
+        profile:_log_event("test_event", { i = i })
+    end
+    T.assert_true(#profile._execution_log <= 500, "in-memory log must cap at 500 entries")
+    T.assert_equal(profile._log_total, 600, "total event counter must keep counting past the cap")
+    T.assert_equal(profile._execution_log[#profile._execution_log].i, 600,
+        "newest entry must be kept")
+    T.assert_equal(profile._execution_log[1].i, 101, "oldest entries must be dropped first")
+    local state = profile:_serialize_state()
+    T.assert_true(#state.execution_history <= 100, "serialized history must cap at 100 entries")
+    T.assert_equal(state.execution_history[#state.execution_history].i, 600,
+        "serialized history must keep the newest entries")
+end
+
 -- ============================================================================
 -- W5.3 — Auto-save tests
 -- ============================================================================
@@ -779,6 +1033,15 @@ local tests = {
     test_empty_fingerprint_starts_fresh = M.test_empty_fingerprint_starts_fresh,
     test_no_save_file_returns_false = M.test_no_save_file_returns_false,
     test_serialize_state_includes_all_fields = M.test_serialize_state_includes_all_fields,
+    test_execution_log_is_ring_buffered = M.test_execution_log_is_ring_buffered,
+    test_wait_timeout_resets_on_kill_progress = M.test_wait_timeout_resets_on_kill_progress,
+    test_nav_dispatch_failure_exhausts_and_advances = M.test_nav_dispatch_failure_exhausts_and_advances,
+    test_advance_operation_clears_kill_tracking = M.test_advance_operation_clears_kill_tracking,
+    test_reset_clears_action_state = M.test_reset_clears_action_state,
+    test_death_loop_abandons_operation_after_three_deaths = M.test_death_loop_abandons_operation_after_three_deaths,
+    test_hot_reload_check_is_throttled = M.test_hot_reload_check_is_throttled,
+    test_wait_timeout_advance_resets_retry_budget = M.test_wait_timeout_advance_resets_retry_budget,
+    test_corrupt_save_falls_back_to_tmp_journal = M.test_corrupt_save_falls_back_to_tmp_journal,
     test_auto_save_on_advance_operation = M.test_auto_save_on_advance_operation,
     test_auto_save_on_skipped_advance = M.test_auto_save_on_skipped_advance,
 }

@@ -71,7 +71,11 @@ local GHOST_TIMEOUT = 300.0             -- Seconds before ghost recovery is aban
                                         -- cover a REAL corpse run (graveyard → corpse can be
                                         -- minutes at ghost speed), not just an in-place res
 local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks
+local MAX_DEATHS_PER_OPERATION = 3      -- Deaths at one operation before it is abandoned
 local MAX_CONDITION_WAIT = 300.0        -- Seconds a Completion-role Condition gate may hold before forced advance
+local RELOAD_CHECK_INTERVAL = 5.0       -- Seconds between hot-reload polls (each poll reads+hashes the profile)
+local MAX_LOG_ENTRIES = 500             -- In-memory execution log ring-buffer cap (oldest dropped)
+local SAVE_LOG_ENTRIES = 100            -- Newest log entries persisted in the save file
 
 -- Sylvannas `unit:get_class()` returns a numeric class_id, not a string. Map it to the
 -- Title-Case class name so ClassIs conditions (compiled from RestedXP's Title-Case class
@@ -110,7 +114,9 @@ function RuntimeProfile:new(json_path, dry_run, event_bus, blackboard)
     o._nav_start_time = nil             -- When navigation began (W4.2)
     o._ghost_start_time = nil           -- When death was detected (W4.3)
     o._last_blocked_action = nil        -- Copy of the action that triggered blocked
-    o._execution_log = {}               -- Structured log entries (W4.5)
+    o._execution_log = {}               -- Structured log entries (W4.5), ring-buffered
+    o._log_total = 0                    -- Total events ever logged; entry.seq stays meaningful
+                                        -- after the ring buffer drops the oldest entries
     o._wait_started_at = nil            -- When the current Completion-role Condition gate started waiting
     o._wait_action_key = nil            -- Identity of the action currently being waited on
 
@@ -195,7 +201,17 @@ function RuntimeProfile:_serialize_state()
         visited_vendors = self._visited_vendors or {},
         known_flight_paths = self._known_flight_paths or {},
         known_hearth_location = self._known_hearth_location,
-        execution_history = self._execution_log or {},
+        execution_history = (function()
+            -- Persist only the newest SAVE_LOG_ENTRIES — the save is a resume point,
+            -- not an archive, and full-log saves grew without bound.
+            local log = self._execution_log or {}
+            if #log <= SAVE_LOG_ENTRIES then return log end
+            local tail = {}
+            for i = #log - SAVE_LOG_ENTRIES + 1, #log do
+                tail[#tail + 1] = log[i]
+            end
+            return tail
+        end)(),
     }
 end
 
@@ -215,6 +231,21 @@ function RuntimeProfile:_save()
     if not json then
         return false
     end
+    -- Atomic-save journal: the sandbox has no rename, so the .tmp file is a completed-write
+    -- journal — both files get the FULL contents, tmp first. A crash mid-write of the real
+    -- save leaves the journal intact for _load_save to fall back to.
+    if not self:_write_save_file(self._save_path .. ".tmp", json) then
+        return false
+    end
+    if self:_write_save_file(self._save_path, json) then
+        self._dirty = false
+        return true
+    end
+    return false
+end
+
+--- Write `json` to `path` through the sandbox-viable mechanisms, in preference order.
+function RuntimeProfile:_write_save_file(path, json)
     -- Sylvannas signature is core.write_data_file(filename, data) — NO self. Passing `core` as the
     -- first argument made every save fail, fall through to a non-existent core.write_file, and then
     -- to io.open, which does not exist in the sandbox: "attempt to index global 'io'" on every save.
@@ -223,29 +254,26 @@ function RuntimeProfile:_save()
         -- save silently never lands, every run starts fresh, and the bot walks the whole route
         -- back to step 1. create_data_file is a no-op when the file is already there.
         if core.create_data_file then
-            pcall(core.create_data_file, self._save_path)
+            pcall(core.create_data_file, path)
         end
-        local ok = pcall(core.write_data_file, self._save_path, json)
+        local ok = pcall(core.write_data_file, path, json)
         if ok then
-            self._dirty = false
             return true
         end
     end
     if core and core.write_file then
-        local ok = pcall(core.write_file, self._save_path, json)
+        local ok = pcall(core.write_file, path, json)
         if ok then
-            self._dirty = false
             return true
         end
     end
     -- Offline/test fallback only: `io` is absent in the Sylvannas sandbox, so it must never be
     -- indexed unguarded.
     if type(io) == "table" and io.open then
-        local f = io.open(self._save_path, "w")
+        local f = io.open(path, "w")
         if f then
             f:write(json)
             f:close()
-            self._dirty = false
             return true
         end
     end
@@ -260,12 +288,16 @@ function RuntimeProfile:_load_save()
     end
     self._save_path = self:_compute_save_path()
     local json, err = core.read_data_file(self._save_path)
-    if not json then
-        return false
-    end
-    local decoded = json_parse(json)
+    local decoded = json and json_parse(json) or nil
     if not decoded or type(decoded) ~= "table" then
-        return false
+        -- A crash mid-write can truncate (or never create) the main save; the .tmp
+        -- journal was fully written first and carries the same contents.
+        local tmp = core.read_data_file(self._save_path .. ".tmp")
+        decoded = tmp and json_parse(tmp) or nil
+        if not decoded or type(decoded) ~= "table" then
+            return false
+        end
+        self:_log_event("save_restored_from_journal", {})
     end
     -- Verify fingerprint matches current profile
     local profile_hash = self._profile and self._profile.content_hash or ""
@@ -316,6 +348,8 @@ function RuntimeProfile:_load_save()
         end
         if type(decoded.execution_history) == "table" then
             self._execution_log = decoded.execution_history
+            local last = self._execution_log[#self._execution_log]
+            self._log_total = (last and last.seq) or #self._execution_log
         end
     end
 
@@ -1147,6 +1181,14 @@ function RuntimeProfile:_check_hot_reload()
     if self._dry_run then return end
     if self._state ~= "running" then return end
 
+    -- _get_file_mtime reads and hashes the whole profile JSON — far too heavy for every
+    -- tick. A 5s poll still catches an edited profile within human reaction time.
+    local now = (core and core.time and core.time()) or 0
+    if self._last_reload_check and (now - self._last_reload_check) < RELOAD_CHECK_INTERVAL then
+        return
+    end
+    self._last_reload_check = now
+
     local mtime = self:_get_file_mtime()
     if not mtime then return end
 
@@ -1230,6 +1272,22 @@ function RuntimeProfile:execute(dry_run)
     local dead = self:_is_player_dead()
     if dead and self._state ~= "ghost" then
         self:_log_event("death_detected", { state = self._state })
+        -- Death-loop guard: rez-and-retry against the same lethal action repeated forever
+        -- (live-caught). After MAX_DEATHS_PER_OPERATION deaths at one operation, abandon
+        -- it — the route position advances now; ghost recovery still runs to rez.
+        local op_idx = self._current_operation_idx
+        self._deaths_at_op = self._deaths_at_op or {}
+        self._deaths_at_op[op_idx] = (self._deaths_at_op[op_idx] or 0) + 1
+        if self._deaths_at_op[op_idx] >= MAX_DEATHS_PER_OPERATION then
+            self._deaths_at_op[op_idx] = nil
+            self:_log_event("death_loop_abandon", {
+                operation = op_idx,
+                deaths = MAX_DEATHS_PER_OPERATION,
+            })
+            local operations = (self._profile and self._profile.operations) or {}
+            self:_advance_operation(operations[op_idx])
+            self._current_action_idx = 1
+        end
         self._state = "ghost"
         self._ghost_start_time = (core and core.time and core.time()) or 0
         return "running", "player dead, entering ghost recovery"
@@ -1366,7 +1424,14 @@ function RuntimeProfile:_log_event(event_type, data)
     if data then
         for k, v in pairs(data) do entry[k] = v end
     end
+    -- Ring buffer: an unbounded log grew for the whole session (17k+ entries live-caught)
+    -- and was serialized wholesale into every save. seq preserves the absolute event index.
+    self._log_total = (self._log_total or 0) + 1
+    entry.seq = self._log_total
     table.insert(self._execution_log, entry)
+    while #self._execution_log > MAX_LOG_ENTRIES do
+        table.remove(self._execution_log, 1)
+    end
 
     -- Also publish to event bus for external listeners (editor UI, etc.)
     if self._event_bus then
@@ -1511,6 +1576,22 @@ function RuntimeProfile:_execute_running()
         if self._wait_action_key ~= key then
             self._wait_action_key = key
             self._wait_started_at = now
+            self._wait_kill_count = nil
+        end
+
+        -- A Kill/Grind that is still MAKING PROGRESS must never be timeout-abandoned: a
+        -- 40-mob grind legitimately exceeds MAX_CONDITION_WAIT. A rising kill count for
+        -- this action's entries resets the clock; only a frozen count can time out.
+        if action and (action.type == "Kill" or action.type == "Grind") then
+            local entries = (action.payload and action.payload.creature_entries) or {}
+            local counts = self._action_state and self._action_state.kill_counts
+            local count = (counts and counts[table.concat(entries, ",")]) or 0
+            if self._wait_kill_count == nil then
+                self._wait_kill_count = count
+            elseif count > self._wait_kill_count then
+                self._wait_kill_count = count
+                self._wait_started_at = now
+            end
         end
 
         local elapsed = now - self._wait_started_at
@@ -1520,11 +1601,8 @@ function RuntimeProfile:_execute_running()
             self._wait_action_key = nil
 
             -- Bounded wait exceeded: don't deadlock the bot — advance past the gate.
-            self._current_action_idx = self._current_action_idx + 1
-            if self._current_action_idx > #op.actions then
-                self._current_operation_idx = self._current_operation_idx + 1
-                self._current_action_idx = 1
-            end
+            -- Through _advance_action, so the next action gets a fresh retry budget (A1).
+            self:_advance_action(op)
             return "running", "condition wait timed out, skipping"
         end
 
@@ -1694,7 +1772,13 @@ function RuntimeProfile:_execute_navigating()
             if self._current_action_retries >= MAX_RETRIES_PER_ACTION then
                 self._consecutive_failures = self._consecutive_failures + 1
                 self:_check_consecutive_failures()
-                self._current_operation_idx = self._current_operation_idx + 1
+                -- Skip the whole operation through _advance_operation (reconcile + save),
+                -- and start its successor at action 1 with a fresh retry budget — the raw
+                -- op increment used to keep the old action index and exhausted counter.
+                local operations = self._profile.operations or {}
+                self:_advance_operation(operations[self._current_operation_idx])
+                self._current_action_idx = 1
+                self._current_action_retries = 0
                 return "running", "nav timeout, retries exhausted"
             end
             return "running", "nav timeout, retry"
@@ -1757,7 +1841,12 @@ function RuntimeProfile:_execute_ghost()
     if elapsed >= GHOST_TIMEOUT then
         self:_log_event("ghost_timeout", { duration = elapsed })
         self._ghost_start_time = nil
-        self._current_operation_idx = self._current_operation_idx + 1
+        -- Through _advance_operation (reconcile + save) with the action index and retry
+        -- budget reset — the raw op increment left both stale for the next operation.
+        local operations = (self._profile and self._profile.operations) or {}
+        self:_advance_operation(operations[self._current_operation_idx])
+        self._current_action_idx = 1
+        self._current_action_retries = 0
         self._state = "running"
         return "running", "ghost recovery timed out, skipping operation"
     end
@@ -1859,12 +1948,22 @@ function RuntimeProfile:_handle_blocked(action, ctx)
     if not ok then
         self._current_action_retries = self._current_action_retries + 1
         self:_log_event("nav_dispatch_failed", { error = err })
+        -- Same exhaustion contract as the no-target branch above: a nav client that
+        -- rejects every dispatch must not retry this action forever.
+        if self._current_action_retries >= MAX_RETRIES_PER_ACTION then
+            self._consecutive_failures = self._consecutive_failures + 1
+            self:_check_consecutive_failures()
+            local operations = self._profile.operations or {}
+            local op = operations[self._current_operation_idx]
+            self:_advance_action(op)
+            return "running", "blocked (nav dispatch failed), retries exhausted, advancing"
+        end
         return "running", "blocked (nav dispatch failed)"
     end
 
-self._state = "navigating"
-        self._nav_start_time = (core and core.time and core.time()) or 0
-        self._last_blocked_action = action
+    self._state = "navigating"
+    self._nav_start_time = (core and core.time and core.time()) or 0
+    self._last_blocked_action = action
     self:_log_event("nav_started", {
         target = target_pos,
         action_type = action and action.type,
@@ -2064,6 +2163,18 @@ function RuntimeProfile:_advance_operation(op)
     local reconciled, certain, certain_idx = self:_reconcile_start_operation()
     self:_apply_reconciliation(reconciled, certain, certain_idx)
 
+    -- A new operation's Kill starts from a clean slate. kill_counts keying isolates
+    -- per-entry-set, but the corpse/loot maps grew for the whole session, and a stale
+    -- committed target or chase destination must never leak into the next operation.
+    local P = self._action_state
+    if P then
+        P.kill_counts = {}
+        P._counted_corpses = nil
+        P._loot_attempts = nil
+        P._target_key = nil
+        P._chase_dest = nil
+    end
+
     -- W5.3 — Auto-save after operation advance
     self:_save()
 end
@@ -2086,14 +2197,19 @@ function RuntimeProfile:reset()
     self._wait_action_key = nil
     self._last_blocked_action = nil
     self._execution_log = {}
+    self._log_total = 0
     self._json_mtime = nil
     self._rewound_ops = {}
+    self._deaths_at_op = {}
     self._completed_quests = {}
     self._temporary_variables = {}
     self._visited_vendors = {}
     self._known_flight_paths = {}
     self._known_hearth_location = nil
     self._sim_result = nil
+    -- Per-session action state (kill tallies, corpse maps, chase target) dies with the
+    -- run; create_context lazily rebuilds a fresh table on the next tick.
+    self._action_state = nil
     self._dry_run = false
     if self._nav then
         self._nav:stop("reset")

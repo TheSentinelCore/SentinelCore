@@ -1136,17 +1136,20 @@ function RuntimeAction.execute_hearth(payload, ctx)
 end
 
 function RuntimeAction.execute_wait(payload, ctx)
-    local duration = payload.duration
+    local duration = payload.duration or 0
+    -- "blocked" routed a plain timer into nav recovery: it burned the retry budget,
+    -- counted spurious failures, and ignored the duration. "waiting" holds the action
+    -- in place; the executor's per-action wait timeout still bounds a bogus duration.
     if not ctx.wait_start then
         ctx.wait_start = (core and core.time and core.time()) or 0
-        return "blocked" -- Start waiting
+        return "waiting" -- Start waiting
     end
 
-    if (core and core.time and core.time()) - ctx.wait_start >= duration then
+    if ((core and core.time and core.time()) or 0) - ctx.wait_start >= duration then
         ctx.wait_start = nil
         return "success"
     end
-    return "blocked" -- Still waiting
+    return "waiting" -- Still waiting
 end
 
 function RuntimeAction.execute_use_item(payload, ctx)
