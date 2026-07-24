@@ -537,6 +537,161 @@ function M.run()
     T.assert_true(combat18:get_state() ~= "IDLE",
         "target-HP progress must reset the no-progress window")
     combat18:disengage("test")
+
+    -- Test 19: when a forced (questing) target dies while OTHER mobs are still
+    -- beating the player, combat must chain into a DEFENSIVE engagement against
+    -- the live attacker instead of handing control back mid-melee with nothing
+    -- fighting back. The chain runs off the attacker scan (only units in combat
+    -- with the player), so it can never re-acquire neutral non-attackers, and it
+    -- ends with a clean disengage once no attacker remains.
+    local bb19 = make_blackboard()
+    local bus19 = EventBus:new()
+    local combat19 = SentinelCombat:new(bus19, bb19, nav)
+    combat19:initialize()
+    local q19_opts = { guid = "q19", hostile = false, position = { x = 3, y = 0, z = 0 } }
+    local q19 = make_unit(q19_opts)
+    local add19_opts = {
+        guid = "add19",
+        hostile = true,
+        is_player = false,
+        target = player,
+        position = { x = 2, y = 0, z = 0 },
+    }
+    local add19 = make_unit(add19_opts)
+    local prev_core19 = core
+    core = { object_manager = { get_all_objects = function() return { add19 } end } }
+    bb19:set("player.in_combat", true)
+    combat19:engage(q19, { source = "questing" })
+    T.assert_equal(combat19:get_state(), "ENGAGING", "sanity: forced engage entered combat")
+    q19_opts.dead = true
+    local got19 = combat19:_ensure_target()
+    T.assert_equal(got19, add19,
+        "forced-target death with a live attacker must engage that attacker")
+    T.assert_equal(bb19:get("combat.source"), "defense",
+        "the chained engagement must be defensive, not questing-sourced")
+    T.assert_true(combat19:get_state() ~= "IDLE",
+        "the defensive engagement must keep combat active")
+    -- The attacker dies too; the scan finds nobody. The defensive chain must end
+    -- with a clean disengage, never a selector pick (which could grab neutrals).
+    add19_opts.dead = true
+    core = { object_manager = { get_all_objects = function() return {} end } }
+    bb19:set("system.now_ms", 2000)
+    local got19b = combat19:_ensure_target()
+    T.assert_equal(got19b, nil, "the defense chain must end when no attacker remains")
+    T.assert_equal(combat19:get_state(), "IDLE",
+        "a defensive engagement with no attacker left must disengage cleanly")
+    core = prev_core19
+
+    -- Test 20: loss of control (fear/stun) must suspend chase movement AND spell
+    -- queueing while it lasts, and resume automatically when it ends. Signal:
+    -- player:get_loss_of_control_info().valid (game-object.md; there is no
+    -- is_stunned/is_feared in the SDK).
+    local loc20 = { valid = true }
+    local player20 = make_unit({
+        guid = "player20",
+        position = { x = 0, y = 0, z = 0 },
+    })
+    function player20:get_loss_of_control_info() return loc20 end
+    local far20_opts = { guid = "far20", hostile = true, position = { x = 50, y = 0, z = 0 } }
+    local far20 = make_unit(far20_opts)
+    local moves20 = 0
+    local nav20 = {
+        move_to = function() moves20 = moves20 + 1 end,
+        stop = function() end,
+        release = function() end,
+        is_active = function() return false end,
+    }
+    local bb20 = make_blackboard()
+    bb20:set("player.object", player20)
+    bb20:set("player.target", far20)
+    local bus20 = EventBus:new()
+    local combat20 = SentinelCombat:new(bus20, bb20, nav20)
+    combat20:initialize()
+    combat20:engage(far20, { source = "auto" })
+    combat20:update(bb20)
+    T.assert_equal(moves20, 0, "chase movement must be suspended while controlled")
+    T.assert_true(combat20:get_state() ~= "IDLE",
+        "loss of control must NOT disengage — the CC is waited out")
+    loc20.valid = false
+    bb20:set("system.now_ms", 2000)
+    combat20:update(bb20)
+    T.assert_true(moves20 > 0, "chase movement must resume once control returns")
+    combat20:disengage("test")
+
+    -- Spell queueing must also be suspended: in range, GCD ready, controlled —
+    -- nothing may be queued.
+    queued = {}
+    local loc21 = { valid = true }
+    local player21 = make_unit({ guid = "player21", position = { x = 0, y = 0, z = 0 } })
+    function player21:get_loss_of_control_info() return loc21 end
+    local near21 = make_unit({ guid = "near21", hostile = true, position = { x = 3, y = 0, z = 0 } })
+    local bb21 = make_blackboard()
+    bb21:set("player.object", player21)
+    bb21:set("player.target", near21)
+    local bus21 = EventBus:new()
+    local combat21 = SentinelCombat:new(bus21, bb21, nav)
+    combat21:initialize()
+    combat21:engage(near21, { source = "auto" })
+    combat21:update(bb21)
+    T.assert_equal(queued[1], nil, "no spell may be queued while controlled")
+    combat21:disengage("test")
+
+    -- Test 22: combat.emergency_flee (set by mage frost_actions.emergency_escape,
+    -- previously write-only) must be CONSUMED: disengage("emergency_flee"), clear
+    -- the flag, and issue a nav flee ~30yd directly away from the target via the
+    -- shared adapter, then release ownership.
+    local move_args22 = nil
+    local released22 = nil
+    local nav22 = {
+        move_to = function(_self, dest, opts) move_args22 = { dest = dest, opts = opts } end,
+        stop = function() end,
+        release = function(_self, owner) released22 = owner end,
+        is_active = function() return false end,
+    }
+    local bb22 = make_blackboard()
+    local bus22 = EventBus:new()
+    local combat22 = SentinelCombat:new(bus22, bb22, nav22)
+    combat22:initialize()
+    local disengaged22 = nil
+    bus22:subscribe("combat:disengaged", function(payload) disengaged22 = payload end)
+    local t22 = make_unit({ guid = "t22", hostile = true, position = { x = 10, y = 0, z = 0 } })
+    bb22:set("player.target", t22)
+    combat22:engage(t22, { source = "auto" })
+    T.assert_equal(combat22:get_state(), "ENGAGING", "sanity: engaged before the flee")
+    bb22:set("combat.emergency_flee", true)
+    combat22:update(bb22)
+    T.assert_equal(combat22:get_state(), "IDLE", "emergency_flee must disengage")
+    T.assert_false(bb22:get("combat.emergency_flee") == true,
+        "the emergency_flee flag must be consumed (cleared)")
+    T.assert_true(disengaged22 ~= nil and disengaged22.reason == "emergency_flee",
+        "the disengage reason must be emergency_flee")
+    T.assert_true(move_args22 ~= nil, "a nav flee move must be issued")
+    T.assert_true(move_args22 and math.abs(move_args22.dest.x - (-30)) < 0.01,
+        "the flee point must be ~30yd directly away from the target")
+    T.assert_equal(move_args22 and move_args22.opts and move_args22.opts.owner, "combat",
+        "the flee move must be issued as owner=combat")
+    T.assert_equal(released22, "combat",
+        "adapter ownership must be released after the flee move is issued")
+
+    -- Test 23: a hardcast aimed at a target that is already dead must be stopped
+    -- via core.input.cancel_spells() (input.md: Spell Cancellation).
+    local cancels23 = 0
+    local bb23 = make_blackboard()
+    local bus23 = EventBus:new()
+    local combat23 = SentinelCombat:new(bus23, bb23, nav)
+    combat23:initialize()
+    local t23_opts = { guid = "t23", hostile = true, position = { x = 3, y = 0, z = 0 } }
+    local t23 = make_unit(t23_opts)
+    bb23:set("player.target", t23)
+    local prev_core23 = core
+    core = { input = { cancel_spells = function() cancels23 = cancels23 + 1 end } }
+    combat23:engage(t23, { source = "auto" })
+    bb23:set("player.is_casting", true)
+    t23_opts.dead = true
+    combat23:update(bb23)
+    T.assert_equal(cancels23, 1, "a hardcast at a dead target must be cancelled")
+    core = prev_core23
+    combat23:disengage("test")
 end
 
 return M

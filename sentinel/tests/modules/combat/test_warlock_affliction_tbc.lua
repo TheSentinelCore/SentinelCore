@@ -198,6 +198,66 @@ function M.test_sustain_life_tap_on_low_mana()
     clear_spell_book()
 end
 
+function M.test_drain_life_recovery_when_low_mana_and_low_hp()
+    set_spell_helper()
+    set_spell_book({ is_spell_known = function() return true end })
+
+    -- The wedge: HP below 50% blocks Life Tap (health_above(0.50)) and HP above
+    -- 40% blocks drain_life_sustain (health_below(0.40)); with mana below 30%
+    -- Shadow Bolt is unaffordable too, so the lock wanded forever. The recovery
+    -- branch must convert enemy HP into ours via Drain Life.
+    local actions = {}
+    local bb = fresh_bb(actions)
+    local bus = EventBus:new()
+    local player = make_unit({ guid = "player" })
+    local target = make_unit({ guid = "target", debuffs = {
+        [CORRUPTION_MAX] = true, [CURSE_OF_AGONY_MAX] = true, [IMMOLATE_MAX] = true,
+    } })
+    bb:set("player.object", player)
+    bb:set("combat.target", target)
+    bb:set("player.mana_pct", 0.20)   -- below 0.30
+    bb:set("player.health_pct", 0.45) -- between 0.40 and 0.50: the wedge zone
+
+    local profile = Profile.build(bb, bus)
+    profile:tick_gcd(bb)
+    T.assert_equal(actions[1].action, "drain_life_target",
+        "Drain Life recovery must fire when mana < 30% and HP < 50%")
+
+    clear_spell_book()
+end
+
+function M.test_wand_final_fallback_when_drain_life_untrained_in_wedge()
+    set_spell_helper()
+    -- Same wedge, but Drain Life untrained: wand must remain the final fallback.
+    local SpellCatalogMod = SpellCatalog:new()
+    local drain_life_ids = {}
+    for _, id in ipairs(SpellCatalogMod:get("drain_life").ranks) do
+        drain_life_ids[id] = true
+    end
+    set_spell_book({
+        is_spell_known = function(id) return not drain_life_ids[id] end,
+    })
+
+    local actions = {}
+    local bb = fresh_bb(actions)
+    local bus = EventBus:new()
+    local player = make_unit({ guid = "player" })
+    local target = make_unit({ guid = "target", debuffs = {
+        [CORRUPTION_MAX] = true, [CURSE_OF_AGONY_MAX] = true, [IMMOLATE_MAX] = true,
+    } })
+    bb:set("player.object", player)
+    bb:set("combat.target", target)
+    bb:set("player.mana_pct", 0.20)
+    bb:set("player.health_pct", 0.45)
+
+    local profile = Profile.build(bb, bus)
+    profile:tick_gcd(bb)
+    T.assert_equal(actions[1].action, "shoot_target",
+        "Wand stays the final fallback when Drain Life is untrained in the wedge")
+
+    clear_spell_book()
+end
+
 function M.test_wand_fallback_when_shadow_bolt_unknown()
     set_spell_helper()
     -- Shadow Bolt untrained; everything else known. Mana-rich, DoTs maintained,

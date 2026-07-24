@@ -80,6 +80,19 @@ local function build_gcd_root(blackboard)
         SharedConditions.spell_available("drain_life"),
     }, Act.cast_drain_life, nil, 40)
 
+    -- 4b. RECOVERY: Drain Life in the low-mana/low-HP wedge. Below 50% HP Life
+    -- Tap is blocked (health_above(0.50)) and above 40% HP drain_life_sustain is
+    -- blocked (health_below(0.40)); with mana under 30% the lock wanded forever.
+    -- Drain Life converts enemy HP into ours, un-wedging both sustain gates.
+    -- Wand (priority 900) remains the final fallback when Drain Life is untrained.
+    builder:add_priority("drain_life_recovery", {
+        SharedConditions.gcd_ready,
+        SharedConditions.target_valid,
+        SharedConditions.mana_below(0.30),
+        SharedConditions.health_below(0.50),
+        SharedConditions.spell_available("drain_life"),
+    }, Act.cast_drain_life, nil, 45)
+
     -- 5. SUSTAIN: Life Tap when mana is low and health can afford it.
     builder:add_priority("life_tap_sustain", {
         SharedConditions.gcd_ready,

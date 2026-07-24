@@ -519,6 +519,21 @@ function SentinelCombat:_ensure_target()
         end
         self:_clear_forced_target()
     end
+    -- Defensive chain (source="defense"): only ever fights units actively attacking
+    -- the player. _find_attacker can never return a neutral non-attacker (it only
+    -- yields units whose target is the player), so the chain is self-limiting: it
+    -- ends with a clean disengage the moment nothing is attacking. It must NOT fall
+    -- through to the selector, whose "best target" has no attacker notion.
+    if self._source == "defense" then
+        local attacker = self:_find_attacker()
+        if attacker then
+            self._current_target = attacker
+            self._blackboard:set("combat.target", attacker)
+            return attacker
+        end
+        self:disengage("defense_complete")
+        return nil
+    end
     -- A questing engagement never self-selects a replacement target. When the forced
     -- target dies (or goes invalid), control goes BACK to the kill action, which picks
     -- the next entry-filtered quest mob and re-requests engagement. Falling through to
@@ -526,8 +541,19 @@ function SentinelCombat:_ensure_target()
     -- under source="questing" (live-caught): the selector's idea of "best target" has no
     -- notion of which entries the quest needs. Real aggressors re-enter combat through
     -- _find_attacker, which only ever yields units attacking the player.
+    -- EXCEPTION: if the forced kill ended while OTHER mobs are still beating the
+    -- player, handing control back leaves nothing fighting back. Chain into a
+    -- DEFENSIVE engagement (not questing-sourced — self-defense may keep chaining
+    -- until no attacker remains) against the live attacker.
     if self._source == "questing" then
+        local attacker = self:_attacker_still_on_player() and self:_find_attacker() or nil
         self:disengage("quest_target_done")
+        if attacker then
+            self:engage(attacker, { source = "defense" })
+            if self._current_target then
+                return self._current_target
+            end
+        end
         return nil
     end
     local selected = self._target_selector:get_best_target({
@@ -819,6 +845,61 @@ function SentinelCombat:_confirm_class_detection(blackboard)
     end
 end
 
+-- Loss-of-control detection. The SDK has no player:is_stunned()/is_feared();
+-- the one CC surface on a unit is get_loss_of_control_info() (game-object.md:575)
+-- -> { valid, spell_id, start_time, end_time, duration, type, lockout_school }.
+-- `valid == true` means a loss-of-control effect is live. While controlled the
+-- update loop suspends chase movement and spell queueing (the fear path made
+-- chase_controller issue look_at/move_to against the fear walk and the rotation
+-- burned queues) and resumes automatically when the info goes invalid. When the
+-- method is absent (older SDK), this returns false and behavior is unchanged.
+function SentinelCombat:_loss_of_control_active(blackboard)
+    local player = blackboard:get("player.object")
+    local ok, info = safe_call(player, "get_loss_of_control_info")
+    if not ok or type(info) ~= "table" then
+        return false
+    end
+    return info.valid == true
+end
+
+-- Emergency flee consumer (combat.emergency_flee is set by the mage's
+-- emergency_escape action / cleared by frost state reset — it had zero readers).
+-- Disengage, then issue a nav flee toward a point ~FLEE_DISTANCE_YD directly
+-- away from the (pre-disengage) target through the shared NavAdapter, and
+-- release ownership so questing can re-claim the adapter. Every adapter call is
+-- pcall-guarded; with no usable positions the flee degrades to disengage+log.
+local FLEE_DISTANCE_YD = 30
+
+function SentinelCombat:_execute_emergency_flee(blackboard)
+    local player_pos = blackboard:get("player.position")
+    local ok_tp, target_pos = safe_call(self._current_target, "get_position")
+    self:disengage("emergency_flee")
+    if core and type(core.log) == "function" then
+        pcall(core.log, "[Combat] combat_emergency_flee")
+    end
+    if type(player_pos) ~= "table" or not ok_tp or type(target_pos) ~= "table" then
+        return
+    end
+    local dx = (tonumber(player_pos.x) or 0) - (tonumber(target_pos.x) or 0)
+    local dy = (tonumber(player_pos.y) or 0) - (tonumber(target_pos.y) or 0)
+    local len = math.sqrt(dx * dx + dy * dy)
+    if len < 0.001 then
+        dx, dy, len = 1, 0, 1
+    end
+    local dest = {
+        x = (tonumber(player_pos.x) or 0) + dx / len * FLEE_DISTANCE_YD,
+        y = (tonumber(player_pos.y) or 0) + dy / len * FLEE_DISTANCE_YD,
+        z = tonumber(player_pos.z) or 0,
+    }
+    if not self._nav_adapter then
+        return
+    end
+    pcall(function()
+        self._nav_adapter:move_to(dest, { use_navmesh = true, owner = "combat", preempt = true })
+        self._nav_adapter:release("combat")
+    end)
+end
+
 local NO_PROGRESS_TIMEOUT_MS = 15000
 
 -- True when the current engagement has made zero progress — target HP not
@@ -884,6 +965,17 @@ function SentinelCombat:update(blackboard)
         return
     end
 
+    -- Consume combat.emergency_flee (see _execute_emergency_flee). The flag is
+    -- cleared unconditionally — a stale flag with combat already over must not
+    -- fire a flee on some later engagement.
+    if blackboard:get("combat.emergency_flee", false) == true then
+        blackboard:set("combat.emergency_flee", false)
+        if self:is_in_combat() then
+            self:_execute_emergency_flee(blackboard)
+            return
+        end
+    end
+
     if self._state_machine:get_state() == "IDLE" then
         self:_combat_diag(blackboard, "idle")
 
@@ -923,9 +1015,31 @@ function SentinelCombat:update(blackboard)
         return
     end
 
+    -- A hardcast aimed at a corpse is pure waste — stop it before _ensure_target
+    -- replaces/clears the dead target. The rotation only ever casts at
+    -- combat.target, so _current_target is the cast's target. cancel_spells()
+    -- is the SDK's cast-stop (input.md: Spell Cancellation).
+    if blackboard:get("player.is_casting", false) == true
+        and core and core.input and type(core.input.cancel_spells) == "function" then
+        local ok_dead, cur_dead = safe_call(self._current_target, "is_dead")
+        if ok_dead and cur_dead == true then
+            pcall(core.input.cancel_spells)
+        end
+    end
+
     local target = self:_ensure_target()
     if not target then
         self:disengage("target_lost")
+        return
+    end
+
+    -- Loss of control (fear/stun/…): suspend chase movement and spell queueing
+    -- and wait the CC out — do NOT disengage. The progress guard is reset so a
+    -- long CC can never be miscounted as a no-progress stall.
+    if self:_loss_of_control_active(blackboard) then
+        self._chase_controller:stop("loss_of_control")
+        self._progress_guard = nil
+        self:_combat_diag(blackboard, "loss_of_control")
         return
     end
 
