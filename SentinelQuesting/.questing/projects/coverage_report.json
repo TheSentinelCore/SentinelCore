@@ -3,12 +3,12 @@
     "abandon": {
       "typed": 0,
       "inert_preserved": 0,
-      "unresolved": 140
+      "unresolved": 142
     },
     "accept": {
-      "typed": 7025,
+      "typed": 7482,
       "inert_preserved": 0,
-      "unresolved": 0
+      "unresolved": 8
     },
     "addquestitem": {
       "typed": 0,
@@ -17,22 +17,22 @@
     },
     "aura": {
       "typed": 0,
-      "inert_preserved": 169,
+      "inert_preserved": 174,
       "unresolved": 0
     },
     "bankdeposit": {
       "typed": 0,
-      "inert_preserved": 22,
+      "inert_preserved": 23,
       "unresolved": 0
     },
     "bankwithdraw": {
       "typed": 0,
-      "inert_preserved": 51,
+      "inert_preserved": 53,
       "unresolved": 0
     },
     "bindlocation": {
       "typed": 0,
-      "inert_preserved": 532,
+      "inert_preserved": 557,
       "unresolved": 0
     },
     "blastedLands": {
@@ -42,12 +42,12 @@
     },
     "bronzetube": {
       "typed": 0,
-      "inert_preserved": 19,
+      "inert_preserved": 22,
       "unresolved": 0
     },
     "cast": {
       "typed": 0,
-      "inert_preserved": 559,
+      "inert_preserved": 589,
       "unresolved": 0
     },
     "clicknext": {
@@ -68,16 +68,16 @@
     "complete": {
       "typed": 0,
       "inert_preserved": 0,
-      "unresolved": 2
+      "unresolved": 4
     },
     "condition": {
-      "typed": 18030,
+      "typed": 18869,
       "inert_preserved": 0,
       "unresolved": 0
     },
     "cooldown": {
       "typed": 0,
-      "inert_preserved": 515,
+      "inert_preserved": 549,
       "unresolved": 0
     },
     "daily": {
@@ -92,22 +92,22 @@
     },
     "deathskip": {
       "typed": 0,
-      "inert_preserved": 75,
+      "inert_preserved": 77,
       "unresolved": 0
     },
     "destroy": {
       "typed": 0,
-      "inert_preserved": 70,
+      "inert_preserved": 72,
       "unresolved": 0
     },
     "disablecheckbox": {
       "typed": 0,
-      "inert_preserved": 187,
+      "inert_preserved": 194,
       "unresolved": 0
     },
     "dungeon": {
       "typed": 0,
-      "inert_preserved": 1252,
+      "inert_preserved": 1351,
       "unresolved": 0
     },
     "equip": {
@@ -116,7 +116,7 @@
       "unresolved": 0
     },
     "fly": {
-      "typed": 687,
+      "typed": 727,
       "inert_preserved": 0,
       "unresolved": 14
     },
@@ -126,48 +126,48 @@
       "unresolved": 0
     },
     "fp": {
-      "typed": 5,
+      "typed": 189,
       "inert_preserved": 0,
-      "unresolved": 175
+      "unresolved": 10
     },
     "gossip": {
       "typed": 0,
-      "inert_preserved": 15,
+      "inert_preserved": 23,
       "unresolved": 0
     },
     "gossipoption": {
       "typed": 0,
-      "inert_preserved": 5,
+      "inert_preserved": 7,
       "unresolved": 0
     },
     "goto": {
-      "typed": 36240,
+      "typed": 38087,
       "inert_preserved": 0,
       "unresolved": 0
     },
     "groundgoto": {
       "typed": 0,
-      "inert_preserved": 104,
+      "inert_preserved": 114,
       "unresolved": 0
     },
     "group": {
       "typed": 0,
-      "inert_preserved": 188,
+      "inert_preserved": 190,
       "unresolved": 0
     },
     "home": {
       "typed": 0,
-      "inert_preserved": 172,
+      "inert_preserved": 186,
       "unresolved": 0
     },
     "hs": {
-      "typed": 356,
+      "typed": 382,
       "inert_preserved": 0,
       "unresolved": 0
     },
     "isNotOnQuest": {
       "typed": 0,
-      "inert_preserved": 27,
+      "inert_preserved": 28,
       "unresolved": 0
     },
     "isQuestNotComplete": {
@@ -176,7 +176,7 @@
       "unresolved": 0
     },
     "item": {
-      "typed": 1601,
+      "typed": 1678,
       "inert_preserved": 0,
       "unresolved": 0
     },
@@ -187,32 +187,32 @@
     },
     "line": {
       "typed": 0,
-      "inert_preserved": 442,
+      "inert_preserved": 485,
       "unresolved": 0
     },
     "link": {
       "typed": 0,
-      "inert_preserved": 159,
+      "inert_preserved": 165,
       "unresolved": 0
     },
     "maxlevel": {
       "typed": 0,
-      "inert_preserved": 166,
+      "inert_preserved": 171,
       "unresolved": 0
     },
     "mob": {
-      "typed": 7159,
+      "typed": 13678,
       "inert_preserved": 0,
       "unresolved": 0
     },
     "money": {
       "typed": 0,
-      "inert_preserved": 257,
+      "inert_preserved": 259,
       "unresolved": 0
     },
     "reputation": {
       "typed": 0,
-      "inert_preserved": 264,
+      "inert_preserved": 298,
       "unresolved": 0
     },
     "requires": {
@@ -247,12 +247,12 @@
     },
     "skill": {
       "typed": 0,
-      "inert_preserved": 492,
+      "inert_preserved": 507,
       "unresolved": 0
     },
     "skipgossip": {
       "typed": 0,
-      "inert_preserved": 256,
+      "inert_preserved": 282,
       "unresolved": 0
     },
     "solo": {
@@ -267,12 +267,12 @@
     },
     "subzone": {
       "typed": 0,
-      "inert_preserved": 932,
+      "inert_preserved": 991,
       "unresolved": 0
     },
     "subzoneskip": {
       "typed": 0,
-      "inert_preserved": 777,
+      "inert_preserved": 820,
       "unresolved": 0
     },
     "tbcWBF": {
@@ -282,27 +282,32 @@
     },
     "timer": {
       "typed": 0,
-      "inert_preserved": 181,
+      "inert_preserved": 200,
       "unresolved": 0
     },
     "train": {
-      "typed": 1363,
+      "typed": 1411,
       "inert_preserved": 0,
-      "unresolved": 208
+      "unresolved": 266
     },
     "turnin": {
-      "typed": 7262,
+      "typed": 7669,
       "inert_preserved": 0,
+      "unresolved": 5
+    },
+    "turninmultiple": {
+      "typed": 0,
+      "inert_preserved": 1,
       "unresolved": 0
     },
     "unitscan": {
       "typed": 0,
-      "inert_preserved": 711,
+      "inert_preserved": 735,
       "unresolved": 0
     },
     "usespell": {
       "typed": 0,
-      "inert_preserved": 194,
+      "inert_preserved": 204,
       "unresolved": 0
     },
     "vehicle": {
@@ -311,34 +316,34 @@
       "unresolved": 0
     },
     "vendor": {
-      "typed": 367,
+      "typed": 381,
       "inert_preserved": 0,
       "unresolved": 4
     },
     "waypoint": {
       "typed": 0,
-      "inert_preserved": 585,
+      "inert_preserved": 593,
       "unresolved": 0
     },
     "xp": {
       "typed": 0,
-      "inert_preserved": 2069,
+      "inert_preserved": 2133,
       "unresolved": 0
     },
     "zone": {
       "typed": 0,
-      "inert_preserved": 1005,
+      "inert_preserved": 1063,
       "unresolved": 0
     },
     "zoneskip": {
       "typed": 0,
-      "inert_preserved": 1921,
+      "inert_preserved": 2032,
       "unresolved": 0
     }
   },
   "totals": {
-    "typed": 80095,
-    "inert_preserved": 15626,
-    "unresolved": 544
+    "typed": 90553,
+    "inert_preserved": 16401,
+    "unresolved": 454
   }
 }
