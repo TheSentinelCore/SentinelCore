@@ -53,8 +53,8 @@ local function wire_diagnostics(bus)
     bus:subscribe("module:fault", function(payload)
         payload = payload or {}
         log_error(string.format(
-            "module:fault module=%s error=%s",
-            tostring(payload.module), tostring(payload.error)))
+            "module:fault module=%s count=%s error=%s",
+            tostring(payload.module), tostring(payload.count or 1), tostring(payload.error)))
     end)
 
     bus:subscribe("questing:error", function(payload)

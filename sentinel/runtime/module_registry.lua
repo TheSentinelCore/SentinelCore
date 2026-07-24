@@ -11,8 +11,13 @@ local MODULE_STATES = {
 	LOADED = "loaded",
 	INITIALIZING = "initializing",
 	ACTIVE = "active",
+	DEGRADED = "degraded", -- tick faulted repeatedly; its tick is skipped, other modules keep running
 	SHUTDOWN = "shutdown",
 }
+
+-- Consecutive tick faults before a module is degraded. Below this, a fault is transient and
+-- the module keeps ticking; at this streak it would re-fault every frame forever.
+local MAX_CONSECUTIVE_TICK_FAULTS = 3
 
 -- Module schema - defines required structure for registered modules
 -- Each module must provide: namespace, capabilities, configuration, state, lifecycle hooks
@@ -60,6 +65,10 @@ function ModuleRegistry:new()
 	o._enabled_names = {}
 	o._blackboard = nil
 	o._event_bus = nil
+	-- Consecutive tick-fault streaks, mirrored to blackboard system.module_faults so the
+	-- cockpit can surface a fault that would otherwise only spam the log.
+	o._fault_counts = {}
+	o._module_faults = {}
 	return o
 end
 
@@ -230,11 +239,28 @@ function ModuleRegistry:tick_all(delta)
 				if type(instance.tick) == "function" then
 					local ok, err = pcall(instance.tick, instance, delta)
 					if not ok then
+						local count = (self._fault_counts[name] or 0) + 1
+						self._fault_counts[name] = count
+						self._module_faults[name] = { count = count, last_error = tostring(err) }
+						if self._blackboard then
+							self._blackboard:set("system.module_faults", self._module_faults)
+						end
 						if self._event_bus then
 							self._event_bus:publish("module:fault", {
 								module = name,
 								error = tostring(err),
+								count = count,
 							})
+						end
+						if count >= MAX_CONSECUTIVE_TICK_FAULTS then
+							self:_set_state(name, MODULE_STATES.DEGRADED)
+						end
+					elseif self._fault_counts[name] and self._fault_counts[name] > 0 then
+						-- Only CONSECUTIVE faults degrade: a clean tick resets the streak.
+						self._fault_counts[name] = 0
+						self._module_faults[name] = nil
+						if self._blackboard then
+							self._blackboard:set("system.module_faults", self._module_faults)
 						end
 					end
 				end

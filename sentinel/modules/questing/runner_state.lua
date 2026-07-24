@@ -17,6 +17,8 @@ local RunnerState = {}
 
 local DEFAULT_STALL_THRESHOLD_S = 300.0  -- a wait longer than this reads STUCK, not WAITING
 local DEFAULT_MAX_EVENTS = 12
+local NAV_ERROR_RECENT_S = 30.0          -- a nav failure older than this is history, not a blocker
+local ETA_WINDOW_MIN_SAMPLES = 3         -- below this the windowed rate is noise; use session avg
 
 -- Execution-log event -> operator severity. Unknown events default to info rather than being
 -- dropped, so a new event type can never silently vanish from triage.
@@ -127,6 +129,12 @@ end
 ---   quest_log         map of quest_id -> true, from the real game quest log
 ---   guardrails        { stop_after_deaths, stop_if_stuck_s }
 ---   max_events        cap on the returned event list
+---   nav_error         { command, reason, at, target } from NavAdapter:get_last_error()
+---   status_message    the executor's last execute() status message
+---   module_faults     map module_name -> { count, last_error } (system.module_faults)
+---   maintenance       the module's _maintenance table { state, vendor_entry, started_at }
+---   paused_s          accumulated paused time, excluded from elapsed/ETA
+---   recent_completions ascending timestamps of the last few step completions
 function RunnerState.build(opts)
     opts = opts or {}
     local executor = opts.executor
@@ -168,27 +176,97 @@ function RunnerState.build(opts)
     end
     local completed = step > 0 and (step - 1) or 0
     local pct = total > 0 and math.floor((completed / total) * 100) or 0
-    local elapsed = now - started_at
+    -- Paused time is excluded: a run paused overnight must not report a 9-hour session or a
+    -- diluted steps/hour.
+    local elapsed = now - started_at - num(opts.paused_s, 0)
+    if elapsed < 0 then elapsed = 0 end
+    local remaining = total - completed
     local eta_s, per_step, steps_per_hour = nil, nil, nil
-    if completed > 0 and elapsed > 0 then
+    -- A windowed rate over the recent completions beats the whole-session average: early slow
+    -- steps (or one long detour) otherwise poison the ETA for the rest of the run.
+    local window = opts.recent_completions
+    if type(window) == "table" and #window >= ETA_WINDOW_MIN_SAMPLES
+        and num(window[#window], 0) > num(window[1], 0) then
+        per_step = (num(window[#window], 0) - num(window[1], 0)) / (#window - 1)
+        steps_per_hour = 3600 / per_step
+        if remaining > 0 then eta_s = math.floor(per_step * remaining) end
+    elseif completed > 0 and elapsed > 0 then
         per_step = elapsed / completed
         steps_per_hour = (completed / elapsed) * 3600
-        local remaining = total - completed
         if remaining > 0 then eta_s = math.floor(per_step * remaining) end
     end
 
-    -- ---- current action & blocked reason ----------------------------------------
+    -- ---- current action & blocked reason (union: failed > ghost > nav > gate) ----
     local action = current_action(executor)
+    local nav_error = opts.nav_error
+    local nav_error_recent = nav_error ~= nil
+        and (now - num(nav_error.at, now)) <= NAV_ERROR_RECENT_S
     local blocked = { is_blocked = false }
-    if is_waiting then
+    if executor and executor._state == "failed" then
+        local failures = num(executor._consecutive_failures, 0)
+        blocked = {
+            is_blocked = true,
+            kind = "failed",
+            human_reason = string.format("profile failed after %d consecutive failures", failures),
+            detail = { consecutive_failures = failures, message = opts.status_message },
+            severity = "alarm",
+        }
+    elseif executor and executor._state == "ghost" then
+        blocked = {
+            is_blocked = true,
+            kind = "ghost",
+            human_reason = "dead - recovering to corpse",
+            detail = { ghost_elapsed = now - num(executor._ghost_start_time, now) },
+            severity = "alarm",
+        }
+    elseif nav_error_recent then
+        blocked = {
+            is_blocked = true,
+            kind = "nav",
+            human_reason = string.format("navigation failed: %s", tostring(nav_error.reason)),
+            detail = { command = nav_error.command, reason = nav_error.reason,
+                       target = nav_error.target, at = nav_error.at },
+            severity = "alarm",
+        }
+    elseif is_waiting then
         local cond = action and action.payload and action.payload.condition or nil
         blocked = {
             is_blocked = true,
+            kind = "gate",
             waited_s = waited_s,
             human_reason = humanize_condition(cond) or "waiting on a completion gate",
             raw_condition = cond,
+            severity = "warn",
         }
     end
+
+    -- ---- health severity (the only thing the render layer switches on) -----------
+    local maintenance_in = opts.maintenance or {}
+    local maintenance = {
+        active = maintenance_in.state ~= nil and maintenance_in.state ~= "idle",
+        phase = maintenance_in.state,
+        vendor_entry = maintenance_in.vendor_entry,
+        started_at = maintenance_in.started_at,
+    }
+    -- Worst faulting module (highest count; name breaks ties deterministically).
+    local module_fault = nil
+    for name, info in pairs(opts.module_faults or {}) do
+        local count = num(info and info.count, 0)
+        if count > 0 and (module_fault == nil or count > module_fault.count
+            or (count == module_fault.count and name < module_fault.name)) then
+            module_fault = { name = name, count = count, last_error = info.last_error }
+        end
+    end
+    local severity
+    if status == "FAILED" or status == "GHOST" or status == "STUCK"
+        or module_fault ~= nil or blocked.kind == "nav" then
+        severity = "alarm"
+    elseif status == "WAITING" or status == "NAVIGATING" or maintenance.active then
+        severity = "warn"
+    else
+        severity = "ok"
+    end
+    is_alarm = severity == "alarm"
 
     -- ---- quest-log desync --------------------------------------------------------
     local tracked = opts.tracked_quests or {}
@@ -236,8 +314,11 @@ function RunnerState.build(opts)
     return {
         health = {
             status = status,
+            severity = severity,
             is_alarm = is_alarm,
             profile_loaded = executor ~= nil,
+            message = opts.status_message,
+            module_fault = module_fault,
         },
         liveness = {
             session_elapsed_s = elapsed,
@@ -258,6 +339,9 @@ function RunnerState.build(opts)
             human_text = humanize_action(action),
         },
         blocked = blocked,
+        maintenance = maintenance,
+        recovery = (executor and executor._state == "ghost")
+            and { ghost_elapsed = now - num(executor._ghost_start_time, now) } or nil,
         sync = sync,
         counters = {
             deaths = deaths,

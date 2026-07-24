@@ -263,6 +263,181 @@ function M.test_events_carry_severity()
 end
 
 -- ============================================================================
+-- Blocked-reason union — nav / failed / ghost / gate all answer "why is it stopped?"
+-- ============================================================================
+
+function M.test_nav_error_populates_blocked_nav()
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", operations = ops(5) }),
+        now = 100, started_at = 0,
+        nav_error = { command = "move_to", reason = "unreachable", at = 95,
+                      target = { x = 1, y = 2, z = 3 } },
+    })
+    T.assert_equal(vm.blocked.is_blocked, true, "a recent nav failure blocks the run")
+    T.assert_equal(vm.blocked.kind, "nav", "nav failure reads kind=nav")
+    T.assert_true(vm.blocked.human_reason:find("unreachable", 1, true) ~= nil,
+        "the nav reason string must survive into the human reason")
+    T.assert_equal(vm.blocked.detail.target.x, 1, "target coords are preserved for triage")
+    T.assert_equal(vm.health.severity, "alarm", "a nav terminal failure is an alarm")
+end
+
+function M.test_stale_nav_error_does_not_block()
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", operations = ops(5) }),
+        now = 500, started_at = 0,
+        nav_error = { command = "move_to", reason = "unreachable", at = 10, target = {} },
+    })
+    T.assert_equal(vm.blocked.is_blocked, false, "an old nav error must not block forever")
+    T.assert_equal(vm.health.severity, "ok", "a recovered run reads ok again")
+end
+
+function M.test_failed_state_populates_blocked_failed()
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "failed", failures = 4, operations = ops(5) }),
+        now = 100, started_at = 0,
+    })
+    T.assert_equal(vm.blocked.kind, "failed", "executor failure reads kind=failed")
+    T.assert_true(#vm.blocked.human_reason > 0, "failed must carry a human reason")
+    T.assert_equal(vm.blocked.detail.consecutive_failures, 4,
+        "consecutive-failure context is preserved")
+end
+
+function M.test_ghost_state_populates_blocked_ghost_and_recovery()
+    local ex = fake_executor({ state = "ghost", operations = ops(5) })
+    ex._ghost_start_time = 40
+    local vm = RunnerState.build({ executor = ex, now = 100, started_at = 0 })
+    T.assert_equal(vm.blocked.kind, "ghost", "ghost state reads kind=ghost")
+    T.assert_equal(vm.recovery.ghost_elapsed, 60, "ghost recovery elapsed is now - ghost start")
+    T.assert_equal(vm.health.severity, "alarm", "ghost is an alarm state")
+end
+
+function M.test_gate_blocked_carries_kind_gate()
+    local cond = { type = "QuestAccepted", payload = 33 }
+    local vm = RunnerState.build({
+        executor = fake_executor({
+            state = "running", wait_started_at = 10, wait_key = "1:1",
+            operations = {
+                { id = 1, actions = { { type = "Condition", payload = { condition = cond, role = "Completion" } } } },
+            },
+        }),
+        now = 20, started_at = 0,
+    })
+    T.assert_equal(vm.blocked.kind, "gate", "a completion gate reads kind=gate")
+    T.assert_equal(vm.blocked.waited_s, 10, "gate keeps the waited duration")
+    T.assert_equal(vm.blocked.raw_condition, cond, "gate keeps the raw condition")
+end
+
+-- ============================================================================
+-- Health severity — the render layer switches on this and nothing else
+-- ============================================================================
+
+function M.test_severity_per_state()
+    local function sev(o, extra)
+        local opts = {
+            executor = fake_executor(o), now = extra and extra.now or 100,
+            started_at = 0, stall_threshold_s = 300,
+        }
+        for k, v in pairs(extra or {}) do opts[k] = v end
+        return RunnerState.build(opts).health.severity
+    end
+    T.assert_equal(sev({ state = "running", operations = ops(5) }), "ok", "RUNNING is ok")
+    T.assert_equal(sev({ state = "navigating", operations = ops(5) }), "warn", "NAVIGATING is warn")
+    T.assert_equal(sev({ state = "running", wait_started_at = 95, wait_key = "1:1",
+        operations = ops(5) }), "warn", "WAITING is warn")
+    T.assert_equal(sev({ state = "running", wait_started_at = 95, wait_key = "1:1",
+        operations = ops(5) }, { now = 500 }), "alarm", "STUCK is alarm")
+    T.assert_equal(sev({ state = "failed", operations = ops(5) }), "alarm", "FAILED is alarm")
+    T.assert_equal(sev({ state = "ghost", operations = ops(5) }), "alarm", "GHOST is alarm")
+end
+
+function M.test_module_fault_surfaces_and_alarms()
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", operations = ops(5) }),
+        now = 100, started_at = 0,
+        module_faults = { questing = { count = 5, last_error = "boom" } },
+    })
+    T.assert_equal(vm.health.module_fault.name, "questing", "the faulting module is named")
+    T.assert_equal(vm.health.module_fault.count, 5, "the fault count is surfaced")
+    T.assert_equal(vm.health.severity, "alarm", "a module fault is an alarm")
+end
+
+function M.test_status_message_passthrough()
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", operations = ops(5) }),
+        now = 100, started_at = 0,
+        status_message = "nav timeout, retry",
+    })
+    T.assert_equal(vm.health.message, "nav timeout, retry",
+        "the executor's last status message reaches the view")
+end
+
+-- ============================================================================
+-- Maintenance visibility — a vendor detour must not look like a hang
+-- ============================================================================
+
+function M.test_maintenance_visible_and_warn()
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", operations = ops(5) }),
+        now = 100, started_at = 0,
+        maintenance = { state = "vendoring", vendor_entry = 42, started_at = 90 },
+    })
+    T.assert_equal(vm.maintenance.active, true, "an active detour is visible")
+    T.assert_equal(vm.maintenance.phase, "vendoring", "the detour phase is surfaced")
+    T.assert_equal(vm.maintenance.vendor_entry, 42, "the vendor entry is surfaced")
+    T.assert_equal(vm.health.severity, "warn", "maintenance reads warn, not alarm")
+end
+
+function M.test_maintenance_idle_is_inactive()
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", operations = ops(5) }),
+        now = 100, started_at = 0,
+        maintenance = { state = "idle" },
+    })
+    T.assert_equal(vm.maintenance.active, false, "idle maintenance is not active")
+    T.assert_equal(vm.health.severity, "ok", "idle maintenance does not change severity")
+end
+
+-- ============================================================================
+-- Pause clock — paused time must not inflate elapsed / ETA
+-- ============================================================================
+
+function M.test_paused_time_excluded_from_elapsed_and_eta()
+    -- 10 of 100 steps; 1000s wall but 400s paused -> 600s effective -> 60s/step -> ETA 5400.
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", op = 11, operations = ops(100) }),
+        now = 1000, started_at = 0, paused_s = 400,
+    })
+    T.assert_equal(vm.liveness.session_elapsed_s, 600, "paused time is excluded from elapsed")
+    T.assert_equal(vm.progress.eta_s, 5400, "ETA uses the effective (unpaused) elapsed")
+end
+
+-- ============================================================================
+-- Windowed ETA — recent rate beats the whole-session average
+-- ============================================================================
+
+function M.test_windowed_eta_uses_recent_rate()
+    -- Session average says 100s/step, but the last 10 completions ran at 10s/step.
+    local completions = {}
+    for i = 1, 10 do completions[i] = 900 + i * 10 end  -- 910..1000
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", op = 11, operations = ops(100) }),
+        now = 1000, started_at = 0,
+        recent_completions = completions,
+    })
+    T.assert_equal(vm.progress.eta_s, 900, "ETA reflects the recent 10s/step rate, not 100s/step")
+    T.assert_equal(vm.progress.steps_per_hour, 360, "rate comes from the recent window")
+end
+
+function M.test_windowed_eta_falls_back_below_three_samples()
+    local vm = RunnerState.build({
+        executor = fake_executor({ state = "running", op = 11, operations = ops(100) }),
+        now = 1000, started_at = 0,
+        recent_completions = { 990, 1000 },
+    })
+    T.assert_equal(vm.progress.eta_s, 9000, "under 3 samples the session average is used")
+end
+
+-- ============================================================================
 -- Event severity table integrity (E6) — every key must have a real emitter.
 -- Encodes the exhaustive set of event names actually passed to
 -- RuntimeProfile:_log_event(...) (modules/questing/runtime_profile.lua) so a severity
@@ -327,6 +502,19 @@ local tests = {
     test_guardrail_trips_on_stuck_duration = M.test_guardrail_trips_on_stuck_duration,
     test_events_are_newest_first_and_capped = M.test_events_are_newest_first_and_capped,
     test_events_carry_severity = M.test_events_carry_severity,
+    test_nav_error_populates_blocked_nav = M.test_nav_error_populates_blocked_nav,
+    test_stale_nav_error_does_not_block = M.test_stale_nav_error_does_not_block,
+    test_failed_state_populates_blocked_failed = M.test_failed_state_populates_blocked_failed,
+    test_ghost_state_populates_blocked_ghost_and_recovery = M.test_ghost_state_populates_blocked_ghost_and_recovery,
+    test_gate_blocked_carries_kind_gate = M.test_gate_blocked_carries_kind_gate,
+    test_severity_per_state = M.test_severity_per_state,
+    test_module_fault_surfaces_and_alarms = M.test_module_fault_surfaces_and_alarms,
+    test_status_message_passthrough = M.test_status_message_passthrough,
+    test_maintenance_visible_and_warn = M.test_maintenance_visible_and_warn,
+    test_maintenance_idle_is_inactive = M.test_maintenance_idle_is_inactive,
+    test_paused_time_excluded_from_elapsed_and_eta = M.test_paused_time_excluded_from_elapsed_and_eta,
+    test_windowed_eta_uses_recent_rate = M.test_windowed_eta_uses_recent_rate,
+    test_windowed_eta_falls_back_below_three_samples = M.test_windowed_eta_falls_back_below_three_samples,
     test_every_event_severity_key_has_a_real_emitter = M.test_every_event_severity_key_has_a_real_emitter,
 }
 

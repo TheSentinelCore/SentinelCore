@@ -25,6 +25,13 @@ local function now_s()
     return (core and core.time and core.time()) or 0
 end
 
+-- The quest-sync refresh walks the full quest log plus every profile operation; per-tick it
+-- dominated the tick cost for a panel humans read at seconds granularity.
+local QUEST_SYNC_INTERVAL = 5.0
+
+-- Recent step-completion timestamps kept for the windowed ETA (runner_state.build).
+local COMPLETION_WINDOW = 10
+
 -- ======================================================================
 -- Quest-log desync sync (C5)
 --
@@ -118,6 +125,14 @@ function QuestingModule:new(blackboard, event_bus)
     o._last_operation_idx = nil
     o._guardrails = {}
     o._profile_dir = PROFILE_DIR
+    -- Pause clock: paused wall time is accumulated so elapsed/ETA never count it.
+    o._paused_at = nil
+    o._paused_accum = 0
+    o._recent_completions = {}
+    o._last_status_message = nil
+    -- View cache: one RunnerState.build per tick timestamp (render calls get_view per frame).
+    o._view_cache = nil
+    o._view_cache_at = nil
 
     -- Vendor maintenance (bags full / broken gear). "Inventory is full." arrives only via
     -- UI_ERROR_MESSAGE (bridged as game:ui_error) — get_num_bag_slots returns 0 in the
@@ -157,7 +172,12 @@ end
 function QuestingModule:tick(delta)
     if not self._enabled or self._paused or not self._executor then return end
 
-    self:_refresh_quest_sync()
+    local sync_now = now_s()
+    if not self._last_quest_sync_at
+        or (sync_now - self._last_quest_sync_at) >= QUEST_SYNC_INTERVAL then
+        self._last_quest_sync_at = sync_now
+        self:_refresh_quest_sync()
+    end
 
     -- Guardrails are evaluated BEFORE executing: an unattended run that has tripped its limit
     -- must halt on this tick, not after one more action.
@@ -172,19 +192,23 @@ function QuestingModule:tick(delta)
     -- detour. Returns true while the detour owns the tick; the route resumes exactly where
     -- it was (leading Travels re-satisfy instantly).
     if self:_maintenance_needed() and self:_run_vendor_maintenance() then
+        self:_invalidate_view()
         return
     end
 
+    -- The status message feeds get_view directly (blackboard writes here had zero readers).
     local status, message = self._executor:execute()
-    self._blackboard:set("module.questing.status", status)
-    self._blackboard:set("module.questing.message", message)
+    self._last_status_message = message
 
     -- Liveness marker: record when the run last actually moved forward, so the cockpit can tell
-    -- a healthy wait from a wedged one.
+    -- a healthy wait from a wedged one. Completion timestamps feed the windowed ETA.
     local op_idx = self._executor._current_operation_idx
     if op_idx ~= self._last_operation_idx then
         self._last_operation_idx = op_idx
         self._last_progress_at = now_s()
+        local ring = self._recent_completions
+        ring[#ring + 1] = self._last_progress_at
+        if #ring > COMPLETION_WINDOW then table.remove(ring, 1) end
     end
     if self._executor._state == "ghost" and not self._counted_death then
         self._deaths = self._deaths + 1
@@ -200,6 +224,9 @@ function QuestingModule:tick(delta)
             path = self._executor._json_path
         })
     end
+
+    -- Execution just mutated the state the cached view was built from.
+    self:_invalidate_view()
 end
 
 function QuestingModule:shutdown()
@@ -371,6 +398,12 @@ end
 -- Runner cockpit control surface
 -- ======================================================================
 
+--- Drop the cached view after any state change a control verb or tick makes.
+function QuestingModule:_invalidate_view()
+    self._view_cache = nil
+    self._view_cache_at = nil
+end
+
 --- Load a profile and begin running it. Resets session counters.
 function QuestingModule:start(profile_path)
     local ok = self:initialize(profile_path)
@@ -381,19 +414,42 @@ function QuestingModule:start(profile_path)
     self._started_at = now_s()
     self._last_progress_at = self._started_at
     self._last_operation_idx = self._executor and self._executor._current_operation_idx or nil
+    self._paused_at = nil
+    self._paused_accum = 0
+    self._recent_completions = {}
+    self._last_status_message = nil
+    self:_invalidate_view()
     self._event_bus:publish("questing:started", { path = profile_path })
     return true
 end
 
---- Halt execution while keeping the executor, so progress is not lost.
+--- Halt execution while keeping the executor, so progress is not lost. The session clock
+--- stops with it: paused time must not inflate elapsed, ETA, or the stall detector.
 function QuestingModule:pause()
+    if not self._paused then
+        self._paused_at = now_s()
+    end
     self._paused = true
     self._blackboard:set("module.questing.paused", true)
+    self:_invalidate_view()
 end
 
 function QuestingModule:resume()
+    if self._paused and self._paused_at then
+        local paused_for = now_s() - self._paused_at
+        if paused_for > 0 then
+            self._paused_accum = self._paused_accum + paused_for
+            -- Shift the executor's wait clock past the pause so is_stalled cannot
+            -- false-trip to STUCK the moment the run resumes.
+            if self._executor and self._executor._wait_started_at then
+                self._executor._wait_started_at = self._executor._wait_started_at + paused_for
+            end
+        end
+    end
+    self._paused_at = nil
     self._paused = false
     self._blackboard:set("module.questing.paused", false)
+    self:_invalidate_view()
 end
 
 function QuestingModule:is_paused()
@@ -406,6 +462,7 @@ function QuestingModule:stop()
     self._paused = false
     self._executor = nil
     self._blackboard:set("module.questing.enabled", false)
+    self:_invalidate_view()
     self._event_bus:publish("questing:stopped", {})
 end
 
@@ -419,6 +476,7 @@ function QuestingModule:skip_current_step()
     self._executor._wait_started_at = nil
     self._executor._wait_action_key = nil
     self._last_progress_at = now_s()
+    self:_invalidate_view()
     self._event_bus:publish("questing:step_skipped", {
         operation = self._executor._current_operation_idx,
     })
@@ -427,6 +485,7 @@ end
 
 function QuestingModule:set_guardrails(cfg)
     self._guardrails = cfg or {}
+    self:_invalidate_view()
 end
 
 --- Available compiled profiles, discovered from the data folder rather than hardcoded.
@@ -448,18 +507,36 @@ function QuestingModule:list_profiles(dir)
     return out
 end
 
---- One snapshot for the cockpit to render.
+--- One snapshot for the cockpit to render. Built at most once per tick timestamp: tick
+--- (guardrails) and every render frame all read the same cached table until the clock
+--- advances or a control verb invalidates it.
 function QuestingModule:get_view()
-    return RunnerState.build({
-        executor = self._executor,
-        now = now_s(),
-        started_at = self._started_at or now_s(),
+    local now = now_s()
+    if self._view_cache and self._view_cache_at == now then
+        return self._view_cache
+    end
+    local ex = self._executor
+    local nav = ex and ex._nav or nil
+    local paused_s = self._paused_accum
+        + (self._paused_at and math.max(now - self._paused_at, 0) or 0)
+    self._view_cache = RunnerState.build({
+        executor = ex,
+        now = now,
+        started_at = self._started_at or now,
         last_progress_at = self._last_progress_at,
         deaths = self._deaths,
         guardrails = self._guardrails,
         tracked_quests = self._blackboard:get("module.questing.tracked_quests", nil),
         quest_log = self._blackboard:get("module.questing.quest_log", nil),
+        nav_error = (nav and nav.get_last_error) and nav:get_last_error() or nil,
+        status_message = self._last_status_message,
+        module_faults = self._blackboard:get("system.module_faults", nil),
+        maintenance = self._maintenance,
+        paused_s = paused_s,
+        recent_completions = self._recent_completions,
     })
+    self._view_cache_at = now
+    return self._view_cache
 end
 
 -- ======================================================================

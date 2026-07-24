@@ -237,7 +237,166 @@ function M.test_quest_sync_defaults_are_written_not_left_as_default_ok()
     T.assert_true(qlog ~= nil, "module.questing.quest_log must be written by the module")
 end
 
+function M.test_quest_sync_refresh_is_throttled()
+    local m = new_module()
+    local calls = 0
+    m._refresh_quest_sync = function() calls = calls + 1 end
+    local now = 1000
+    local saved_time = core.time
+    core.time = function() return now end
+
+    m:tick(0.1)
+    m:tick(0.1) -- same instant: the full quest-log scan must not run again
+    local immediate = calls
+    now = 1006 -- past the 5s throttle window
+    m:tick(0.1)
+    local after_window = calls
+
+    core.time = saved_time
+    T.assert_equal(immediate, 1, "two immediate ticks must scan the quest log only once")
+    T.assert_equal(after_window, 2, "the scan must resume once the throttle window passes")
+end
+
+-- ============================================================================
+-- View caching — one build per tick timestamp, invalidated by control verbs
+-- ============================================================================
+
+function M.test_get_view_is_cached_within_one_tick()
+    local now = 1000
+    local saved_time = core.time
+    core.time = function() return now end
+    local m = new_module()
+
+    local v1 = m:get_view()
+    local v2 = m:get_view()
+    T.assert_true(rawequal(v1, v2), "two get_view calls at the same tick share one snapshot")
+    now = 1001
+    local v3 = m:get_view()
+    T.assert_true(not rawequal(v1, v3), "advancing the clock invalidates the cached view")
+
+    core.time = saved_time
+end
+
+function M.test_control_verbs_invalidate_the_view_cache()
+    local now = 1000
+    local saved_time = core.time
+    core.time = function() return now end
+    local m = new_module()
+
+    local v1 = m:get_view()
+    m:pause()
+    local v2 = m:get_view()
+    T.assert_true(not rawequal(v1, v2), "a control verb must rebuild the view within the tick")
+
+    core.time = saved_time
+end
+
+-- ============================================================================
+-- Pause clock — paused time must not inflate the session clock or trip stall
+-- ============================================================================
+
+function M.test_pause_freezes_the_session_clock()
+    local now = 0
+    local saved_time = core.time
+    core.time = function() return now end
+    local m = new_module()
+    m._started_at = 0
+
+    now = 50
+    m:pause()
+    now = 150
+    m:resume()
+    now = 160
+    local vm = m:get_view()
+    T.assert_equal(vm.liveness.session_elapsed_s, 60,
+        "a 100s pause must not count into session elapsed")
+
+    core.time = saved_time
+end
+
+function M.test_resume_shifts_the_wait_clock_past_the_pause()
+    local now = 0
+    local saved_time = core.time
+    core.time = function() return now end
+    local m = new_module()
+    m._executor._wait_started_at = 40
+    m._executor._wait_action_key = "1:1"
+
+    now = 50
+    m:pause()
+    now = 150
+    m:resume()
+    T.assert_equal(m._executor._wait_started_at, 140,
+        "the wait clock shifts by the pause duration so stall cannot false-trip")
+
+    core.time = saved_time
+end
+
+-- ============================================================================
+-- Status routing — the executor's message reaches the view, not a dead key
+-- ============================================================================
+
+function M.test_status_message_routes_to_view_not_blackboard()
+    local bb = Blackboard:new()
+    local m = QuestingModule:new(bb, EventBus:new())
+    m._executor = fake_executor()
+    m._enabled = true
+    m:tick(0.1)
+    T.assert_equal(bb:get("module.questing.status", nil), nil,
+        "the dead module.questing.status blackboard write must be gone")
+    T.assert_equal(bb:get("module.questing.message", nil), nil,
+        "the dead module.questing.message blackboard write must be gone")
+    local vm = m:get_view()
+    T.assert_equal(vm.health.message, "ok", "the executor's message reaches the view directly")
+end
+
+function M.test_nav_error_reaches_the_view()
+    local now = 1000
+    local saved_time = core.time
+    core.time = function() return now end
+    local m = new_module()
+    m._executor._nav = {
+        get_last_error = function()
+            return { command = "move_to", reason = "unreachable", at = 1000,
+                     target = { x = 1, y = 2, z = 3 } }
+        end,
+    }
+    local vm = m:get_view()
+    T.assert_equal(vm.blocked.kind, "nav", "the executor's nav error reaches the blocked union")
+
+    core.time = saved_time
+end
+
+-- ============================================================================
+-- Completion ring — recent step completions feed the windowed ETA
+-- ============================================================================
+
+function M.test_completion_ring_records_and_caps()
+    local now = 0
+    local saved_time = core.time
+    core.time = function() return now end
+    local m = new_module()
+    for i = 1, 12 do
+        now = i * 10
+        m._executor._current_operation_idx = i + 1
+        m:tick(0.1)
+    end
+    T.assert_equal(#m._recent_completions, 10, "the completion ring holds at most 10 samples")
+    T.assert_equal(m._recent_completions[10], 120, "the newest completion time is kept")
+    T.assert_equal(m._recent_completions[1], 30, "the oldest samples are evicted first")
+
+    core.time = saved_time
+end
+
 local tests = {
+    test_quest_sync_refresh_is_throttled = M.test_quest_sync_refresh_is_throttled,
+    test_get_view_is_cached_within_one_tick = M.test_get_view_is_cached_within_one_tick,
+    test_control_verbs_invalidate_the_view_cache = M.test_control_verbs_invalidate_the_view_cache,
+    test_pause_freezes_the_session_clock = M.test_pause_freezes_the_session_clock,
+    test_resume_shifts_the_wait_clock_past_the_pause = M.test_resume_shifts_the_wait_clock_past_the_pause,
+    test_status_message_routes_to_view_not_blackboard = M.test_status_message_routes_to_view_not_blackboard,
+    test_nav_error_reaches_the_view = M.test_nav_error_reaches_the_view,
+    test_completion_ring_records_and_caps = M.test_completion_ring_records_and_caps,
     test_pause_halts_execution_but_keeps_the_executor = M.test_pause_halts_execution_but_keeps_the_executor,
     test_resume_continues_from_the_same_executor = M.test_resume_continues_from_the_same_executor,
     test_stop_clears_the_executor = M.test_stop_clears_the_executor,

@@ -154,16 +154,15 @@ function RunnerUI:_on_render_window()
     end
 end
 
+-- Severity -> colour: the view-model decides severity; this table only maps it to paint.
+local HEALTH_COLOR = { ok = C.ok, warn = C.warn, alarm = C.alarm }
+
 --- Health banner — the one-glance "do I need to intervene?" answer.
 function RunnerUI:_draw_health(window, vm)
     local h = vm.health
-    local color = C.idle
-    if h.is_alarm then color = C.alarm
-    elseif h.status == "RUNNING" then color = C.ok
-    elseif h.status == "WAITING" or h.status == "NAVIGATING" then color = C.warn
-    elseif h.status == "FINISHED" then color = C.ok end
+    local color = h.profile_loaded and (HEALTH_COLOR[h.severity] or C.idle) or C.idle
 
-    local dot = h.is_alarm and "!" or "*"
+    local dot = h.severity == "alarm" and "!" or "*"
     window:add_text_on_dynamic_pos(color(), string.format("%s %s", dot, h.status))
     window:add_text_on_dynamic_pos(C.value(),
         string.format("   profile: %s", tostring(self._selected_profile or "(none)")))
@@ -177,6 +176,19 @@ function RunnerUI:_draw_health(window, vm)
     window:add_text_on_dynamic_pos(C.dim(), string.format(
         "   deaths %d   retries %d   failures %d",
         vm.counters.deaths, vm.counters.retries, vm.counters.failures))
+    if h.module_fault then
+        window:add_text_on_dynamic_pos(C.alarm(), string.format(
+            "   MODULE FAULT %s x%d", tostring(h.module_fault.name), h.module_fault.count))
+    end
+    if vm.maintenance and vm.maintenance.active then
+        window:add_text_on_dynamic_pos(C.warn(), string.format(
+            "   Maintenance: %s%s", tostring(vm.maintenance.phase),
+            vm.maintenance.vendor_entry and (" (vendor " .. tostring(vm.maintenance.vendor_entry) .. ")") or ""))
+    end
+    if vm.recovery and vm.recovery.ghost_elapsed then
+        window:add_text_on_dynamic_pos(C.alarm(),
+            "   Ghost recovery " .. dur(vm.recovery.ghost_elapsed))
+    end
     window:add_separator(10, 10, 0, 0, C.sep())
 end
 
@@ -193,11 +205,13 @@ function RunnerUI:_draw_progress(window, vm)
     window:add_separator(10, 10, 0, 0, C.sep())
 end
 
---- Why it is stopped — human text first, raw condition behind a details toggle.
+--- Why it is stopped — the view-model's human_reason is projected verbatim; colour and the
+--- waited prefix come straight from fields it already decided.
 function RunnerUI:_draw_blocked(window, vm)
     if not vm.blocked.is_blocked then return end
-    window:add_text_on_dynamic_pos(C.warn(), string.format(
-        "WAITING %s - %s", dur(vm.blocked.waited_s), tostring(vm.blocked.human_reason)))
+    local color = (HEALTH_COLOR[vm.blocked.severity] or C.warn)
+    local prefix = vm.blocked.waited_s and ("WAITING " .. dur(vm.blocked.waited_s) .. " - ") or ""
+    window:add_text_on_dynamic_pos(color(), prefix .. tostring(vm.blocked.human_reason))
     if self._el.btn_details:render(self._show_condition_details and "hide details" or "details") then
         self._show_condition_details = not self._show_condition_details
     end
