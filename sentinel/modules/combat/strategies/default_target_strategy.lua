@@ -55,6 +55,17 @@ function DefaultTargetStrategy:is_valid_enemy(unit, opts)
     local ok_dead, dead = safe_call(unit, "is_dead")
     if ok_dead and dead == true then return false end
 
+    -- Immunity blacklist: module.lua consumes combat.target_has_immunity by
+    -- blacklisting the GUID for a period — skip those units until expiry.
+    local blacklist = self._blackboard:get("combat.immune_target_guids")
+    if type(blacklist) == "table" then
+        local ok_guid, guid = safe_call(unit, "get_guid")
+        local until_ms = ok_guid and guid ~= nil and blacklist[tostring(guid)] or nil
+        if until_ms and num(self._blackboard:get("system.now_ms", 0)) < until_ms then
+            return false
+        end
+    end
+
     -- Check if it's a player unit - only allow for require_player (PvP) mode
     local ok_is_player, is_player = safe_call(unit, "is_player")
     if ok_is_player and is_player == true then

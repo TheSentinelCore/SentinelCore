@@ -50,6 +50,9 @@ local function make_unit(opts)
     function unit:is_player()
         return opts.is_player ~= false
     end
+    function unit:is_valid()
+        return opts.invalid ~= true
+    end
     return unit
 end
 
@@ -89,6 +92,7 @@ function M.run()
     local nav = {
         move_to = function() end,
         stop = function() end,
+        release = function() end,
         is_active = function() return false end,
     }
 
@@ -320,6 +324,219 @@ function M.run()
     T.assert_equal(got, nil, "questing combat must not self-select a replacement target")
     T.assert_equal(combat10:get_state(), "IDLE",
         "combat must disengage and return control to the kill action when the quest target dies")
+
+    -- Test 11: low-HP safety must not oscillate. While an attacker is still actively
+    -- attacking the player, tripping the low-health threshold must NOT disengage
+    -- (fighting back beats standing there dying). Once combat genuinely ends with low
+    -- HP, a recovery latch must block idle AUTO-engage until HP recovers, a timeout
+    -- passes, or the player is attacked again. Explicit/forced engages bypass it.
+    local bb11 = make_blackboard()
+    local bus11 = EventBus:new()
+    local combat11 = SentinelCombat:new(bus11, bb11, nav)
+    combat11:initialize()
+    local attacker = make_unit({
+        guid = "attacker",
+        hostile = true,
+        is_player = false,
+        target = player,
+        position = { x = 2, y = 0, z = 0 },
+    })
+    local prev_core11 = core
+    core = { object_manager = { get_all_objects = function() return { attacker } end } }
+    bb11:set("player.in_combat", true)
+    bb11:set("combat.gcd_until_ms", 1e9) -- hold the GCD so rotation ticks stay inert
+    combat11:engage(target, { source = "auto" })
+    T.assert_equal(combat11:get_state(), "ENGAGING", "sanity: engaged before the low-HP dip")
+    bb11:set("player.health_pct", 0.20)
+    combat11:update(bb11)
+    T.assert_true(combat11:get_state() ~= "IDLE",
+        "low HP with an attacker still on the player must keep fighting, not disengage")
+
+    -- Attacker gone, combat over: the low-HP disengage must latch recovery.
+    core = { object_manager = { get_all_objects = function() return {} end } }
+    bb11:set("system.now_ms", 2000)
+    bb11:set("player.in_combat", false)
+    combat11:update(bb11)
+    T.assert_equal(combat11:get_state(), "IDLE", "low HP with no attacker must disengage")
+
+    -- The latch must block idle auto-engage even where it would otherwise fire.
+    -- (bg.active, not bg.combat_zone — CombatZoneDetector recomputes the latter
+    -- every update() and would erase a hand-set value.)
+    bb11:set("bg.active", true)
+    bb11:set("system.now_ms", 3000)
+    combat11:update(bb11)
+    T.assert_equal(combat11:get_state(), "IDLE",
+        "recovery latch must block idle auto-engage while HP is low")
+
+    -- Explicit (forced) engagement is never blocked by the latch.
+    combat11:engage(target, { source = "questing", force = true })
+    T.assert_equal(combat11:get_state(), "ENGAGING", "explicit engage bypasses the recovery latch")
+    combat11:disengage("test")
+
+    -- Recovering past the exit threshold releases the latch.
+    bb11:set("system.now_ms", 4000)
+    bb11:set("player.health_pct", 0.70)
+    combat11:update(bb11)
+    T.assert_equal(combat11:get_state(), "ENGAGING",
+        "auto engage resumes once HP recovers past the exit threshold")
+    combat11:disengage("test")
+    core = prev_core11
+
+    -- Test 12: the recovery latch must break IMMEDIATELY when the player is attacked
+    -- again (enters combat with a live attacker) — even while HP is still low.
+    local bb12 = make_blackboard()
+    local bus12 = EventBus:new()
+    local combat12 = SentinelCombat:new(bus12, bb12, nav)
+    combat12:initialize()
+    local attacker12 = make_unit({
+        guid = "attacker12",
+        hostile = true,
+        is_player = false,
+        target = player,
+        position = { x = 2, y = 0, z = 0 },
+    })
+    local prev_core12 = core
+    core = { object_manager = { get_all_objects = function() return {} end } }
+    bb12:set("combat.gcd_until_ms", 1e9)
+    combat12:engage(target, { source = "auto" })
+    bb12:set("player.health_pct", 0.20)
+    combat12:update(bb12)
+    T.assert_equal(combat12:get_state(), "IDLE", "sanity: latched after a low-HP disengage")
+    core = { object_manager = { get_all_objects = function() return { attacker12 } end } }
+    bb12:set("system.now_ms", 2000)
+    bb12:set("player.in_combat", true)
+    combat12:update(bb12)
+    T.assert_equal(combat12:get_state(), "ENGAGING",
+        "the latch must break immediately when the player is attacked again")
+    combat12:disengage("test")
+    core = prev_core12
+
+    -- Test 13: a forced quest target must be cleared when it despawns / leash-resets
+    -- (is_valid() false) even though is_dead() never flips — evade left the bot
+    -- chasing a full-HP ghost mob forever.
+    local bb13 = make_blackboard()
+    local bus13 = EventBus:new()
+    local combat13 = SentinelCombat:new(bus13, bb13, nav)
+    combat13:initialize()
+    local disengaged13 = nil
+    bus13:subscribe("combat:disengaged", function(payload) disengaged13 = payload end)
+    local q13_opts = { guid = "q13", hostile = false, position = { x = 3, y = 0, z = 0 } }
+    local q13 = make_unit(q13_opts)
+    combat13:engage(q13, { source = "questing" })
+    T.assert_equal(combat13:get_state(), "ENGAGING", "sanity: forced engage entered combat")
+    q13_opts.invalid = true
+    local got13 = combat13:_ensure_target()
+    T.assert_equal(got13, nil, "a despawned (is_valid=false) forced target must be cleared")
+    T.assert_equal(combat13:get_state(), "IDLE",
+        "clearing an invalid forced target must return control to the kill action")
+    T.assert_equal(bb13:get("combat.forced_target_guid"), nil,
+        "the forced-target guid must be cleared with the target")
+    T.assert_true(disengaged13 ~= nil,
+        "the disengaged event must publish so questing's Kill handler can react")
+
+    -- Test 14: a forced target whose HP makes zero progress for the stall window
+    -- (evading / unreachable) must be cleared; HP progress must reset the window.
+    local bb14 = make_blackboard()
+    local bus14 = EventBus:new()
+    local combat14 = SentinelCombat:new(bus14, bb14, nav)
+    combat14:initialize()
+    local q14_opts = { guid = "q14", hostile = false, health_pct = 0.9, position = { x = 3, y = 0, z = 0 } }
+    local q14 = make_unit(q14_opts)
+    bb14:set("system.now_ms", 1000)
+    combat14:engage(q14, { source = "questing" })
+    T.assert_true(combat14:_ensure_target() ~= nil, "forced target valid on the first check")
+    bb14:set("system.now_ms", 15000)
+    q14_opts.health_pct = 0.6 -- damage landed: progress resets the stall window
+    T.assert_true(combat14:_ensure_target() ~= nil, "HP progress must reset the stall window")
+    bb14:set("system.now_ms", 30000)
+    T.assert_true(combat14:_ensure_target() ~= nil,
+        "an engagement inside the stall window since last progress stays alive")
+    bb14:set("system.now_ms", 35001)
+    T.assert_equal(combat14:_ensure_target(), nil,
+        "20s with zero target-HP progress must clear the forced target")
+    T.assert_equal(combat14:get_state(), "IDLE", "the stall clear must disengage back to the kill action")
+
+    -- Test 15: combat.target_has_immunity must be CONSUMED. A forced target flagged
+    -- immune is cleared via the invalid-target path; a grind/auto target flagged
+    -- immune is blacklisted so the selector skips it for a period.
+    local bb15 = make_blackboard()
+    local bus15 = EventBus:new()
+    local combat15 = SentinelCombat:new(bus15, bb15, nav)
+    combat15:initialize()
+    local q15 = make_unit({ guid = "q15", hostile = false, position = { x = 3, y = 0, z = 0 } })
+    combat15:engage(q15, { source = "questing" })
+    bb15:set("combat.target_has_immunity", true)
+    T.assert_equal(combat15:_ensure_target(), nil, "an immune forced target must be cleared")
+    T.assert_equal(combat15:get_state(), "IDLE", "immune forced target clears through the disengage path")
+
+    bb15:set("combat.target_has_immunity", false)
+    combat15:engage(target, { source = "auto" })
+    T.assert_equal(combat15:get_state(), "ENGAGING", "sanity: auto engage on the hostile target")
+    bb15:set("combat.target_has_immunity", true)
+    combat15:_ensure_target()
+    local blacklist15 = bb15:get("combat.immune_target_guids")
+    T.assert_true(type(blacklist15) == "table" and blacklist15["enemy"] ~= nil,
+        "an immune grind target must be blacklisted by GUID")
+    T.assert_false(bb15:get("combat.target_has_immunity") == true,
+        "the immunity flag must be consumed (reset) once acted upon")
+    T.assert_false(combat15._target_selector:is_valid_enemy(target, { require_player = true }),
+        "the selector must skip a blacklisted GUID while the blacklist entry is live")
+    bb15:set("system.now_ms", bb15:get("system.now_ms", 0) + 30001)
+    T.assert_true(combat15._target_selector:is_valid_enemy(target, { require_player = true }),
+        "the blacklist entry must expire so the mob becomes targetable again")
+    combat15:disengage("test")
+
+    -- Test 16: disengage must recall the pet (passive/follow) so a Voidwalker stops
+    -- attacking and cannot chain-pull between kills.
+    local bb16 = make_blackboard()
+    local bus16 = EventBus:new()
+    local combat16 = SentinelCombat:new(bus16, bb16, nav)
+    combat16:initialize()
+    local recalled = 0
+    bb16:set("module.combat.pet_controller", { passive = function() recalled = recalled + 1 end })
+    combat16:engage(target, { source = "auto" })
+    combat16:disengage("test")
+    T.assert_equal(recalled, 1, "disengage must send the pet passive/follow via the pet controller")
+
+    -- Test 17: independent no-progress guard — engaged with a target whose HP is not
+    -- dropping AND whose distance is not closing for 15s must disengage (the COOLDOWN
+    -- no-legal-action timeout is unreachable when fallbacks always return SUCCESS).
+    local bb17 = make_blackboard()
+    local bus17 = EventBus:new()
+    local combat17 = SentinelCombat:new(bus17, bb17, nav)
+    combat17:initialize()
+    bb17:set("combat.gcd_until_ms", 1e9) -- hold the GCD so the COOLDOWN timeout can't preempt
+    bb17:set("system.now_ms", 1000)
+    combat17:engage(target, { source = "auto" })
+    combat17:update(bb17)
+    bb17:set("system.now_ms", 10000)
+    combat17:update(bb17)
+    T.assert_true(combat17:get_state() ~= "IDLE",
+        "engagement persists while inside the no-progress window")
+    bb17:set("system.now_ms", 16001)
+    combat17:update(bb17)
+    T.assert_equal(combat17:get_state(), "IDLE",
+        "15s with no HP and no distance progress must disengage with no_progress")
+
+    -- Progress (target HP dropping) must keep the engagement alive past 15s.
+    local bb18 = make_blackboard()
+    local bus18 = EventBus:new()
+    local combat18 = SentinelCombat:new(bus18, bb18, nav)
+    combat18:initialize()
+    local t18_opts = { guid = "t18", hostile = true, health_pct = 0.9, position = { x = 3, y = 0, z = 0 } }
+    local t18 = make_unit(t18_opts)
+    bb18:set("combat.gcd_until_ms", 1e9)
+    bb18:set("system.now_ms", 1000)
+    combat18:engage(t18, { source = "auto" })
+    combat18:update(bb18)
+    bb18:set("system.now_ms", 12000)
+    t18_opts.health_pct = 0.5 -- damage is landing
+    combat18:update(bb18)
+    bb18:set("system.now_ms", 20000)
+    combat18:update(bb18)
+    T.assert_true(combat18:get_state() ~= "IDLE",
+        "target-HP progress must reset the no-progress window")
+    combat18:disengage("test")
 end
 
 return M

@@ -18,9 +18,15 @@ Profile.__index = Profile
 -- ---------------------------------------------------------------------------
 local function build_off_gcd_root()
     return BT.selector("warlock_affliction_off_gcd", {
+        -- Summon gates: out of combat (a 10s summon cast mid-combat stalls the
+        -- chase) AND "usable" (trained + Soul Shard reagent present via
+        -- core.spell_book.is_usable_spell) — "known" alone retried forever with
+        -- zero shards. When it can't summon, the selector falls through and
+        -- combat proceeds pet-less.
         BT.sequence("summon_voidwalker", {
             BT.condition("missing_voidwalker", Cond.missing_voidwalker),
-            BT.condition("summon_voidwalker_available", SharedConditions.spell_available("summon_voidwalker")),
+            BT.condition("out_of_combat", SharedConditions.not_in_combat),
+            BT.condition("summon_voidwalker_usable", SharedConditions.spell_available("summon_voidwalker", "usable")),
             BT.condition("summon_voidwalker_ready", SharedConditions.spell_ready("summon_voidwalker", nil, "self")),
             BT.action("queue_summon_voidwalker", Act.summon_voidwalker),
         }),

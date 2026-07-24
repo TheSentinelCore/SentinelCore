@@ -66,6 +66,18 @@ function PetController:already_sent_to(target)
     return self._sent_guid == get_guid(target)
 end
 
+--- Recall on disengage: passive + follow stops an in-progress attack so the
+--- Voidwalker cannot chain-pull between kills. Clears the sent guid so the
+--- next engagement re-sends attack. Guarded for SDK absence.
+function PetController:passive()
+    self._state = "passive"
+    self._sent_guid = nil
+    if core and core.input then
+        pcall(core.input.set_pet_passive)
+        pcall(core.input.set_pet_follow)
+    end
+end
+
 function PetController:reset()
     self._state = "idle"
     self._sent_guid = nil

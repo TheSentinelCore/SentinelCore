@@ -203,7 +203,11 @@ function SentinelCombat:initialize()
     self:_subscribe(Events.PLAYER_HEALTH_THRESHOLD, function(payload)
         local health_threshold = tonumber(self._blackboard:get("module.combat.low_health_threshold", 0.35)) or 0.35
         if payload.direction == "below" and payload.threshold == health_threshold then
-            self:disengage("low_health")
+            -- Same gate as _check_safety: while a mob is still actively attacking,
+            -- fighting back beats standing there dying at melee range.
+            if not self:_attacker_still_on_player() then
+                self:disengage("low_health")
+            end
         end
     end)
 
@@ -274,7 +278,41 @@ function SentinelCombat:_require_player_targets()
     return self._source == "bg" or self._source == "auto"
 end
 
+-- Low-HP recovery latch. Armed by disengage() whenever combat ends below the
+-- low-health threshold; blocks ONLY idle auto-engage (explicit/forced engages
+-- never consult it). Passive regen and profile maintenance heals do the
+-- recovery; the latch releases on HP recovery, timeout, or the instant a mob
+-- is actively attacking the player again (fight back rather than stand there).
+-- Without it, `player.in_combat` alone re-triggered engage the tick after a
+-- low_health disengage and the pair flip-flopped once per frame below 35% HP.
+local LOW_HP_RECOVERY_EXIT_PCT = 0.60
+local LOW_HP_RECOVERY_TIMEOUT_MS = 60000
+
+function SentinelCombat:_attacker_still_on_player()
+    return self._blackboard:get("player.in_combat", false) == true
+        and self:_find_attacker() ~= nil
+end
+
+function SentinelCombat:_low_hp_recovery_active()
+    local until_ms = self._low_hp_recovery_until_ms
+    if not until_ms then
+        return false
+    end
+    local now_ms = self._blackboard:get("system.now_ms", 0)
+    local hp = tonumber(self._blackboard:get("player.health_pct", 0)) or 0
+    if hp >= LOW_HP_RECOVERY_EXIT_PCT
+        or now_ms >= until_ms
+        or self:_attacker_still_on_player() then
+        self._low_hp_recovery_until_ms = nil
+        return false
+    end
+    return true
+end
+
 function SentinelCombat:_allow_idle_auto_engage()
+    if self:_low_hp_recovery_active() then
+        return false
+    end
     if self._blackboard:get("bg.combat_zone", false) == true then
         return true
     end
@@ -383,6 +421,7 @@ end
 --- while the quest kill chased its own mob.)
 function SentinelCombat:_set_forced_target(target)
     self._forced_target = target
+    self._forced_progress = nil
     local guid = nil
     if target and target.get_guid then
         local ok, g = pcall(target.get_guid, target)
@@ -393,10 +432,80 @@ end
 
 function SentinelCombat:_clear_forced_target()
     self._forced_target = nil
+    self._forced_progress = nil
     self._blackboard:set("combat.forced_target_guid", nil)
 end
 
+-- Zero-HP-progress window for a forced (quest) target. Evade/leash-reset,
+-- despawn, and immunity all leave is_dead()==false — without these checks a
+-- questing-forced GUID was chased forever. There is no evade flag in the SDK
+-- (game-object.md exposes only is_valid); an evading mob heals to full and
+-- then takes no damage, so the HP-stall window catches it.
+local FORCED_STALL_TIMEOUT_MS = 20000
+
+function SentinelCombat:_forced_target_still_valid(unit)
+    local ok_dead, dead = safe_call(unit, "is_dead")
+    if ok_dead and dead == true then
+        return false
+    end
+    -- Despawned / gone from the object manager.
+    local ok_valid, valid = safe_call(unit, "is_valid")
+    if ok_valid and valid == false then
+        return false
+    end
+    -- Immunity flagged by the UNIT_BUFF_APPLIED handler: an immune forced
+    -- target is as unkillable as a despawned one.
+    if self._blackboard:get("combat.target_has_immunity", false) == true then
+        return false
+    end
+    -- HP stall: progress means the target's HP went DOWN (an evading mob's
+    -- heal-to-full must not count as progress).
+    local now_ms = self._blackboard:get("system.now_ms", 0)
+    local ok_hp, hp = safe_call(unit, "get_health_percentage")
+    hp = ok_hp and tonumber(hp) or nil
+    local prog = self._forced_progress
+    if not prog or prog.hp == nil or hp == nil then
+        self._forced_progress = { hp = hp, since_ms = now_ms }
+    elseif hp < prog.hp then
+        prog.hp = hp
+        prog.since_ms = now_ms
+    elseif now_ms - prog.since_ms >= FORCED_STALL_TIMEOUT_MS then
+        return false
+    end
+    return true
+end
+
+-- How long an immune GUID stays skipped by the selector. TBC leveling
+-- immunities (bubble, evade-adjacent protection auras) outlive a kill window;
+-- 30s keeps the mob re-targetable once the aura is long gone.
+local IMMUNE_BLACKLIST_MS = 30000
+
+function SentinelCombat:_blacklist_immune_target(unit)
+    local ok, guid = safe_call(unit, "get_guid")
+    if not ok or guid == nil then
+        return
+    end
+    local now_ms = self._blackboard:get("system.now_ms", 0)
+    local blacklist = self._blackboard:get("combat.immune_target_guids")
+    if type(blacklist) ~= "table" then
+        blacklist = {}
+    end
+    blacklist[tostring(guid)] = now_ms + IMMUNE_BLACKLIST_MS
+    self._blackboard:set("combat.immune_target_guids", blacklist)
+end
+
 function SentinelCombat:_ensure_target()
+    -- Consume combat.target_has_immunity (set by the UNIT_BUFF_APPLIED handler;
+    -- previously write-only). An immune grind/auto target gets its GUID
+    -- blacklisted so the selector skips it for a period; an immune FORCED
+    -- target falls through to _forced_target_still_valid below, which clears it
+    -- via the same path as any other invalid forced target.
+    if self._current_target and self._current_target ~= self._forced_target
+        and self._blackboard:get("combat.target_has_immunity", false) == true then
+        self:_blacklist_immune_target(self._current_target)
+        self._blackboard:set("combat.target_has_immunity", false)
+        self._current_target = nil
+    end
     if self:_target_is_valid(self._current_target) then
         self._blackboard:set("combat.target", self._current_target)
         return self._current_target
@@ -404,8 +513,7 @@ function SentinelCombat:_ensure_target()
     -- A forced (quest) target stays current while it lives, even though the selector rejects it
     -- for being neutral. Without this it would be dropped on the very next tick after engage.
     if self._forced_target and self._forced_target == self._current_target then
-        local ok, dead = pcall(self._forced_target.is_dead, self._forced_target)
-        if ok and dead ~= true then
+        if self:_forced_target_still_valid(self._forced_target) then
             self._blackboard:set("combat.target", self._current_target)
             return self._current_target
         end
@@ -451,7 +559,12 @@ function SentinelCombat:_check_safety()
         end
     end
 
-    if effective_hp <= health_threshold then
+    -- Low HP with a mob still actively attacking: do NOT disengage — the mob keeps
+    -- meleeing either way, and idle auto-engage would re-enter combat next tick
+    -- anyway (the engage/disengage pair oscillated once per frame below the
+    -- threshold). Only bail when nothing is attacking; disengage() then arms the
+    -- recovery latch that keeps idle auto-engage quiet until HP recovers.
+    if effective_hp <= health_threshold and not self:_attacker_still_on_player() then
         self._event_bus:publish(Events.HEALTH_THRESHOLD, {
             health_pct = hp,
             predicted_pct = effective_hp,
@@ -572,11 +685,20 @@ function SentinelCombat:engage(target, opts)
         self:_clear_forced_target()
     end
 
+    local previous_target = self._current_target
     self._current_target = target or self._target_selector:get_best_target({
         require_player = self:_require_player_targets(),
     })
     if not self._current_target then
         return
+    end
+
+    -- combat.target_has_immunity describes exactly one unit. Questing re-publishes
+    -- engage for the SAME target every tick, so only a genuine target change may
+    -- reset the flag — resetting unconditionally would erase it before
+    -- _ensure_target ever consumed it.
+    if not same_guid(previous_target, self._current_target) then
+        self._blackboard:set("combat.target_has_immunity", false)
     end
 
     self._blackboard:set("combat.target", self._current_target)
@@ -590,6 +712,13 @@ end
 function SentinelCombat:disengage(reason)
     local active = self:is_in_combat() or self._state_machine:get_state() ~= "IDLE"
     self._chase_controller:stop(reason)
+    -- Recall the pet (passive + follow) so a Voidwalker/Water Elemental stops
+    -- attacking and cannot chain-pull between kills. The controller key is only
+    -- set by pet-class profiles; every call is guarded for SDK absence inside.
+    local pet_ctrl = self._blackboard:get("module.combat.pet_controller")
+    if pet_ctrl and type(pet_ctrl.passive) == "function" then
+        pcall(pet_ctrl.passive, pet_ctrl)
+    end
     -- Clean up cast cancellation movement so the player doesn't walk forward forever
     if self._blackboard:get("combat._cancel_cast_pending") then
         if core and core.input and type(core.input.move_forward_stop) == "function" then
@@ -607,6 +736,18 @@ function SentinelCombat:disengage(reason)
     if reason == "outnumbered" then
         local now_ms = self._blackboard:get("system.now_ms", 0)
         self._outnumbered_backoff_until_ms = now_ms + OUTNUMBERED_BACKOFF_MS
+    end
+    self._progress_guard = nil
+    self._blackboard:set("combat.target_has_immunity", false)
+    -- Combat ending below the low-health threshold (whatever the reason) arms
+    -- the recovery latch — see _low_hp_recovery_active.
+    if active then
+        local hp = tonumber(self._blackboard:get("player.health_pct", 1)) or 1
+        local health_threshold = tonumber(self._blackboard:get("module.combat.low_health_threshold", 0.35)) or 0.35
+        if hp <= health_threshold then
+            local now_ms = self._blackboard:get("system.now_ms", 0)
+            self._low_hp_recovery_until_ms = now_ms + LOW_HP_RECOVERY_TIMEOUT_MS
+        end
     end
     -- Unit C: self._profile can be nil when the class_id has no registered
     -- profile (combat disabled) -- guard so a stray disengage() (event
@@ -676,6 +817,38 @@ function SentinelCombat:_confirm_class_detection(blackboard)
     if core and type(core.log) == "function" then
         pcall(core.log, string.format("[Combat] player class confirmed as %s (id=%d), profile rebuilt", CLASS_ID_TO_NAME[class_id] or "?", class_id))
     end
+end
+
+local NO_PROGRESS_TIMEOUT_MS = 15000
+
+-- True when the current engagement has made zero progress — target HP not
+-- decreasing and distance to it not closing — for NO_PROGRESS_TIMEOUT_MS.
+-- Tracker resets on target change (guid) and on disengage.
+function SentinelCombat:_progress_guard_stalled(blackboard, target, now_ms)
+    local ok_guid, guid = safe_call(target, "get_guid")
+    guid = ok_guid and tostring(guid) or nil
+    local ok_hp, hp = safe_call(target, "get_health_percentage")
+    hp = ok_hp and tonumber(hp) or nil
+    local dist = tonumber(blackboard:get("combat.target_distance"))
+    local guard = self._progress_guard
+    if not guard or guard.guid ~= guid then
+        self._progress_guard = { guid = guid, hp = hp, dist = dist, since_ms = now_ms }
+        return false
+    end
+    local progressed = false
+    if hp and (guard.hp == nil or hp < guard.hp) then
+        guard.hp = hp
+        progressed = true
+    end
+    if dist and (guard.dist == nil or dist < guard.dist) then
+        guard.dist = dist
+        progressed = true
+    end
+    if progressed then
+        guard.since_ms = now_ms
+        return false
+    end
+    return (now_ms - guard.since_ms) >= NO_PROGRESS_TIMEOUT_MS
 end
 
 function SentinelCombat:update(blackboard)
@@ -753,6 +926,19 @@ function SentinelCombat:update(blackboard)
     local target = self:_ensure_target()
     if not target then
         self:disengage("target_lost")
+        return
+    end
+
+    -- Independent no-progress guard: the COOLDOWN no-legal-action timeout is
+    -- unreachable while profile fallbacks (melee/wand) return SUCCESS every
+    -- tick, so an unreachable target (ledge, pathing hole) was chased forever.
+    -- No HP progress AND no distance progress for the window means the
+    -- engagement is going nowhere.
+    if self:_progress_guard_stalled(blackboard, target, now_ms) then
+        if self._forced_target and self._forced_target == self._current_target then
+            self:_clear_forced_target()
+        end
+        self:disengage("no_progress")
         return
     end
 

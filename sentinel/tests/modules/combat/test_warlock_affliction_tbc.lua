@@ -330,13 +330,18 @@ end
 
 function M.test_pet_summons_voidwalker_when_absent()
     set_spell_helper()
-    set_spell_book({ is_spell_known = function(id) return id == SUMMON_VOIDWALKER end })
+    -- Summon is gated out-of-combat AND "usable" (Soul Shard reagent present).
+    set_spell_book({
+        is_spell_known = function(id) return id == SUMMON_VOIDWALKER end,
+        is_usable_spell = function() return true end,
+    })
 
     local actions = {}
     local bb = fresh_bb(actions)
     local bus = EventBus:new()
     local player = make_unit({ guid = "player", pet = nil }) -- no pet yet
     bb:set("player.object", player)
+    bb:set("player.in_combat", false)
     bb:set("combat.target", make_unit({ guid = "target" }))
 
     local profile = Profile.build(bb, bus)
@@ -344,6 +349,81 @@ function M.test_pet_summons_voidwalker_when_absent()
     T.assert_equal(actions[1].action, "summon_voidwalker_self", "Voidwalker is summoned when no pet is active")
 
     clear_spell_book()
+end
+
+function M.test_no_summon_mid_combat()
+    set_spell_helper()
+    set_spell_book({
+        is_spell_known = function(id) return id == SUMMON_VOIDWALKER end,
+        is_usable_spell = function() return true end,
+    })
+
+    local actions = {}
+    local bb = fresh_bb(actions) -- fresh_bb sets player.in_combat = true
+    local bus = EventBus:new()
+    bb:set("player.object", make_unit({ guid = "player", pet = nil }))
+    bb:set("combat.target", make_unit({ guid = "target" }))
+
+    local profile = Profile.build(bb, bus)
+    profile:tick_off_gcd(bb)
+    T.assert_equal(actions[1], nil,
+        "the summon cast must not fire mid-combat (it stalls the chase)")
+
+    clear_spell_book()
+end
+
+function M.test_no_summon_without_shard_falls_back_petless()
+    set_spell_helper()
+    -- Trained but NOT usable (zero Soul Shards): the summon must not retry
+    -- forever — combat proceeds pet-less.
+    set_spell_book({
+        is_spell_known = function() return true end,
+        is_usable_spell = function() return false end,
+    })
+
+    local actions = {}
+    local bb = fresh_bb(actions)
+    local bus = EventBus:new()
+    bb:set("player.object", make_unit({ guid = "player", pet = nil }))
+    bb:set("player.in_combat", false)
+    bb:set("combat.target", make_unit({ guid = "target" }))
+
+    local profile = Profile.build(bb, bus)
+    profile:tick_off_gcd(bb)
+    T.assert_equal(actions[1], nil, "no summon may be queued without a Soul Shard")
+
+    -- Pet-less combat still works: the GCD rotation is unaffected.
+    profile:tick_gcd(bb)
+    T.assert_equal(actions[1].action, "corruption_target",
+        "the rotation must proceed pet-less when the summon is not usable")
+
+    clear_spell_book()
+end
+
+function M.test_pet_controller_passive_recall()
+    local PetCtrl = require("modules/combat/profiles/warlock/pet_controller")
+    local calls = {}
+    local prev_core = _G.core
+    _G.core = {
+        input = {
+            set_pet_passive = function() calls[#calls + 1] = "passive" end,
+            set_pet_follow = function() calls[#calls + 1] = "follow" end,
+        },
+    }
+    local ctrl = PetCtrl:new()
+    ctrl:attack(make_unit({ guid = "t" }))
+    ctrl:passive()
+    T.assert_equal(ctrl:get_state(), "passive", "passive() must transition the controller state")
+    T.assert_equal(calls[1], "passive", "passive() must send set_pet_passive")
+    T.assert_equal(calls[2], "follow", "passive() must send set_pet_follow so the pet returns")
+    T.assert_false(ctrl:already_sent_to(make_unit({ guid = "t" })),
+        "recall must clear the sent guid so the next engagement re-sends attack")
+
+    -- SDK absence must never error.
+    _G.core = nil
+    local ok = pcall(function() ctrl:passive() end)
+    T.assert_true(ok, "passive() must be safe when core.input is absent")
+    _G.core = prev_core
 end
 
 function M.test_registry_resolves_warlock_class_id()
