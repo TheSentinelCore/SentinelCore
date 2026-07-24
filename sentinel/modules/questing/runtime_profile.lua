@@ -1710,9 +1710,21 @@ function RuntimeProfile:_execute_navigating()
         return "running", "nav stuck, retry"
 
     else
-        -- failed / unknown
-        self:_log_event("nav_failed", { state = state })
+        -- failed / unknown. Same exhaustion contract as the idle branch: without it a
+        -- client that fails every request (unreachable target, dead server) loops
+        -- retry-forever with no escalation and no visible blocked reason.
+        local nav_err = self._nav.get_last_error and self._nav:get_last_error() or nil
+        self:_log_event("nav_failed", { state = state, reason = nav_err and nav_err.reason })
+        self._current_action_retries = self._current_action_retries + 1
         self._state = "running"
+        if self._current_action_retries >= MAX_RETRIES_PER_ACTION then
+            self._consecutive_failures = self._consecutive_failures + 1
+            self:_check_consecutive_failures()
+            local operations = self._profile.operations or {}
+            local op = operations[self._current_operation_idx]
+            self:_advance_action(op)
+            return "running", "nav failed, retries exhausted, advancing"
+        end
         return "running", "nav failed, retry"
     end
 end

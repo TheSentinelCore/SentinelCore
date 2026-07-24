@@ -103,6 +103,45 @@ function M.run()
     M.test_ownership_blocks_other_callers_until_release()
     M.test_release_rejects_non_owner()
     M.test_same_target_redispatch_is_debounced()
+    M.test_move_to_failure_callback_is_captured()
+end
+
+-- client:move_to(target, callback?, opts?) reports failure ONLY through the callback
+-- (ok=false, reason="unreachable"|...). The adapter passed nil, so a failed path request
+-- vanished: the client dropped to idle, the adapter still said requesting_path, and the
+-- executor spun re-dispatching forever with no error anywhere (live-caught at op 37).
+function M.test_move_to_failure_callback_is_captured()
+    local captured_callback = nil
+    _G.SentinelNavClient = {
+        client = {
+            move_to = function(_self, _target, callback, _opts)
+                captured_callback = callback
+            end,
+            stop = function() end,
+            get_state = function() return "idle" end,
+            get_full_state = function() return "idle" end,
+            get_progress = function() return {} end,
+        },
+    }
+    core = { object_manager = {}, time = function() return 50.0 end }
+
+    local adapter = NavAdapter:new(EventBus:new())
+    T.assert_true(adapter:move_to({ x = 5, y = 6, z = 7 }, {}))
+    T.assert_true(type(captured_callback) == "function",
+        "the adapter must hand the client a completion callback")
+
+    captured_callback(false, "unreachable")
+    T.assert_equal(adapter:get_state(), "failed",
+        "a callback failure must mark the active command failed")
+    local err = adapter:get_last_error()
+    T.assert_not_nil(err, "the failure must be inspectable")
+    T.assert_equal(err.reason, "unreachable")
+
+    -- A later success clears nothing retroactively but must not be reported as failure.
+    T.assert_true(adapter:move_to({ x = 8, y = 9, z = 10 }, {}))
+    captured_callback(true, nil)
+    T.assert_equal(adapter:get_state(), "arrived",
+        "a callback success must mark the active command arrived")
 end
 
 -- The executor re-enters its Travel handler every tick; when the nav client silently

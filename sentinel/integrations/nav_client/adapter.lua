@@ -143,7 +143,27 @@ function NavAdapter:move_to(target, opts)
         self._active.state = "failed"
         return false, "client_unavailable"
     end
-    local ok = select(1, invoke(client, "move_to", target, nil, opts or {}))
+    -- The client reports the OUTCOME of a move only through this callback (ok=false with
+    -- reason "unreachable" etc.) — see docs/SylvannasAPI/dev/api/sentinel-navigation.md.
+    -- Passing nil silently discarded every pathfinding failure: the client dropped to
+    -- idle, the adapter still claimed requesting_path, and the executor re-dispatched
+    -- forever with no error visible anywhere (live-caught at op 37).
+    local this_command = self._active
+    local on_done = function(ok_result, reason)
+        if ok_result then
+            this_command.state = "arrived"
+        else
+            this_command.state = "failed"
+            this_command.failures = (this_command.failures or 0) + 1
+            self._last_error = {
+                command = "move_to",
+                reason = tostring(reason or "unknown"),
+                at = (core and core.time and core.time()) or 0,
+                target = { x = target.x, y = target.y, z = target.z },
+            }
+        end
+    end
+    local ok = select(1, invoke(client, "move_to", target, on_done, opts or {}))
     if not ok then
         self._active.state = "failed"
         return false, "move_to_dispatch_failed"
@@ -152,6 +172,13 @@ function NavAdapter:move_to(target, opts)
         self._last_dispatch = { target = { x = target.x, y = target.y, z = target.z }, at = now }
     end
     return true, nil
+end
+
+--- Most recent navigation failure reported by the client's completion callback, or nil.
+--- { command, reason, at, target } — surfaced so the cockpit and the executor's blocked
+--- reason can say WHY movement is failing instead of silently standing still.
+function NavAdapter:get_last_error()
+    return self._last_error
 end
 
 function NavAdapter:follow_path(nodes, opts)
@@ -322,6 +349,13 @@ function NavAdapter:poll()
     self._last_full_state = full_state
     self._last_progress = progress
     if self._active then
+        -- A callback-reported failure is terminal for this command: the client drops
+        -- to "idle" right after failing, and letting that poll overwrite the mark
+        -- turned every pathfinding failure back into a silent no-op. Only a new
+        -- dispatch (fresh _active) or an explicit stop() clears it.
+        if self._active.state == "failed" then
+            return "failed", progress
+        end
         self._active.state = normalized_state
         self._active.progress = progress
         if normalized_state == "failed" then
