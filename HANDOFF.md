@@ -1,206 +1,139 @@
 # SentinelCore — continuation prompt
 
-Copy everything below the line into a fresh Claude Code session in `/home/levi/Projects/SentinelCore`.
+Copy the **`/goal`** below into the session first, then paste everything under the line as the
+opening prompt in a fresh Claude Code session in `/home/levi/Projects/SentinelCore`.
+
+## The /goal
+
+```
+/goal SentinelCore's questing bot is production-grade for 1-70 leveling: compiled profiles run
+hands-off through full accept → travel → kill → loot → turn-in → vendor/repair cycles, verified
+LIVE in-game via the lx-debug bridge (not just offline tests); deaths, stuck navigation, missed
+steps, and relogs all self-recover through reconciliation; the cockpit UI is clean, modern, and
+shows run health at a glance. Every fix must be proven in the running game before it counts.
+```
 
 ---
 
-You are continuing work on **SentinelCore**, a WoW TBC (2.4.3) questing bot running under the
-Project Sylvannas injector. Read `CLAUDE.md` and `sentinel/docs/adr/06_QUESTING_SCHEMA_V2.md`
-first — ADR 06 is the agreed architecture and its §10 is the build order.
+You are continuing work on **SentinelCore**, a WoW TBC (2.4.3) automation stack running under the
+Project Sylvannas injector. Lua runs in-game (`sentinel/`); Rust services run outside
+(`SentinelQuesting/` importer→validator→compiler pipeline, `SentinelQueryServer/` game-DB API,
+`SentinelNavServer/` pathfinding). Guides are compiled to Runtime Profile JSON and only that JSON
+executes in-game (**compile-before-execute** — never add reference resolution to Lua).
 
-## Your immediate objective
+## Mission
 
-**Get the bot to kill a single mob.** Everything upstream of the kill is verified working in-game;
-the kill loop has never once executed. Do not start new features until a mob dies.
+Make questing **fully functional for 1-70 leveling**: a user picks a profile in the cockpit,
+presses start, and the bot quests indefinitely without intervention — accepting, traveling,
+killing, looting, turning in, choosing rewards, vendoring/repairing, recovering from death and
+stuck states, and surviving relogs and character switches. Combat and questing matter most;
+UI/UX should be clean and modern but is a runner cockpit, not an editor.
 
-## How to work on this
+**Definition of done for any change:** offline tests green AND the behavior observed working in
+the live game. Code that "should work" does not count — every major bug this project hit was
+invisible offline.
 
-You have a **live game bridge** (`lx-debug` MCP). The game is running with a level-70 Paladin in
-Elwynn Forest. This is the single most important tool available — **verify in-game, do not reason
-from the code alone.** Every significant bug this project has hit was invisible offline and only
-appeared when run against the real client.
+## Current verified state (2026-07-24, all live-proven on a Paladin "Nasina")
 
-Loop: edit → `luajit sentinel/tests/run_offline.lua` → deploy → ask the user to reload → verify via
-`game_eval`.
+Working end-to-end, each stage observed in-game:
+- **Route reconciliation** (ADR 06 §8.1 "reconcile, don't count"): position derived from
+  per-character server quest flags; per-character save files are only a forward hint. Ready
+  turn-ins, missed accepts, and unmet farm gates are *certain* verdicts that can rewind the route
+  (one-shot per op). Class-guarded actions are excluded per-class.
+- **Accept/turn-in**: gossip flow paced at 2s per real attempt ("waiting" between), rewards always
+  claimed (guide `.turnin id,slot` choice wins, slot 1 fallback), unseen NPCs reached via static
+  spawn positions (profile `npcs` table, then QueryServer `/npc/:entry`).
+- **Kill loop**: sticky entry-filtered targets, chase with drift re-issue, corpse looting
+  (bounded attempts), engage via forced-target GUID exemption — combat never self-selects
+  replacements under `source="questing"` (that caused rabbit/vermin fights and a nav deadlock).
+- **Death recovery**: `is_dead_or_ghost` detection, spirit release, real corpse run via
+  `core.game_ui.get_corpse_position()`, in-range resurrect.
+- **Vendor maintenance** (built + offline-tested, NOT yet live-triggered): bags-full via
+  `UI_ERROR_MESSAGE` → detour to nearest visible vendor → sell greys via
+  `use_container_item` + QueryServer item quality → `repair_all_items` → resume.
+- Suites: `luajit sentinel/tests/run_offline.lua` = **119 passed / 0 failed** (run from repo
+  root); Rust workspaces all green.
 
-- Deploy: `cp -r sentinel/. "/mnt/c/Users/Levi/Desktop/8492710429180123131425564324/scripts/sentinel/"`
-  then `rm -f .../scripts/sentinel/modules/questing/editor_ui.lua`
-- **A Lua-level `_G.Sentinel.reload()` does NOT pick up file changes.** The loader caches its
-  script set; the user must reload from the Sylvannas UI. Use `game_wait_reload` to detect it.
-- Data (profiles/saves) lives in `scripts_data/`, NOT `scripts/`.
+## Prioritized backlog (work top-down; re-verify live after each)
 
-### Bridge gotchas that will waste your time
+1. **Watch a full unattended multi-quest chain** (Elwynn profile, ops 15+): quest 15 kill →
+   turn-in → follow-up accepts. Fix whatever wedges, using the live-debug workflow below.
+2. **Recompile profiles** with the current toolchain (embeds NPC spawns, reward choices, radius→
+   tolerance, purges the baked-Z bug bytes): `import-guides` → `sentinel-compile`; compare op
+   counts vs deployed before replacing; back up `scripts_data` profiles first.
+3. **Vendor maintenance live verification**: force `player.bags_full = true` near Goldshire via
+   `game_eval` and watch the detour; verify grey-sell + repair.
+4. **Opportunistic kills while traveling** (ADR 06 objective graph, §10 step 4): if a mob needed
+   by an active quest crosses the path, kill it between waypoints.
+5. **Cockpit UI/UX pass**: `runner_state.lua` (pure view-model, testable) + `runner_ui.lua`
+   (thin Sylvannas projection). Health, progress+ETA, blocked reason, maintenance status, quest
+   log sync, guardrails. No decision logic in the render layer.
+6. **AbandonQuest live verification** and quest-log-full recovery (abandon a non-route quest when
+   accepts fail with a full log).
+7. **1-70 continuity**: profile chaining when one finishes (next zone), flight paths, hearth,
+   Z-resolution at import time via NavServer `/api/v1/height`.
 
-- `game_eval` **truncates everything after the final closing quote of the last string literal**.
-  `return f("x.json")` loses its `)`. Build strings without quotes instead:
-  `string.char(101,46,106,115,111,110)` == `"e.json"`.
-- Plain tables work where docs show `vec2`/`vec3`: `{x=..,y=..}`.
-- `_G.Sentinel.combat()` returns the module **wrapper**; the real `SentinelCombat` is
-  `:get_combat()`. Reading `_source`/`_current_target` off the wrapper gives nil and will send you
-  down a false trail — this already cost an hour.
-- `dbg.quest_log()` can report 0 while quests are genuinely in the log. Truth is
-  `core.quests.is_on_quest(id)` and `dbg.quest_status(id)`.
+## The live-debug workflow (this is the project's core loop)
 
-### Session bootstrap (in-game)
+You have a **live game bridge** (`lx-debug` MCP). Verify in-game; never reason from code alone.
 
-```
-local q=_G.Sentinel.questing() _G.Q=q return 1
-return _G.Q:start(string.char(101,46,106,115,111,110))     -- loads e.json
-local ex=_G.Q._executor for i=1,300 do ex:execute() end return ex._current_operation_idx
-```
+1. Edit → `luajit sentinel/tests/run_offline.lua` (repo root; expect 119/0).
+2. Deploy: `cp -r sentinel/. "/mnt/c/Users/Levi/Desktop/8492710429180123131425564324/scripts/sentinel/"`
+   then `rm -f .../scripts/sentinel/modules/questing/editor_ui.lua`.
+3. Ask the user to reload the Sylvannas loader UI (a Lua-level `_G.Sentinel.reload()` does NOT
+   re-read files). Detect it with `game_wait_reload` (arm it in the background and keep working).
+4. Restart the profile via `game_eval` and read the executor's `_execution_log` events, kill
+   trace (`_action_state._kill_trace`), nav state, and combat state to confirm behavior.
+5. Commit each proven fix (conventional commits, no AI attribution), then `graphify update .`.
 
-`execute()` polls instantly but the character walks in real time — insert real waits (60–120s)
-between batches or you will conclude it is stuck when it is merely walking.
+Restart snippet (avoids the string-literal truncation bug):
+`local q = _G.Sentinel.questing() local p = q:list_profiles() q:start(q._profile_dir .. string.char(47) .. p[1] .. string.char(46,106,115,111,110))`
 
-## THE EXACT NEXT BUG (start here)
+Services that must be running: QueryServer (`cd SentinelQueryServer && SENTINEL_DB=../tbcmangos.sqlite
+cargo run --release`, port 3030 — the game reaches WSL via localhost forwarding) and NavServer
+(port 47110, usually Windows-side).
 
-The Kill action now reaches its target. Verified live, all in one run:
+## Tooling contract (use these, in this order)
 
-```
-operation 16 / action 18 (Kill)
-kill trace:      engaging   dist=2.6
-target:          Young Wolf (299), 2.6 yd, TARGETED
-combat state:    ENGAGING  →  COOLDOWN   (after ticking)
-combat _source:  "questing"          ← the questing engage event reaches combat
-_current_target: set
-_forced_target:  set                 ← neutral-mob override holds
-combat enabled:  true
-player:          is_auto_attacking = false, is_in_combat = false
-```
+- **engram MCP**: `mem_context` + `mem_search` at session start — this project's hard-won
+  gotchas are stored there. Save every new discovery/bugfix/decision proactively (`mem_save`).
+- **codegraph** (`codegraph_explore`): symbol questions — definitions, callers, blast radius.
+  Always check blast radius before editing shared symbols.
+- **graphify** (`graphify query/explain/path`): architecture/concept/docs questions; run
+  `graphify update .` after code changes (no auto-update).
+- **context7 MCP**: current docs for any external library/API before using it.
+- **lx-debug MCP**: the live game — `game_eval`, `game_wait_reload`, `game_bridge_status`,
+  `dbg.*` helpers (`dbg.quest_log()`, `dbg.gossip()`, `dbg.nearby()`).
+- Filesystem/standard tools for everything else. Prefer MCP intelligence over raw grep/read.
 
-So: questing finds the mob, targets it, requests engagement, combat accepts the target and runs —
-then goes to COOLDOWN having **queued no spell**. Nothing ever swings.
+## Expensive lessons — do not relearn these
 
-The remaining gate is almost certainly that the rotation/target-strategy path refuses a
-**non-hostile** unit. Elwynn's Young Wolves report `enemy = false` and never aggro. Note
-`sentinel/tests/modules/combat/test_module.lua` explicitly asserts "combat should not queue spells
-for non-hostile direct targets" — that rule is correct for AUTO engagement and wrong for an
-explicitly requested quest target. `SentinelCombat:engage` and `_ensure_target` were already taught
-to honour `_forced_target`; the spell/rotation path was not.
+- `game_eval` truncates everything after the last string literal's closing quote. Build strings
+  with `string.char(...)` (e.g. `string.char(46,106,115,111,110)` == `".json"`).
+- `core.http_get` is **async-only** `(url, callback)`; sync calls raise. QueryClient is
+  request-and-cache — first call returns `(nil, pending)`, poll next tick.
+- Quest-log flags are **numeric**: `is_complete = 1`, and `0` is truthy in Lua. Use
+  `quest_flag()`-style normalization (`== true or == 1`).
+- Ghost form reports `is_dead() == false` — always use `is_dead_or_ghost`.
+- Rewarded quests leave the log — objective gates must first check `is_quest_flagged_completed`.
+- RestedXP `.goto zone,x,y[,radius]` has **no Z**; the third numeric is a reach radius. Any
+  implausible baked Z (>30yd off player) is re-resolved at runtime.
+- The Sylvannas sandbox has no global `JSON`, no usable `load`, no `io`; use `core/JSON`,
+  `core.read_data_file`/`write_data_file` (no self; `create_data_file` first).
+- `unit:get_class()` returns a numeric class_id; map via `shared/class_names.lua`.
+- Rust→Lua enums must be adjacently tagged `{type, payload}`.
+- `_G.Sentinel.combat()` is the wrapper; the real module is `:get_combat()`.
+- `get_num_bag_slots` returns 0 live; `UI_ERROR_MESSAGE` is the only bags-full signal.
+- Gossip is asynchronous — pace interaction attempts on real time, never frame-count retries.
+- The object manager only sees draw distance — navigation to NPCs needs static spawn fallbacks.
 
-**A hook already exists — try it before writing new plumbing.**
-`grind_target_strategy.lua::is_valid_enemy` (line ~60) reads:
+## Operating rules
 
-```lua
-local attack_neutral = self._blackboard:get("module.grind.attack_neutral") == true
-if attack_neutral then return true end   -- players already filtered out above
-return is_hostile(player, unit)
-```
-
-So setting `module.grind.attack_neutral = true` on the blackboard should make neutral quest mobs
-valid targets everywhere the strategy is consulted. Cheapest experiment: set that flag in-game and
-re-run the Kill — if the wolf dies, the fix is to set it (scoped to questing engagement, not
-globally, so auto-engage behaviour is unchanged) rather than to add a new exemption path.
-
-If that is not sufficient, trace where the rotation validates a target before queueing a spell and
-thread the forced-target exemption through. Either way keep the auto-engage guarantee intact —
-`sentinel/tests/modules/combat/test_module.lua` asserts combat must not queue spells for
-non-hostile *auto*-selected targets, and that test must keep passing.
-
-Secondary, same area: the bot does not close the last few yards as the mob wanders (observed
-drifting 2.6 → 6.5 yd). The chase re-issues `move_to` only when the target moves >3 yd from the
-last commanded destination; consider tightening that, and note the Kill action owns pursuit —
-combat must NOT be made to chase.
-
-## Where the kill loop stands
-
-The route reaches operation 16 (`label:WolfMeatEnd`), whose action 18 is
-`Kill{creature_entries=[299,69,704,705], quantity=40}` (wolves for *Wolves Across the Border*).
-
-Just fixed, **not yet verified in-game** — reload and re-test first:
-travel was looping `navigated, retry` because the profile re-verified nav's arrival with a 3D
-distance check while the inferred destination Z was 8.4 yards wrong. It now trusts nav's own
-`arrived`. This was blocking action 2, so the Kill at action 18 was never reached.
-
-`execute_kill` records its branch each tick — read it back with:
-
-```
-local ex=_G.Q._executor local t=ex._action_state and ex._action_state._kill_trace
-return t and (tostring(t.branch)..[[ dist=]]..tostring(t.dist)) or [[kill not reached]]
-```
-
-Branches: `success_count`, `success_killed`, `next_target`, `chasing`, `engaging`.
-If you see `engaging` and the mob still does not die, the problem is downstream in the combat
-module's rotation, not in questing.
-
-Verified working, do not re-litigate: the shared event bus reaches combat
-(`ctx.event_bus == combat._event_bus`), `engage(target,{force=true})` sets `_current_target` and
-state `ENGAGING` on a neutral wolf, and `_forced_target` survives `_ensure_target`.
-
-**Architecture:** questing owns movement (it holds the route), combat owns the rotation. Do not
-make combat chase — the Kill action's own chase logic does that.
-
-## The Z problem — proper fix, not yet implemented
-
-RestedXP guides carry no Z, so the compiler emits `world_z = 0` and the runtime infers a height.
-That inference is the root of several bugs: travel timing out short of its goal, nav pathing to a
-point underground, and arrival checks failing on an 8-yard vertical error. The current mitigations
-(infer via `core.get_height_for_position`, fall back to the player's Z, and trust nav's `arrived`)
-are workarounds.
-
-**SentinelNavServer already answers this authoritatively** — verified live this session:
-
-```
-NavigationService:get_height(pos, callback, opts)   →  GET /api/v1/height?map_id&x&y&z  → { height }
-NavigationService:get_all_heights(pos, cb, opts)    →  GET /api/v1/heights (multi-layer, z_extent)
-```
-
-Reached from Lua as `_G.SentinelNavClient.client.nav_client:get_height(...)`. Measured:
-`(x=-8932.539, y=-137.525, z=83.0, map_id=0)` returned **83.29**, against the DB's 83.4 for Deputy
-Willem — accurate to ~0.1 yd, and it works for ANY coordinate because the navmesh covers the whole
-map, unlike `core.get_height_for_position` which only answers for *loaded* terrain.
-
-Caveat: `z` is a **search hint**. The same query with `z = 0` FAILED. Guide waypoints have
-`world_z = 0`, so either pass a plausible hint or use `/api/v1/heights` with a wide `z_extent`.
-
-Recommended: resolve Z **at import time**, not at runtime. NavServer is plain HTTP, so the Rust
-importer can batch-resolve all 522 travel waypoints once and bake correct world_z into the profile.
-That deletes the entire class of runtime Z bugs and costs nothing per tick. (NavServer runs on the
-Windows host; WSL cannot reach its localhost — query it from the game, or use the host IP.)
-
-## Design principles that are settled
-
-- **Reconcile, never count.** Objective progress is derived from observed game state
-  (`is_on_quest`, `is_quest_flagged_completed`), never accumulated locally. ADR 06 §8.1.
-- **Never claim success without verification.** A handler that returns `"success"` for a no-op is
-  the worst failure mode — the bot advances past work it never did. This bug shipped once already
-  (`AcceptQuest` reported success while the quest log stayed empty).
-- **Refuse to guess.** Enrichment deliberately declines two cases rather than inventing an action:
-  `NOT ItemCount(...)` (asserts you hold FEWER than n) and items with no loot row (script-driven).
-- **Any enum crossing Rust→Lua must be adjacently tagged** `{type,payload}`; the Lua dispatches on
-  `.type`. An externally-tagged `RuntimeCondition` silently made every condition fail open.
-- **A mock that agrees with the bug proves nothing.** Several bugs hid behind fixtures written to
-  match broken code (JSON parser, `write_data_file` arity, Lua-literal fixtures). When a test
-  passes but the game fails, suspect the mock.
-
-## After the kill works
-
-ADR 06 §10 build order. Steps 1–3 are done (coordinates, structured objectives, Level-1
-enrichment). Next is **step 4: replace the linear executor with guide-ordered graph traversal**,
-then the scheduler phases.
-
-The user's own design request, which is correct and is the graph model's whole point:
-*if we are on quest X and travelling, and we pass mobs needed for quest X, kill them en route.*
-Caveat: RestedXP routes are hand-tuned to pass through the right camps, so this should be
-opportunistic **on the way**, never a detour planner, or it will thrash between camps.
-
-## Known-open issues
-
-- 40 unsatisfiable gates remain (19 `NOT ItemCount`, ~21 script-driven) — deliberate refusals.
-- `.train` still has 227 unresolved NPCs corpus-wide; needs trainer-by-class/zone lookup rather
-  than name hints.
-- `VariableValue` has the same externally-tagged serde issue that broke `RuntimeCondition`. Dormant
-  (the importer never emits `SetVariable`), but a trap if variables are ever used.
-- Spawn `locations` use the mean of spawn rows; a centroid can land on a cliff. Clustering unproven.
-- Recompiling a profile changes its `content_hash` and correctly invalidates saved progress — that
-  is a safety property, not a bug.
-
-## Working agreements
-
-- Verify claims before stating them; say you will verify, then check.
-- Do not claim something works without running it. Report failures with the actual output.
-- Push back with evidence when the user is wrong, and say plainly when they are right.
-- Commit with conventional commits, no AI attribution. Explain *why*, with measured numbers.
-- Prefer `graphify query` / `codegraph_explore` over raw grep for structural questions.
-- Note: raw `rg` output in this repo redacts some identifiers to the literal `n` — confirm ground
-  truth by reading files.
+- **TDD**: write the failing offline test with the real wire shapes (numeric flags, positional
+  payloads) before the fix; mocks must pin live-client behavior, not idealized behavior.
+- One fix per commit, message states the live symptom it cures.
+- When the user reports a symptom, pull live state FIRST (`game_eval` the executor log, kill
+  trace, nav full state, combat state) — diagnose from evidence, then fix, then re-verify.
+- Reconciliation invariants: game state is truth; saves only move the route forward; certain
+  verdicts (ready turn-in, missed accept, unmet farm gate) may rewind once per op.
+- Never claim something works without having watched it work in-game this session.
