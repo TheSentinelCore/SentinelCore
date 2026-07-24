@@ -614,6 +614,7 @@ function M.test_gate_met_mid_kill_skips_operation()
                 id = 1,
                 actions = {
                     { type = "Comment", payload = { text = "walk-in" } },
+                    { type = "Travel", payload = { position = { world_x = 1, world_y = 2, world_z = 0 }, tolerance = 5 } },
                     { type = "Kill", payload = { creature_entries = { 705 }, quantity = 40 } },
                     { type = "Condition", payload = { role = "Completion", condition = { type = "ObjectiveComplete", payload = { 33, 1 } } } },
                 },
@@ -636,11 +637,60 @@ function M.test_gate_met_mid_kill_skips_operation()
     }
     profile._state = "running"
     profile._current_operation_idx = 1
-    profile._current_action_idx = 2 -- mid-Kill, past the action-1 gate check
+    profile._current_action_idx = 2 -- mid-op (a Travel lead-in), past the action-1 gate check
     profile:execute()
     T.assert_equal(profile._current_operation_idx, 2,
-        "a met Completion gate must end the farm op even mid-kill")
+        "a met Completion gate must end the farm op from ANY action tick — travel "
+        .. "lead-ins included, or the bot walks the whole waypoint chain first")
     _G.core.quests = nil
+end
+
+function M.test_nav_idle_unconfirmed_exhausts_and_advances()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Travel", payload = { position = { world_x = 100, world_y = 200, world_z = 0 }, tolerance = 5 } },
+                    { type = "Comment", payload = { text = "after" } },
+                },
+                next_condition = "auto",
+            },
+        },
+    })
+    -- A dead nav client: never active, always idle, never arrives. Live-caught as a
+    -- frame-rate spin (17k+ log events at op 37): nav_idle_unconfirmed incremented
+    -- retries but nothing ever consumed them, so the executor re-dispatched move_to
+    -- every tick forever while the player stood still.
+    profile._nav = {
+        is_active = function() return false end,
+        poll = function() return "idle", {} end,
+        get_state = function() return "idle" end,
+        stop = function() end,
+        move_to = function() return true end,
+    }
+    profile._state = "navigating"
+    profile._current_operation_idx = 1
+    profile._current_action_idx = 1
+    profile._current_action_retries = 4 -- one below MAX_RETRIES_PER_ACTION (5)
+    -- _handle_blocked records the action it navigated for; without it,
+    -- _confirm_nav_arrival has nothing to verify and trusts idle as arrival.
+    profile._last_blocked_action = profile._profile.operations[1].actions[1]
+    -- The player is far from (100,200): arrival must NOT be confirmable.
+    _G.core.object_manager.get_local_player = function()
+        return { get_position = function() return { x = 0, y = 0, z = 0 } end }
+    end
+    local before_failures = profile._consecutive_failures or 0
+    profile:_execute_navigating()
+    T.assert_equal(profile._current_action_idx, 2,
+        "exhausted nav-idle retries must advance the action, not spin forever")
+    T.assert_equal(profile._consecutive_failures, before_failures + 1,
+        "an abandoned travel counts toward the consecutive-failure escalation")
+    -- mock_globals() never resets object_manager, so an override here leaks into
+    -- alphabetically-later tests; restore the pristine shape.
+    _G.core.object_manager.get_local_player = nil
 end
 
 -- ============================================================================
@@ -720,6 +770,7 @@ local tests = {
     test_npc_position_falls_back_to_static_sources = M.test_npc_position_falls_back_to_static_sources,
     test_unmet_gate_rewinds_save_that_skipped_kills = M.test_unmet_gate_rewinds_save_that_skipped_kills,
     test_gate_met_mid_kill_skips_operation = M.test_gate_met_mid_kill_skips_operation,
+    test_nav_idle_unconfirmed_exhausts_and_advances = M.test_nav_idle_unconfirmed_exhausts_and_advances,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,

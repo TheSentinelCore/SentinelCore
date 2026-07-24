@@ -102,6 +102,54 @@ function M.run()
     M.test_get_shared_returns_distinct_instance_per_bus()
     M.test_ownership_blocks_other_callers_until_release()
     M.test_release_rejects_non_owner()
+    M.test_same_target_redispatch_is_debounced()
+end
+
+-- The executor re-enters its Travel handler every tick; when the nav client silently
+-- dropped a request, that meant a fresh client move_to per FRAME to the same target —
+-- re-commanding the client's HSM faster than its async path response could ever land
+-- (live-caught at op 37: 17k+ spin events, player standing still). Within the debounce
+-- window a same-target move_to is treated as already in flight; an explicit stop()
+-- clears the window so stuck-recovery's stop→move_to can genuinely re-dispatch.
+function M.test_same_target_redispatch_is_debounced()
+    local move_to_calls = 0
+    _G.SentinelNavClient = {
+        client = {
+            move_to = function() move_to_calls = move_to_calls + 1 end,
+            stop = function() end,
+            get_state = function() return "idle" end,
+            get_full_state = function() return "idle" end,
+            get_progress = function() return {} end,
+        },
+    }
+    local now = 100.0
+    core = { object_manager = {}, time = function() return now end }
+
+    local adapter = NavAdapter:new(EventBus:new())
+    local target = { x = 10, y = 20, z = 30 }
+
+    T.assert_true(adapter:move_to(target, {}), "first dispatch must reach the client")
+    T.assert_equal(move_to_calls, 1)
+
+    now = 100.2 -- same tick-ish: well inside the debounce window
+    T.assert_true(adapter:move_to(target, {}),
+        "a same-target re-dispatch inside the window must report success (in flight)")
+    T.assert_equal(move_to_calls, 1, "the client must NOT be re-commanded inside the window")
+
+    now = 100.4
+    T.assert_true(adapter:move_to({ x = 99, y = 20, z = 30 }, {}),
+        "a different target is a new command, never debounced")
+    T.assert_equal(move_to_calls, 2)
+
+    now = 100.6
+    adapter:stop("stuck_recovery")
+    T.assert_true(adapter:move_to({ x = 99, y = 20, z = 30 }, {}),
+        "stop() must clear the window so recovery can re-dispatch the same target")
+    T.assert_equal(move_to_calls, 3)
+
+    now = 105.0 -- window expired
+    T.assert_true(adapter:move_to({ x = 99, y = 20, z = 30 }, {}))
+    T.assert_equal(move_to_calls, 4, "an expired window must dispatch again")
 end
 
 -- B4: app.lua, combat/init.lua, and runtime_profile.lua each used to construct their

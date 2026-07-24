@@ -105,10 +105,29 @@ function NavAdapter:_claim_or_reject(opts)
     return true
 end
 
+-- Minimum seconds between identical move_to dispatches to the real client. The executor
+-- re-enters its Travel handler every tick; without this window a silently-failing client
+-- was re-commanded per FRAME to the same target, restarting its HSM faster than any async
+-- path response could land (live-caught: 17k+ spin events at one waypoint). stop() clears
+-- the window so stuck-recovery's stop→move_to genuinely re-dispatches.
+local REDISPATCH_WINDOW = 2.0
+
+local function same_target(a, b)
+    return a and b and a.x == b.x and a.y == b.y and a.z == b.z
+end
+
 function NavAdapter:move_to(target, opts)
     local claimed, claim_err = self:_claim_or_reject(opts)
     if not claimed then
         return false, claim_err
+    end
+    local now = (core and core.time and core.time()) or nil
+    if now and self._last_dispatch
+        and same_target(self._last_dispatch.target, target)
+        and (now - self._last_dispatch.at) < REDISPATCH_WINDOW then
+        -- Same command, still inside the window: treat as in flight, do not re-command
+        -- the client's state machine.
+        return true, nil
     end
     local client = self:_client()
     self._active = {
@@ -128,6 +147,9 @@ function NavAdapter:move_to(target, opts)
     if not ok then
         self._active.state = "failed"
         return false, "move_to_dispatch_failed"
+    end
+    if now then
+        self._last_dispatch = { target = { x = target.x, y = target.y, z = target.z }, at = now }
     end
     return true, nil
 end
@@ -215,6 +237,10 @@ function NavAdapter:stop(reason, owner)
         self._active.state = "idle"
         self._active.stop_reason = reason or "stop"
     end
+    -- An explicit stop invalidates the debounce window: whoever stops navigation is
+    -- allowed to immediately re-dispatch the same target (stuck recovery does exactly
+    -- stop → move_to).
+    self._last_dispatch = nil
     return true
 end
 

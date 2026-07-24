@@ -1437,15 +1437,15 @@ function RuntimeProfile:_execute_running()
     -- gate (usually ObjectiveComplete) is already met, the kills/loots in front of it are
     -- moot — skip the operation instead of re-farming from a zeroed local counter.
     --
-    -- Re-checked on every farm-action tick, not just at action 1: Kill counts corpses from
-    -- zero and holds until ITS quantity is satisfied, so a gate that becomes met mid-farm
-    -- (objective completed, or completed-quest flags that answered stale-false at the
-    -- action-1 instant right after profile start) would otherwise never be consulted again
-    -- — live-caught as re-farming 40 wolves for rewarded quest 33.
-    local farm_action = action and (action.type == "Kill" or action.type == "Grind"
-        or action.type == "Loot" or action.type == "UseItem")
-    if (self._current_action_idx == 1 or farm_action)
-        and self:_operation_gate_already_met(op, ctx) then
+    -- Re-checked on EVERY tick of the operation, not just at action 1: Kill counts corpses
+    -- from zero and holds until ITS quantity is satisfied, and the first
+    -- is_quest_flagged_completed(qid) call per quest can answer a cold false until the
+    -- client fetches server data — so a gate read once at op entry commits the bot to the
+    -- full travel-and-farm chain (live-caught twice: re-farming 40 wolves for rewarded
+    -- quest 33, and walking op 24's nine lead-in waypoints for finished quest 15).
+    -- _operation_gate_already_met returns false for ops without both a Completion gate and
+    -- farm work, so quest-action and pure-travel ops don't pay for this.
+    if self:_operation_gate_already_met(op, ctx) then
         self:_log_event("operation_gate_met", { operation = self._current_operation_idx })
         self:_advance_operation(op)
         self._current_action_idx = 1
@@ -1666,6 +1666,20 @@ function RuntimeProfile:_execute_navigating()
         self:_log_event("nav_idle_unconfirmed", {})
         self._current_action_retries = self._current_action_retries + 1
         self._state = "running"
+        -- These retries must actually EXHAUST. They were incremented here but consumed
+        -- nowhere, so a nav client that silently dropped every request span the
+        -- running↔navigating cycle at frame rate forever (live-caught: 17k+ events at
+        -- one waypoint, player standing still). Mirror the nav-timeout branch: give up
+        -- on the action, count a consecutive failure so the cascade guard can surface
+        -- a blocked run instead of a silent spin.
+        if self._current_action_retries >= MAX_RETRIES_PER_ACTION then
+            self._consecutive_failures = self._consecutive_failures + 1
+            self:_check_consecutive_failures()
+            local operations = self._profile.operations or {}
+            local op = operations[self._current_operation_idx]
+            self:_advance_action(op)
+            return "running", "nav idle without arrival, retries exhausted, advancing"
+        end
         return "running", "nav idle without arrival, retry"
 
     elseif state == "requesting_path" or state == "moving" then
