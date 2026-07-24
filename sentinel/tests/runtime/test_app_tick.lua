@@ -20,27 +20,25 @@ local T = require("tests/test_util")
 
 local M = {}
 
---- Build an app instance WITHOUT SentinelApp:new().
---- new() constructs IziBridge, which requires the injector-only `common/izi_sdk`
---- (and that pulls common/modules/health_prediction), none of which exist offline.
---- Only the tick plumbing is under test, so every collaborator is a recording stub.
+--- Build an app instance THROUGH the real SentinelApp:new().
+---
+--- This used to hand-build the app with `setmetatable({}, SentinelApp)` because new()
+--- constructed an IziBridge, which did an unguarded `require("common/izi_sdk")` — an
+--- injector-only module — so the composition root could not be constructed offline at all.
+--- ADR 08 §11.6 called that out as testability debt: "the file that encodes the kernel's
+--- boot contract is asserted by nobody." Phase 1 guarded the require
+--- (integrations/izi_bridge.lua), so the real thing is now reachable from a test and this
+--- helper exercises the ACTUAL wiring — scheduler included — rather than a replica of it.
+---
+--- Collaborators are still swapped for recording stubs, which works because every kernel
+--- stage handler reads its collaborator off `self` at CALL time rather than capturing it
+--- at registration (see SentinelApp:_register_kernel_stages).
 local function make_app(registry)
-    local app = setmetatable({}, SentinelApp)
-    app._blackboard = require("core/blackboard"):new()
+    local app = SentinelApp:new()
     app._registry = registry
     app._sensor_hub = { refresh = function() end, shutdown = function() end }
     app._callback_bridge = { on_update = function() end, on_pre_tick = function() end }
     app._nav_adapter = { poll = function() end }
-    -- Mirrors ErrorBoundary:wrap — runs the thunk, swallows and reports errors.
-    app._error_boundary = {
-        wrap = function(_self, _scope, _op, fn)
-            local ok, err = pcall(fn)
-            if not ok then
-                _self.last_error = err
-            end
-            return ok
-        end,
-    }
     return app
 end
 

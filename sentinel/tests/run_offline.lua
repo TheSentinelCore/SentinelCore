@@ -323,6 +323,15 @@ local test_modules = {
     "tests/core/test_blackboard",
     "tests/core/test_bt",
     "tests/core/test_geometry",
+    "tests/core/test_error_boundary",
+
+    -- Kernel (ADR 08 Phase 1: scheduler, frozen snapshot, intent queue, tick clock)
+    "tests/kernel/test_cadence_meter",
+    "tests/kernel/test_tick_clock",
+    "tests/kernel/test_snapshot",
+    "tests/kernel/test_snapshot_source",
+    "tests/kernel/test_intent_queue",
+    "tests/kernel/test_scheduler",
 
     -- Integrations
     "tests/integrations/test_izi_bridge",

@@ -33,14 +33,15 @@ function Blackboard:has(key)
     return self._data[key] ~= nil
 end
 
-function Blackboard:snapshot(prefix)
-    local out = {}
-    for key, value in pairs(self._data) do
-        if not prefix or key:find(prefix, 1, true) == 1 then
-            out[key] = value
-        end
-    end
-    return out
-end
+-- `Blackboard:snapshot(prefix)` was REMOVED in Phase 1 and superseded by
+-- `kernel/snapshot.lua`. ADR 08 §5.1 already recorded that it had zero callers, but dead
+-- code was not the reason it had to go: it returned a SHALLOW copy of live blackboard
+-- state, and this blackboard holds `player.object` -- a raw game_object handle written by
+-- runtime/sensors/player_sensor.lua. It therefore produced precisely the artefact ADR 08
+-- §2.7 forbids (a "snapshot" holding a pointer that can die inside the tick that froze it),
+-- under a name that invited exactly the trust it could not honour.
+--
+-- The blackboard remains what it is: LIVE, mutable, read-through state. Anything that needs
+-- a consistent view for the duration of a tick uses kernel/snapshot.lua.
 
 return Blackboard
