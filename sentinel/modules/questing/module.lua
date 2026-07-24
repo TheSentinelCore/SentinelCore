@@ -11,6 +11,17 @@
 local RuntimeProfile = require("modules/questing/runtime_profile")
 local RunnerState = require("modules/questing/runner_state")
 local QuestLogSpace = require("modules/questing/quest_log_space")
+local ProfileChain = require("modules/questing/profile_chain")
+
+-- JSON decoder for the chain manifest — same core/JSON the runtime uses, degrading to nil
+-- when the sandbox lib is absent (offline tests inject the manifest directly instead).
+local ChainJson = (function()
+    local ok, mod = pcall(require, "core/JSON")
+    if ok and type(mod) == "table" and mod.decode then
+        return mod
+    end
+    return nil
+end)()
 local Blackboard = require("core/blackboard")
 local EventBus = require("core/event_bus")
 
@@ -21,6 +32,10 @@ QuestingModule.__index = QuestingModule
 -- scripts_data sandbox. Legacy .yaml route files share this folder; list_profiles filters to
 -- .json so the two coexist without collision.
 local PROFILE_DIR = "sentinel/data/profiles/quests"
+
+-- Chain manifest (RestedXP `#next` route order, class-guarded) deployed alongside the
+-- compiled profiles. When present, a finished profile hands off to its successor.
+local CHAIN_FILE = "chain.json"
 
 local function now_s()
     return (core and core.time and core.time()) or 0
@@ -274,11 +289,16 @@ function QuestingModule:tick(delta)
     end
 
     if status == "finished" then
-        self._enabled = false
-        self._blackboard:set("module.questing.enabled", false)
-        self._event_bus:publish("questing:finished", {
-            path = self._executor._json_path
-        })
+        -- 1-70 continuity: a completed zone hands off to its RestedXP chain successor for
+        -- this character's class. Only when there is no successor (end of chain, no manifest,
+        -- or the next zone isn't compiled yet) does the run truly finish.
+        if not self:_advance_to_next_profile() then
+            self._enabled = false
+            self._blackboard:set("module.questing.enabled", false)
+            self._event_bus:publish("questing:finished", {
+                path = self._executor._json_path
+            })
+        end
     end
 
     -- Execution just mutated the state the cached view was built from.
@@ -542,6 +562,71 @@ end
 function QuestingModule:set_guardrails(cfg)
     self._guardrails = cfg or {}
     self:_invalidate_view()
+end
+
+--- Basename of a compiled profile path minus the .json extension — its chain slug.
+local function profile_slug(json_path)
+    if type(json_path) ~= "string" then return nil end
+    return json_path:match("([^/\\]+)%.json$")
+end
+
+--- Lazily load and cache the chain manifest from <profile_dir>/chain.json. A missing or
+--- unparseable manifest caches a negative so a chainless deployment does not re-read the
+--- disk on every profile completion. Tests inject `_chain` directly to bypass file IO.
+--- @return table|nil manifest
+function QuestingModule:_load_chain()
+    if self._chain ~= nil then
+        return self._chain or nil
+    end
+    self._chain = false -- negative cache until proven otherwise
+    if not (ChainJson and core and core.read_data_file) then return nil end
+    local ok, text = pcall(core.read_data_file, self._profile_dir .. "/" .. CHAIN_FILE)
+    if not ok or type(text) ~= "string" then return nil end
+    local ok2, decoded = pcall(ChainJson.decode, text)
+    if ok2 and type(decoded) == "table" and type(decoded.entries) == "table" then
+        self._chain = decoded
+        return decoded
+    end
+    return nil
+end
+
+--- On profile completion, resolve and start the next profile in the RestedXP chain for the
+--- character's class. Returns true only when a successor was actually started (keeping the
+--- run alive); false at the end of the chain, with no manifest, or when the resolved
+--- successor has not been compiled — so the caller finalizes the run exactly as before.
+function QuestingModule:_advance_to_next_profile()
+    local chain = self:_load_chain()
+    if not chain then return false end
+    local slug = profile_slug(self._executor and self._executor._json_path)
+    if not slug then return false end
+
+    -- Class decides the branch (e.g. Warlock takes a different Loch Modan). Fail safe to
+    -- "Unknown" — the resolver simply won't match a class-guarded link, ending the chain.
+    local class_name = "Unknown"
+    if self._executor and self._executor.create_context then
+        local ctx = self._executor:create_context()
+        if ctx and ctx.get_player_class then
+            local ok, name = pcall(ctx.get_player_class, ctx)
+            if ok and type(name) == "string" then class_name = name end
+        end
+    end
+
+    local next_slug = ProfileChain.next_slug(chain, slug, class_name)
+    if not next_slug then return false end
+
+    -- Never start a successor that isn't compiled on disk — surface the gap instead of
+    -- faulting on a missing file.
+    local available = {}
+    for _, stem in ipairs(self:list_profiles()) do available[stem] = true end
+    if not available[next_slug] then
+        self._event_bus:publish("questing:chain_dead_end", {
+            from = slug, next_slug = next_slug, reason = "successor not compiled",
+        })
+        return false
+    end
+
+    self._event_bus:publish("questing:chain_advance", { from = slug, to = next_slug })
+    return self:start(self._profile_dir .. "/" .. next_slug .. ".json")
 end
 
 --- Available compiled profiles, discovered from the data folder rather than hardcoded.

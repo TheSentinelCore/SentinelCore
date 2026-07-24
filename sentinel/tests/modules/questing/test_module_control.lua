@@ -388,7 +388,77 @@ function M.test_completion_ring_records_and_caps()
     core.time = saved_time
 end
 
+-- ============================================================================
+-- Profile chaining — 1-70 continuity. A finished profile must load its RestedXP
+-- #next successor for the character's class instead of just stopping the run.
+-- ============================================================================
+
+--- A fake executor that reports "finished" and knows its class + path.
+local function finished_executor(path, class_name)
+    local ex = fake_executor({ path = path })
+    ex.execute = function(self)
+        self.executed = self.executed + 1
+        return "finished", "done"
+    end
+    ex.create_context = function()
+        return { get_player_class = function() return class_name end }
+    end
+    return ex
+end
+
+function M.test_finished_profile_advances_to_next_in_chain()
+    local m = new_module()
+    m._executor = finished_executor("sentinel/data/profiles/quests/1-11-Elwynn-Forest.json", "Paladin")
+    -- Inject the manifest (bypasses chain.json file IO) and the on-disk profile set.
+    m._chain = {
+        entries = {
+            ["1-11-Elwynn-Forest"] = { next = { { slug = "11-12-Loch-Modan", class_not = "Warlock" } } },
+            ["11-12-Loch-Modan"] = { next = {} },
+        },
+    }
+    m.list_profiles = function() return { "1-11-Elwynn-Forest", "11-12-Loch-Modan" } end
+    local started = {}
+    m.start = function(_, path) started[#started + 1] = path; return true end
+
+    m:tick(0.1)
+    T.assert_equal(#started, 1, "a finished profile must start its chain successor")
+    T.assert_true(started[1]:match("11%-12%-Loch%-Modan%.json$") ~= nil,
+        "must start the resolved next slug, got: " .. tostring(started[1]))
+    T.assert_equal(m:is_enabled(), true, "advancing the chain keeps the module enabled")
+end
+
+function M.test_finished_at_chain_end_finalizes_the_run()
+    local m = new_module()
+    m._executor = finished_executor("sentinel/data/profiles/quests/69-70-Shadowmoon.json", "Paladin")
+    m._chain = { entries = { ["69-70-Shadowmoon"] = { next = {} } } }
+    m.list_profiles = function() return { "69-70-Shadowmoon" } end
+    local started = {}
+    m.start = function(_, path) started[#started + 1] = path; return true end
+
+    m:tick(0.1)
+    T.assert_equal(#started, 0, "the end of the chain must not start another profile")
+    T.assert_equal(m:is_enabled(), false, "the end of the chain finalizes the run (disables)")
+end
+
+function M.test_finished_with_uncompiled_successor_finalizes()
+    -- The manifest names a successor, but no compiled profile exists for it: the run must
+    -- finalize rather than try to start a missing file.
+    local m = new_module()
+    m._executor = finished_executor("sentinel/data/profiles/quests/A.json", "Paladin")
+    m._chain = { entries = { ["A"] = { next = { { slug = "B" } } }, ["B"] = { next = {} } } }
+    m.list_profiles = function() return { "A" } end
+    local started = {}
+    m.start = function(_, path) started[#started + 1] = path; return true end
+
+    m:tick(0.1)
+    T.assert_equal(#started, 0, "a successor with no compiled file must not be started")
+    T.assert_equal(m:is_enabled(), false, "an uncompiled successor finalizes the run")
+end
+
 local tests = {
+    test_finished_profile_advances_to_next_in_chain = M.test_finished_profile_advances_to_next_in_chain,
+    test_finished_at_chain_end_finalizes_the_run = M.test_finished_at_chain_end_finalizes_the_run,
+    test_finished_with_uncompiled_successor_finalizes = M.test_finished_with_uncompiled_successor_finalizes,
     test_quest_sync_refresh_is_throttled = M.test_quest_sync_refresh_is_throttled,
     test_get_view_is_cached_within_one_tick = M.test_get_view_is_cached_within_one_tick,
     test_control_verbs_invalidate_the_view_cache = M.test_control_verbs_invalidate_the_view_cache,
