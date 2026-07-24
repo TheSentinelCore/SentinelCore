@@ -605,6 +605,44 @@ function M.test_load_reconciles_with_no_save_at_all()
     _G.core.quests = nil
 end
 
+function M.test_gate_met_mid_kill_skips_operation()
+    written_files = {}
+    local profile = create_profile({
+        content_hash = "h",
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Comment", payload = { text = "walk-in" } },
+                    { type = "Kill", payload = { creature_entries = { 705 }, quantity = 40 } },
+                    { type = "Condition", payload = { role = "Completion", condition = { type = "ObjectiveComplete", payload = { 33, 1 } } } },
+                },
+                next_condition = "auto",
+            },
+            { id = 2, actions = { { type = "Comment", payload = { text = "next" } } }, next_condition = "auto" },
+        },
+    })
+    -- The executor is already INSIDE the Kill (action 2) when the gate reads met —
+    -- either the objective completed mid-farm or the completed-quest flags answered
+    -- late at startup (live-caught: a stale false at action 1 committed the bot to
+    -- re-farming 40 wolves for rewarded quest 33). Kill counts corpses from zero and
+    -- never re-consults the gate, so the tick itself must.
+    _G.core.quests = {
+        is_quest_flagged_completed = function(qid) return qid == 33 end,
+        is_on_quest = function(_) return false end,
+        get_num_quest_log_entries = function() return 0 end,
+        get_quest_log_title = function(_) return nil end,
+        get_num_quest_leader_boards = function(_) return 0 end,
+    }
+    profile._state = "running"
+    profile._current_operation_idx = 1
+    profile._current_action_idx = 2 -- mid-Kill, past the action-1 gate check
+    profile:execute()
+    T.assert_equal(profile._current_operation_idx, 2,
+        "a met Completion gate must end the farm op even mid-kill")
+    _G.core.quests = nil
+end
+
 -- ============================================================================
 -- W5.2 — Serialization tests
 -- ============================================================================
@@ -681,6 +719,7 @@ local tests = {
     test_class_guarded_accepts_do_not_block_status = M.test_class_guarded_accepts_do_not_block_status,
     test_npc_position_falls_back_to_static_sources = M.test_npc_position_falls_back_to_static_sources,
     test_unmet_gate_rewinds_save_that_skipped_kills = M.test_unmet_gate_rewinds_save_that_skipped_kills,
+    test_gate_met_mid_kill_skips_operation = M.test_gate_met_mid_kill_skips_operation,
     test_operation_with_kills_skipped_when_quest_rewarded = M.test_operation_with_kills_skipped_when_quest_rewarded,
     test_load_reconciles_with_no_save_at_all = M.test_load_reconciles_with_no_save_at_all,
     test_save_creates_save_file = M.test_save_creates_save_file,

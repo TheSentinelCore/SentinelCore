@@ -1436,7 +1436,16 @@ function RuntimeProfile:_execute_running()
     -- Same idea for non-quest operations gated by their own Completion condition: if the
     -- gate (usually ObjectiveComplete) is already met, the kills/loots in front of it are
     -- moot — skip the operation instead of re-farming from a zeroed local counter.
-    if self._current_action_idx == 1 and self:_operation_gate_already_met(op, ctx) then
+    --
+    -- Re-checked on every farm-action tick, not just at action 1: Kill counts corpses from
+    -- zero and holds until ITS quantity is satisfied, so a gate that becomes met mid-farm
+    -- (objective completed, or completed-quest flags that answered stale-false at the
+    -- action-1 instant right after profile start) would otherwise never be consulted again
+    -- — live-caught as re-farming 40 wolves for rewarded quest 33.
+    local farm_action = action and (action.type == "Kill" or action.type == "Grind"
+        or action.type == "Loot" or action.type == "UseItem")
+    if (self._current_action_idx == 1 or farm_action)
+        and self:_operation_gate_already_met(op, ctx) then
         self:_log_event("operation_gate_met", { operation = self._current_operation_idx })
         self:_advance_operation(op)
         self._current_action_idx = 1
