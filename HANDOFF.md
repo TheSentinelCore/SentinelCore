@@ -33,51 +33,74 @@ UI/UX should be clean and modern but is a runner cockpit, not an editor.
 the live game. Code that "should work" does not count — every major bug this project hit was
 invisible offline.
 
-## Current verified state (2026-07-24, all live-proven on a Paladin "Nasina")
+## State (2026-07-24)
 
-Working end-to-end, each stage observed in-game:
-- **Route reconciliation** (ADR 06 §8.1 "reconcile, don't count"): position derived from
-  per-character server quest flags; per-character save files are only a forward hint. Ready
-  turn-ins, missed accepts, and unmet farm gates are *certain* verdicts that can rewind the route
-  (one-shot per op). Class-guarded actions are excluded per-class.
-- **Accept/turn-in**: gossip flow paced at 2s per real attempt ("waiting" between), rewards always
-  claimed (guide `.turnin id,slot` choice wins, slot 1 fallback), unseen NPCs reached via static
-  spawn positions (profile `npcs` table, then QueryServer `/npc/:entry`).
-- **Kill loop**: sticky entry-filtered targets, chase with drift re-issue, corpse looting
-  (bounded attempts), engage via forced-target GUID exemption — combat never self-selects
-  replacements under `source="questing"` (that caused rabbit/vermin fights and a nav deadlock).
-- **Death recovery**: `is_dead_or_ghost` detection, spirit release, real corpse run via
-  `core.game_ui.get_corpse_position()`, in-range resurrect.
-- **Vendor maintenance** (built + offline-tested, NOT yet live-triggered): bags-full via
-  `UI_ERROR_MESSAGE` → detour to nearest visible vendor → sell greys via
-  `use_container_item` + QueryServer item quality → `repair_all_items` → resume.
-- Suites: `luajit sentinel/tests/run_offline.lua` = **119 passed / 0 failed** (run from repo
-  root); Rust workspaces all green.
+Suites: `luajit sentinel/tests/run_offline.lua` = **127 passed / 0 failed** (repo root); all Rust
+workspaces green. **Read the discipline line at the top of "Mission" before trusting anything
+below as done** — offline-green ≠ working.
 
-## Prioritized backlog (work top-down; re-verify live after each)
+### Live-proven earlier this session (Paladin "Nasina", observed in-game)
+- **Route reconciliation** (ADR 06 §8.1 "reconcile, don't count"): position from per-character
+  server quest flags; saves are only a forward hint; ready turn-ins / missed accepts / unmet farm
+  gates are *certain* verdicts that rewind once per op. Class-guarded actions excluded per-class.
+- **Accept/turn-in** (gossip paced 2s/attempt, rewards claimed, unseen NPCs via static spawns),
+  **kill loop** (sticky entry-filtered targets, forced-target GUID exemption — combat never
+  self-selects under `source="questing"`), **death recovery** (`is_dead_or_ghost`, corpse run).
+- **Mid-farm completion-gate skip**: re-checked every tick, so a cold `is_quest_flagged_completed`
+  at op entry can't commit the bot to re-farming a rewarded quest (was live-caught re-killing 40
+  wolves).
 
-1. **Watch a full unattended multi-quest chain** (Elwynn profile, ops 15+): quest 15 kill →
-   turn-in → follow-up accepts. Fix whatever wedges, using the live-debug workflow below.
-2. **Recompile profiles** with the current toolchain (embeds NPC spawns, reward choices, radius→
-   tolerance, purges the baked-Z bug bytes): `import-guides` → `sentinel-compile`; compare op
-   counts vs deployed before replacing; back up `scripts_data` profiles first.
-3. **Vendor maintenance live verification**: force `player.bags_full = true` near Goldshire via
-   `game_eval` and watch the detour; verify grey-sell + repair.
-4. **Opportunistic kills while traveling** (ADR 06 objective graph, §10 step 4): if a mob needed
-   by an active quest crosses the path, kill it between waypoints.
-5. **Cockpit UI/UX pass**: `runner_state.lua` (pure view-model, testable) + `runner_ui.lua`
-   (thin Sylvannas projection). Health, progress+ETA, blocked reason, maintenance status, quest
-   log sync, guardrails. No decision logic in the render layer.
-6. **AbandonQuest live verification** and quest-log-full recovery (abandon a non-route quest when
-   accepts fail with a full log).
-7. **1-70 continuity**: profile chaining when one finishes (next zone), flight paths, hearth,
-   Z-resolution at import time via NavServer `/api/v1/height`.
+### Built + offline-green + DEPLOYED, but NOT LIVE-VERIFIED (this session's big push)
+Everything here is committed and deployed to `scripts_data` but has **never run in-game** — the
+next session's entire job is to live-verify it. The game client was down at end of session (bridge
+frozen), so zero live verification happened.
+- **1-70 profile chain**: `build_chain_manifest.py` derives `chain.json` from RestedXP `#next`;
+  `profile_chain.lua` resolves the next profile per class; `module.lua` `_advance_to_next_profile`
+  starts it on `finished`. Deployed: **36-profile Paladin chain 1-11-Elwynn-Forest →
+  69-70-Shadowmoon**, all hop files present, 17 level gates live. Build chain from **per-guide
+  imports** (each dir `rm -rf`'d first) — a full batch import into a dirty dir leaves stale base
+  files (see below).
+- **`.xp` level gates**: importer lowers `.xp N` / `N+M` → `LevelAtLeast(N)` Completion condition
+  (wire `{"condition":{"type":"LevelAtLeast","payload":N},"role":"Completion"}`); runtime holds the
+  gate for hours (resets the 300s wait clock while level rises) and sets
+  `module.combat.auto_engage_world=true` to grind while waiting.
+- **Quest-log-full recovery** (`quest_log_space.lua` picks a non-route sacrificial quest to
+  abandon) + **train/hearth/loot effect verification** (spell-book delta / >500yd position jump /
+  item-count increase).
+- **Combat survival** (two rounds): low-HP fight-back + recovery latch, forced-target release on
+  despawn/immunity/20s no-progress, adds-defense, loss-of-control suspend
+  (`unit:get_loss_of_control_info`), mage `emergency_flee` consumer, warlock drain-life recovery,
+  cancel-cast on target death.
+- **Cockpit**: blocked-reason union (gate|nav|ghost|failed) with human text + nav
+  `get_last_error()` reason; severity ok|warn|alarm in the pure view-model; module-fault visibility
+  (degrade after 3 tick faults); maintenance panel; pause-corrected clocks; windowed ETA.
+- **Vendor maintenance** (bags-full detour, sell greys, repair) — still not live-triggered.
+
+## Prioritized backlog (work top-down; LIVE-VERIFY each — nothing above the line counts yet)
+
+1. **RELOAD + live-verify the whole deployed push** (task 5 in the tracker has the ordered batch):
+   start `1-11-Elwynn-Forest`, watch reconciliation, then the items below.
+2. **Flight-path travel is the #1 blocker for 1-70 continuity** (`runtime_action.lua`
+   `execute_flight`): `RuntimeFlight.destination` is a STRING node name but the handler does
+   `tonumber(destination)` → nil → returns `"failed"`, so every named `.fp`/taxi step strands the
+   bot. No documented name→node API — **discover the taxi surface live** (`core.input.take_taxi`
+   signature, any taxi-map query) then wire name resolution. Also confirm the importer emits Flight
+   actions and whether the Paladin chain's transitions actually need flights vs overland.
+3. **`.xp` level gate live**: reach a gate op, confirm it holds (no force-advance) AND grinds
+   (`module.combat.auto_engage_world`), level rises, gate releases.
+4. **Chain advance live**: confirm `questing:chain_advance` fires at a profile's end and the next
+   profile starts (hard to reach naturally — may need to force the executor near the end).
+5. **Combat survival live**, **vendor maintenance live** (force `player.bags_full`), **effect
+   verification live** (train/hearth/loot), **quest-log-full recovery** if reachable.
+6. **Eat/drink economy** (task 10, not started): importer `buy_items` for class food/water; combat
+   consumes food/drink out of combat instead of passive regen only.
+7. **Hearth + import-time Z-resolution** via NavServer `/api/v1/height` (backlog item 7 remainder).
 
 ## The live-debug workflow (this is the project's core loop)
 
 You have a **live game bridge** (`lx-debug` MCP). Verify in-game; never reason from code alone.
 
-1. Edit → `luajit sentinel/tests/run_offline.lua` (repo root; expect 119/0).
+1. Edit → `luajit sentinel/tests/run_offline.lua` (repo root; expect 127/0).
 2. Deploy: `cp -r sentinel/. "/mnt/c/Users/Levi/Desktop/8492710429180123131425564324/scripts/sentinel/"`
    then `rm -f .../scripts/sentinel/modules/questing/editor_ui.lua`.
 3. Ask the user to reload the Sylvannas loader UI (a Lua-level `_G.Sentinel.reload()` does NOT
@@ -126,6 +149,14 @@ cargo run --release`, port 3030 — the game reaches WSL via localhost forwardin
 - `get_num_bag_slots` returns 0 live; `UI_ERROR_MESSAGE` is the only bags-full signal.
 - Gossip is asynchronous — pace interaction attempts on real time, never frame-count retries.
 - The object manager only sees draw distance — navigation to NPCs needs static spawn fallbacks.
+- **`ripgrep` respects `.gitignore`** — `.questing/projects/*.json` is ignored, so `rg pattern
+  .questing/projects/` silently returns nothing. Use `rg -u` (or a non-rg tool) on build-artifact
+  dirs; a bare `rg` there nearly caused a false "importer is broken" conclusion.
+- **Batch `import-guides` into a non-clean output dir leaves stale files**: it seeds "used"
+  filenames from existing output (intentional, so it won't clobber prior runs), so a re-import
+  writes NEW content to `name-2.json` and leaves the STALE `name.json`. For a full re-import,
+  `rm -rf` the output dir first, OR import per-guide into fresh dirs (what the chain build does).
+- `find_guide_files` is now sorted so batch imports are order-deterministic (was `fs::read_dir`).
 
 ## Operating rules
 
