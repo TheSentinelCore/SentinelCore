@@ -3,7 +3,7 @@ local T = require("tests/test_util")
 local M = {}
 
 function M.run()
-    local MaintenanceTree = require("modules/combat/profiles/mage/maintenance_tree")
+    local MaintenanceTree = require("rotations/mage_frost/maintenance_tree")
 
     -- build() returns a non-nil BT node
     local tree = MaintenanceTree.build()

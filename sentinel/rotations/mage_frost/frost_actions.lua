@@ -1,9 +1,22 @@
-local QueuePriorities = require("shared/queue_priorities")
-local Status = require("core/bt/status")
-local AuraCatalog = require("kernel/catalogs/aura")
-local AoeHelper = require("shared/aoe_helper")
-local SpellQueue = require("shared/spell_queue")
-local H = require("shared/combat_helpers")
+local API = require("rotations/mage_frost/sentinel_api")
+local H = require("rotations/mage_frost/frost_support")
+
+local QueuePriorities = H.QueuePriorities
+local Status = setmetatable({}, { __index = function(_, k)
+    local s = H.status()
+    return s and s[k] or nil
+end })
+local AuraCatalog = setmetatable({}, { __index = function(_, k)
+    local c = API.catalogs
+    return c and c.aura and c.aura[k] or nil
+end })
+local AoeHelper = {
+    find_optimal_position = function(spell_id, range, min_targets, radius)
+        local s = API.spells
+        if not s then return nil, 0 end
+        return s:find_aoe_position(spell_id, range, min_targets, radius)
+    end,
+}
 
 local Act = {}
 

@@ -1,7 +1,10 @@
-local BT = require("core/bt/factory")
-local Cond = require("modules/combat/profiles/mage/frost_conditions")
-local Act = require("modules/combat/profiles/mage/frost_actions")
-local Status = require("core/bt/status")
+local API = require("rotations/mage_frost/sentinel_api")
+local BT = setmetatable({}, { __index = function(_, k) return API.bt and API.bt[k] or nil end })
+local Cond = require("rotations/mage_frost/frost_conditions")
+local Act = require("rotations/mage_frost/frost_actions")
+local Status = setmetatable({}, { __index = function(_, k)
+    return API.bt and API.bt.Status and API.bt.Status[k] or nil
+end })
 
 local AoeTree = {}
 

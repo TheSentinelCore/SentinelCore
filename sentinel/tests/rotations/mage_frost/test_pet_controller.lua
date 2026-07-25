@@ -35,7 +35,7 @@ local function make_bb(overrides)
 end
 
 function M.run()
-    local PetController = require("modules/combat/profiles/mage/pet_controller")
+    local PetController = require("rotations/mage_frost/pet_controller")
 
     -- get_state returns "idle" initially
     local pc = PetController:new()

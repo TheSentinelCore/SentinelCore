@@ -30,12 +30,12 @@ local test_modules = {
     "tests/modules/combat/test_module",
 
     -- Combat profiles (mage)
-    "tests/modules/combat/profiles/mage/test_frost_conditions",
-    "tests/modules/combat/profiles/mage/test_frost_actions",
-    "tests/modules/combat/profiles/mage/test_maintenance_tree",
-    "tests/modules/combat/profiles/mage/test_aoe_tree",
-    "tests/modules/combat/profiles/mage/test_frost_tbc",
-    "tests/modules/combat/profiles/mage/test_pet_controller",
+    "tests/rotations/mage_frost/test_frost_conditions",
+    "tests/rotations/mage_frost/test_frost_actions",
+    "tests/rotations/mage_frost/test_maintenance_tree",
+    "tests/rotations/mage_frost/test_aoe_tree",
+    "tests/rotations/mage_frost/test_frost_tbc",
+    "tests/rotations/mage_frost/test_pet_controller",
 
     -- Shared
     "tests/shared/test_compat",

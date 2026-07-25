@@ -1,4 +1,9 @@
-local AuraCatalog = require("kernel/catalogs/aura")
+local API = require("rotations/mage_frost/sentinel_api")
+
+local AuraCatalog = setmetatable({}, { __index = function(_, k)
+    local c = API.catalogs
+    return c and c.aura and c.aura[k] or nil
+end })
 
 local FrostCombatState = {}
 FrostCombatState.__index = FrostCombatState

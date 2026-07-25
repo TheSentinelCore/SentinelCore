@@ -1,5 +1,5 @@
 local PaladinRetTBC = require("modules/combat/profiles/paladin/retribution_tbc")
-local MageFrostTBC = require("modules/combat/profiles/mage/frost_tbc")
+local MageFrostTBC = require("rotations/mage_frost/frost_tbc")
 local WarlockAfflictionTBC = require("modules/combat/profiles/warlock/affliction_tbc")
 
 local Registry = {}

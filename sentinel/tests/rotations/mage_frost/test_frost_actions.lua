@@ -50,7 +50,7 @@ local function make_bb(overrides)
 end
 
 function M.run()
-    local Act = require("modules/combat/profiles/mage/frost_actions")
+    local Act = require("rotations/mage_frost/frost_actions")
 
     -- queue_frostbolt returns SUCCESS when dispatcher accepts
     local bb, actions = make_bb({ accept = true })

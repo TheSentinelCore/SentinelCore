@@ -3,7 +3,7 @@ local T = require("tests/test_util")
 local M = {}
 
 function M.run()
-    local AoeTree = require("modules/combat/profiles/mage/aoe_tree")
+    local AoeTree = require("rotations/mage_frost/aoe_tree")
 
     -- build() returns a non-nil BT node
     local tree = AoeTree.build()

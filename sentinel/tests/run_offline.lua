@@ -375,6 +375,7 @@ local test_modules = {
     "tests/kernel/test_plugin_registry",
     "tests/kernel/test_api",
     "tests/kernel/test_rotation_lib",
+    "tests/kernel/test_plugin_require_audit",
     "tests/kernel/test_timing",
     "tests/kernel/test_intent_executors",
 
@@ -409,13 +410,13 @@ local test_modules = {
     "tests/modules/combat/test_context_builder_distance",
 
     -- Combat profiles
-    "tests/modules/combat/profiles/mage/test_frost_conditions",
-    "tests/modules/combat/profiles/mage/test_frost_actions",
-    "tests/modules/combat/profiles/mage/test_maintenance_tree",
-    "tests/modules/combat/profiles/mage/test_aoe_tree",
-    "tests/modules/combat/profiles/mage/test_frost_tbc",
-    "tests/modules/combat/profiles/mage/test_frost_gcd_priority",
-    "tests/modules/combat/profiles/mage/test_pet_controller",
+    "tests/rotations/mage_frost/test_frost_conditions",
+    "tests/rotations/mage_frost/test_frost_actions",
+    "tests/rotations/mage_frost/test_maintenance_tree",
+    "tests/rotations/mage_frost/test_aoe_tree",
+    "tests/rotations/mage_frost/test_frost_tbc",
+    "tests/rotations/mage_frost/test_frost_gcd_priority",
+    "tests/rotations/mage_frost/test_pet_controller",
 
     -- Questing module
     "tests/modules/questing/test_runtime_action",

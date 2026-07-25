@@ -1,13 +1,31 @@
-local BT = require("core/bt/factory")
-local Runner = require("core/bt/runner")
-local Cond = require("modules/combat/profiles/mage/frost_conditions")
-local Act = require("modules/combat/profiles/mage/frost_actions")
-local MaintenanceTree = require("modules/combat/profiles/mage/maintenance_tree")
-local FrostCombatState = require("modules/combat/profiles/mage/frost_combat_state")
-local KiteController = require("modules/combat/profiles/mage/kite_controller")
-local PetController = require("modules/combat/profiles/mage/pet_controller")
-local PriorityBuilder = require("kernel/lib/priority_builder")
-local ActionLibrary = require("modules/combat/action_library")
+local API = require("rotations/mage_frost/sentinel_api")
+
+-- `core/bt/runner` used to be required here and never referenced -- dead on arrival, like the two
+-- requires that appeared to tie PriorityBuilder to the combat module. Dropped rather than carried.
+local BT = setmetatable({}, { __index = function(_, k) return API.bt and API.bt[k] or nil end })
+-- The tree RUNNER, not a node constructor -- `Sentinel.bt.Runner`. Each of the three trees below is
+-- wrapped in one.
+-- Forwards `new` explicitly rather than proxying through `__index`: `Runner:new(root)` would pass
+-- THIS table as `self`, and the real constructor uses its own table as the instance metatable.
+local Runner = {
+    new = function(_, root) return API.bt.Runner:new(root) end,
+}
+local Cond = require("rotations/mage_frost/frost_conditions")
+local Act = require("rotations/mage_frost/frost_actions")
+local MaintenanceTree = require("rotations/mage_frost/maintenance_tree")
+local FrostCombatState = require("rotations/mage_frost/frost_combat_state")
+local KiteController = require("rotations/mage_frost/kite_controller")
+local PetController = require("rotations/mage_frost/pet_controller")
+local H = require("rotations/mage_frost/frost_support")
+
+-- `Sentinel.rotation` is the promoted PriorityBuilder (ADR §5.4). Resolved live so the plugin does
+-- not capture nil if it loads before the kernel publishes.
+local PriorityBuilder = setmetatable({}, { __index = function(_, k)
+    return API.rotation and API.rotation[k] or nil
+end })
+-- Only `sequence`/`selector` were ever used from `action_library`, and both are action combinators
+-- rather than BT nodes -- see frost_support.lua. Plugin-local, not an API gap.
+local ActionLibrary = H
 
 local Profile = {}
 Profile.__index = Profile

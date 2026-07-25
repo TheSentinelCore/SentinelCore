@@ -70,7 +70,7 @@ end
 function M.run()
     -- health_below: returns true when health is below threshold
     local bb = make_bb({ health_pct = 0.30 })
-    local Cond = require("modules/combat/profiles/mage/frost_conditions")
+    local Cond = require("rotations/mage_frost/frost_conditions")
     T.assert_true(Cond.health_below(0.50)(bb), "health_below 0.50 should be true at 0.30")
     T.assert_false(Cond.health_below(0.20)(bb), "health_below 0.20 should be false at 0.30")
 

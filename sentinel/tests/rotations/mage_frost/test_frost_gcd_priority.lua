@@ -7,7 +7,7 @@
 -- rewritten tree.
 local Blackboard = require("core/blackboard")
 local EventBus = require("core/event_bus")
-local Profile = require("modules/combat/profiles/mage/frost_tbc")
+local Profile = require("rotations/mage_frost/frost_tbc")
 local T = require("tests/test_util")
 
 local M = {}

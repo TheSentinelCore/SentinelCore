@@ -1,6 +1,29 @@
-local AuraCatalog = require("kernel/catalogs/aura")
-local H = require("shared/combat_helpers")
-local SpellHelper = require("shared/spell_helper")
+local API = require("rotations/mage_frost/sentinel_api")
+local H = require("rotations/mage_frost/frost_support")
+
+-- Resolved at CALL time, never captured at load time: `_G.Sentinel` may not exist yet when this
+-- file loads (ADR 08 §2.4 -- the getter fixes reads, the queue fixes registration).
+local AuraCatalog = setmetatable({}, { __index = function(_, k)
+    local c = API.catalogs
+    return c and c.aura and c.aura[k] or nil
+end })
+local SpellHelper = {
+    -- FAIL OPEN on "cannot say", preserving the ported behaviour: the original called
+    -- `SpellHelper.is_spell_castable` directly and tested `if not castable`, so the truthy `UNKNOWN`
+    -- string read as castable. That default is right HERE -- the commit gate is the real check now,
+    -- and a condition that went false on an unresolved helper would stop the mage casting entirely.
+    is_spell_castable = function(id, src, dst)
+        local s = API.spells
+        if s == nil then return true end
+        return s:castability(id, src, dst) ~= false
+    end,
+    -- Fail open on "cannot say", for the same reason as `is_spell_castable` above.
+    is_spell_in_los = function(id, src, dst)
+        local s = API.spells
+        if s == nil then return true end
+        return s:los_state(id, src, dst) ~= false
+    end,
+}
 
 local Cond = {}
 
