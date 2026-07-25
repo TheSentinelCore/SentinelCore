@@ -385,6 +385,19 @@ local test_modules = {
     "tests/kernel/test_timing",
     "tests/kernel/test_intent_executors",
 
+    -- Phase 4b D3. Five tracks worked in parallel worktrees off one baseline commit and were
+    -- forbidden from touching this file, so every suite below is registered in a single pass
+    -- after the merge. That is deliberate: a track that registers its own tests verifies them
+    -- against a suite that contains only itself, and a mutant killed in isolation can survive
+    -- once other tests exist to mask it.
+    "tests/kernel/test_blackboard_handle_guard",  -- the structural guard; the .object audit above
+                                                  -- is now its backstop, not the primary defence
+    "tests/kernel/test_cond_fraction",            -- the 0-1 pin, on both the threshold and the
+                                                  -- SOURCE side
+    "tests/kernel/test_cond",
+    "tests/kernel/test_nav_under_broker",         -- uses a NAV double; the input double in
+                                                  -- test_movement_release cannot see this hole
+
     -- Integrations
     "tests/integrations/test_izi_bridge",
 
@@ -423,6 +436,7 @@ local test_modules = {
     "tests/rotations/mage_frost/test_frost_tbc",
     "tests/rotations/mage_frost/test_frost_gcd_priority",
     "tests/rotations/mage_frost/test_pet_controller",
+    "tests/rotations/mage_frost/test_frost_item_intents",
 
     -- Questing module
     "tests/modules/questing/test_runtime_action",
