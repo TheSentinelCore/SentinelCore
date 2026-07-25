@@ -13,6 +13,8 @@ local ControlBroker = require("kernel/control_broker")
 local ActivityStack = require("kernel/activity_stack")
 local PluginRegistry = require("kernel/plugin_registry")
 local KernelConfig = require("kernel/config")
+local Timing = require("kernel/timing")
+local SpellCatalog = require("kernel/catalogs/spell")
 local Api = require("kernel/api")
 
 local SentinelApp = {}
@@ -71,6 +73,15 @@ function SentinelApp:new()
     -- and questing; Phase 4 migrates the first real consumer. Nothing is deleted before then,
     -- because deleting the working path while this one has no consumer leaves nothing running.
     o._kernel_config = KernelConfig:new()
+    -- One spell catalog for the whole app. §5.1: catalogs are kernel precisely because duplicating
+    -- reference data "costs memory and drifts".
+    o._spell_catalog = SpellCatalog:new()
+    -- ADR §2.5 -- GCD state, derived from the kernel's own cast timestamps on the game_time ms axis.
+    -- GCD membership comes from the catalog rather than a second hardcoded list, so "is this on the
+    -- GCD" has exactly one answer.
+    o._timing = Timing:new({
+        is_gcd_spell = function(id) return o._spell_catalog:is_gcd_spell(id) end,
+    })
     o._plugin_registry = PluginRegistry:new({
         api_version = Api.API_VERSION,
         kernel_provides = Api.KERNEL_CAPABILITIES,
@@ -327,6 +338,10 @@ end
 
 function SentinelApp:get_kernel_config()
     return self._kernel_config
+end
+
+function SentinelApp:get_timing()
+    return self._timing
 end
 
 --- The kernel API surface. Reachable here in Phase 3; see publish_api() for why it is not yet at
