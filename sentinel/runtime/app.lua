@@ -102,6 +102,11 @@ function SentinelApp:new()
     local ok_sq, spell_queue = pcall(require, "common/modules/spell_queue")
     IntentExecutors.install({
         intent_queue = o._intent_queue,
+        -- ADR 08 §13.1 item 19, made live by the Phase 4c cast conversion. Left unset, the executor
+        -- resolves `"target"` as `player:get_target()` -- the CLIENT's target -- while the rotation
+        -- aims at `combat.target`. They usually agree and are not guaranteed to, so every converted
+        -- cast would have silently fought a different mob. One resolution, shared.
+        unit_target = o:unit_target_resolver(),
         timing = o._timing,
         spell_catalog = o._spell_catalog,
         units = o._units,
@@ -150,6 +155,31 @@ function SentinelApp:new()
     })
 
     return o
+end
+
+--- The unit the ROTATION is fighting, which is not always the one the client has targeted.
+---
+--- `combat.target` is the combat module's own selection; `player.target` is the sensor's read of the
+--- client. The module selects before the client is set and holds a selection across a tick where the
+--- client's is cleared, so the two diverge in exactly the moments that matter. This mirrors
+--- `rotations/mage_frost/frost_support.player_and_target` deliberately -- a cast must land on the unit
+--- the rotation decided to attack, not on whatever the client happens to point at when COMMIT runs.
+---
+--- Returns nil rather than falling back further: an unresolved unit makes the castable gate refuse,
+--- which is loud and correct, whereas guessing a unit sends a real packet at the wrong thing.
+---@return table|nil handle
+function SentinelApp:selected_target()
+    return self._blackboard:get("combat.target") or self._blackboard:get("player.target")
+end
+
+--- `selected_target` as the callable `Executors.install` takes, bound to this app.
+---
+--- A method reference cannot be handed over directly (the executor calls it with the player, not
+--- with the app), so the binding is made once, here, rather than inline at the install site where a
+--- later reader would have to work out which receiver it closes over.
+---@return function (player) -> table|nil
+function SentinelApp:unit_target_resolver()
+    return function() return self:selected_target() end
 end
 
 ---Publish the kernel surface at `_G.Sentinel`.

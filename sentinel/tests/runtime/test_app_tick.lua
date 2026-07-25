@@ -42,6 +42,79 @@ local function make_app(registry)
     return app
 end
 
+-- ---------------------------------------------------------------------------
+-- Which unit does "target" mean? (ADR 08 §13.1 item 19)
+-- ---------------------------------------------------------------------------
+-- The ADR recorded this as a hazard for Phase 1b's snapshot work. Converting the frost cast path
+-- onto intents (Phase 4c D4) made it LIVE, because the executor resolves the symbolic reference
+-- `"target"` and the rotation does not.
+--
+-- The rotation acts on `combat.target`, falling back to `player.target` -- that is what
+-- `frost_support.player_and_target` returns and what every action in the profile aims at. The
+-- executor's fallback, with `unit_target` unwired, is `player:get_target()` -- the CLIENT's target.
+-- They usually agree. They are not guaranteed to: the combat module selects a target before it has
+-- been set on the client, and it holds the selection across a tick where the client's is cleared.
+--
+-- With `unit_target` unset in production, every converted cast would have silently aimed at the
+-- client's target instead of the rotation's. Nothing would fail; the character would just fight the
+-- wrong mob. So the composition root wires the SAME resolution the rotation uses.
+
+function M.test_the_app_resolves_target_the_way_the_rotation_does()
+    local app = SentinelApp:new()
+    local bb = app:get_blackboard()
+    local combat_target = { id = "the-mob-the-rotation-chose" }
+    local client_target = { id = "the-mob-the-client-has" }
+
+    bb:set("player.target", client_target)
+    bb:set("combat.target", combat_target)
+    T.assert_true(app:selected_target() == combat_target,
+        "combat.target is the rotation's selection and must win")
+
+    bb:set("combat.target", nil)
+    T.assert_true(app:selected_target() == client_target,
+        "and player.target is the documented fallback, not a second authority")
+end
+
+function M.test_the_app_resolves_no_target_to_nil_rather_than_guessing()
+    local app = SentinelApp:new()
+    T.assert_nil(app:selected_target(),
+        "no selection must resolve to nil so the gate refuses, never to a guessed unit")
+end
+
+--- THE CALLABLE, AND ONLY THE CALLABLE. Renamed in Phase 4d D4, because the old name --
+--- `test_the_cast_executor_is_wired_to_the_apps_target_resolution` -- claimed something this test
+--- has never been able to observe.
+---
+--- What it checks is that `unit_target_resolver()` returns a callable that ignores the argument the
+--- executor passes it (the player) and answers with the app's own selection. That is a real
+--- property and worth pinning: the executor calls `deps.unit_target(player)`, so a resolver that
+--- read its argument instead of the blackboard would aim every symbolic cast at the client again.
+---
+--- WHAT IT CANNOT SEE, MEASURED RATHER THAN ASSUMED: whether the resolver is HANDED TO
+--- `Executors.install` at all. Comment out `unit_target = o:unit_target_resolver()` in
+--- `runtime/app.lua` and this test still passes -- it never touches the installed deps. The wiring
+--- itself is pinned at the SDK boundary, one packet at a time, by
+--- `tests/integration/test_kernel_end_to_end.lua`'s
+--- `test_a_symbolic_cast_commits_at_the_rotations_unit_not_the_clients`, which goes red under
+--- exactly that edit. A correct `selected_target` the executors never receive is the same bug with
+--- an extra step, and this file is not where that gets caught.
+---
+--- The dead `add_gate("probe", ...)` block that used to sit here went with the rename. It captured
+--- an intent into a local nothing ever read, which made the test LOOK as though it observed a
+--- commit; it observed nothing.
+function M.test_the_target_resolver_answers_with_the_apps_own_selection()
+    local app = SentinelApp:new()
+    local bb = app:get_blackboard()
+    local chosen = { id = "chosen" }
+    local a_different_unit = { id = "the-argument-the-executor-passes" }
+    bb:set("combat.target", chosen)
+
+    T.assert_true(app:unit_target_resolver()(nil) == chosen,
+        "the resolver handed to Executors.install must read the app's own selection")
+    T.assert_true(app:unit_target_resolver()(a_different_unit) == chosen,
+        "and must ignore the player handle the executor passes it, rather than resolving through it")
+end
+
 local function make_app_with_stub_registry()
     local ticks = {}
     local app = make_app({
