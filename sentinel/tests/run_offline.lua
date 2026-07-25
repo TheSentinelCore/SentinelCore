@@ -378,6 +378,8 @@ local test_modules = {
     -- Phase 4c D1: the capability list stops being free text. Every entry in
     -- KERNEL_CAPABILITIES must resolve to something callable on the published surface.
     "tests/kernel/test_capability_resolution",
+    -- Phase 4c D3: one fault-counting implementation in the tree, structurally and behaviourally.
+    "tests/kernel/test_one_fault_tracker",
     -- Phase 4d D1: the blackboard stops holding the IZI bridge. Characterization pins for all six
     -- readers, written BEFORE the migration -- each reader fell back to a non-forecast branch, so
     -- deleting the write first would have turned the gating off with the suite still green.

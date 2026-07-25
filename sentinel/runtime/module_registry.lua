@@ -2,6 +2,21 @@
 -- Runtime Module Registry - SENT-8.1 per ADR 008 §16-17
 -- Manages module lifecycle with states: UNLOADED, LOADED, INITIALIZING, ACTIVE, SHUTDOWN
 
+-- The 3-strike policy lives in ONE place (kernel/fault_tracker.lua). This file used to hold the
+-- original inline copy -- the scheduler's header names it as the reason the rule was extracted at
+-- all, and calls this "the last holdout" kept while it was the running path. Delegating to the
+-- tracker retires that copy: a private streak counter maintained here is precisely the second
+-- authority the extraction removed.
+--
+-- CORRECTED IN PHASE 4D. This comment used to justify the delegation by claiming "combat registers
+-- through the plugin registry, so this drives questing alone". That was false when written and is
+-- false now: `ModuleRegistry.modules` below registers combat (enabled, priority 10), `app.lua`
+-- calls `register_all` on THIS registry, and combat is never registered on the PluginRegistry at
+-- all. The delegation is still correct -- one policy, one owner -- but it is correct for BOTH
+-- modules, and the degrade rule in `tick_all` reaches combat. A future reader deciding what that
+-- policy may safely do must know its blast radius includes the rotation engine, not questing alone.
+local FaultTracker = require("kernel/fault_tracker")
+
 local ModuleRegistry = {}
 ModuleRegistry.__index = ModuleRegistry
 
@@ -15,9 +30,9 @@ local MODULE_STATES = {
 	SHUTDOWN = "shutdown",
 }
 
--- Consecutive tick faults before a module is degraded. Below this, a fault is transient and
--- the module keeps ticking; at this streak it would re-fault every frame forever.
-local MAX_CONSECUTIVE_TICK_FAULTS = 3
+-- The consecutive-fault threshold is FaultTracker.DEFAULT_MAX_CONSECUTIVE. It is deliberately not
+-- restated here: below the threshold a fault is transient and the module keeps ticking; at it, the
+-- module would re-fault every frame forever. Both halves of that rule belong to the tracker.
 
 -- Module schema - defines required structure for registered modules
 -- Each module must provide: namespace, capabilities, configuration, state, lifecycle hooks
@@ -65,9 +80,9 @@ function ModuleRegistry:new()
 	o._enabled_names = {}
 	o._blackboard = nil
 	o._event_bus = nil
-	-- Consecutive tick-fault streaks, mirrored to blackboard system.module_faults so the
-	-- cockpit can surface a fault that would otherwise only spam the log.
-	o._fault_counts = {}
+	-- Consecutive tick-fault streaks, counted by the shared tracker and mirrored to blackboard
+	-- system.module_faults so the cockpit can surface a fault that would otherwise only spam the log.
+	o._faults = FaultTracker:new()
 	o._module_faults = {}
 	return o
 end
@@ -188,6 +203,14 @@ function ModuleRegistry:initialize_module(name, blackboard, event_bus)
 		return false, "module is shut down, cannot reinitialize"
 	end
 
+	-- Retain the collaborators when `register_all` has not already supplied them. Fault reporting
+	-- needs a blackboard and an event bus, and this entry point is HANDED both and used to discard
+	-- them -- so a module initialised through here alone had no channel to report a failure on.
+	-- Never overwrites: `register_all`'s pair is the app's, and a later caller passing a different
+	-- one must not silently redirect where every module's faults are published.
+	if self._blackboard == nil then self._blackboard = blackboard end
+	if self._event_bus == nil then self._event_bus = event_bus end
+
 	self:_set_state(name, MODULE_STATES.INITIALIZING)
 
 	local instance = module_def.init(blackboard, event_bus)
@@ -239,8 +262,11 @@ function ModuleRegistry:tick_all(delta)
 				if type(instance.tick) == "function" then
 					local ok, err = pcall(instance.tick, instance, delta)
 					if not ok then
-						local count = (self._fault_counts[name] or 0) + 1
-						self._fault_counts[name] = count
+						-- The tracker owns the streak AND the threshold; this owns what the
+						-- registry does when the threshold is crossed. Degrading rather than
+						-- quarantining is the registry's own policy: a degraded module's tick
+						-- is skipped while every other module keeps running.
+						local degrade_now, count = self._faults:fault(name, err)
 						self._module_faults[name] = { count = count, last_error = tostring(err) }
 						if self._blackboard then
 							self._blackboard:set("system.module_faults", self._module_faults)
@@ -252,12 +278,12 @@ function ModuleRegistry:tick_all(delta)
 								count = count,
 							})
 						end
-						if count >= MAX_CONSECUTIVE_TICK_FAULTS then
+						if degrade_now then
 							self:_set_state(name, MODULE_STATES.DEGRADED)
 						end
-					elseif self._fault_counts[name] and self._fault_counts[name] > 0 then
+					elseif self._faults:streak(name) > 0 then
 						-- Only CONSECUTIVE faults degrade: a clean tick resets the streak.
-						self._fault_counts[name] = 0
+						self._faults:success(name)
 						self._module_faults[name] = nil
 						if self._blackboard then
 							self._blackboard:set("system.module_faults", self._module_faults)
