@@ -58,7 +58,7 @@ local function make_bb(overrides)
     bb:set("combat.target", target)
     bb:set("combat.enemy_count_10yd", overrides.enemy_count or 0)
     bb:set("combat.gcd_until_ms", 0)
-    bb:set("module.combat.catalog", require("modules/combat/spell_catalog"):new())
+    bb:set("module.combat.catalog", require("kernel/catalogs/spell"):new())
     bb:set("module.combat.cooldowns", {
         spell_ready = function() return true end,
         is_gcd_ready = function(_self, _now) return overrides.gcd_ready ~= false end,

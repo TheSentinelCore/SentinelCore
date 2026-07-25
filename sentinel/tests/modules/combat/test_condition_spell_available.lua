@@ -3,7 +3,7 @@
 -- spell_available gates on TRAINED status (via SpellCatalog:resolve_known_rank), with an
 -- optional "usable" mode additionally requiring core.spell_book.is_usable_spell.
 local Blackboard = require("core/blackboard")
-local SpellCatalog = require("modules/combat/spell_catalog")
+local SpellCatalog = require("kernel/catalogs/spell")
 local ConditionLibrary = require("modules/combat/condition_library")
 local T = require("tests/test_util")
 

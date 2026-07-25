@@ -3,7 +3,7 @@
 -- resolve_known_rank must gate on TRAINED status via is_spell_learned (checked first, per
 -- spellbook.md:227 — more reliable for talent-modified spells) falling back to is_spell_known,
 -- walking the rank array HIGH->LOW and returning the first known id, or nil if none known.
-local SpellCatalog = require("modules/combat/spell_catalog")
+local SpellCatalog = require("kernel/catalogs/spell")
 local T = require("tests/test_util")
 
 local M = {}

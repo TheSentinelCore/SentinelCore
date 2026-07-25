@@ -340,9 +340,22 @@ strategies. Profile authoring tooling.
 - **Target selection** — same split. `target_selector_v2.lua` (60 lines) and
   `strategies/default_target_strategy.lua` (252 lines, mature) become the kernel selector; other
   strategies become plugin-contributed.
-- **PriorityBuilder** — **promote to the kernel library.** It is the best existing asset, it is proven
-  by 9 consumers, and it is currently trapped inside the combat module. It is also the honest basis
-  for the Tier-1 rotation DSL (§2.9).
+- **PriorityBuilder** — **promote to the kernel library.** It is the best existing asset and it is
+  currently trapped inside the combat module. It is also the honest basis for the Tier-1 rotation DSL
+  (§2.9).
+
+  **Correction (Phase 4).** This section claimed "proven by 9 consumers". The real figure is **3**:
+  `profiles/mage/frost_tbc.lua`, `profiles/paladin/retribution_tbc.lua` and
+  `profiles/warlock/affliction_tbc.lua` are the only files that `require` it. `core/bt/composites.lua`
+  names it in a doc comment about RUNNING semantics but does not consume it, and the remaining
+  matches were tests and prose. The promotion argument does not depend on the count — 3 independent
+  profiles is still the evidence that the shape generalises — but the number was wrong and every
+  later section that leaned on "9" was leaning on nothing.
+
+  Promotion cost was also lower than the section implies: the file's only load-bearing dependencies
+  were `core/bt/*`. It bound `condition_library` and `action_library` at the top and never referenced
+  either — they survived solely in comments — so the two requires that appeared to tie it to
+  `modules/combat/` were dead on arrival.
 
 ----------
 

@@ -1,6 +1,6 @@
 local StrategyFactory = require("modules/combat/strategies/factory")
 local Events = require("modules/combat/events")
-local AuraCatalog = require("modules/combat/aura_catalog")
+local AuraCatalog = require("kernel/catalogs/aura")
 
 local TargetSelector = {}
 TargetSelector.__index = TargetSelector

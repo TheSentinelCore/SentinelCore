@@ -1,4 +1,4 @@
-local AuraCatalog = require("modules/combat/aura_catalog")
+local AuraCatalog = require("kernel/catalogs/aura")
 
 local AuraSensor = {}
 AuraSensor.__index = AuraSensor

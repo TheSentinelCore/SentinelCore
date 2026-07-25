@@ -3,7 +3,7 @@
 -- helper) + test_condition_spell_available.lua (core.spell_book mock lifecycle).
 local Blackboard = require("core/blackboard")
 local EventBus = require("core/event_bus")
-local SpellCatalog = require("modules/combat/spell_catalog")
+local SpellCatalog = require("kernel/catalogs/spell")
 local Profile = require("modules/combat/profiles/warlock/affliction_tbc")
 local Registry = require("modules/combat/profiles/registry")
 local T = require("tests/test_util")

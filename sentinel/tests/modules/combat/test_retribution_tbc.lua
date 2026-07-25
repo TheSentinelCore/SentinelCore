@@ -37,7 +37,7 @@ end
 function M.run()
     -- Reset module cache to ensure clean state
     package.loaded["modules/combat/profiles/paladin/retribution_tbc"] = nil
-    package.loaded["modules/combat/priority_builder"] = nil
+    package.loaded["kernel/lib/priority_builder"] = nil
 end
 
 function M.test_legacy_path()
@@ -87,7 +87,7 @@ function M.test_legacy_path()
     bb:set("rotation.desired_seal", "blood")
     bb:set("combat.swing.remaining_ms", 999)
     bb:set("module.combat.twist_window_ms", 350)
-    bb:set("module.combat.catalog", require("modules/combat/spell_catalog"):new())
+    bb:set("module.combat.catalog", require("kernel/catalogs/spell"):new())
     bb:set("module.combat.cooldowns", {
         spell_ready = function() return true end,
         is_gcd_ready = function() return true end,
@@ -121,7 +121,7 @@ end
 
 function M.test_dsl_path()
     package.loaded["modules/combat/profiles/paladin/retribution_tbc"] = nil
-    package.loaded["modules/combat/priority_builder"] = nil
+    package.loaded["kernel/lib/priority_builder"] = nil
     
     spell_helper = {
         is_spell_castable = function(_self, _spell_id, _source, _target, _ignore_facing, _ignore_range)
@@ -169,7 +169,7 @@ function M.test_dsl_path()
     bb:set("rotation.desired_seal", "blood")
     bb:set("combat.swing.remaining_ms", 999)
     bb:set("module.combat.twist_window_ms", 350)
-    bb:set("module.combat.catalog", require("modules/combat/spell_catalog"):new())
+    bb:set("module.combat.catalog", require("kernel/catalogs/spell"):new())
     bb:set("module.combat.cooldowns", {
         spell_ready = function() return true end,
         is_gcd_ready = function() return true end,
@@ -200,7 +200,7 @@ function M.test_dsl_path()
 
     -- Test seal missing case (the fix for combat not starting)
     package.loaded["modules/combat/profiles/paladin/retribution_tbc"] = nil
-    package.loaded["modules/combat/priority_builder"] = nil
+    package.loaded["kernel/lib/priority_builder"] = nil
     local profile3 = Profile.build(bb, bus)
     bb:set("combat.target", target)
     bb:set("rotation.active_seal", nil)  -- No seal active

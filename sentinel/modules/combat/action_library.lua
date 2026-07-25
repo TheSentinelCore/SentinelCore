@@ -1,6 +1,6 @@
 local QueuePriorities = require("shared/queue_priorities")
 local Status = require("core/bt/status")
-local AuraCatalog = require("modules/combat/aura_catalog")
+local AuraCatalog = require("kernel/catalogs/aura")
 local H = require("shared/combat_helpers")
 
 local ActionLibrary = {}

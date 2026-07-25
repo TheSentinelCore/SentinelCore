@@ -4,7 +4,7 @@ local Cond = require("modules/combat/profiles/warlock/affliction_conditions")
 local Act = require("modules/combat/profiles/warlock/affliction_actions")
 local MaintenanceTree = require("modules/combat/profiles/warlock/maintenance_tree")
 local PetController = require("modules/combat/profiles/warlock/pet_controller")
-local PriorityBuilder = require("modules/combat/priority_builder")
+local PriorityBuilder = require("kernel/lib/priority_builder")
 local SharedConditions = require("modules/combat/condition_library")
 local ActionLibrary = require("modules/combat/action_library")
 

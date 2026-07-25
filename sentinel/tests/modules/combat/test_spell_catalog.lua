@@ -1,4 +1,4 @@
-local SpellCatalog = require("modules/combat/spell_catalog")
+local SpellCatalog = require("kernel/catalogs/spell")
 local T = require("tests/test_util")
 
 local M = {}

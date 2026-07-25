@@ -6,7 +6,7 @@ local MaintenanceTree = require("modules/combat/profiles/mage/maintenance_tree")
 local FrostCombatState = require("modules/combat/profiles/mage/frost_combat_state")
 local KiteController = require("modules/combat/profiles/mage/kite_controller")
 local PetController = require("modules/combat/profiles/mage/pet_controller")
-local PriorityBuilder = require("modules/combat/priority_builder")
+local PriorityBuilder = require("kernel/lib/priority_builder")
 local ActionLibrary = require("modules/combat/action_library")
 
 local Profile = {}

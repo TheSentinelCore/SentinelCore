@@ -1,6 +1,6 @@
 local Blackboard = require("core/blackboard")
 local CooldownTracker = require("modules/combat/cooldown_tracker")
-local SpellCatalog = require("modules/combat/spell_catalog")
+local SpellCatalog = require("kernel/catalogs/spell")
 local Cond = require("modules/combat/profiles/paladin/retribution_conditions")
 local T = require("tests/test_util")
 

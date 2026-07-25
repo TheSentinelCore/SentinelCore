@@ -1,7 +1,7 @@
 local GrindTargetStrategy = {}
 GrindTargetStrategy.__index = GrindTargetStrategy
 
-local AuraCatalog = require("modules/combat/aura_catalog")
+local AuraCatalog = require("kernel/catalogs/aura")
 local Events = require("modules/combat/events")
 local SpellHelper = require("shared/spell_helper")
 local Geometry = require("core/geometry")

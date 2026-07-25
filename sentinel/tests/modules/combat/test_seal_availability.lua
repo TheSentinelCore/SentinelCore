@@ -130,7 +130,7 @@ end
 -- ============================================================================
 
 local Profile = require("modules/combat/profiles/paladin/retribution_tbc")
-local SpellCatalog = require("modules/combat/spell_catalog")
+local SpellCatalog = require("kernel/catalogs/spell")
 
 local function make_rotation_unit(opts)
     opts = opts or {}
@@ -214,7 +214,7 @@ end
 --- Level 3: only Seal of Righteousness (20154) is in the spell book.
 function M.test_level_3_paladin_queues_righteousness()
     package.loaded["modules/combat/profiles/paladin/retribution_tbc"] = nil
-    package.loaded["modules/combat/priority_builder"] = nil
+    package.loaded["kernel/lib/priority_builder"] = nil
 
     local actions, bb = tick_gcd_with_spellbook({ [20154] = true })
     T.assert_equal(bb:get("rotation.primary_seal"), "righteousness")
@@ -226,7 +226,7 @@ end
 --- Level 64+: Seal of Blood is known, so the level-70 behaviour is unchanged.
 function M.test_level_70_paladin_still_queues_blood()
     package.loaded["modules/combat/profiles/paladin/retribution_tbc"] = nil
-    package.loaded["modules/combat/priority_builder"] = nil
+    package.loaded["kernel/lib/priority_builder"] = nil
 
     local actions, bb = tick_gcd_with_spellbook({ [31892] = true, [20154] = true, [20271] = true })
     T.assert_equal(bb:get("rotation.primary_seal"), "blood")

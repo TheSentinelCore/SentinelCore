@@ -29,7 +29,7 @@ local function make_bb(overrides)
     bb:set("player.object", player)
     bb:set("player.target", target)
     bb:set("combat.target", target)
-    bb:set("module.combat.catalog", require("modules/combat/spell_catalog"):new())
+    bb:set("module.combat.catalog", require("kernel/catalogs/spell"):new())
 
     local accept = overrides.accept ~= false
     local queued_actions = overrides.queued_actions or {}

@@ -1,5 +1,17 @@
-local ConditionLibrary = require("modules/combat/condition_library")
-local ActionLibrary = require("modules/combat/action_library")
+-- kernel/lib/priority_builder.lua
+-- The Tier-1 rotation DSL, published as `Sentinel.rotation` (ADR 08 §5.4, §8.4).
+--
+-- PROMOTED FROM `modules/combat/priority_builder.lua`, unchanged except for the two dead requires
+-- noted below. §13 risk 5 is explicit that the combat DSL is a mature asset to port rather than
+-- rewrite, so the behaviour here is byte-for-byte the behaviour the three shipped profiles were
+-- authored against; tests/kernel/test_rotation_lib.lua pins the contracts they rely on.
+--
+-- The move was possible at all because the only real dependencies were `core/bt/*`. It also used to
+-- bind `condition_library` and `action_library` at the top of the file and then never reference
+-- either -- they survive only in the comments at `_validate_priority` and `_build_priority_node`
+-- that describe the `{function, arg}` call shapes. Those two requires were the sole thing tying this
+-- file to `modules/combat/`, and they were never load-bearing.
+
 local BT = require("core/bt/factory")
 local Status = require("core/bt/status")
 

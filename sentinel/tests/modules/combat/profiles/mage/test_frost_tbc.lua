@@ -63,7 +63,7 @@ local function make_bb()
     bb:set("combat.state", "ENGAGING")
     bb:set("combat.enemy_count_10yd", 0)
     bb:set("combat.gcd_until_ms", 0)
-    bb:set("module.combat.catalog", require("modules/combat/spell_catalog"):new())
+    bb:set("module.combat.catalog", require("kernel/catalogs/spell"):new())
     bb:set("module.combat.cooldowns", {
         spell_ready = function() return true end,
         is_gcd_ready = function() return true end,

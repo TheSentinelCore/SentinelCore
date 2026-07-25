@@ -3,7 +3,7 @@ local Runner = require("core/bt/runner")
 local Cond = require("modules/combat/profiles/paladin/retribution_conditions")
 local Act = require("modules/combat/profiles/paladin/retribution_actions")
 local MaintenanceTree = require("modules/combat/profiles/paladin/maintenance_tree")
-local PriorityBuilder = require("modules/combat/priority_builder")
+local PriorityBuilder = require("kernel/lib/priority_builder")
 local SharedConditions = require("modules/combat/condition_library")
 
 local Profile = {}

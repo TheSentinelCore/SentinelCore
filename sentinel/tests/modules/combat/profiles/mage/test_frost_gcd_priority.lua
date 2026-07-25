@@ -81,7 +81,7 @@ local function make_bb(overrides)
     bb:set("combat.state", "ENGAGING")
     bb:set("combat.enemy_count_10yd", 0)
     bb:set("combat.gcd_until_ms", 0)
-    bb:set("module.combat.catalog", require("modules/combat/spell_catalog"):new())
+    bb:set("module.combat.catalog", require("kernel/catalogs/spell"):new())
 
     local gcd_ready = true
     if overrides and overrides._gcd_ready == false then
