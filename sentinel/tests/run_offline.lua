@@ -340,6 +340,13 @@ local test_modules = {
     "tests/kernel/test_activity_stack",
     "tests/kernel/test_arbitration_pipeline",
 
+    -- Kernel (ADR 08 Phase 3: API surface, manifest, capability resolution, lifecycle)
+    "tests/kernel/test_semver",
+    "tests/kernel/test_manifest",
+    "tests/kernel/test_capabilities",
+    "tests/kernel/test_plugin_registry",
+    "tests/kernel/test_api",
+
     -- Integrations
     "tests/integrations/test_izi_bridge",
 

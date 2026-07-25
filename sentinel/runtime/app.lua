@@ -11,6 +11,9 @@ local IntentQueue = require("kernel/intent_queue")
 local SnapshotSource = require("kernel/snapshot_source")
 local ControlBroker = require("kernel/control_broker")
 local ActivityStack = require("kernel/activity_stack")
+local PluginRegistry = require("kernel/plugin_registry")
+local KernelConfig = require("kernel/config")
+local Api = require("kernel/api")
 
 local SentinelApp = {}
 SentinelApp.__index = SentinelApp
@@ -64,6 +67,17 @@ function SentinelApp:new()
         return o._control_broker:is_generation_valid(intent)
     end)
 
+    -- ADR 08 §8 -- the plugin contract. Runs ALONGSIDE ModuleRegistry, which still drives combat
+    -- and questing; Phase 4 migrates the first real consumer. Nothing is deleted before then,
+    -- because deleting the working path while this one has no consumer leaves nothing running.
+    o._kernel_config = KernelConfig:new()
+    o._plugin_registry = PluginRegistry:new({
+        api_version = Api.API_VERSION,
+        kernel_provides = Api.KERNEL_CAPABILITIES,
+        event_bus = o._event_bus,
+        config = o._kernel_config,
+    })
+
     o._scheduler = Scheduler:new({
         event_bus = o._event_bus,
         blackboard = o._blackboard,
@@ -73,7 +87,53 @@ function SentinelApp:new()
     })
     o:_register_kernel_stages()
 
+    -- The API surface is BUILT but deliberately NOT published to `_G.Sentinel` -- see
+    -- SentinelApp:publish_api() for why.
+    o._api = Api.build({
+        app = o,
+        registry = o._plugin_registry,
+        config = o._kernel_config,
+        broker = o._control_broker,
+        activity_stack = o._activity_stack,
+        intent_queue = o._intent_queue,
+        blackboard = o._blackboard,
+        event_bus = o._event_bus,
+        scheduler = o._scheduler,
+        nav = o._nav_adapter,
+    })
+
     return o
+end
+
+---Publish the kernel surface at `_G.Sentinel`.
+---
+---NOT called from main.lua in Phase 3, and that is a deliberate hold rather than an omission.
+---`main.lua` currently owns `_G.Sentinel`: it builds the table at main.lua:160 and ASSIGNS into it
+---(`_G.Sentinel.app = app`, main.lua:153 and :201). The kernel surface is read-only by design --
+---a plugin must not be able to mutate what every other plugin reads -- so publishing over it would
+---throw on the first assignment.
+---
+---Worse, the legacy table is what the live-debug workflow uses: HANDOFF.md's restart snippet calls
+---`_G.Sentinel.questing()`, and `.combat()` / `.reload()` are the documented entry points for
+---in-game verification. Clobbering them in a phase whose own deliverables cannot be verified
+---in-game would break the only workflow that can verify anything.
+---
+---Phase 4 merges the two surfaces when the first real plugin needs `_G.Sentinel`, at which point
+---the legacy accessors move onto the kernel surface as static fields and this becomes a one-line
+---call from main.lua. Publication semantics are fully covered by tests/kernel/test_api.lua.
+function SentinelApp:publish_api()
+    return Api.publish({
+        app = self,
+        registry = self._plugin_registry,
+        config = self._kernel_config,
+        broker = self._control_broker,
+        activity_stack = self._activity_stack,
+        intent_queue = self._intent_queue,
+        blackboard = self._blackboard,
+        event_bus = self._event_bus,
+        scheduler = self._scheduler,
+        nav = self._nav_adapter,
+    })
 end
 
 --- Wire the existing 4-step frame onto the 7-stage pipeline (ADR 08 §7).
@@ -115,6 +175,19 @@ function SentinelApp:_register_kernel_stages()
     -- 2. EVENTS -- publish the engine frame to subscribers.
     sched:register("EVENTS", "callback_bridge", function()
         self._callback_bridge:on_update()
+    end)
+
+    -- Plugin lifecycle upkeep, at the end of SENSE so it reads the tick's frozen snapshot.
+    --
+    -- `refresh_eligibility` is internally THROTTLED: `applies_to` reads class/spec/level, which §7
+    -- puts in the cold tier (poll-only). Calling it every tick is the RXPGuides mistake from the
+    -- opposite direction -- §13 risk 6 caches a level-dependent gate and never invalidates it,
+    -- while re-reading cold data 60 times a second just burns the frame budget.
+    sched:register("SENSE", "plugin_registry", function(ctx)
+        self._plugin_registry:refresh_eligibility(ctx.snapshot, ctx.tick_index)
+        -- §2.4's deferred queue, re-drained for the first ~60 ticks: a plugin the injector loads
+        -- after us can push at any point during startup. A no-op once the window closes.
+        Api.tick_pending({ registry = self._plugin_registry }, ctx.tick_index)
     end)
 
     -- 3. INTERRUPT -- safety evaluators may push/pop the ActivityStack. No evaluators are
@@ -246,6 +319,20 @@ end
 
 function SentinelApp:get_activity_stack()
     return self._activity_stack
+end
+
+function SentinelApp:get_plugin_registry()
+    return self._plugin_registry
+end
+
+function SentinelApp:get_kernel_config()
+    return self._kernel_config
+end
+
+--- The kernel API surface. Reachable here in Phase 3; see publish_api() for why it is not yet at
+--- `_G.Sentinel`.
+function SentinelApp:get_api()
+    return self._api
 end
 
 --- ADR 08 §7 names `_izi_bridge` as constructed-and-never-read. It is a real collaborator
