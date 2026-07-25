@@ -214,6 +214,36 @@ function M.test_the_owner_scoped_adapter_stop_is_not_the_kernel_path()
     end)
 end
 
+--- THE BEHAVIOURAL TEST ABOVE IS NOT ENOUGH, AND FINDING THAT OUT IS THE POINT.
+---
+--- Mutating `release_all` to route through `NavAdapter:stop` did NOT fail the test above. The
+--- mutant reached for `NavAdapter.get_shared(nil)`, which hands back a FRESH, UNOWNED adapter --
+--- so its stop was never refused and the client was stopped anyway. The test asserted the right
+--- property and watched the wrong object: it owned one adapter instance while the kernel talked
+--- to another.
+---
+--- The property that actually needs locking is structural, not behavioural: the kernel must have
+--- NO ROUTE to an owner-scoped stop at all. `movement_release.lua` already states the same kind
+--- of boundary about `core.input` ("rg core.input sentinel/kernel/ -> this file, nothing else"),
+--- so this pin is that boundary's other half -- and unlike the behavioural test it does not care
+--- which adapter instance a future mutant picks, because it forbids reaching for any of them.
+function M.test_the_kernel_has_no_route_to_the_owner_scoped_adapter()
+    local handle = io.open("sentinel/kernel/movement_release.lua", "r")
+    T.assert_not_nil(handle, "run the suite from the repo root -- package.path is root-relative")
+    local source = handle:read("*a")
+    handle:close()
+
+    -- Comments legitimately NAME the adapter to explain why the kernel avoids it, so strip them
+    -- before looking. A pin that could be defeated by mentioning the trap would be worthless.
+    local code = source:gsub("%-%-[^\n]*", "")
+
+    T.assert_nil(code:find("nav_client/adapter", 1, true),
+        "movement_release must not require the nav adapter: its stop is owner-scoped and would "
+        .. "refuse the broker, which is never the owner")
+    T.assert_nil(code:find("NavAdapter", 1, true),
+        "no reference to NavAdapter in kernel code -- the force-release resolves the client itself")
+end
+
 --- Which stop the kernel chose, pinned.
 ---
 --- `client:stop()` "stops all movement and resets the active navigation state"
@@ -236,6 +266,38 @@ end
 -- ---------------------------------------------------------------------------
 -- FAULT TOLERANCE -- the nav stop inherits the key sweep's promise
 -- ---------------------------------------------------------------------------
+
+--- ORDER: navigation first, keys last -- and this is the test that makes the order matter
+--- rather than merely be documented.
+---
+--- `ControlBroker:_revoke` states the rule for its own three steps: the force-release is last
+--- "so it is the final word -- if on_revoke pressed a key on its way out, the release still
+--- lands after it." A nav client is third-party code with a live key-press capability, and
+--- `client:stop()` runs its own teardown; a teardown that touches a movement key while the
+--- kernel's sweep has already gone past would leave that key held with nothing left to lift it.
+---
+--- Without this test the ordering is unpinned: moving `stop_navigation` below the sweep leaves
+--- the whole suite green, because every other nav double here is polite enough not to press
+--- anything on the way down. This one is not.
+function M.test_the_key_sweep_is_the_final_word_after_the_nav_stop()
+    local input, key_calls = make_input()
+    local nav = make_nav_client()
+    -- A nav client that grabs a key during its own teardown. Impolite, entirely possible, and
+    -- exactly the case the ordering exists for.
+    nav.stop = function() input.move_forward_start() end
+
+    with_globals(nav, nil, function()
+        MovementRelease.release_all(input)
+    end)
+
+    local last_forward = nil
+    for _, call in ipairs(key_calls) do
+        if call == "move_forward" or call == "move_forward_START" then last_forward = call end
+    end
+    T.assert_equal(last_forward, "move_forward",
+        "the eight-key sweep must land AFTER the nav stop -- otherwise a key the nav client "
+        .. "pressed on its way down stays held with nothing left to release it")
+end
 
 --- `release_all` "never throws and never partially aborts". Adding a nav stop in front of the
 --- key sweep puts third-party code on the safety path ahead of the eight keys, so the throwing
@@ -398,6 +460,55 @@ function M.test_an_abandoned_navigation_is_stopped_by_lease_expiry()
         T.assert_equal(nav_calls.stop, 1,
             "an abandoned navigation must be stopped by TTL expiry, not run until the lake")
         T.assert_nil(broker:who_owns("MOVEMENT"))
+    end)
+end
+
+--- Losing the lease must also cost the adapter its BELIEF that it is navigating.
+---
+--- The broker's force-release stops the client, so the character halts either way -- which is
+--- exactly why this needs its own test: with the character stopped, a stale `_active` is
+--- invisible until an executor hangs. `runtime_profile` and `runtime_action` both branch on
+--- `nav:is_active()`, so an adapter that still reports "moving" over a path the broker
+--- cancelled leaves them polling forever for an arrival that can never come. The recovery path
+--- for "something else drove nav idle" already exists in runtime_profile; this makes sure the
+--- adapter actually tells it so.
+function M.test_revocation_clears_the_adapters_belief_that_it_is_navigating()
+    local nav = make_nav_client({ state = "navigating", full_state = "navigating.following_path" })
+    local broker = ControlBroker:new({ input = make_input() })
+    broker:begin_tick(1)
+
+    with_globals(nav, fake_api(broker), function()
+        local adapter = NavAdapter:new(nil)
+        T.assert_true(adapter:move_to({ x = 5, y = 5, z = 5 }, { owner = "questing" }))
+        adapter:poll()
+        T.assert_true(adapter:is_active(), "the fixture must actually be navigating")
+
+        for tick = 2, 6 do broker:arbitrate(tick) end
+
+        T.assert_false(adapter:is_active(),
+            "a revoked lease must end the navigation the adapter thinks it is running, or an "
+            .. "executor polls forever for an arrival the broker already cancelled")
+        T.assert_nil(adapter:get_owner(), "and the owner goes with it")
+    end)
+end
+
+--- Stopping is not navigating, and not navigating is not holding MOVEMENT. An adapter that kept
+--- the channel after its own stop would block every other caller until the TTL reaped it --
+--- which is the "wedged waiting on a nav state that will never change" failure B4's ownership
+--- comments were already worried about, just moved up a layer.
+function M.test_stopping_hands_the_movement_lease_back()
+    local nav = make_nav_client()
+    local broker = ControlBroker:new({ input = make_input() })
+    broker:begin_tick(1)
+
+    with_globals(nav, fake_api(broker), function()
+        local adapter = NavAdapter:new(nil)
+        T.assert_true(adapter:move_to({ x = 1, y = 1, z = 1 }, { owner = "questing" }))
+        T.assert_equal(broker:who_owns("MOVEMENT"), "questing")
+
+        T.assert_true(adapter:stop("arrived", "questing"))
+        T.assert_nil(broker:who_owns("MOVEMENT"),
+            "a stopped navigation must not squat the channel until its TTL runs out")
     end)
 end
 
