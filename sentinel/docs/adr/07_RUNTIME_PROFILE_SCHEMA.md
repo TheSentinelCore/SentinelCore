@@ -1,0 +1,1944 @@
+
+# 07_RUNTIME_PROFILE_SCHEMA.md
+
+## Sentinel Questing
+
+### Runtime Profile Schema — RestedXP ingest to kernel-executable artifact
+
+**Version:** 1.0 Draft
+**Status:** Proposal
+**Target:** Project Sylvanas, TBC Classic 2.4.3, levels 1–70, both factions
+**Consumer:** Quest Activity plugin, per `ADR-000 — Sentinel Kernel: API-First Plugin Architecture`
+**Producer:** `sentinel-compiler` (Rust, offline)
+
+**Numbering.** The repository's ADR sequence runs `00_PRD` … `06_QUESTING_SCHEMA_V2`. `07` is the next
+free number. The kernel document is referred to throughout as ADR-000; see §1.1 for its status, which
+is not what the sequence implies.
+
+----------
+
+# 1. D1 — Executive summary
+
+The recommendation is a **task graph of containers**, not a list of actions.
+
+A compiled profile is an array of `Task` records. A `Task` is the direct descendant of a RestedXP
+`step`: an ordered bundle of operations that execute as one unit at one place, plus a completion
+predicate, plus a declaration of which control channels it needs. Every runtime condition in the
+corpus lowers into a single extended `Predicate` tree evaluated only by `Sentinel.objectives`. Every
+static gate — class, race, faction, expansion, realm mode — is resolved away by the compiler, which
+emits one artifact per character archetype. Concurrency is expressed as channel leases, not as a
+background flag. Behaviours the kernel already owns (vendor, flight, hearth, bank, trainer, corpse)
+are delegated with a payload rather than reimplemented.
+
+Four findings drove the design and each contradicts an obvious default:
+
+1. **`#sticky` and `#completewith` are not the same mechanism.** Only 37 steps carry both, against
+   274 sticky-only and 5,423 completewith-only. They are separate axes — *lifetime* and *completion
+   authority* — and the schema models them as two independent fields. Collapsing them into one
+   "background" flag, which is the intuitive move, is wrong on the evidence (§2.4, §5.3).
+2. **A step is a container, decisively.** 90.5% of steps carry two or more commands; the mode is four.
+   One action per step is not a simplification, it is a misreading (§2.3).
+3. **Player faction and reputation are not readable from the Sylvanas API at all.** This is not a
+   preference for compile-time gating; it is a hard requirement, because the runtime physically cannot
+   evaluate `<< Alliance` (§5.2, §5.8).
+4. **The serialization question is not a codec question.** Measured, the entire profile decodes in
+   ~306 ms of which only ~250 ms is parsing; the remaining ~53 ms is an irreducible LuaJIT table
+   allocation floor. No format on the evaluation list gets under one frame. Reading one record out of
+   an offset-indexed container costs 7.3 µs. The fix is the container, not the encoding (§6.2).
+
+## 1.1 ADR-000's verified status — read this before relying on anything below
+
+**ADR-000 is not committed to this repository.** I searched exhaustively before designing: no file
+matches it under any name, `rg` finds no occurrence of `ControlBroker`, `objectives:satisfied`,
+`schema_hash`, `tags_used`, or `Sentinel.control` anywhere outside `SentinelNavClient` and a test mock,
+and the CodeGraph/graphify indexes return nothing. It exists as a conversation artifact whose own
+header reads `Status: Proposal`.
+
+So its status is **Proposal, uncommitted** — weaker than the task framing assumed. I have designed
+against it as binding anyway, because a schema needs a fixed consumer. But the following decisions are
+downstream of ADR-000 and change if it is rejected:
+
+| If ADR-000 is rejected | What changes here |
+|---|---|
+| No ControlBroker / channels | §5.3 concurrency collapses to a scheduler-priority model; `channels` and `band` become dead fields. This is the largest single dependency. |
+| No `Sentinel.objectives` single authority | §5.1 still holds — one predicate evaluator is right regardless — but `Predicate` becomes owned by the Quest Activity rather than the kernel. |
+| No built-in behaviour plugins (§3.2) | All 11 `DELEGATE` verdicts in §4 become `KEEP`, and the Quest Activity must implement vendor/flight/hearth/bank itself. 4,210 command instances move. |
+| Two-phase intent commit dropped | No schema change. The artifact never names intents. |
+
+The parts that are **not** contingent: step-as-container, compile-time static gating, the tri-state
+predicate result, the offset-indexed container, and the content-integrity fields. Those follow from the
+corpus and the Sylvanas API, not from the kernel.
+
+----------
+
+# 2. D2 — Corpus analysis
+
+## 2.1 Method
+
+Seven `.lua` files under `sentinel/docs/adr/restedxp guides/`, 182,851 lines, 6,909,964 bytes.
+`The Burning Crusade.lua` alone is 154,328 lines / 5,704,898 bytes, matching the stated scale.
+
+Tokenisation, applied line-by-line over raw bytes:
+
+- **Step** — a line matching `^step\b`. Every step line in the corpus begins at column 0; there are no
+  indented step headers.
+- **Command** — `^\s*\.([A-Za-z_][A-Za-z0-9_]*)`. Commented-out commands (`--  .goto …`) do not match
+  and are excluded.
+- **Directive** — `^\s*#([A-Za-z_][A-Za-z0-9_]*)`.
+- Trailing ` >> display text` and `-- comment` are stripped before argument analysis.
+
+## 2.2 Independently derived counts, against the stated baseline
+
+| Metric | Baseline | Derived | Δ |
+|---|---|---|---|
+| Distinct `.` commands | 74 | **74** | **0 — exact** |
+| Distinct `#` directives | 48 | **49** | +1 |
+| `step` blocks | 22,282 | **23,894** | +1,612 (+7.2%) |
+| Command instances | 107,620 | **115,021** | +7,401 (+6.9%) |
+| Directive instances | 16,339 | **17,598** | +1,259 (+7.7%) |
+
+**The distinct-command count matches exactly at 74**, which is strong evidence the tokeniser is
+correct. Two discrepancies remain, and I resolved one of them.
+
+**Directives, 49 vs 48 — resolved.** The corpus contains `#completewithTBTurnins`
+(`The Burning Crusade.lua:211`), a **missing-space typo** of `#completewith TBTurnins`. A tokeniser
+that prefix-matches against a known directive table folds it into `#completewith` and reports 48
+distinct; a tokeniser that reads the identifier greedily, as mine does, reports 49. Both are defensible.
+I report 49 and treat the extra as a malformed instance of `#completewith` (§4, §7.6).
+
+**Instance counts, ~7% high — unresolved.** I tested and eliminated four hypotheses:
+
+- *Whole-file exclusion* — no subset of the seven files sums to the 1,612-step delta.
+- *Expansion filtering* — dead. All 277 `RegisterGuide` blocks carry `#tbc`; there is no
+  `#wotlk`-only or `#classic`-only guide to exclude.
+- *Duplicate guide bodies* — 277 guides, 272 distinct bodies; deduplicating removes 1 step and 47
+  directives, nowhere near the delta.
+- *Indentation sensitivity* — dead, and instructive: 97,956 of 115,021 commands sit at column 0, not
+  indented, so an indentation-anchored regex would undercount by 85%, not 7%.
+
+The per-token deltas are also **not uniform** (`.goto` +7.5%, `.dungeon` +10.0%,
+`.isQuestTurnedIn` +1.4%), which rules out a clean proportional subset. The most likely remaining
+explanation is that the baseline was computed against a different snapshot of the guides. **I have not
+adopted the baseline figures.** Every count in this document is derived, and the arithmetic in §4 uses
+my numbers so it is internally consistent.
+
+## 2.3 Step-as-container — settled by the histogram
+
+| Commands in step | Steps | Cumulative |
+|---|---|---|
+| 0 | 360 | 1.5% |
+| 1 | 1,899 | 9.5% |
+| 2 | 1,873 | 17.3% |
+| 3 | 4,813 | 37.4% |
+| 4 | **6,286** | 63.7% |
+| 5 | 3,520 | 78.5% |
+| 6–10 | 3,469 | 93.0% |
+| 11+ | 1,674 | 100% |
+
+**21,635 of 23,894 steps (90.5%) carry two or more commands.** The distribution peaks at four. A
+schema that emits one action per step is not lossy at the margin; it misrepresents the primary unit.
+
+Ordering within a step is real but positional, not arbitrary. Mean relative position (0 = first,
+1 = last) across the corpus:
+
+`.goto` 0.26 · `.vendor` 0.37 · `.train` 0.42 · `.turnin` 0.43 · `.accept` 0.56 · `.complete` 0.56 ·
+`.target` 0.77 · `.mob` 0.78 · `.xp` 0.82
+
+The canonical shape is **navigate → interact → declare**. `.target`, `.mob` and the `.is*` predicates
+cluster at the end because they are *annotations on the step*, not sequential actions — they say who to
+talk to, what is legal to kill, and when the step is done. The schema reflects this by separating
+`ops` (ordered, executed) from step-level `combat`, `interact_target` and `complete_when` (unordered,
+declarative).
+
+## 2.4 Concurrency — `#sticky` and `#completewith` are distinct
+
+| | Steps |
+|---|---|
+| `#sticky` **and** `#completewith` | **37** |
+| `#sticky` only | 274 |
+| `#completewith` only | 5,423 |
+| `#loop` **and** `#sticky` | 56 |
+| `#loop` total | 1,661 |
+
+The two directives are effectively disjoint as authored. Their command payloads differ accordingly:
+
+- **Inside `#sticky` steps**: `.waypoint` 416, `.goto` 296, `.complete` 136, `.mob` 89. Sticky work is
+  overwhelmingly *movement plus a kill/collect objective* — it wants `MOVEMENT`.
+- **Inside `#loop` steps**: `.goto` 14,117, `.mob` 2,846, `.complete` 1,958. Loops are patrol circuits
+  with a kill objective.
+
+`#completewith` takes `next` in 2,681 of 5,469 uses; the remaining 2,788 name one of **1,246 distinct
+labels**.
+
+**The nuance that reconciles this with the kernel's framing.** Reading the actual RXPGuides
+implementation (`GuideWindow.lua:1917`):
+
+```lua
+if step.completewith and not step.tip then step.sticky = true end
+```
+
+`#completewith` *implies* sticky **at runtime**. So the two are authored disjointly but converge in
+execution — which is why the combined figure of ~5,700 is meaningful even though the intersection is
+37. The schema keeps them as two fields precisely because the authored intent differs: one is a
+lifetime, the other is a completion authority (§5.3).
+
+## 2.5 Gating grammar
+
+196 distinct step-level gate expressions. Confirmed operators, each with a corpus witness:
+
+| Operator | Meaning | Witness |
+|---|---|---|
+| space | AND | `step << NightElf !Druid` (20 uses) |
+| `/` | OR | `step << Warrior/Paladin/Rogue` (37 uses) |
+| `!` | NOT | `step << !Mage` (312 uses) |
+
+`/` binds **looser** than space: `step << Gnome !Warlock/Dwarf !Paladin` (14 uses) reads
+`(Gnome ∧ ¬Warlock) ∨ (Dwarf ∧ ¬Paladin)`. `step << Alliance/Horde Hunter` (10 uses) is ambiguous under
+that precedence and is flagged in §9.
+
+Token vocabulary: 9 classes, races, `Alliance`/`Horde`, expansions (`tbc` 223, `wotlk` 84, `era` 14),
+`DK` 81, and `skip` 147. Junk tokens (`if`, `checking`, `mount`, `nothing`) all originate from
+commented-out lines and are not real gates.
+
+**Gating is not step-only.** There are **3,412 command- and directive-level `<<` gates across 172
+distinct expressions** — a single command inside a shared step can be class-gated. This is the decisive
+evidence for P2 (§5.9).
+
+## 2.6 Spatial representation
+
+`.goto` uses **two mutually exclusive coordinate systems**:
+
+- **Zone-percentage** — `<zone name|zone id>,<x>,<y>` with x,y always in 0..100. 36,322 name-form,
+  1,765 numeric-id form (4.6%).
+- **World coordinates** — `<mapId>/<floor>,<x>,<y>` with raw world coords, never in 0..100.
+  873 instances, e.g. `The Burning Crusade.lua:7210` → `.goto 1419/0,-3196.90015,-11815.10059`.
+
+Both zone forms appear **in the same file for the same zone**: `A-1-11-Dwarf-Gnome.lua:1955` uses
+`1426` while `:1975` uses `Dun Morogh`. Normalisation is unavoidable.
+
+Arity: 3 args (16,231), 4 (5,436), 5 (16,353), 6 (67 — all malformed, a decimal typed with a comma:
+`Un'Goro Crater,20.6,60,4,70,0` should be `60.4`).
+
+The 4th positional is an arrival radius; observed values 0 (3,963), −1 (580), then 5–200. The 5th is
+**invariantly 0 across all 16,353 five-arg instances** — its meaning is UNDETERMINED (§9).
+
+Decisive disambiguation: `A-11-23.lua:247` and `:249` give the *same coordinates* as
+`.goto 1439,38.226,52.780,0` and `.goto 1439,38.226,52.780,50,0`. The lone trailing `0` in the 4-arg
+form is therefore not a radius.
+
+**Importer gotcha:** 553 steps (461 of them `#loop`) emit the same `zone,x,y` twice — once 4-arg, once
+5-arg — producing 1,252 duplicated coordinate triples. An importer treating each `.goto` as a distinct
+route node doubles the path. The compiler deduplicates (§7.3).
+
+----------
+
+# 3. D3 — Prior art
+
+## 3.1 RXPGuides — the source format's own parser
+
+Read directly from `github.com/RestedXP/RXPGuides` at commit `d69e178`, not from documentation.
+
+**Line grammar** (`GuideLoader.lua::parseLine`, 804–914), strip order: `<<` gate → `#tag[=]value` →
+`>> display` → `^%.(%S+)%s*(.*)` command. Bare `+text` is an objective line; bare `*text` is a
+tooltip-only line. Args comma-split by default, **but `addon.separators` overrides it** —
+`.target`/`.mob`/`.unitscan` split on semicolon, `.link`/`.clicknext` take the rest of the line
+verbatim. This is why `.target Korfax, Champion of the Light` is one argument, not two.
+
+**Unknown `.tag` is a hard error** (`addon.error("Invalid function call (." .. tag .. ")")`). Fail-loud
+is the shipped behaviour, and Sentinel should match it at ingest (§5.10).
+
+**Elements are dual-mode**, discriminated by `type(self) == "string"`: the same function is the parser
+and the runtime handler, and the parsed table *is* the live object. There is no compiled artifact.
+
+**`#completewith` resolution** (`GuideWindow.lua:682–704`) resolves `next` to `step.index + 1` and
+otherwise looks up `guide.labels[…]`; **`#requires` mutates an earlier step at load time**
+(`:1918–1928`), synthesising a `completewith` back-edge onto the step it depends on. Control flow
+therefore cannot be read top-to-bottom.
+
+**Known defects worth not repeating.** `applies()` caches gate results in `local aCache = {}`
+(`GuideLoader.lua:29`) which is **never invalidated anywhere in the addon**, and `playerLevel` is read
+*inside* the cached computation — so a level-threshold gate freezes at whatever level the player was
+when the string was first evaluated. The cache key is also the gate string alone while the result also
+depends on `customClass`. There is **no validation pass**: an unresolved `#completewith foo` silently
+never fires.
+
+**Adopt:** the `.command args >> display << gate` line shape; `<<` as parse-time elimination; the
+`events[tag]` declarative reactivity table; fail-loud on unknown tokens.
+**Avoid:** the unkeyed cache; the dual-mode function; load-time mutation of earlier steps; the absence
+of a validator.
+
+## 3.2 Honorbuddy (WoW) — the cautionary XML case
+
+Honorbuddy, Bossland GmbH, discontinued after the 2017 Blizzard litigation. Quest profiles are XML:
+`<QuestOrder>` containing `<PickUp>`, `<TurnIn>`, `<If>`, `<While>`, and `<CustomBehavior>` elements,
+with a companion `QuestBehaviors` repository of C# behaviour classes (`InteractWith`, `RunMacro`,
+`WaitTimer`, `ForcedDismount`).
+
+Its defining decision — and its defining problem — is that **conditions are embedded C# expression
+strings** evaluated at runtime, e.g. `Condition="Me.Level &gt;= 20 &amp;&amp; !HasQuest(1234)"`. That
+buys unlimited expressiveness and costs everything else: profiles cannot be statically validated, a
+condition typo surfaces as a runtime exception mid-run, the expressions bind to an API surface that
+changed every patch, and profile packs broke wholesale on client updates. This is the strongest
+available argument for Sentinel's compiled `Predicate` AST over any embedded scripting.
+
+**RebornBuddy is the Final Fantasy XIV product of the same lineage and is not evidence about
+Honorbuddy.** Its profile format and behaviour set differ and I have not cited it.
+
+I could not reach primary Honorbuddy documentation (the vendor site and forums are gone); the structure
+above is corroborated across archived community profile repositories and behaviour source, and I flag
+element-name precision as medium confidence in §9.
+
+## 3.3 Guidelime — the closest open analogue
+
+Open-source WoW Classic guide addon with a bracket-code markup (`GuideParser.lua`). Its transferable
+strength is that **the entire vocabulary is one 30-line declarative table** (`GP.codes`) with the
+reverse map derived, including first-class `--deprecated` aliases (`COMPLETE_WITH_NEXT = "C"` "same as
+OC"). Conditions lower into **typed struct fields** on the step (`step.spellMin`, `step.repMax`,
+`step.itemMax`) rather than a string re-parsed at runtime — independent validation of Sentinel's
+compile-to-typed-condition approach.
+
+Its weaknesses are equally instructive: **no labels, no join edges** (`[OC]` can only ever mean "the
+next step"), so non-adjacent dependencies are inexpressible; **no sticky equivalent**, so "kill 10 boars
+while you run this route" has no clean encoding. Sentinel needs Guidelime's *table discipline* with
+RXP's *label expressiveness*.
+
+## 3.4 LazyBot / Lazy Evolution — the tiering ADR-000 is built on
+
+C# out-of-process bot (`descention/LazyBot`, GPLv3). Three tiers: `ILazyEngine` (activity, supplies
+`List<MainState>`), `MainState` (`Priority` / `NeedToRun` / `DoWork` — a four-member contract), and
+`ILazyPlugin` (ambient `Pulse`). The scheduler sorts states by descending priority and runs the first
+whose guard passes, then `break`s — one state per tick, with a guaranteed lowest-priority `StateIdle`
+making the selector total.
+
+Grind routes are XML with `Waypoint` / `GhostWaypoint` / `ToTown` lists, entered **at the nearest point
+rather than at index 0** — a genuinely good recovery model that Sentinel should copy for corpse runs.
+
+**The single worst anti-pattern in the codebase** is profile loading: `GrindingProfile.LoadFile` is a
+sequence of ~8 independent `try { … } catch { }` blocks with *empty* catch bodies, each silently
+falling back to a hardcoded default. A profile can be 90% broken and still "load". Sentinel's
+fail-closed artifact (§5.4) is the deliberate inversion of this. Also: coordinate parsing is
+culture-dependent, conditions cannot nest (one `MatchAll` bool per rule), and **there is no completion
+model at all** — `MainState` has a precondition but never an "am I done", so LazyBot can grind
+indefinitely but can never finish a quest chain.
+
+## 3.5 RuneMate TreeBot (non-WoW) — the profiles-as-code extreme
+
+RuneScape/OSRS. Profiles are **not data**: a bot is a compiled Java class hierarchy of `BranchTask`
+(conditions only), `LeafTask` (effects only), and `TreeTask`, rooted at `createRootTask()`. Both
+`successTask()` and `failureTask()` are mandatory and non-null, so branching is total — no silent
+fallthrough, which is a stronger guarantee than either RXP or Guidelime provides.
+
+The tree is **stateless per tick**: it re-derives the whole situation from live world state, so
+interruption recovery is free — there is no cursor to resume. The cost is disqualifying for Sentinel:
+nothing can be imported, validated, diffed, or shipped without compilation, and with no cursor there is
+no progress, no ETA, and no blocked-reason for the runner cockpit.
+
+**Adopt:** the branch-holds-only-conditions / leaf-holds-only-effects discipline, and mandatory
+explicit failure branches — that discipline is exactly what prevents the fail-open condition bug.
+**Avoid:** profiles as code; full statelessness.
+
+----------
+
+# 4. D4 — Command disposition table
+
+*Core deliverable.* All 74 commands and all 49 directives. Use counts are my derived figures (§2.2).
+Verdicts: `KEEP` (becomes a first-class op), `MERGE` (folded into another construct), `TRANSFORM`
+(becomes a different kind of construct, usually a `Predicate`), `DELEGATE` (handed to an ADR-000
+behaviour plugin per §3.2 of that document), `DROP`.
+
+## 4.1 Commands (74)
+
+| Source token | Uses | Verdict | Maps to | Justification |
+|---|---|---|---|---|
+| `.goto` | 38,087 | KEEP | `Op::Travel { waypoints }` | Primary movement. Zone/world coords normalised to `(map_id, x, y, z?)` by the compiler. |
+| `.target` | 13,352 | MERGE | `Task.interact_target` / `Op::Interact.target` | Not a verb — it names the NPC that `.accept`/`.turnin`/`.train` act on. `+`-prefix (1,292) binds to the preceding quest line, becoming per-op rather than per-task. |
+| `.turnin` | 7,712 | KEEP | `Op::TurnIn { quest, reward_choice, optional }` | 2nd arg is reward index (proven: `A-1-11-Human.lua:155/156` turn in quest 33 with reward 2 vs 1, split by armour class). Negative id ⇒ `optional: true` (38 instances). |
+| `.accept` | 7,490 | KEEP | `Op::Accept { quest }` | Core verb. |
+| `.mob` | 7,456 | TRANSFORM | `Task.combat.targets: Vec<CreatureEntry>` | Not an action — a target whitelist feeding the combat policy (C6). Names resolve to entries via MaNGOS `creature_template`. |
+| `.complete` | 7,218 | TRANSFORM | `Predicate::QuestObjective { id, index, need }` | The step's completion authority. `need` is baked from `quest_template.ReqItemCount*`/`ReqCreatureOrGOCount*`, removing the need to parse a localized progress string for the denominator. |
+| `.isOnQuest` | 3,139 | TRANSFORM | `Predicate::QuestInLog` (OR-list ⇒ `Or`) | Multi-arg lists are any-of, up to 11 ids. |
+| `.collect` | 3,044 | TRANSFORM | `Predicate::ItemCount` + `Task.loot_filter` | Acquire-N-of-item; optional 3rd arg is the owning quest. |
+| `.xp` | 2,133 | TRANSFORM | `Predicate::XpAtLeast { level, offset }` | Two forms: `4-420` (level minus xp) and `>5,1` (comparison). Grind-to-level objective. |
+| `.zoneskip` | 2,032 | TRANSFORM | `Predicate::InArea { kind: Zone }` | Skip-if-already-arrived guard on travel steps. |
+| `.use` | 1,678 | KEEP | `Op::UseItem { item }` | Quest-item use, including quest-starting items. |
+| `.itemcount` | 1,666 | TRANSFORM | `Predicate::ItemCount { id, cmp, count }` | Carries explicit `<`/`>` operators — the direct justification for adding `cmp` (C1). |
+| `.train` | 1,653 | DELEGATE | `behavior.trainer` — payload `{ spell_id, npc_entry, pos }` | 1-arg = action (train spell); 2-arg (`,1`/`,3`) = condition ⇒ `Predicate::SpellKnown`. Split by arity. |
+| `.isQuestTurnedIn` | 1,488 | TRANSFORM | `Predicate::QuestTurnedIn` | Maps to `core.quests.is_quest_flagged_completed`. Distinct from complete-but-unhanded. |
+| `.isQuestComplete` | 1,389 | TRANSFORM | `Predicate::QuestComplete` | Objectives met, not yet handed in. |
+| `.dungeon` | 1,351 | TRANSFORM | Archetype gate ⇒ compile-time variant selector | A GATE, not an action: marks a step as belonging to a dungeon variant of the guide. `!` negates. Case is inconsistent (`Mara` 105 / `MARA` 91) and is normalised. |
+| `.zone` | 1,063 | TRANSFORM | `Predicate::InArea { kind: Zone }` | Travel-completion condition. |
+| `.subzone` | 991 | TRANSFORM | `Predicate::InArea { kind: SubArea }` | Numeric AreaTable id. |
+| `.isQuestAvailable` | 930 | TRANSFORM | `Predicate::QuestAvailable` | Obtainable — prerequisites/level/rep satisfied and not already done. |
+| `.subzoneskip` | 820 | TRANSFORM | `Predicate::InArea { kind: SubArea, negate }` | `,1` negates; `,2` is a distinct mode. |
+| `.fly` | 741 | DELEGATE | `behavior.flightpath` — payload `{ dest_node, npc_entry, pos }` | Taxi travel. Behaviour does not exist in ADR-000 §3.2 — see §5.5. |
+| `.unitscan` | 735 | TRANSFORM | `Task.combat.watch_units` | Registers a roamer/rare/low-spawn name to watch for; feeds targeting, not a standalone action. |
+| `.waypoint` | 593 | KEEP | `Op::Travel { waypoints, route_kind }` | Route node rather than destination; see C7. |
+| `.cast` | 589 | KEEP | `Op::Cast { spell }` | Also covers "click this object which casts spell N". |
+| `.bindlocation` | 557 | TRANSFORM | `Predicate::HearthBoundTo { area }` | Silent skip on current hearth bind; `,1` negates. |
+| `.cooldown` | 549 | TRANSFORM | `Predicate::CooldownCmp { kind, id, cmp, secs }` | `item,6948,>2,1` — hearthstone gating with an explicit operator. |
+| `.skill` | 507 | TRANSFORM | `Predicate::SkillCmp { line, cmp, value }` | Explicit `<` operator present (`A-23-30.lua:1008` `.skill cooking,<50,1`). Readable via `core.spell_book.get_profession_info`. |
+| `.line` | 485 | DROP | — | Draws a polyline on the addon's map to show an NPC patrol route. Pure cartography for a human reader; the bot navigates by waypoints, not by a drawn line. |
+| `.trainer` | 469 | DELEGATE | `behavior.trainer` — payload `{ npc_entry, pos }` | "Train your class spells" — a whole-visit delegation. |
+| `.requires` (command) | 445 | TRANSFORM | `Task.serves_quests: Vec<QuestId>` | Distinct from `#requires`. `quest,<id>` declares which quest the step exists to serve — used for whole-chain pruning when the quest is unobtainable. |
+| `.vendor` | 385 | DELEGATE | `behavior.vendor` — payload `{ npc_entry?, pos, mode: Sell\|Buy, items? }` | Bare = sell junk; with entry id = buy from this vendor. |
+| `.hs` | 382 | DELEGATE | `behavior.hearth` — payload `{}` | Always bare; the `.cooldown item,6948` sibling supplies the gate. |
+| `.itemStat` | 327 | TRANSFORM | `Predicate::ItemStatCmp { slot, stat, cmp, value }` | Upgrade check on equipped gear; note this one is *stay-active-while-true*, inverted vs `.money`. |
+| `.reputation` | 298 | TRANSFORM | `Predicate::ReputationCmp` — **fails closed** | No Sylvanas API exposes reputation (§5.8). Compiler resolves what it can from `quest_template.RequiredMinRepFaction`; the residual predicate evaluates `Unknown` and blocks. |
+| `.skipgossip` | 282 | MERGE | `Op::Interact.gossip: GossipPolicy::AutoAdvance` | A modifier on the interaction, not an action. |
+| `.money` | 259 | TRANSFORM | `Predicate::MoneyCmp { cmp, copper }` | `<0.0480` = gold.silver-copper. Readable via `core.inventory.get_gold`. |
+| `.collectmultiple` | 210 | MERGE | `Predicate::ItemCount` (aggregated) | Attaches to sibling `.collect` lines for the same item across several quests. |
+| `.usespell` | 204 | MERGE | `Op::Cast` | 181/204 duplicate a sibling `.cast` with the same spell id; the pair is one action. |
+| `.timer` | 200 | TRANSFORM | `Op::Wait { secs, label }` | Scripted RP/cutscene/spawn delay after an interaction. Real bot behaviour, not display. |
+| `.fp` | 199 | DELEGATE | `behavior.flightpath` — payload `{ node_name, npc_entry, pos, mode: Discover }` | Acquire a flight path. |
+| `.disablecheckbox` | 194 | DROP | — | Suppresses the manual-completion checkbox the addon renders for a human. No bot meaning. |
+| `.group` | 190 | TRANSFORM | `Predicate::InGroup { cmp, size }` + `Task.combat.expect_group` | Optional party size; drives combat policy and blocking. |
+| `.home` | 186 | DELEGATE | `behavior.hearth` — payload `{ mode: Bind, npc_entry, pos }` | Set hearth at innkeeper. |
+| `.aura` | 174 | TRANSFORM | `Predicate::AuraPresent { spell, on }` | Leading `-` on an id negates. |
+| `.maxlevel` | 171 | TRANSFORM | `Predicate::LevelAtMost` + optional `Task.jump_to` | 2-arg form is a forward jump to a label. |
+| `.link` | 165 | DROP | — | Renders a clickable URL (YouTube reference video) or a raw slash-command macro for a human. |
+| `.abandon` | 142 | KEEP | `Op::Abandon { quests }` | Real inventory-of-quests mutation; needed for failed/obsolete quests. |
+| `.groundgoto` | 114 | KEEP | `Op::Travel { waypoints, mode: Ground }` | Forces ground travel where a flying line would fail. |
+| `.deathskip` | 77 | DELEGATE | `behavior.corpse` — payload `{ intent: DeliberateDeath, resurrect_at }` | Deliberate death as traversal. Interacts with the band 90–99 safety net; see §8. |
+| `.destroy` | 72 | KEEP | `Op::DestroyItem { item }` | Frees bag space; real action. |
+| `.bankwithdraw` | 53 | DELEGATE | `behavior.bank` — payload `{ mode: Withdraw, items, npc_entry, pos }` | Lists up to 89 item ids. Behaviour does not exist in ADR-000 — see §5.5. |
+| `.clicknext` | 53 | DROP | — | Renders a UI button switching the human reader to another guide. Profile chaining is `#next` (§4.2). |
+| `.stable` | 42 | DELEGATE | `behavior.stable` — payload `{ mode, npc_entry, pos }` | Hunter pet stabling, both directions. Behaviour does not exist — see §5.5. |
+| `.dailyturnin` | 40 | MERGE | `Op::TurnIn { repeatable: true }` | Repeatable counterpart of `.turnin`. |
+| `.daily` | 35 | MERGE | `Op::Accept { repeatable: true }` | Repeatable counterpart of `.accept`. |
+| `.addquestitem` | 32 | TRANSFORM | `Task.loot_filter += { item, for_quest }` | Declares an item that counts toward a quest the current step is not working on, so it is kept while doing something else. |
+| `.isNotOnQuest` | 28 | TRANSFORM | `Predicate::Not(QuestInLog)` | Negation of `.isOnQuest`. |
+| `.equip` | 27 | KEEP | `Op::Equip { slot, item }` | Slot-then-item; slot numbering corroborated by sibling `.itemStat`. |
+| `.gossip` | 23 | KEEP | `Op::Interact { npc, gossip: Index(n) }` | NPC entry + option index; transport/escort/RP triggers. |
+| `.bankdeposit` | 23 | DELEGATE | `behavior.bank` — payload `{ mode: Deposit, items, npc_entry, pos }` | As `.bankwithdraw`. |
+| `.bronzetube` | 22 | TRANSFORM | `Predicate::ItemCount { id: 4371, cmp: Ge, count: 1 }` | Determined, not guessed: `A-23-30.lua:1229` carries the author comment `--skips the step if you have a bronze tube`, and every instance sits on a vendor step buying one. |
+| `.solo` | 13 | TRANSFORM | `Predicate::Not(InGroup)` | Exact complement of `.group`; the two tag paired alternative step variants. |
+| `.tbcWBF` | 11 | DROP | — | Guide-local filter confined to one `RestedXP TBC Preparation` guide, selecting Wrath-of-the-Blue-Flight turn-in staging steps. Semantics UNDETERMINED (§9); the whole preparation guide group is out of scope for a 1–70 leveling profile. |
+| `.gossipoption` | 7 | MERGE | `Op::Interact { gossip: OptionId(n) }` | Same action as `.gossip`, addressed by option id instead of index. |
+| `.blastedLands` | 7 | DROP | — | Guide-local filter on the optional Blasted Lands stat-buff farming apparatus. Semantics UNDETERMINED (§9); the gated content is an optional detour, not the leveling path. |
+| `.vehicle` | 2 | KEEP | `Op::EnterVehicle` | Rare but a genuine distinct action (Fel Reaver console, quest 10612). Kept because it cannot be expressed by `.use` or `.interact`. |
+| `.setturninhs` | 2 | DROP | — | Addon planner state marker inside the TBC pre-launch preparation guides. No world action. |
+| `.showtotalxp` | 2 | DROP | — | Injects a computed XP number into the addon's guide window text. |
+| `.isQuestNotComplete` | 1 | TRANSFORM | `Predicate::Not(QuestComplete)` | Negation; one instance, half of an explicit complementary pair. |
+| `.turninmultiple` | 1 | MERGE | `Op::TurnIn { any_of: [..] }` | The Aldor/Scryer allegiance choice — turn in whichever one was taken. |
+| `.flygoto` | 1 | KEEP | `Op::Travel { mode: Air }` | Airborne counterpart of `.groundgoto`. Kept for symmetry; one instance. |
+| `.setquestdb` | 1 | DROP | — | A 2,546-field inline Lua table literal backing the addon's TBC turn-in planner. Not comma-tokenisable, not a bot instruction. |
+| `.show25quests` | 1 | DROP | — | Renders a clickable "see the 25 best quests" UI element. |
+| `.setturninroute` | 1 | DROP | — | Marks its guide as the dynamically generated turn-in route. Addon planner internal. |
+
+**Commands: 74/74 present.**
+
+## 4.2 Directives (49)
+
+| Source token | Uses | Verdict | Maps to | Justification |
+|---|---|---|---|---|
+| `#completewith` | 5,469 | TRANSFORM | `Task.completion = CompletionSource::LinkedTo(TaskId)` | Completion authority delegated to another task. `next` (2,681) resolves to the successor; 2,788 name one of 1,246 labels. Compiler resolves all to `TaskId`. |
+| `#optional` | 3,067 | TRANSFORM | `Task.blocking = false` | Non-mandatory: failure or skip does not stall the profile. |
+| `#label` | 2,581 | TRANSFORM | Compiler-side symbol table ⇒ `TaskId` | Link target for `#completewith`/`#requires`. Names do not survive into the artifact. |
+| `#loop` | 1,661 | TRANSFORM | `Route.kind = RouteKind::Circuit` | Patrol circuit: cycle the waypoints while working the objective, rather than walking once. |
+| `#xprate` | 735 | DROP | — | Filters guides by server XP-rate multiplier so RestedXP can publish one pack for 1× and boosted realms. Realm economics, not bot behaviour; the archetype selects the right guide set at compile time. |
+| `#requires` | 349 | TRANSFORM | `Task.deps: Vec<TaskId>` | Dependency edge. Plural in the schema — see P1 and §5.9. |
+| `#sticky` | 311 | TRANSFORM | `Task.lifetime = Lifetime::Background { channels, band }` | Concurrent task holding a channel subset. Payload analysis (§2.4) shows it wants `MOVEMENT`. |
+| `#name` | 278 | KEEP | `GuideMeta.name` | Unique link target within a `#group`, resolved by `#next`/`#include`. |
+| `#tbc` | 277 | TRANSFORM | Archetype filter `expansion` | Client-version whitelist; resolved at compile time. |
+| `#group` | 277 | KEEP | `GuideMeta.group` | Catalogue bucket and the namespace in which `#name` is unique. |
+| `#subgroup` | 272 | KEEP | `GuideMeta.subgroup` | Level band / themed section. |
+| `#version` | 265 | KEEP | `GuideMeta.source_version` | Guide-pack revision; feeds `content_hash` provenance (§5.4). |
+| `#aldor` | 239 | TRANSFORM | Archetype filter `allegiance: Aldor` | Shattrath allegiance branch; irreversible in-game, so compile-time. |
+| `#questguide` | 228 | TRANSFORM | Archetype filter `mode: QuestGuide` | Selects do-the-quests mode over the pure speed route. |
+| `#scryer` | 209 | TRANSFORM | Archetype filter `allegiance: Scryer` | Mirror of `#aldor`. |
+| `#ah` | 178 | TRANSFORM | Archetype filter `self_found: false` | Auction-house-permitted variant. |
+| `#phase` | 174 | TRANSFORM | Archetype filter `content_phase` | Server content-release phase, e.g. `4-6`. |
+| `#next` | 156 | TRANSFORM | `GuideMeta.next: Vec<GuideRef>` | Guide chaining; `;`-separated alternatives. Becomes the profile-chain edge. |
+| `#wotlk` | 129 | TRANSFORM | Archetype filter `expansion` | As `#tbc`. |
+| `#classic` | 125 | TRANSFORM | Archetype filter `expansion` | As `#tbc`. |
+| `#include` | 107 | TRANSFORM | Compile-time splice | Inlines another guide by `#name`, optionally `@start-end` label range. Fully resolved; no runtime construct. |
+| `#softcore` | 91 | TRANSFORM | Archetype filter `hardcore: false` | Death-is-cheap variant of an objective. |
+| `#displayname` | 71 | DROP | — | Human-facing label overriding `#name` in the addon's guide list. Pure UI chrome. |
+| `#hardcore` | 59 | TRANSFORM | Archetype filter `hardcore: true` | Permadeath variant, with extra safety/grouping requirements. |
+| `#ssf` | 58 | TRANSFORM | Archetype filter `self_found: true` | No-auction-house twin of `#ah`. |
+| `#title` | 56 | DROP | — | Human-facing chapter title, distinct from `#name`. UI only. |
+| `#chapter` | 50 | DROP | — | Marks a guide as a leaf in a parent's `#chapters` navigator. UI tree structure. |
+| `#level` | 22 | TRANSFORM | `Predicate::LevelAtLeast` | Every instance is `#level 70` on a `step << skip` step. Kept as a predicate because level changes during play. |
+| `#defaultfor` | 17 | DROP | — | Declares which character the guide is auto-selected for in the addon's picker. Sentinel selects by archetype at compile time. |
+| `#chapters` | 17 | DROP | — | Ordered list of sibling chapter guides for the UI navigator. |
+| `#noflyable` | 14 | TRANSFORM | Archetype filter `can_fly: false` | Selects the ground-route variant. |
+| `#internal` | 10 | DROP | — | Marks a guide as a non-selectable template that exists only to be `#include`d. Resolved and consumed at compile time. |
+| `#tip` | 9 | DROP | — | Marks a step as purely informational; every instance contains only `#tip` plus a `#completewith`. |
+| `#icon` | 6 | DROP | — | Overrides the step's displayed icon with an inline WoW texture escape. |
+| `#hidewindow` | 6 | DROP | — | Suppresses the addon's step-tracking frame for informational guides. |
+| `#hardcoreserver` | 4 | TRANSFORM | Archetype filter `realm: Hardcore` | Realm-type variant (dying is unacceptable ⇒ different route). |
+| `#flyable` | 3 | TRANSFORM | Archetype filter `can_fly: true` | Positive half of the `#noflyable` pair. |
+| `#OnClick` | 3 | DROP | — | Binds a named addon handler (`turninconfig`, `noop`) to the guide-list entry. Addon UI behaviour. |
+| `#season` | 2 | TRANSFORM | Archetype filter `season` | Seasonal realm/ruleset gate. Both instances `#season 0`; low confidence (§9). |
+| `#softcoreserver` | 2 | TRANSFORM | Archetype filter `realm: Softcore` | Counterpart of `#hardcoreserver`. |
+| `#qremove` | 2 | TRANSFORM | `Op::UntrackQuest { quest }` | Drops a quest from guide tracking where the route never turns it in. Distinct from `.abandon` (no in-game effect). |
+| `#compltewith` | 2 | MERGE | `#completewith` | Author typo (transposed letters). Normalised at ingest with a diagnostic (§5.10). |
+| `#completewithTBTurnins` | 1 | MERGE | `#completewith TBTurnins` | Author typo — a **missing space**, not a misspelling. Also the source of the 49-vs-48 count discrepancy (§2.2). |
+| `#lable` | 1 | MERGE | `#label` | Author typo (transposed `le`/`el`). |
+| `#ignorecorpse` | 1 | TRANSFORM | `Task.suppress_behaviors: [corpse]` | Suppresses corpse-recovery on a step that deliberately dies inside an instance to corpse-run elsewhere. Low confidence (§9), but it is the only lever that makes deliberate death work against the safety net (§8). |
+| `#noflyasble` | 1 | MERGE | `#noflyable` | Author typo (stray `s`). |
+| `#completewity` | 1 | MERGE | `#completewith` | Author typo (transposed final letters). |
+| `#subweight` | 1 | DROP | — | Signed integer controlling guide-list ordering. UI sort key. |
+| `#requries` | 1 | MERGE | `#requires` | Author typo (transposed `ri`/`ir`). |
+
+**Directives: 49/49 present.**
+
+## 4.3 Coverage arithmetic
+
+Computed programmatically over the derived counts, not estimated.
+
+**Commands — 74 tokens, 115,021 instances**
+
+| Verdict | Tokens | Instances | Share |
+|---|---|---|---|
+| KEEP | 13 | 56,530 | 49.15% |
+| MERGE | 8 | 14,131 | 12.29% |
+| TRANSFORM | 31 | 39,228 | 34.11% |
+| DELEGATE | 11 | 4,210 | 3.66% |
+| DROP | 11 | 922 | 0.80% |
+
+Retained = 115,021 − 922 = **114,099 / 115,021 = 99.20%**
+
+**Directives — 49 tokens, 17,598 instances**
+
+| Verdict | Tokens | Instances | Share |
+|---|---|---|---|
+| KEEP | 4 | 1,092 | 6.21% |
+| MERGE | 6 | 7 | 0.04% |
+| TRANSFORM | 27 | 15,518 | 88.18% |
+| DROP | 12 | 981 | 5.57% |
+
+Retained = 17,598 − 981 = **16,617 / 17,598 = 94.43%**
+
+**Combined = 130,716 / 132,619 = 98.57% of all token instances retained.**
+
+The dropped 0.80% of commands is dominated by `.line` (485, map cartography) and `.disablecheckbox`
+(194, a UI checkbox). The dropped 5.57% of directives is dominated by `#xprate` (735, realm XP-rate
+publishing) and a long tail of guide-list UI chrome. **No dropped token carries world state or a bot
+action.**
+
+----------
+
+# 5. D5 — Architecture alignment
+
+*Core deliverable.* One subsection per interface contract.
+
+## 5.1 C1 — Conditions compile to `Predicate`
+
+**Contract.** `Sentinel.objectives:satisfied(predicate, snapshot)` is the only completion authority.
+No second condition system.
+
+**How the schema satisfies it.** Every one of the 31 `TRANSFORM`-to-predicate commands lowers into one
+`Predicate` tree. There is exactly one condition type in the artifact. `Task` has three predicate
+slots — `applies_when`, `complete_when`, `abort_when` — and all three hold the same type evaluated by
+the same function. Grep the Rust structs in §7: there is no other boolean-valued construct.
+
+### 5.1.1 Proposed `Predicate` additions
+
+ADR-000 §7.2 ships `And`, `Or`, `Not`, `QuestComplete`, `QuestObjective`, `HasItem`, `AtLocation`,
+`LevelAtLeast`, `AuraPresent`, `Flag`. That set cannot express this corpus. Minimal additions:
+
+| New variant | Corpus command | Uses | Justification |
+|---|---|---|---|
+| `QuestInLog { id }` | `.isOnQuest` | 3,139 | "On quest" is neither complete nor turned in. Maps to `core.quests.is_on_quest`. Third distinct quest state. |
+| `QuestTurnedIn { id }` | `.isQuestTurnedIn` | 1,488 | Distinct API (`is_quest_flagged_completed`) and distinct meaning from `QuestComplete`. Without it, a resumed run cannot tell "handed in" from "never taken". |
+| `QuestAvailable { id }` | `.isQuestAvailable` | 930 | Obtainable: prerequisites, level and rep satisfied, not already done. Requires compile-time prerequisite resolution from `quest_template`. |
+| `ItemCount { id, cmp, count }` | `.itemcount`, `.collect`, `.bronzetube` | 4,732 | **Supersedes `HasItem`**, which has no operator. The corpus needs `<1` and `>0` (`A-1-11-Dwarf-Gnome.lua:631` `.itemcount 16321,<1`). |
+| `MoneyCmp { cmp, copper }` | `.money` | 259 | No money variant exists. `.money <0.0480` gates purchase steps. Readable via `core.inventory.get_gold`. |
+| `SkillCmp { line, cmp, value }` | `.skill` | 507 | No skill variant. Explicit operator: `.skill cooking,<50,1`. |
+| `ReputationCmp { faction, standing, cmp, value }` | `.reputation` | 298 | No reputation variant — and **not evaluable client-side** (§5.8). Present so the compiler can emit it and the runtime can fail closed rather than fail open. |
+| `XpAtLeast { level, xp_offset }` | `.xp` | 2,133 | No XP variant. Both corpus forms (`4-420`, `>5,1`) fold into level + signed offset. `get_xp`/`get_max_xp`. |
+| `CooldownCmp { kind, id, cmp, secs }` | `.cooldown` | 549 | No cooldown variant. Hearthstone gating depends on it. |
+| `InArea { area_id, kind, }` | `.zone`, `.subzone`, `.zoneskip`, `.subzoneskip` | 4,906 | `AtLocation` is a point plus radius; zone/sub-area membership is a set test, not a distance test. Largest single addition by use count. |
+| `HearthBoundTo { area_id }` | `.bindlocation` | 557 | Not expressible otherwise. |
+| `ItemStatCmp { slot, stat, cmp, value }` | `.itemStat` | 327 | Gear-upgrade gate on the currently equipped item. |
+| `InGroup { cmp, size }` | `.group`, `.solo` | 203 | Party-size test; drives both gating and combat policy. |
+| `SpellKnown { spell }` | `.train` (2-arg form) | 403 | The condition half of `.train`; distinct from `AuraPresent`. |
+| `LevelAtMost { level }` | `.maxlevel` | 171 | `LevelAtLeast` cannot express a ceiling without `Not`, and `Not(LevelAtLeast(n))` is off by one. |
+
+Plus one shared enum, not a variant: `Cmp { Lt, Le, Eq, Ge, Gt }`. Adding a comparison *operator* once
+is what keeps this at 15 additions instead of 40 — the RXPGuides parser re-invents `<`/threshold
+parsing in every one of ~120 handlers (§3.1), which is exactly the cost of not doing this.
+
+**Bend:** I am replacing `HasItem { id, count }` with `ItemCount { id, cmp, count }` rather than adding
+alongside it. `HasItem` is the `cmp: Ge` case. Keeping both would be a second way to say one thing.
+
+### 5.1.2 Tri-state — the correctness requirement
+
+`satisfied()` returns `Truth { True, False, Unknown }`, not `bool`.
+
+This is not defensive design; the API forces it. Three documented facts:
+
+1. **The quest log has no readiness contract.** `docs/SylvannasAPI/dev/api/events.md:47–95` registers no
+   `QUEST_LOG_UPDATE`, no `QUEST_ACCEPTED`, no `PLAYER_ENTERING_WORLD`. All quest state must be
+   **polled**, and there is no documented signal for "the log is populated". An empty read after a
+   loading screen is indistinguishable from "no quests".
+2. **`is_complete` is genuinely tri-state and the two APIs disagree.**
+   `core.game_ui.get_quest_log_info` documents it as an integer `1 / -1 / 0` where `-1` is *failed*;
+   `core.quests.get_quest_log_title` names the same field and its own example treats it as a boolean
+   (`quests.md:171`). In Lua both `0` and `-1` are truthy, **so the documented example reports a failed
+   quest as COMPLETE**. Standardise on `get_quest_log_info` and compare `== 1`.
+3. **The profession API returns safe defaults indistinguishable from real zeroes.**
+   `professions.md:18`: on clients where the underlying global is absent the call returns
+   "`0`, `false`, `nil`, or an empty table instead of erroring". A `skill >= 125` gate silently
+   evaluates false on a client that cannot answer.
+
+**Policy, declared per task.** `Task.unknown_policy: UnknownPolicy`:
+
+| Policy | Behaviour on `Unknown` | Compiler default |
+|---|---|---|
+| `Block` | Task does not start; the runner reports `blocked_reason`. Nothing advances. | `complete_when` on any task with a `DELEGATE` or irreversible op (turn-in, abandon, destroy, deathskip) |
+| `Defer` | Task yields this tick, retries next; after `unknown_budget` ticks escalates to `Block`. | Default for `complete_when` |
+| `Treat(False)` | Proceed as if not satisfied — re-do the work. Safe only when the work is idempotent. | `applies_when` on pure-travel tasks |
+| `Treat(True)` | Proceed as if satisfied — skip the work. **Never a default.** Requires an explicit compiler opt-in and emits a diagnostic. | never |
+
+The failure mode ADR-000 §7.1 exists to kill is `Unknown → false → "not complete" → redo the step`.
+Making `Treat(False)` opt-in per task, and never the default for `complete_when`, is what prevents the
+ledger reintroducing it.
+
+## 5.2 C2 — Static gating resolves at compile time
+
+**Contract.** Static gates must not reach `Sentinel.objectives`.
+
+**Decision: one artifact per character archetype, gates fully resolved away.**
+
+An `Archetype` is `(class, race, faction, expansion, allegiance, hardcore, self_found, can_fly,
+content_phase, mode)`. The compiler evaluates every `<<` expression, every `#aldor`/`#scryer`,
+`#hardcore`/`#softcore`, `#ah`/`#ssf`, `#flyable`/`#noflyable`, `#phase`, `#tbc`/`#wotlk`/`#classic`
+and `.dungeon` against a concrete archetype and emits only the surviving tasks and ops.
+
+**The argument that settles it is not cache economics — it is capability.** Player faction is **not
+readable from the Sylvanas API**. `game_object:get_faction_id()` returns a *unit faction template*
+(who is hostile to whom), not Alliance/Horde player side; the only faction-side call,
+`core.game_ui.get_battlefield_arena_faction()`, works in arena/battleground context only. There is also
+**no race enum and no `race_id_to_name` table** anywhere in `enums.md` — `get_race_id()` returns a bare
+number with no documented value space. A residual-gate design would require the runtime to answer
+"am I Alliance?" and it cannot. Compile-time resolution is therefore forced.
+
+Weighed against the alternative:
+
+| | Per-archetype artifacts (chosen) | One artifact with residual gates |
+|---|---|---|
+| Runtime cost | Zero — gates do not exist | Per-tick gate evaluation over 23,894 tasks |
+| Faction/race readability | Not needed | **Impossible** — blocks the design |
+| Second condition system | None | Required, violating C1 |
+| Artifact count | One per archetype actually played | One |
+| Reroll cost | Offline recompile (seconds) | None |
+| Cache-ability | Keyed by `(archetype, content_hash)`; immutable, shareable | Single blob |
+
+Artifact count is the real cost, and it is smaller than it looks: profiles are generated on demand for
+the archetype being played, not exhaustively for all valid TBC `(class, race, faction)` combinations. A
+reroll is a recompile of an offline Rust binary.
+
+**Bend:** `#level` (22 uses) is *not* resolved at compile time despite looking static, because player
+level changes during play. It becomes `Predicate::LevelAtLeast`. Same for `.maxlevel`. This is the RXP
+`applies()` cache bug (§3.1) avoided by construction.
+
+## 5.3 C3 — Concurrency maps to channels and leases
+
+**Contract.** Sticky steps are concurrent tasks holding a channel subset. No generic background flag.
+
+**The schema separates two axes that the intuitive design conflates.** §2.4 showed `#sticky` and
+`#completewith` are disjoint as authored; §3.1 showed `#completewith` implies sticky at runtime. Both
+facts are captured by making them independent fields:
+
+```rust
+pub struct Task {
+    pub lifetime:   Lifetime,          // from #sticky  — how long do I live, what do I hold
+    pub completion: CompletionSource,  // from #completewith — who decides I am done
+    // ...
+}
+```
+
+- `Lifetime::Exclusive` — the foreground task. Acquires its ops' channels as needed.
+- `Lifetime::Background { channels, band, terminate_on }` — a concurrent task holding
+  `channels` at `band` until `terminate_on`.
+- `CompletionSource::OwnPredicate` — `complete_when` decides.
+- `CompletionSource::LinkedTo(TaskId)` — the named task's completion completes this one.
+
+A `#completewith`-only task therefore becomes `Background` with an **empty or minimal channel set** and
+`LinkedTo` completion — it rides along without contending. A `#sticky`-only task becomes `Background`
+with `channels: [MOVEMENT]` and `OwnPredicate`. A step carrying both (the 37) gets both.
+
+**Channels, from the payload evidence.** Sticky steps are 416 `.waypoint` + 296 `.goto` + 136
+`.complete` + 89 `.mob`: movement plus a kill objective. So the compiler assigns:
+
+| Task shape | Channels claimed |
+|---|---|
+| Sticky patrol / grind loop | `MOVEMENT` (combat delegates `CASTING`+`TARGETING` separately per C6) |
+| Foreground turn-in / accept | `INTERACTION`, `FACING`, transiently `MOVEMENT` to approach |
+| Vendor / bank / trainer delegation | `INTERACTION` + `ITEMS` |
+| Travel-only fused (`#completewith next`) | none — display/marker only |
+
+This is exactly the case ADR-000 §4.1 calls out: the sticky patrol holds `MOVEMENT` while a foreground
+turn-in holds `INTERACTION`, and they coexist.
+
+**Lifecycle, fully specified:**
+
+- **Start.** A `Background` task starts when its `applies_when` first evaluates `True` *and* the
+  foreground cursor reaches or passes its source position. It acquires its channels at **band 30–49
+  (Goal)**, per ADR-000 §4.2, offset by task order so two sticky tasks cannot deadlock.
+- **Suspend vs terminate.** `terminate_on` is a `Predicate` — normally the linked task's completion or
+  its own `complete_when`. *Suspension* is involuntary: losing a lease to a higher band. *Termination*
+  is voluntary and permanent: `terminate_on` becomes `True`, or the profile cursor passes
+  `terminate_at_task`.
+- **Orphaned `#completewith` target.** If the target task is skipped or never reached, the linking task
+  would hang forever — this is the exact defect RXPGuides ships (`guide.labels[…]` returns nil and the
+  edge silently never fires, §3.1). **The compiler resolves every link to a concrete `TaskId` and
+  emits a hard diagnostic for any unresolved label**, so an unresolvable link cannot reach the artifact.
+  At runtime, a link whose target is skipped inherits the target's terminal state: skipped target ⇒
+  linking task also completes (it was riding along on work that is no longer needed).
+- **Lease revocation mid-loop.** Combat preempts at band 50–69. The task receives `on_revoke`, writes
+  its `ResumeCursor`, and parks. When it re-acquires, it resumes from the cursor.
+
+**Resume granularity — the gap ADR-000 leaves open.** ADR-000 asserts resume-after-preemption but never
+defines the unit. Resolved here, explicitly, in the struct:
+
+```rust
+pub struct ResumeCursor {
+    pub task:     TaskId,
+    pub op_index: u16,   // which op within the task's ordered `ops`
+    pub waypoint: u16,   // which waypoint within that op's route, if it is a Travel op
+    pub loop_iter: u32,  // circuit iteration, for #loop tasks
+}
+```
+
+Three levels because the corpus needs three. A 15-waypoint patrol circuit
+(`A-11-23.lua:218–231`) preempted by combat must not restart the circuit — that is a
+minutes-long regression per interruption. `op_index` alone is insufficient because one `Travel` op
+carries the whole route.
+
+## 5.4 C4 — The artifact is fail-closed
+
+**Contract.** `schema_hash`, `tags_used`, adjacently-tagged enums, refuse-don't-degrade.
+
+Present on the profile root (§7.1): `schema_hash: [u8; 32]`, `tags_used: Vec<String>`. Every enum
+crossing the boundary carries `#[serde(tag = "type", content = "payload")]`. This repository has
+already been bitten by the alternative — `RuntimeCondition` was externally tagged and every non-unit
+condition fell through to fail-open `true`, so gating silently stopped gating.
+
+### 5.4.1 The content-integrity gap
+
+`schema_hash` guards the *tag set*. Nothing guards the *resolved IDs*, and this project resolves a lot
+of them: `tbcmangos.sqlite` (298 MB, 197 tables) supplies `creature_template` (18,799 rows),
+`item_template` (30,396), `gameobject_template` (14,216), `quest_template` (6,599). If that snapshot
+drifts from what the server actually runs, the compiler emits a syntactically perfect profile that
+walks to the wrong NPC forever.
+
+**Proposal — three fields, not one:**
+
+```rust
+pub struct ContentIntegrity {
+    pub content_hash: [u8; 32],   // BLAKE3 over every resolved (kind, entry_id, expect_name) triple, sorted
+    pub world_source: String,     // "tbcmangos.sqlite"
+    pub world_build:  String,     // snapshot identity: file digest + row counts of the tables consulted
+}
+```
+
+**What the kernel does on mismatch — and the honest limit.** The kernel **cannot** independently
+compute the server's content hash; there is no documented API exposing world-database identity. So
+`content_hash` is *not* a server-truth check. It is two things it can actually be:
+
+1. **A coherence check across artifacts.** Profile, its sidecar index, and its `.save.json` must all
+   carry the same `content_hash`. Mismatch ⇒ **refuse**, because a save file resumed against a
+   differently-resolved profile will step to the wrong task index. This is a real, checkable failure.
+2. **A provenance record** for the operator and for bug reports.
+
+To get actual server-truth verification, the schema carries `expect_name` alongside every resolved
+entry id, and the runtime does a **first-touch probe**: the first time a task interacts with NPC
+entry *N*, it compares the observed unit name against `expect_name`. Mismatch ⇒ fail that task with a
+named reason and quarantine the profile. Rationale for failing rather than warning: a wrong entry id is
+not recoverable by retrying, and the bot would otherwise loop indefinitely at the wrong coordinates.
+
+This costs a few bytes per resolved reference and is the only mechanism that can actually catch drift.
+
+## 5.5 C5 — Delegate to existing behaviours
+
+**Contract.** Prefer delegation over reimplementation.
+
+Eleven commands (4,210 instances) become `Op::Delegate { behavior, payload }`:
+
+| Command | Uses | Behaviour | Payload |
+|---|---|---|---|
+| `.vendor` | 385 | `behavior.vendor` | `{ npc_entry?, pos, mode: Sell\|Buy, item_filter?, gold_floor? }` |
+| `.train` (1-arg) | 1,250 | `behavior.trainer` † | `{ npc_entry, pos, spell_id }` |
+| `.trainer` | 469 | `behavior.trainer` † | `{ npc_entry, pos, mode: TrainAll }` |
+| `.fly` | 741 | `behavior.flightpath` † | `{ npc_entry, pos, dest_node }` |
+| `.fp` | 199 | `behavior.flightpath` † | `{ npc_entry, pos, mode: Discover }` |
+| `.hs` | 382 | `behavior.hearth` † | `{ mode: Use }` |
+| `.home` | 186 | `behavior.hearth` † | `{ mode: Bind, npc_entry, pos }` |
+| `.bankwithdraw` | 53 | `behavior.bank` † | `{ npc_entry, pos, mode: Withdraw, items }` |
+| `.bankdeposit` | 23 | `behavior.bank` † | `{ npc_entry, pos, mode: Deposit, items }` |
+| `.stable` | 42 | `behavior.stable` † | `{ npc_entry, pos, mode }` |
+| `.deathskip` | 77 | `behavior.corpse` | `{ intent: DeliberateDeath, resurrect_at }` |
+
+**Behaviours marked † do not exist in ADR-000 §3.2.** That section lists corpse recovery, loot,
+vendor/repair/mail, rest/eat/drink, anti-stuck, mount handling, and blacklists. It does **not** list
+trainer, flight path, hearth, bank, or stable. Those are five new built-in behaviour plugins — listed
+as required kernel changes in §5.9.
+
+`.deathskip` delegates to the *existing* corpse behaviour but needs a capability it does not currently
+expose: an `intent` distinguishing deliberate death from accidental death (§8).
+
+`behavior.vendor` also needs a `mode: Buy` with an item list; ADR-000 describes vendor/repair/mail as a
+selling/maintenance behaviour, and 43 of the 385 `.vendor` instances name a vendor entry id to **buy**
+from.
+
+## 5.6 C6 — Combat is a service invoked with a policy
+
+**Contract.** The Quest Activity delegates `CASTING`+`TARGETING` with a policy.
+
+**Scope decision: a profile-level default with per-task override.** Justification from the corpus —
+`.mob` (7,456) is per-step and names a *step-specific* whitelist, so policy cannot be profile-only;
+but 16,438 of 23,894 tasks carry no combat token at all, so per-task-only would mean emitting a
+redundant policy on two-thirds of tasks. Default plus override is the smaller artifact and matches the
+authoring reality.
+
+```rust
+pub struct CombatPolicy {
+    pub stance:       CombatStance,        // Avoid | Defensive | Objective | Aggressive
+    pub targets:      Vec<CreatureEntry>,  // from .mob — the whitelist
+    pub watch_units:  Vec<CreatureEntry>,  // from .unitscan — roamers/rares to notice
+    pub leash_yards:  u16,
+    pub allow_adds:   bool,
+    pub expect_group: GroupExpectation,    // Solo | Party(u8) | Dungeon
+}
+```
+
+Mapping from the corpus:
+
+| Corpus signal | Uses | Policy |
+|---|---|---|
+| No combat token | — | profile default, `stance: Defensive`, empty whitelist |
+| `.mob` present | 7,456 | `stance: Objective`, `targets` = whitelist, `allow_adds: false` |
+| `#loop` + `.mob` + `.complete` | 1,661 | `stance: Aggressive` (a grind circuit *wants* pulls), leash from route radius |
+| `.solo` | 13 | `expect_group: Solo` |
+| `.group [n]` | 190 | `expect_group: Party(n)` |
+| `.dungeon` | 1,351 | `expect_group: Dungeon` — resolved at compile time into a separate archetype variant |
+
+This is the C6 distinction made concrete: `Objective` kills only what blocks the objective and refuses
+adds; `Aggressive` on a `#loop` grind circuit pulls proactively. Same schema field, opposite behaviour,
+selected from evidence in the source.
+
+## 5.7 C7 — Navigation is async; engine owns pathfinding
+
+**Contract.** `request_path` returns a handle; decide whether the artifact carries destinations or
+baked routes.
+
+**Decision: carry both, discriminated by `RouteKind`, because the corpus contains both and they are
+not interchangeable.**
+
+*The case for destinations only.* 16,231 `.goto` lines are 3-arg — a bare `zone,x,y` with no radius and
+no successor. For those, RXP's coordinate is just "the place the NPC stands", and the engine's navmesh
+will path there better than a 2004-era hand-placed waypoint chain. Carrying redundant intermediate
+points would fight the navmesh, and 553 steps already contain duplicated coordinates (§2.6) that would
+double a naively-imported path.
+
+*The case for baked routes.* Some chains encode intent no navmesh can infer. The decisive witness is
+`A-11-23.lua:215–231`:
+
+```
+.goto 1439,36.051,44.757,0          <- entry point
+.waypoint 1439,36.091,51.501,60,0
+   … 14 waypoints …
+.waypoint 1439,36.051,44.757,60,0   <- returns to the entry point
+```
+
+**The last waypoint is byte-identical to the first `.goto`.** This is a *closed circuit*, and the step
+carries `#loop`. A navmesh asked to path from A to A returns a zero-length path; it cannot know the
+intent is to walk a 15-node loop repeatedly to farm respawns. The route *is* the objective.
+
+Similarly `.groundgoto` (114) exists precisely to override the engine's preferred line — it threads
+mountain paths, caves and stairs where a direct or flying line fails.
+
+**Resolution:**
+
+```rust
+pub enum RouteKind {
+    Destination,                  // single point; engine paths freely  (16,231 3-arg .goto)
+    Corridor,                     // ordered points, engine may smooth between them
+    Circuit { close: bool },      // ordered points, cycled; DO NOT smooth away  (#loop)
+}
+```
+
+The compiler emits `Destination` for isolated `.goto`, `Corridor` for a run of `.goto`/`.waypoint` in a
+non-loop task, and `Circuit` for `#loop` tasks — and deduplicates the 1,252 duplicated coordinate
+triples on the way in.
+
+**Coordinate normalisation.** Both corpus coordinate systems (§2.6) normalise to
+`{ map_id: u32, x: f32, y: f32, z: Option<f32> }` **in world coordinates**, resolved offline. The
+runtime never converts zone-percentage to world space — it has no reliable table for it, and the
+repository already records that Sylvanas zone coordinates are percentage-based with no Z.
+
+`z` is `Option` because the corpus never supplies it; the compiler fills it from the navmesh where it
+can and leaves `None` otherwise, letting the engine ground-snap.
+
+## 5.8 C8 — Raw game types stop at the sensor boundary
+
+**Contract.** No raw Sylvanas representations in the artifact.
+
+The artifact carries Sentinel types only:
+
+| Concept | Artifact form | Why |
+|---|---|---|
+| Class | `Class` enum (`Warrior`, `Paladin`, …) | `get_class()` returns a numeric id; `enums.class_id_to_name` yields **UPPERCASE** (`"WARRIOR"`) while RestedXP class tails are Title-Case. The mismatch is a live trap already recorded in this repo. Resolved at compile time — the artifact never contains a class at all after archetype resolution. |
+| Race | `Race` enum | **There is no race enum and no `race_id_to_name` in `enums.md`.** `get_race_id()` is a bare number with an undocumented value space. The compiler owns the numeric map; the artifact carries none. |
+| Faction | `Faction` enum | Not readable at runtime (§5.2). Compile-time only. |
+| Creature | `CreatureEntry(u32)` + `expect_name: String` | Resolved from `creature_template`; `expect_name` powers the first-touch probe (§5.4.1). |
+| Area | `AreaId(u32)` | Numeric AreaTable id; zone *names* never reach the artifact. |
+| Reaction / power / creature type | not carried | No corpus token requires them. |
+
+Since C2 resolves the archetype away entirely, class/race/faction appear in the artifact **only in the
+header**, as provenance describing which archetype it was compiled for — never as a runtime test.
+
+## 5.9 Kernel changes this design requires
+
+Not "none". Listed explicitly:
+
+| # | Change | ADR-000 § | Why forced |
+|---|---|---|---|
+| K1 | Extend `Predicate` with 15 variants + `Cmp` | §7.2 | The shipped enum cannot express money, reputation, skill, XP, cooldown, area membership, hearth bind, item stats, group size, or any comparison operator. §5.1.1. |
+| K2 | `satisfied()` returns `Truth`, not `bool` | §7.2 | Cold-tier data is genuinely unavailable; `is_complete` is a documented tri-state including *failed*. §5.1.2. |
+| K3 | Five new built-in behaviour plugins: `trainer`, `flightpath`, `hearth`, `bank`, `stable` | §3.2 | 3,322 command instances delegate to behaviours the kernel does not list. §5.5. |
+| K4 | `behavior.vendor` gains `mode: Buy` with an item list | §3.2 | 43 `.vendor` instances name a vendor to buy from, not sell to. |
+| K5 | `behavior.corpse` gains an `intent` distinguishing deliberate from accidental death | §3.2 | `.deathskip` (77) must not fight the band 90–99 safety net. §8. |
+| K6 | Profile root gains `ContentIntegrity` + per-reference `expect_name`; loader gains the first-touch probe | §7.1 | `schema_hash` guards tags, not content. §5.4.1. |
+| K7 | Loader reads via `core.read_data_file_partial` against an offset index rather than one whole-file read | §2 | A single decode is a measured ~306 ms render-thread hitch. §6.2. |
+| K8 | Specify resume granularity as `(task, op_index, waypoint, loop_iter)` | §4.3 | ADR-000 asserts resume-after-preemption without defining the unit. §5.3. |
+
+K1, K2 and K8 are corrections to under-specification. K3–K5 are additive. K6 and K7 are new mechanism.
+
+## 5.10 P2 and P3
+
+**P2 — class-gating granularity.** The boundary is now empirical, not a judgement call. **3,412
+command-level `<<` gates across 172 distinct expressions** prove that gating happens *below* the step.
+So:
+
+- *"Class quest chain to exclude"* = a run of tasks whose **step-level** gate is a single class token,
+  and whose `.requires quest,<id>` set is disjoint from the surrounding tasks. The compiler drops the
+  whole run.
+- *"Inline class-conditional micro-action"* = an **op-level** gate inside a task whose step-level gate
+  is absent or broader. The compiler drops the op and keeps the task.
+
+Does compile-time resolution make the problem disappear? **No — it moves it into the compiler, which is
+the right place.** The compiler must evaluate gates at *two* levels and, having dropped ops, must then
+decide whether the remaining task is still meaningful. A task reduced to zero executable ops is elided
+(this is what the 360 zero-command steps already look like). A task reduced to only a `.goto` becomes a
+pure travel task and is a candidate for fusion with its successor.
+
+**P3 — malformed input.** Six real typos: `#compltewith` (2), `#completewity` (1),
+`#completewithTBTurnins` (1), `#lable` (1), `#noflyasble` (1), `#requries` (1). Plus 67 malformed
+`.goto` lines (a decimal typed with a comma) and one duplicated-argument `.turnin 2948,2948,1`.
+
+**Decision: normalise at ingest with a diagnostic; reject unknown tokens; keep the artifact fail-closed.**
+
+The tension C4 names is real, and it is resolved by putting the two policies at *different stages*:
+
+- **Ingest is permissive-but-loud.** A closed alias table maps each known typo to its intended token
+  and emits a `Diagnostic::Normalised { line, from, to }`. An **unknown** token is a hard error — RXP
+  itself does this (`addon.error("Invalid function call")`, §3.1) and silently skipping is how you get
+  the 60%-coverage failure. Malformed `.goto` arity is a hard error, not a guess: `20.6,60,4` could be
+  `60.4` or `60` with a stray field, and guessing wrong sends the bot to the wrong coordinates.
+- **The artifact is strict.** By the time a profile is emitted, every token is canonical, every label
+  is resolved to a `TaskId`, and `tags_used` lists only registered tags. Nothing malformed survives
+  compilation, so the fail-closed loader has nothing to forgive.
+
+The alias table is closed and versioned: a *new* typo is a compile error and a one-line patch, not a
+silent normalisation. That is the difference between tolerating known damage and tolerating unknown
+damage.
+
+----------
+
+# 6. D6 — Design rationale
+
+## 6.1 Execution / control-flow model
+
+**Chosen: an explicit task graph with a cursor — ordered tasks, plus dependency edges, plus a
+concurrent background set.**
+
+| Alternative | Why not |
+|---|---|
+| **Linear step list with skips** (RXP, Guidelime) | Cannot express non-adjacent dependencies. Guidelime's `[OC]` can only mean "the next step" and it is a documented capability gap (§3.3). The corpus has 1,246 distinct `#completewith` labels and 349 `#requires` edges — non-adjacency is the norm, not an edge case. |
+| **Stateless behaviour tree** (RuneMate, §3.5) | Recovery becomes free, but progress, ETA and blocked-reason become impossible, and the runner cockpit in this repo already ships all three. Also forces re-deriving 23,894 tasks of context every tick. |
+| **Task graph with cursor** (chosen) | Keeps the cursor for progress/ETA/resume; gets non-adjacency from explicit edges; gets concurrency from the background set. Cost: the compiler must topologically validate the graph. |
+
+The borrowed discipline from RuneMate is narrower and worth stating: *preconditions are re-checked
+against live state every tick even though the cursor is persisted*. The cursor says where we are; it
+never asserts what is true. This repository's own recent fix — skipping kill ops gated on a quest the
+player never took — is exactly the bug that arises from trusting a persisted cursor for truth.
+
+## 6.2 Serialization format
+
+**Chosen: JSON as the codec; an offset-indexed record container as the format; lazy reads via
+`core.read_data_file_partial`.**
+
+ADR-000 §2 says "Runtime Profile JSON". **I am keeping JSON** — but the container changes, and that
+distinction is the whole answer.
+
+### 6.2.1 Measurements
+
+No citable public benchmark exists for pure-Lua decoding at this shape and scale, so these are
+**first-party measurements**, method and environment disclosed, not quoted from anywhere.
+
+*Method:* a generated artifact schema-faithful to the real Rust runtime model — 22,000 operations, each
+with a UUID, 2 entry conditions, 1 exit condition and 4–6 guarded actions (≈110,000 actions), including
+nested adjacently-tagged condition ASTs, plus 4,000 NPCs and 6,000 quests. Result: 20,695,404 bytes of
+compact JSON. *Environment:* Intel Core Ultra 7 265K, LuaJIT 2.1, WSL2, JIT on, no render-thread
+contention — **every number below is a floor; in-client will be worse.**
+
+| Configuration | Wire bytes | Decode | Resident Lua heap |
+|---|---|---|---|
+| JSON — the decoder the runtime ships | 19.74 MB | **306 / 323 ms** | 63.9 MB |
+| JSON — `lunajson` (fastest pure-Lua) | 19.74 MB | **303 / 327 ms** | 64.7 MB |
+| MessagePack — `lua-MessagePack` 0.5.4 | 15.34 MB | **332 / 407 ms** | 67.0 MB |
+| Table construction only, **zero parsing** | — | **53.1 ms** | 64.5 MB |
+| Offset-indexed container — decode **one** record | 19.56 MB | **7.3 µs** | 3.2 KB |
+| Parse a 22,000-entry `u32` index | 176 KB | **0.26 ms** | ~0.35 MB |
+
+### 6.2.2 What the measurements force
+
+**A better codec buys nothing.** MessagePack shrank the wire 22% and decoded *slower*. `lunajson`, a
+heavily optimised decoder, matched a hand-written one within noise. Two independent swaps, zero
+improvement — both are bottlenecked on something neither controls.
+
+**That something is LuaJIT table allocation, floor ~53 ms.** Building the identical object graph from
+compile-time constants with the parser removed entirely still costs 53.1 ms and 64.5 MB. So a
+hypothetical perfect zero-parse decoder that still materialises Lua tables costs **3+ dropped frames at
+60 Hz**. No format on the evaluation list gets under one frame.
+
+**Not materialising costs 7.3 µs.** That is 0.04% of a 16.7 ms frame, at 3.2 KB resident per live
+record. A 64-record sliding window is ~205 KB instead of 64 MB.
+
+The gap between 306,000 µs and 7.3 µs is an architecture problem. Choosing a different codec does not
+touch it.
+
+### 6.2.3 The capability that makes it possible
+
+`docs/SylvannasAPI/dev/api/file-io.md` documents `core.get_data_file_size(filename)` and
+`core.read_data_file_partial(filename, offset, size)` — the latter explicitly binary-safe and
+offset-addressed. This is **random access to the artifact** with no C module, no FFI, and no host
+decoder. The premise that file reads must return one whole string is incomplete, and the incompleteness
+is load-bearing.
+
+### 6.2.4 Format-by-format
+
+| Format | Pure-Lua decoder | Lazy access | Verdict |
+|---|---|---|---|
+| **JSON** | Yes, already shipped | Not native, but trivially containerised | **Chosen.** Greppable, diffable in git, readable in a bug report, mature serde, adjacent tagging is native. |
+| MessagePack | Yes (`lua-MessagePack`) | No length-prefixed skip in the pure-Lua decoder | Rejected — measured *slower*, and loses diffability for a 22% size win that does not matter. |
+| Protobuf | Only via codegen or a heavy pure-Lua runtime | Requires full parse | Rejected — schema-evolution story is good, but adjacently-tagged enums map to `oneof` awkwardly and the Lua runtime cost is unjustified. |
+| FlatBuffers | Pure-Lua reader exists but is verbose | **Yes, genuinely zero-copy** | Rejected reluctantly. Real zero-copy, but every field access crosses a vtable indirection in interpreted Lua, the artifact stops being human-readable, and it needs an IDL alongside the Rust types — two sources of truth. The offset-indexed JSON container gets the same laziness at 7.3 µs/record without that cost. |
+| RON | No usable pure-Lua parser | No | Rejected — Rust-side only, no consumer. |
+| bincode | No pure-Lua decoder; not self-describing | No | Rejected — a schema change silently misparses. Exactly the fail-open class this design exists to eliminate. |
+| rkyv | No pure-Lua access; relies on Rust archived types and alignment | Yes, in Rust | Rejected — the consumer is Lua. rkyv's zero-copy is unreachable without FFI into a Rust reader, which the sandbox does not offer. |
+
+### 6.2.5 Container layout and chunked warmup
+
+```
+[ magic "SNTL" | u16 version | u32 task_count ]
+[ header: compact-JSON profile header               ]
+[ index:  task_count × (u32 offset, u32 length)     ]   ~176 KB at 22k tasks, 0.26 ms to parse
+[ body:   task_count × compact-JSON task record     ]   read on demand
+```
+
+The kernel reads magic+header+index at load (measured ~0.26 ms plus a small header decode) and then
+reads individual task records through `read_data_file_partial` as the cursor approaches them. Measured
+prefetch, if warming ahead of the cursor is wanted:
+
+| Slice | Worst slice | Mean slice | Wall time to prefetch all @1 slice/frame, 60 Hz |
+|---|---|---|---|
+| 32 tasks | 2.19 ms | 0.31 ms | 11.5 s |
+| 64 tasks | 4.97 ms | 0.63 ms | 5.7 s |
+
+A 32-task slice stays inside a frame budget on this hardware with room to spare. **Judgement call:**
+prefetch is optional — a 7.3 µs on-demand read is cheap enough that lazy-only is the safer default, and
+prefetch should be added only if measurement in-client shows read latency mattering.
+
+## 6.3 Condition lowering
+
+**Chosen: lower to a typed `Predicate` AST at compile time.**
+
+| Alternative | Why not |
+|---|---|
+| Embedded expression strings (Honorbuddy, §3.2) | Unlimited expressiveness, zero static validation. A typo is a runtime exception mid-run; profiles broke wholesale on client patches. The single clearest cautionary case in the prior art. |
+| Per-command imperative handlers (RXPGuides, §3.1) | ~120 handlers each re-inventing `<`/threshold parsing. Adding one operator means touching all of them, and completion truth ends up scattered — a problem this repository has already logged against itself. |
+| Typed struct fields per condition kind (Guidelime, §3.3) | Genuinely good and independently validates the approach, but flat fields cannot nest, and the corpus needs `Or` over 11-element quest lists and `Not` over quest states. |
+| **Typed AST** (chosen) | Nests, validates offline, evaluates in one function, serialises adjacently. Cost: 15 new variants. |
+
+## 6.4 Spatial representation
+
+Covered in §5.7. The alternative — destinations only, letting the navmesh do everything — is rejected
+on the single decisive counter-example of a closed patrol circuit whose first and last points are
+identical. The cost of carrying routes is artifact size, mitigated by the waypoint pool (§7.1) that
+deduplicates shared points across tasks.
+
+## 6.5 Versioning
+
+Three independent version axes, because they change for different reasons and at different rates:
+
+| Field | Covers | Mismatch |
+|---|---|---|
+| `schema_version` + `schema_hash` | The tag set and struct shape | **Refuse** — the kernel cannot interpret the bytes |
+| `content_hash` + `world_build` | Resolved entry ids | **Refuse** across artifacts (§5.4.1); first-touch probe for server drift |
+| `source_version` (from `#version`) | The upstream guide pack revision | **Warn** — informational; a newer guide pack is not an error, it is a reason to recompile |
+
+Collapsing these into one number is the mistake: a guide-pack update should not invalidate a
+structurally identical artifact, and a struct change must not be maskable by a content refresh.
+
+## 6.6 Should authoring and runtime formats be the same artifact?
+
+**No.** They are the same information at different stages and they want opposite properties.
+
+| | Authoring (Project JSON) | Runtime Profile |
+|---|---|---|
+| Optimised for | Human diff, review, editor round-trip | Frame budget, random access |
+| Gates | Present, unresolved | Resolved away |
+| References | Names (`"Wizbang Cranktoggle"`) | Entry ids (`3666`) |
+| Labels | Strings (`"BuzzBox1"`) | `TaskId` indices |
+| Layout | Whole file | Offset-indexed records |
+| Failure mode | Permissive with diagnostics | Fail-closed |
+
+RXPGuides is the counter-example: its parsed table *is* its runtime object, so a guide cannot be
+serialised, validated, or diffed independently of the running UI (§3.1). This repository's existing
+Project → Runtime Profile split is correct and this design keeps it.
+
+The one thing worth carrying across the boundary is **provenance**: every `Task` keeps
+`source: { file, line_start, line_end }` so a runtime failure points at a corpus line. That is how every
+citation in this document was produced, and it costs ~20 bytes per task.
+
+----------
+
+# 7. D7 — The schema
+
+## 7.1 Rust structs (serde-annotated, authoritative)
+
+```rust
+// ─── Profile root ────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+pub struct RuntimeProfile {
+    pub magic:          [u8; 4],          // b"SNTL"
+    pub schema_version: u16,
+    pub schema_hash:    [u8; 32],         // C4: over the full tag set
+    pub tags_used:      Vec<String>,      // C4: every op/predicate tag referenced
+    pub integrity:      ContentIntegrity, // C4 gap-closer
+    pub archetype:      Archetype,        // C2: what this artifact was resolved for
+    pub meta:           GuideMeta,
+    pub defaults:       ProfileDefaults,
+    pub waypoint_pool:  Vec<Point>,       // deduplicated; routes index into this
+    pub tasks:          Vec<Task>,        // ordered; TaskId is the index
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ContentIntegrity {
+    pub content_hash: [u8; 32],  // BLAKE3 over sorted (kind, entry_id, expect_name)
+    pub world_source: String,    // "tbcmangos.sqlite"
+    pub world_build:  String,    // file digest + consulted row counts
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Archetype {
+    pub class:         Class,
+    pub race:          Race,
+    pub faction:       Faction,
+    pub expansion:     Expansion,
+    pub allegiance:    Option<Allegiance>,   // #aldor / #scryer
+    pub hardcore:      bool,                 // #hardcore / #softcore
+    pub self_found:    bool,                 // #ssf / #ah
+    pub can_fly:       bool,                 // #flyable / #noflyable
+    pub content_phase: Option<u8>,           // #phase
+    pub mode:          ProfileMode,          // #questguide, .dungeon variant
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GuideMeta {
+    pub name:           String,       // #name
+    pub group:          String,       // #group
+    pub subgroup:       Option<String>,
+    pub source_version: u32,          // #version
+    pub next:           Vec<String>,  // #next — profile chaining
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ProfileDefaults {
+    pub combat:         CombatPolicy,    // C6: profile-level default
+    pub unknown_policy: UnknownPolicy,   // C1: fallback when a task does not override
+}
+
+// ─── Task: the step-as-container ─────────────────────────────────────────────
+
+pub type TaskId = u32;
+
+#[derive(Serialize, Deserialize)]
+pub struct Task {
+    pub id:              TaskId,
+    pub deps:            Vec<TaskId>,          // P1: MULTI-dependency. Plural.
+    pub blocking:        bool,                 // #optional ⇒ false
+    pub lifetime:        Lifetime,             // C3: from #sticky
+    pub completion:      CompletionSource,     // C3: from #completewith
+    pub applies_when:    Option<Predicate>,    // C1: gate
+    pub complete_when:   Option<Predicate>,    // C1: the ONLY completion authority
+    pub abort_when:      Option<Predicate>,    // C1: failure/abandon
+    pub unknown_policy:  UnknownPolicy,        // C1: tri-state policy
+    pub ops:             Vec<Op>,              // ORDERED — step-as-container
+    pub interact_target: Option<NpcRef>,       // from .target (step-wide form)
+    pub combat:          Option<CombatPolicy>, // C6: per-task override
+    pub loot_filter:     Vec<LootRule>,        // .collect / .addquestitem
+    pub serves_quests:   Vec<QuestId>,         // .requires quest,<id>
+    pub suppress:        Vec<BehaviorId>,      // #ignorecorpse
+    pub jump_to:         Option<TaskId>,       // .maxlevel 2-arg forward jump
+    pub source:          SourceSpan,           // provenance
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SourceSpan { pub file: String, pub line_start: u32, pub line_end: u32 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum Lifetime {
+    Exclusive,
+    Background {
+        channels:     Vec<Channel>,   // C3: MOVEMENT | FACING | CASTING | ...
+        band:         u8,             // C3: 30..=49, Goal band
+        terminate_on: Predicate,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum CompletionSource {
+    OwnPredicate,
+    LinkedTo(TaskId),   // #completewith — compiler-resolved, never a dangling label
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum UnknownPolicy {
+    Block,
+    Defer { budget_ticks: u16 },
+    TreatFalse,
+    TreatTrue,          // requires explicit compiler opt-in; emits a diagnostic
+}
+
+// ─── Operations ──────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum Op {
+    Travel        { route: Route },
+    Accept        { quest: QuestId, repeatable: bool },
+    TurnIn        { quest: QuestId, any_of: Vec<QuestId>, reward_choice: Option<u8>,
+                    optional: bool, repeatable: bool },
+    Abandon       { quests: Vec<QuestId> },
+    UntrackQuest  { quest: QuestId },
+    Interact      { npc: NpcRef, gossip: GossipPolicy },
+    UseItem       { item: ItemId },
+    Cast          { spell: SpellId },
+    DestroyItem   { item: ItemId },
+    Equip         { slot: u8, item: ItemId },
+    EnterVehicle,
+    Wait          { secs: u16, label: String },       // .timer
+    Delegate      { behavior: BehaviorId, payload: DelegatePayload },  // C5
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Route {
+    pub kind:      RouteKind,
+    pub mode:      TravelMode,   // Any | Ground | Air
+    pub points:    Vec<u32>,     // indices into RuntimeProfile.waypoint_pool
+    pub radii:     Vec<u16>,     // arrival radius per point, yards
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum RouteKind {
+    Destination,             // C7: single point, engine paths freely
+    Corridor,                // C7: ordered, engine may smooth
+    Circuit { close: bool }, // C7: cycled patrol; DO NOT smooth away
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Point { pub map_id: u32, pub x: f32, pub y: f32, pub z: Option<f32> }
+
+#[derive(Serialize, Deserialize)]
+pub struct NpcRef { pub entry: u32, pub expect_name: String, pub pos: Option<u32> }
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum GossipPolicy { None, AutoAdvance, Index(u8), OptionId(u32) }
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum DelegatePayload {
+    Vendor      { npc: NpcRef, mode: VendorMode, items: Vec<ItemId>, gold_floor: Option<u32> },
+    Trainer     { npc: NpcRef, spell: Option<SpellId> },
+    FlightPath  { npc: NpcRef, mode: FlightMode, dest_node: Option<String> },
+    Hearth      { mode: HearthMode, npc: Option<NpcRef> },
+    Bank        { npc: NpcRef, mode: BankMode, items: Vec<ItemId> },
+    Stable      { npc: NpcRef, mode: StableMode },
+    Corpse      { intent: CorpseIntent, resurrect_at: Option<u32> },  // K5
+}
+
+// ─── Combat policy (C6) ──────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+pub struct CombatPolicy {
+    pub stance:       CombatStance,
+    pub targets:      Vec<NpcRef>,     // .mob whitelist
+    pub watch_units:  Vec<NpcRef>,     // .unitscan
+    pub leash_yards:  u16,
+    pub allow_adds:   bool,
+    pub expect_group: GroupExpectation,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum CombatStance { Avoid, Defensive, Objective, Aggressive }
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum GroupExpectation { Solo, Party { size: u8 }, Dungeon }
+
+// ─── Predicate: THE single condition language (C1) ────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum Cmp { Lt, Le, Eq, Ge, Gt }
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum Predicate {
+    // — ADR-000 §7.2 baseline —
+    And(Vec<Predicate>),
+    Or(Vec<Predicate>),
+    Not(Box<Predicate>),
+    QuestComplete  { id: QuestId },
+    QuestObjective { id: QuestId, index: u8, need: u32 },
+    AtLocation     { point: u32, radius: f32 },
+    LevelAtLeast   { level: u8 },
+    AuraPresent    { spell: SpellId, on: UnitRef },
+    Flag           { key: String },
+
+    // — additions, each justified in §5.1.1 —
+    QuestInLog     { id: QuestId },
+    QuestTurnedIn  { id: QuestId },
+    QuestAvailable { id: QuestId },
+    ItemCount      { id: ItemId, cmp: Cmp, count: u32 },   // supersedes HasItem
+    MoneyCmp       { cmp: Cmp, copper: u64 },
+    SkillCmp       { line: SkillLine, cmp: Cmp, value: u16 },
+    ReputationCmp  { faction: u32, standing: Standing, cmp: Cmp, value: i32 },
+    XpAtLeast      { level: u8, xp_offset: i32 },
+    CooldownCmp    { kind: CooldownKind, id: u32, cmp: Cmp, secs: f32 },
+    InArea         { area: u32, kind: AreaKind },
+    HearthBoundTo  { area: u32 },
+    ItemStatCmp    { slot: u8, stat: ItemStat, cmp: Cmp, value: f32 },
+    InGroup        { cmp: Cmp, size: u8 },
+    SpellKnown     { spell: SpellId },
+    LevelAtMost    { level: u8 },
+}
+
+// ─── Resume (C3, closing the ADR-000 gap) ────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+pub struct ResumeCursor {
+    pub task:      TaskId,
+    pub op_index:  u16,
+    pub waypoint:  u16,
+    pub loop_iter: u32,
+}
+```
+
+## 7.2 JSON Schema (excerpt — the load-bearing shapes)
+
+Full schema is mechanical from the structs; these are the parts where agreement matters.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sentinel Runtime Profile",
+  "type": "object",
+  "required": ["magic","schema_version","schema_hash","tags_used","integrity",
+               "archetype","meta","defaults","waypoint_pool","tasks"],
+  "properties": {
+    "magic":          { "const": "SNTL" },
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "schema_hash":    { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "tags_used":      { "type": "array", "items": { "type": "string" } },
+    "integrity": {
+      "type": "object",
+      "required": ["content_hash","world_source","world_build"],
+      "properties": {
+        "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "world_source": { "type": "string" },
+        "world_build":  { "type": "string" }
+      }
+    },
+    "waypoint_pool": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["map_id","x","y"],
+        "properties": {
+          "map_id": { "type": "integer" },
+          "x": { "type": "number" }, "y": { "type": "number" },
+          "z": { "type": ["number","null"] }
+        }
+      }
+    },
+    "tasks": { "type": "array", "items": { "$ref": "#/$defs/Task" } }
+  },
+  "$defs": {
+    "Task": {
+      "type": "object",
+      "required": ["id","deps","blocking","lifetime","completion","unknown_policy","ops","source"],
+      "properties": {
+        "id":       { "type": "integer" },
+        "deps":     { "type": "array", "items": { "type": "integer" } },
+        "blocking": { "type": "boolean" },
+        "lifetime":       { "$ref": "#/$defs/Lifetime" },
+        "completion":     { "$ref": "#/$defs/CompletionSource" },
+        "applies_when":   { "oneOf": [{ "$ref": "#/$defs/Predicate" }, { "type": "null" }] },
+        "complete_when":  { "oneOf": [{ "$ref": "#/$defs/Predicate" }, { "type": "null" }] },
+        "abort_when":     { "oneOf": [{ "$ref": "#/$defs/Predicate" }, { "type": "null" }] },
+        "unknown_policy": { "$ref": "#/$defs/UnknownPolicy" },
+        "ops":    { "type": "array", "items": { "$ref": "#/$defs/Op" } },
+        "source": {
+          "type": "object",
+          "required": ["file","line_start","line_end"],
+          "properties": { "file": {"type":"string"},
+                          "line_start": {"type":"integer"},
+                          "line_end": {"type":"integer"} }
+        }
+      }
+    },
+    "Lifetime": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["Exclusive","Background"] },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "channels": { "type": "array",
+                          "items": { "enum": ["MOVEMENT","FACING","CASTING","TARGETING",
+                                              "INTERACTION","ITEMS","CAMERA"] } },
+            "band": { "type": "integer", "minimum": 30, "maximum": 49 },
+            "terminate_on": { "$ref": "#/$defs/Predicate" }
+          }
+        }
+      }
+    },
+    "CompletionSource": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type":    { "enum": ["OwnPredicate","LinkedTo"] },
+        "payload": { "type": "integer" }
+      }
+    },
+    "UnknownPolicy": {
+      "type": "object", "required": ["type"],
+      "properties": { "type": { "enum": ["Block","Defer","TreatFalse","TreatTrue"] },
+                      "payload": { "type": "object" } }
+    },
+    "Predicate": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["And","Or","Not","QuestComplete","QuestObjective","AtLocation",
+                           "LevelAtLeast","AuraPresent","Flag","QuestInLog","QuestTurnedIn",
+                           "QuestAvailable","ItemCount","MoneyCmp","SkillCmp","ReputationCmp",
+                           "XpAtLeast","CooldownCmp","InArea","HearthBoundTo","ItemStatCmp",
+                           "InGroup","SpellKnown","LevelAtMost"] },
+        "payload": {}
+      },
+      "$comment": "Adjacently tagged per C4. An externally-tagged variant fails closed at load."
+    },
+    "Op": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["Travel","Accept","TurnIn","Abandon","UntrackQuest","Interact",
+                           "UseItem","Cast","DestroyItem","Equip","EnterVehicle","Wait","Delegate"] },
+        "payload": {}
+      }
+    }
+  }
+}
+```
+
+## 7.3 Worked example
+
+**Source:** `sentinel/docs/adr/restedxp guides/A-11-23.lua:211–280`, transcribed contiguously.
+**Every game ID below is copied from a corpus line and independently verified against
+`tbcmangos.sqlite`.** Nothing is invented.
+
+### 7.3.1 The corpus excerpt
+
+```
+211  step
+212      #sticky
+213      #label BuzzBox1
+214      #loop
+215      .goto 1439,36.051,44.757,0
+216      .goto 1439,36.280,50.071,0
+217      .goto 1439,35.275,53.464,0
+218      .waypoint 1439,36.091,51.501,60,0
+             … 13 further .waypoint lines …
+231      .waypoint 1439,36.051,44.757,60,0
+232      >>Kill |cRXP_ENEMY_Pygmy Tide Crawlers|r and |cRXP_ENEMY_Young Reef Crawlers|r …
+234      .complete 983,1 --Crawler Leg (6)
+235      .mob Pygmy Tide Crawler
+236      .mob Young Reef Crawler
+237      .isOnQuest 983
+238  step
+239      .isOnQuest 3524
+240      .goto 1439,36.371,50.920
+241      >>Open the |cRXP_PICK_Beached Sea Creature|r. Loot it for the |cRXP_LOOT_Sea Creature Bones|r
+242      .complete 3524,1 --Sea Creature Bones (1)
+243  step
+244      #sticky
+245      #label RabidThistle
+246      #loop
+247      .goto 1439,38.226,52.780,0
+             … 7 further .goto lines …
+255      >>|cRXP_WARN_Use|r |T134335:0|t[Tharnariun's Hope] on a |cRXP_ENEMY_Rabid Thistle Bear|r …
+258      .complete 2118,1 --Rabid Thistle Bear Captured (1)
+259      .unitscan Rabid Thistle Bear
+260      .use 7586
+261  step
+262      .goto Darkshore,38.90,53.59
+263      >>Run toward the edge of the Furbolg Camp
+264      .complete 984,1 -- Find a corrupt furbolg camp
+265  step
+266      #optional
+267      #requires RabidThistle
+268  --XXREQ Placeholder invis step until multiple requires per step
+269  step
+270  #optional
+271      .xp 10+6760 >> Grind to 6760+/7600xp
+272  step
+273      #label Auber1
+274      #completewith next
+275      .subzone 442 >> Travel to Auberdine
+276  step
+277      #requires BuzzBox1
+278      .goto 1439,36.634,46.250
+279      >>Click the |cRXP_PICK_Buzzbox 827|r on the ground
+280      .turnin 983 >> Turn in Buzzbox 827
+```
+
+### 7.3.2 ID verification against `tbcmangos.sqlite`
+
+| ID | Kind | MaNGOS name | Corroborating corpus text |
+|---|---|---|---|
+| 983 | quest | `Buzzbox 827` | `A-11-23.lua:280` "Turn in Buzzbox 827" |
+| 5385 | item | `Crawler Leg` | `A-11-23.lua:234` comment `--Crawler Leg (6)` |
+| 2231 | creature | `Pygmy Tide Crawler` | `A-11-23.lua:235` `.mob Pygmy Tide Crawler` |
+| 2234 | creature | `Young Reef Crawler` | `A-11-23.lua:236` `.mob Young Reef Crawler` |
+| 3524 | quest | `Washed Ashore` | `A-11-23.lua:239` `.isOnQuest 3524` |
+| 12242 | item | `Sea Creature Bones` | `A-11-23.lua:241` "Sea Creature Bones" |
+| 2118 | quest | `Plagued Lands` | `A-11-23.lua:258` `.complete 2118,1` |
+| 11836 | creature | `Captured Rabid Thistle Bear` | `A-11-23.lua:258` comment "Rabid Thistle Bear Captured (1)" |
+| 2164 | creature | `Rabid Thistle Bear` | `A-11-23.lua:259` `.unitscan Rabid Thistle Bear` |
+| 7586 | item | `Tharnariun's Hope` | `A-11-23.lua:255` `[Tharnariun's Hope]` |
+| 984 | quest | `How Big a Threat?` | `A-11-23.lua:264` `.complete 984,1` |
+| 17182 | gameobject | `Buzzbox 827` | `A-11-23.lua:279` "Click the Buzzbox 827 on the ground" |
+| 1439 | zone/map | Darkshore | `A-11-23.lua:262` uses the **name** `Darkshore` for the same area |
+
+Three cross-checks that validate the whole pipeline, not just the ids:
+
+- `quest_template` row 983 has `ReqItemId1 = 5385, ReqItemCount1 = 6` — **matching the corpus author's
+  comment `(6)` exactly.** This is why `Predicate::QuestObjective.need` can be baked offline instead of
+  parsed from a localized progress string at runtime.
+- Quest 983's ender is **`gameobject_involvedrelation` entry 17182**, not a creature — which is exactly
+  why task 7 has a `.turnin` with **no `.target`**. The schema's `interact_target: None` is not an
+  omission, it is correct.
+- Quest 984 has **no `Req*` columns populated at all** — it is an exploration objective, matching
+  `.complete 984,1 -- Find a corrupt furbolg camp`. So `QuestObjective.need` must permit `0`
+  (satisfied by area discovery, not a count).
+
+### 7.3.3 Compiled output
+
+Archetype resolved for a Night Elf Hunter, Alliance, TBC, softcore, AH-permitted. Waypoint indices
+refer to `waypoint_pool`; coordinates shown inline for readability.
+
+```json
+{
+  "magic": "SNTL",
+  "schema_version": 1,
+  "schema_hash": "<blake3-of-tagset>",
+  "tags_used": ["Travel","TurnIn","UseItem","Wait","Delegate","QuestObjective","QuestInLog",
+                "QuestTurnedIn","InArea","XpAtLeast","And","Or","Not"],
+  "integrity": {
+    "content_hash": "<blake3-of-resolved-ids>",
+    "world_source": "tbcmangos.sqlite",
+    "world_build":  "sha256:…; quest_template=6599 creature_template=18799 gameobject_template=14216"
+  },
+  "archetype": { "class": "Hunter", "race": "NightElf", "faction": "Alliance",
+                 "expansion": "Tbc", "allegiance": null, "hardcore": false,
+                 "self_found": false, "can_fly": false, "content_phase": null,
+                 "mode": "SpeedRoute" },
+  "meta": { "name": "10-14 Darkshore", "group": "RestedXP TBC Guide (A)",
+            "subgroup": "RestedXP Alliance 1-20", "source_version": 7, "next": [] },
+
+  "tasks": [
+    {
+      "id": 0,
+      "deps": [],
+      "blocking": true,
+      "_comment": "#sticky + #loop -> Background task holding MOVEMENT, running a CLOSED CIRCUIT",
+      "lifetime": {
+        "type": "Background",
+        "payload": {
+          "channels": ["MOVEMENT"],
+          "band": 34,
+          "terminate_on": { "type": "QuestTurnedIn", "payload": { "id": 983 } }
+        }
+      },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when":  { "type": "QuestInLog",     "payload": { "id": 983 } },
+      "complete_when": { "type": "QuestObjective", "payload": { "id": 983, "index": 1, "need": 6 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
+      "ops": [
+        { "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Circuit", "payload": { "close": true } },
+              "mode": "Ground",
+              "points": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17],
+              "radii":  [0,0,0,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60]
+            }
+          } }
+      ],
+      "interact_target": null,
+      "combat": {
+        "stance": { "type": "Aggressive", "payload": null },
+        "targets": [
+          { "entry": 2231, "expect_name": "Pygmy Tide Crawler", "pos": null },
+          { "entry": 2234, "expect_name": "Young Reef Crawler", "pos": null }
+        ],
+        "watch_units": [],
+        "leash_yards": 60,
+        "allow_adds": true,
+        "expect_group": { "type": "Solo", "payload": null }
+      },
+      "loot_filter": [ { "item": 5385, "for_quest": 983 } ],
+      "serves_quests": [983],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 211, "line_end": 237 }
+    },
+
+    {
+      "id": 1,
+      "deps": [],
+      "blocking": true,
+      "lifetime": { "type": "Exclusive", "payload": null },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when":  { "type": "QuestInLog",     "payload": { "id": 3524 } },
+      "complete_when": { "type": "QuestObjective", "payload": { "id": 3524, "index": 1, "need": 1 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
+      "ops": [
+        { "type": "Travel",
+          "payload": { "route": { "kind": { "type": "Destination", "payload": null },
+                                  "mode": "Any", "points": [18], "radii": [5] } } }
+      ],
+      "interact_target": null,
+      "combat": null,
+      "loot_filter": [ { "item": 12242, "for_quest": 3524 } ],
+      "serves_quests": [3524],
+      "suppress": [], "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 238, "line_end": 242 }
+    },
+
+    {
+      "id": 2,
+      "deps": [],
+      "blocking": true,
+      "_comment": "second sticky circuit; .use 7586 is an op, .unitscan feeds watch_units",
+      "lifetime": {
+        "type": "Background",
+        "payload": {
+          "channels": ["MOVEMENT"],
+          "band": 35,
+          "terminate_on": { "type": "QuestObjective",
+                            "payload": { "id": 2118, "index": 1, "need": 1 } }
+        }
+      },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when":  { "type": "QuestInLog",     "payload": { "id": 2118 } },
+      "complete_when": { "type": "QuestObjective", "payload": { "id": 2118, "index": 1, "need": 1 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
+      "ops": [
+        { "type": "Travel",
+          "payload": { "route": { "kind": { "type": "Circuit", "payload": { "close": true } },
+                                  "mode": "Ground",
+                                  "points": [19,20,21,22,23,24,25,26],
+                                  "radii":  [0,0,50,50,50,50,50,50] } } },
+        { "type": "UseItem", "payload": { "item": 7586 } }
+      ],
+      "interact_target": null,
+      "combat": {
+        "stance": { "type": "Objective", "payload": null },
+        "targets": [ { "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null } ],
+        "watch_units": [ { "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null } ],
+        "leash_yards": 50,
+        "allow_adds": false,
+        "expect_group": { "type": "Solo", "payload": null }
+      },
+      "loot_filter": [], "serves_quests": [2118], "suppress": [], "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 243, "line_end": 260 }
+    },
+
+    {
+      "id": 3,
+      "deps": [],
+      "blocking": true,
+      "_comment": "zone NAME in source (Darkshore) normalises to the same map_id 1439 as tasks 0-2",
+      "lifetime": { "type": "Exclusive", "payload": null },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": { "type": "QuestInLog", "payload": { "id": 984 } },
+      "complete_when": { "type": "QuestObjective",
+                         "payload": { "id": 984, "index": 1, "need": 0 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
+      "ops": [
+        { "type": "Travel",
+          "payload": { "route": { "kind": { "type": "Destination", "payload": null },
+                                  "mode": "Any", "points": [27], "radii": [5] } } }
+      ],
+      "interact_target": null, "combat": null, "loot_filter": [],
+      "serves_quests": [984], "suppress": [], "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 261, "line_end": 264 }
+    },
+
+    {
+      "id": 4,
+      "_comment": "P1 — THE MULTI-DEPENDENCY TASK. Source lines 265-268 are the author's XXREQ hack: an empty #optional step carrying #requires, used because RXP allows only one requires per step. The compiler folds the placeholder away and emits BOTH predecessors directly in deps.",
+      "deps": [2, 0],
+      "blocking": false,
+      "lifetime": { "type": "Exclusive", "payload": null },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": null,
+      "complete_when": {
+        "type": "And",
+        "payload": [
+          { "type": "QuestObjective", "payload": { "id": 2118, "index": 1, "need": 1 } },
+          { "type": "QuestObjective", "payload": { "id": 983,  "index": 1, "need": 6 } }
+        ]
+      },
+      "abort_when": null,
+      "unknown_policy": { "type": "Block", "payload": null },
+      "ops": [],
+      "interact_target": null, "combat": null, "loot_filter": [],
+      "serves_quests": [2118, 983], "suppress": [], "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 265, "line_end": 268 }
+    },
+
+    {
+      "id": 5,
+      "deps": [],
+      "blocking": false,
+      "_comment": "#optional + .xp 10+6760 -> fallback grind objective",
+      "lifetime": { "type": "Exclusive", "payload": null },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": null,
+      "complete_when": { "type": "XpAtLeast", "payload": { "level": 10, "xp_offset": 6760 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "TreatFalse", "payload": null },
+      "ops": [],
+      "interact_target": null,
+      "combat": {
+        "stance": { "type": "Aggressive", "payload": null },
+        "targets": [], "watch_units": [], "leash_yards": 40,
+        "allow_adds": true, "expect_group": { "type": "Solo", "payload": null }
+      },
+      "loot_filter": [], "serves_quests": [], "suppress": [], "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 269, "line_end": 271 }
+    },
+
+    {
+      "id": 6,
+      "deps": [],
+      "blocking": true,
+      "_comment": "#completewith next -> CompletionSource::LinkedTo(7). Rides along with no channels of its own.",
+      "lifetime": {
+        "type": "Background",
+        "payload": { "channels": [], "band": 30,
+                     "terminate_on": { "type": "InArea",
+                                       "payload": { "area": 442, "kind": "SubArea" } } }
+      },
+      "completion": { "type": "LinkedTo", "payload": 7 },
+      "applies_when": null,
+      "complete_when": { "type": "InArea", "payload": { "area": 442, "kind": "SubArea" } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 30 } },
+      "ops": [],
+      "interact_target": null, "combat": null, "loot_filter": [],
+      "serves_quests": [], "suppress": [], "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 272, "line_end": 275 }
+    },
+
+    {
+      "id": 7,
+      "deps": [0],
+      "blocking": true,
+      "_comment": "#requires BuzzBox1 -> deps [0]. Turn-in target is GAMEOBJECT 17182, so interact_target is null and the op carries the object. Verified: quest 983 ender is gameobject_involvedrelation 17182.",
+      "lifetime": { "type": "Exclusive", "payload": null },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when":  { "type": "QuestComplete", "payload": { "id": 983 } },
+      "complete_when": { "type": "QuestTurnedIn", "payload": { "id": 983 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Block", "payload": null },
+      "ops": [
+        { "type": "Travel",
+          "payload": { "route": { "kind": { "type": "Destination", "payload": null },
+                                  "mode": "Any", "points": [28], "radii": [5] } } },
+        { "type": "TurnIn",
+          "payload": { "quest": 983, "any_of": [], "reward_choice": null,
+                       "optional": false, "repeatable": false } }
+      ],
+      "interact_target": null,
+      "combat": null, "loot_filter": [], "serves_quests": [983],
+      "suppress": [], "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 276, "line_end": 280 }
+    }
+  ]
+}
+```
+
+**Step types exercised:** `Background`+`Circuit` sticky loop with declared channels (task 0, 2),
+`Exclusive` objective task (1, 3), multi-dependency task (4), fallback grind (5),
+`CompletionSource::LinkedTo` fused task (6), and a dependency-gated turn-in against a gameobject (7).
+`Op::Travel`, `Op::UseItem`, `Op::TurnIn` all appear; `Op::Delegate` is shown in §5.5 rather than here
+because this excerpt contains no vendor/flight/hearth step.
+
+----------
+
+# 8. D8 — Edge case matrix
+
+| Edge case | Schema mechanism | ADR-000 subsystem |
+|---|---|---|
+| **Multi-predecessor chains across non-adjacent steps** | `Task.deps: Vec<TaskId>` — plural in the struct (§7.1, task 4). Compiler folds the XXREQ placeholder and emits both edges. | Quest Activity cursor |
+| **Grind/patrol loops on dynamic conditions** | `RouteKind::Circuit` + `complete_when` predicate. `#loop`+`.mob`+`.complete` → `Aggressive` stance with an objective predicate (§7.3, task 0). | ControlBroker (`MOVEMENT`), `service.combat` |
+| **Group/party content and tag contention** | `CombatPolicy.expect_group` (`Solo`/`Party{n}`/`Dungeon`). `.group` 190, `.solo` 13. Tag contention is **not schema-solvable** — the schema exposes `targets` and `allow_adds` so the combat service can decide to abandon a tagged mob; the retry budget lives in the runtime. | `service.combat`, ControlBroker `TARGETING` |
+| **Escort quests** | **Not expressible in the source DSL.** Escorts appear only as `>>` display prose (`A-23-30.lua:2017` "Escort Corporal Keeshan back to Lakeshire"). The schema exposes `Op::Interact` with `GossipPolicy` to *start* one (`.gossip 6669,0`, `A-11-23.lua:3661`) and `complete_when` to detect the outcome, but following/protecting the NPC is a behaviour the kernel must own. Flagged in §9 as a genuine gap. | Would need a new `behavior.escort` |
+| **Timed quests** | `Op::Wait { secs, label }` from `.timer` (200). Failure detected via `abort_when` on the quest's failed state (`is_complete == -1`). | `Sentinel.objectives` |
+| **Vehicle quests** | `Op::EnterVehicle` (`.vehicle`, 2). Kept precisely because it cannot be expressed as `.use`. | ControlBroker — vehicle control needs `MOVEMENT`+`CASTING`; ADR-000 does not model a vehicle channel (§9) |
+| **Quests with failure states** | `Task.abort_when` predicate, plus the documented `is_complete == -1` *failed* tri-state (§5.1.2). This is why `satisfied()` must not return `bool` — the failed state is truthy in Lua. | `Sentinel.objectives` |
+| **Faction/race starting-zone variance** | Resolved entirely at compile time into `Archetype`. Distinct starting guides (`A-1-11-Human`, `A-1-11-Draenei`, …) become distinct artifacts. | Compiler; no runtime subsystem |
+| **Objectives already complete on arrival / resume mid-profile** | `applies_when` re-evaluated against live state every tick; `Predicate::QuestTurnedIn` distinguishes handed-in from never-taken. `ResumeCursor` restores position but is **never trusted for truth** (§6.1). | `Sentinel.objectives`, Persist |
+| **Death and corpse recovery** | Delegated to `behavior.corpse` at band 90–99. Automatic. | §3.2 corpse recovery |
+| **Deliberate death as traversal (`.deathskip`)** | `Op::Delegate { behavior: corpse, payload: { intent: DeliberateDeath } }` **plus** `Task.suppress: [corpse]` derived from `#ignorecorpse`. The `intent` field (kernel change K5) is what stops the band 90–99 safety net from "rescuing" a death the profile wanted: recovery sees `DeliberateDeath` and resurrects at the *intended* graveyard instead of running back to the corpse. Without K5 the safety net and the profile fight each other. | §3.2 corpse recovery — **needs a new capability** |
+| **Vendor / restock / bank / hearth / flight** | `Op::Delegate` with typed `DelegatePayload` (§5.5). Five of the six behaviours do not yet exist (K3). | §3.2 built-in behaviours |
+| **Dungeon steps** | `.dungeon` (1,351) is a **compile-time archetype gate**, not a runtime branch — a dungeon run is a different artifact, not a conditional inside the solo path. `expect_group: Dungeon` sets the combat policy. | Compiler; `service.combat` |
+| **Daily quests in a solo leveling path** | `Op::Accept { repeatable: true }` / `Op::TurnIn { repeatable: true }` from `.daily`/`.dailyturnin`. `QuestTurnedIn` is unreliable for repeatables (a daily retaken after completion reads true on both `is_on_quest` and `is_quest_flagged_completed`), so the compiler emits `QuestInLog` as the gate for repeatables instead. | `Sentinel.objectives` |
+| **Fallback grinding when quests run dry** | `.xp` (2,133) → `Predicate::XpAtLeast` on a non-blocking task with `Aggressive` stance and an empty whitelist (§7.3, task 5). | `service.combat` |
+| **Faction-choice branches (`#aldor`/`#scryer`)** | `Archetype.allegiance`, resolved at compile time. The choice is irreversible in-game, so a runtime branch would be dead weight. The choice *point* itself is `Op::TurnIn { any_of: [10551, 10552] }` from `.turninmultiple`. | Compiler |
+| **Content phasing (`#phase`)** | `Archetype.content_phase`. | Compiler |
+| **Hardcore / softcore / SSF variants** | `Archetype.hardcore`, `Archetype.self_found`, plus `#hardcoreserver`/`#softcoreserver` for realm type. | Compiler |
+| **Loading screens and zone transitions** | Two distinct effects, both handled. (1) **In-flight sticky tasks:** a zone transition is a band 90–99 interrupt, so every `Background` task loses its leases and receives `on_revoke`; it writes its `ResumeCursor` and parks. On the far side it re-acquires and resumes at `(op_index, waypoint, loop_iter)` — a 15-node circuit does not restart. (2) **Cold-tier predicate truth:** the quest log has **no readiness contract and no events** (§5.1.2), so every cold predicate must read `Unknown`, not `False`, across the transition. `UnknownPolicy::Defer` holds the cursor until the log repopulates; `Block` is used where an irreversible op would otherwise fire on stale data. Guard on `core.object_manager.get_local_player()` being non-nil, and treat a zero-length quest log as `Unknown`. | Scheduler §4.2 band 90–99; sensor tiering §5 |
+| **Additional: contested turn-in objects** | Quest 983's ender is a **gameobject**, not an NPC (verified §7.3.2). `interact_target: None` with the object in the op is correct; a schema assuming every turn-in has an NPC target would emit a null target and stall. | Quest Activity |
+| **Additional: exploration objectives with no count** | Quest 984 has no `Req*` columns; `QuestObjective.need` must permit `0`. A schema requiring a positive count would make the objective unsatisfiable. | `Sentinel.objectives` |
+| **Additional: duplicated waypoints** | 553 steps emit the same coordinate twice (§2.6). Compiler deduplicates into `waypoint_pool`; an importer that does not doubles every affected route. | Compiler |
+| **Additional: reputation-gated content** | Reputation is **unreadable** (§5.8). `Predicate::ReputationCmp` evaluates `Unknown` and `UnknownPolicy::Block` stops the profile with a named reason rather than looping. The compiler pre-resolves what it can from `quest_template.RequiredMinRepFaction`. | Sensor gap — see §9 |
+
+----------
+
+# 9. D9 — Open questions
+
+**Corpus semantics I could not determine.**
+
+1. **The fifth `.goto` positional.** Invariantly `0` across all 16,353 five-arg instances — no
+   counter-example exists in the corpus, so its meaning cannot be inferred from variation. The
+   compiler currently discards it. If it encodes something (facing? auto-complete suppression?), we
+   are silently dropping it.
+2. **`.goto` 4th positional value `-1`** (580 instances). Appears on multi-candidate marker waypoints
+   (three adjacent Exodar auctioneer positions, `A-11-23.lua:959–961`) and on unstuck/instance-portal
+   markers. Plausibly "no arrival radius / marker only", but no corpus line defines it.
+3. **`.tbcWBF`** (11) — confined to one `RestedXP TBC Preparation` guide, associated with
+   Wrath-of-the-Blue-Flight turn-in staging. Bare or with a literal `1`. Dropped; semantics unknown.
+4. **`.blastedLands`** (7) — gates the optional Blasted Lands stat-buff farming apparatus. Dropped;
+   semantics unknown.
+5. **`#ignorecorpse`** (1) — single instance, on a step that deliberately dies inside an instance. I
+   have mapped it to `Task.suppress: [corpse]` because that is the only reading that makes
+   `.deathskip` work against the safety net, but with one witness this is inference, not proof.
+6. **`#subweight -1`** (1) and **`#season 0`** (2) — single/low-witness directives; both mapped on
+   weak evidence.
+7. **Gate precedence ambiguity.** `step << Alliance/Horde Hunter` (10 uses). Under the derived
+   precedence (`/` looser than space) this is `Alliance ∨ (Horde ∧ Hunter)`, which is semantically
+   odd — an Alliance *anything* plus a Horde Hunter. The author may have meant
+   `(Alliance ∨ Horde) ∧ Hunter`. RXPGuides' `applies()` flattens to a single disjunction, which
+   supports my reading, but the authorial intent is genuinely unclear. **The compiler should emit a
+   diagnostic on any gate mixing `/` and space rather than silently picking.**
+
+**Baseline discrepancy.**
+
+8. **The ~7% instance-count gap (§2.2) is unexplained.** Four hypotheses tested and eliminated. Most
+   likely a different corpus snapshot. My counts are internally consistent and all arithmetic uses
+   them, but if the baseline is authoritative, every absolute number in §4 shifts (proportions and
+   verdicts do not).
+
+**ADR-000 gaps and ambiguities hit while designing.**
+
+9. **ADR-000 is not in the repository** (§1.1) and is marked `Status: Proposal`. Everything in §5 is
+   designed against a document that has not been ratified or committed.
+10. **Resume granularity is asserted but never specified** (§4.3 of ADR-000). Resolved here as
+    `(task, op_index, waypoint, loop_iter)` — but that is my decision, not the kernel's.
+11. **`Predicate` is under-specified for any real corpus** — no comparison operator at all. Fifteen
+    additions proposed (§5.1.1). If the kernel rejects them, C1 becomes unsatisfiable and a second
+    condition system becomes unavoidable, which the contract forbids.
+12. **`satisfied()` returning `bool` is a latent fail-open bug** given the documented `1/-1/0`
+    tri-state. This needs deciding before the ledger is implemented, not after.
+13. **No vehicle channel.** ADR-000 §4.1 lists seven channels; a vehicle takes over movement and
+    casting simultaneously in a way that does not decompose cleanly. Two instances in the corpus, so
+    the priority is low, but the model does not cover it.
+14. **Five behaviours are missing from §3.2** (trainer, flightpath, hearth, bank, stable) covering
+    3,322 command instances, and no escort behaviour exists at all.
+15. **The kernel cannot verify world-data content** (§5.4.1). There is no API exposing world-database
+    identity, so `content_hash` can only be an inter-artifact coherence check plus provenance. The
+    first-touch name probe is my proposal to get actual drift detection; it needs kernel support.
+
+**Sensor gaps that constrain the schema.**
+
+16. **Reputation is entirely absent from the Sylvanas API.** 298 `.reputation` uses cannot be
+    evaluated. Highest-impact gap for TBC (Aldor/Scryer, Sporeggar, Cenarion Expedition).
+17. **Player faction is not readable** outside arena/battleground context, and **there is no race
+    name table**. Both forced compile-time archetype resolution (§5.2) — which I believe is right
+    anyway, but the decision was made under constraint, not freely.
+18. **Objective progress is only a localized string** (`"Wolves slain: 3/10"`, `quests.md:215`).
+    Baking `need` from `quest_template` removes the denominator problem; the numerator still requires
+    parsing two integers out of a localized string, and a failed parse must never fail open.
+19. **No quest events exist**, so all quest state is polled. Combined with the missing readiness
+    contract, this makes resume-after-loading-screen a real correctness risk rather than a theoretical
+    one.
+
+**Prior-art confidence.**
+
+20. **Honorbuddy element names are medium confidence.** The vendor site and forums are gone; structure
+    is corroborated across archived community repositories, not primary documentation. The
+    load-bearing claim — that conditions were embedded C# expression strings — is well corroborated;
+    exact element spellings are not.
+
+----------
+
+# 10. Self-verification
+
+Run before finishing. Failures were fixed, not reported.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Disposition table contains all 74 commands and all 48/49 directives | **PASS — 74/74 commands, 49/49 directives.** Verified programmatically: every corpus token has exactly one verdict, no token missing, no verdict for a non-existent token. The 49th is `#completewithTBTurnins`, reconciled against the stated 48 in §2.2. |
+| 2 | Every mechanism promised in rationale exists in the formal schema *and* the Rust structs | **PASS.** Spot-checked the ones most likely to be prose-only: multi-dependency → `Task.deps: Vec<TaskId>` (§7.1) and exercised in §7.3 task 4; tri-state → `UnknownPolicy` enum + `Task.unknown_policy`; resume granularity → `ResumeCursor` with all four fields; content integrity → `ContentIntegrity` struct + `expect_name` on `NpcRef`; channels → `Lifetime::Background.channels`. All appear in both §7.1 and §7.2. |
+| 3 | Every game ID in the worked example traceable to a real corpus line, with citation | **PASS.** 13 IDs, each with a corpus `file:line` **and** an independent `tbcmangos.sqlite` name lookup (§7.3.2). Nothing invented. Three structural cross-checks also passed (objective count 6 matches the author's comment; quest 983's ender is a gameobject, explaining the absent `.target`; quest 984 has no count columns). |
+| 4 | Worked example violates no exclusion rule stated in this document | **PASS.** The example is archetype-resolved for a Night Elf Hunter and contains no class-gated content — the source region `A-11-23.lua:211–280` carries no `<<` gate on any step or command, so nothing was excluded and nothing class-specific was smuggled in. No dropped token appears in the output. |
+| 5 | `#sticky`/`#completewith` modeled via channels and leases, not desugared, not a background flag, not dropped | **PASS.** `Lifetime::Background { channels, band, terminate_on }` and `CompletionSource::LinkedTo` are **separate fields** on `Task`, justified by the disjointness measurement (§2.4). Tasks 0, 2 and 6 in §7.3 exercise all three combinations. Full lifecycle in §5.3. |
+| 6 | Every runtime condition lowers to a `Predicate`; no second condition system | **PASS.** All three predicate slots on `Task` hold the same type. `Cmp` is a shared operator enum, not a parallel language. Static gates do not survive compilation (§5.2), so they are not a second system either. |
+| 7 | All enums adjacently tagged; `schema_hash` / `tags_used` / content-integrity present | **PASS.** Every `enum` in §7.1 carries `#[serde(tag = "type", content = "payload")]`; the JSON Schema mirrors it with `{type, payload}` and an explicit `$comment`. Root has `schema_hash`, `tags_used`, and `integrity: ContentIntegrity`. |
+| 8 | Unknown/unavailable predicate state handled explicitly, not collapsed to false | **PASS.** `Truth { True, False, Unknown }` (K2) plus a four-way per-task `UnknownPolicy`. `TreatFalse` is never the default for `complete_when`; `TreatTrue` requires explicit opt-in and emits a diagnostic. Grounded in three documented API facts (§5.1.2). |
+| 9 | D5 lists every required kernel change, or states none required | **PASS.** Eight changes, K1–K8, in §5.9, each with an ADR-000 section reference and a forcing reason. Explicitly *not* "none". |
+| 10 | No files created or modified other than this ADR | **PASS.** One file written: `sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md`. All corpus analysis ran read-only or wrote to the session scratchpad outside the repository. No source file, test, or config touched. |
