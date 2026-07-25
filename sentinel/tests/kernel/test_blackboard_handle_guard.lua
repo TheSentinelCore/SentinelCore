@@ -80,6 +80,23 @@ function M.test_set_refuses_raw_userdata()
         "the refusal must name the offending type, got: " .. err)
 end
 
+--- Refusing is half the job. A guard that stops the write but leaves the author guessing gets
+--- worked around, so the message must say WHY it is unsound and WHAT to do instead. Removing
+--- `userdata` from the behaviour branch still refuses -- it falls through to the generic
+--- "unsupported type" arm -- so accept/reject alone cannot tell the two apart. This can.
+function M.test_the_refusal_explains_the_rule_and_the_way_out()
+    local bb = Blackboard:new()
+    for _, value in ipairs({ userdata_handle(), mock_handle() }) do
+        local err = refusal(bb, "combat.some_unlisted_key", value)
+        T.assert_true(err:match("carries behaviour") ~= nil,
+            "must state the rule, got: " .. err)
+        T.assert_true(err:match("ADR 08") ~= nil,
+            "must cite the contract it enforces, got: " .. err)
+        T.assert_true(err:match("HANDLE_LEDGER") ~= nil,
+            "must point at the ledger as the phased way out, got: " .. err)
+    end
+end
+
 function M.test_set_refuses_a_function()
     local bb = Blackboard:new()
     refusal(bb, "combat.some_unlisted_key", function() end)
@@ -303,12 +320,21 @@ end
 -- THE RATCHET: the ledger may only shrink
 -- ---------------------------------------------------------------------------
 
----Live evidence that a ledgered key is still written from its declared writer.
+--- The ledger lives in `core/blackboard.lua`, so that file MENTIONS every ledgered key by
+--- construction. An entry naming it as a writer would therefore be its own evidence, and the
+--- ratchet would never fire for it. A mutation that added a stale entry with this file as its
+--- writer survived until the evidence was narrowed from "mentions" to "sets".
+local LEDGER_FILE = "sentinel/core/blackboard.lua"
+
+---Live evidence that a ledgered key is still WRITTEN -- not merely named -- by a declared
+---writer. `bb:get("k")`, a comment, or the ledger entry itself must not count: a key that is
+---only ever read is a key whose handle write is gone, which is exactly the retirement this
+---ratchet exists to notice.
 ---@param key string
 ---@param entry table
 ---@return boolean found, string|nil why_not
 local function writer_still_sets(key, entry)
-    local quoted = '"' .. key:gsub("%.", "%%.") .. '"'
+    local set_of_key = 'set%(%s*"' .. key:gsub("%.", "%%.") .. '"'
     for _, path in ipairs(entry.writers) do
         local source = Scope.read_file(path)
         if not source then
@@ -316,11 +342,11 @@ local function writer_still_sets(key, entry)
         end
         local found = false
         Scope.each_code_line(source, function(line)
-            if line:match(quoted) then found = true end
+            if line:match(set_of_key) then found = true end
         end)
         if found then return true, nil end
     end
-    return false, "no declared writer still names " .. key
+    return false, "no declared writer still sets " .. key
 end
 
 --- Each entry must declare who writes it and what reads it. An unattributed exception is
@@ -331,6 +357,14 @@ function M.test_every_ledger_entry_names_its_writer_and_its_readers()
         T.assert_true(#entry.writers > 0, key .. " must declare at least one writer")
         T.assert_not_nil(entry.readers, key .. " must declare `readers`")
         T.assert_not_nil(entry.retire, key .. " must declare `retire` -- what would remove it")
+        T.assert_true(entry.kind == "sdk_handle" or entry.kind == "collaborator",
+            key .. " must declare kind as sdk_handle or collaborator, got "
+            .. tostring(entry.kind))
+        for _, path in ipairs(entry.writers) do
+            T.assert_false(path == LEDGER_FILE, key .. " may not name the ledger's own file as "
+                .. "its writer -- that file names every ledgered key, so the entry would be "
+                .. "its own evidence and the ratchet could never fire for it")
+        end
     end
 end
 
