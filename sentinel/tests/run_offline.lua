@@ -473,6 +473,10 @@ local test_modules = {
 
     -- Integration
     "tests/integration/test_combat_dummy",
+    -- Phase 4c D5: one real path, end to end. A real SentinelApp through real ticks, with doubles
+    -- at the SDK boundary and nowhere else. Registered LAST because it replaces `_G.core` for the
+    -- duration -- it restores it, but running it late keeps that blast radius as small as possible.
+    "tests/integration/test_kernel_end_to_end",
 }
 
 local passed = 0
