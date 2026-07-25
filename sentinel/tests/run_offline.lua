@@ -446,6 +446,9 @@ local test_modules = {
     "tests/rotations/mage_frost/test_frost_gcd_priority",
     "tests/rotations/mage_frost/test_pet_controller",
     "tests/rotations/mage_frost/test_frost_item_intents",
+    -- Phase 4c D4: the cast path, pinned on outcomes so the same assertions run against both the
+    -- dispatcher era and the intent era.
+    "tests/rotations/mage_frost/test_frost_cast_intents",
 
     -- Questing module
     "tests/modules/questing/test_runtime_action",

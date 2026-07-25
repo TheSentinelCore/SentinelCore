@@ -5,12 +5,40 @@
 -- set of representative blackboard states, so the PriorityBuilder port (A2) can be
 -- proven behavior-preserving by re-running this same suite unmodified against the
 -- rewritten tree.
+--
+-- PHASE 4C: the recorder moved, the assertions did not.
+--
+-- Casts leave the plugin as `cast` intents now, so there is no SpellDispatcher to record against.
+-- What each scenario asserts -- which single action the tree selected -- is unchanged, because the
+-- dispatcher's `action_id` is carried through as the intent's `payload.label`. That is the property
+-- that makes this file still a characterization test rather than a rewritten one: every
+-- `assert_equal(recorder.calls[1], "counterspell")` below is byte-for-byte what it was.
+--
+-- Recording happens at SUBMIT, not at commit, deliberately. The old recorder logged the queue call
+-- whatever the SDK then did with it; recording at commit would additionally fold in the GCD and
+-- castability gates, and this suite is about the TREE's choice, not about what the kernel permits.
+local Api = require("kernel/api")
 local Blackboard = require("core/blackboard")
+local ControlBroker = require("kernel/control_broker")
 local EventBus = require("core/event_bus")
 local Profile = require("rotations/mage_frost/frost_tbc")
+local Snapshot = require("kernel/snapshot")
+-- Phase 4d D5: a cast names its unit by a guid ref MINTED THROUGH THE KERNEL, so a surface
+-- without `units` leaves the rotation with no legal way to name a target and every action refuses.
+local Units = require("kernel/units")
 local T = require("tests/test_util")
 
 local M = {}
+
+--- Every scenario publishes a real `_G.Sentinel` and must put back whatever the offline harness had
+--- there, or the plugin suites that follow lose their kernel.
+local function with_surface(surface, fn)
+    local saved = _G.Sentinel
+    _G.Sentinel = surface
+    local ok, err = pcall(fn)
+    _G.Sentinel = saved
+    if not ok then error(err, 0) end
+end
 
 local function make_unit(opts)
     opts = opts or {}
@@ -92,16 +120,29 @@ local function make_bb(overrides)
         is_gcd_ready = function() return gcd_ready end,
     })
 
+    -- The recorder now sits where the intent queue does. A real ControlBroker still stands in front
+    -- of it, so a cast that could not take a CASTING lease is invisible here exactly as a cast the
+    -- dispatcher refused used to be.
     local recorder = { calls = {} }
-    bb:set("module.combat.dispatcher", {
-        queue_target = function(_self, action_id, _spell_id, _target, _priority, _message, _opts)
-            table.insert(recorder.calls, action_id)
+    local recording_queue = {
+        submit = function(_self, intent)
+            table.insert(recorder.calls, intent.payload and intent.payload.label)
             return true
         end,
-        queue_position = function(_self, action_id, _spell_id, _position, _priority, _message)
-            table.insert(recorder.calls, action_id)
-            return true
-        end,
+    }
+    local broker = ControlBroker:new({ intent_queue = recording_queue })
+
+    -- The tick a minted guid ref is stamped with. These scenarios record at SUBMIT and never
+    -- commit, so any stable tick will do; what matters is that the mint can read ONE, because a
+    -- rotation with no snapshot can name no unit and every action would refuse.
+    local frozen = Snapshot.empty(1)
+
+    recorder.surface = Api.build({
+        blackboard = bb, broker = broker, intent_queue = recording_queue,
+        scheduler = { current_snapshot = function() return frozen end },
+        -- `Sentinel.units` is where a guid ref is minted, stamped with THIS snapshot's tick index.
+        -- The scheduler double above is what makes the stamp reachable; the two travel together.
+        units = Units:new(),
     })
 
     if overrides then
@@ -120,11 +161,18 @@ local function build_profile(bb)
     return Profile.build(bb, bus)
 end
 
+--- Drive one GCD tick with the scenario's kernel surface published.
+local function tick_gcd(profile, bb, recorder)
+    local status
+    with_surface(recorder.surface, function() status = profile:tick_gcd(bb) end)
+    return status
+end
+
 -- Scenario 1: interruptible cast in range -> counterspell wins over everything else.
 function M.test_counterspell_interrupt_wins()
     local bb, recorder = make_bb({ _target_casting = true, _target_interruptible = true })
     local profile = build_profile(bb)
-    profile:tick_gcd(bb)
+    tick_gcd(profile, bb, recorder)
     T.assert_equal(#recorder.calls, 1, "exactly one action should be queued")
     T.assert_equal(recorder.calls[1], "counterspell", "counterspell interrupt must preempt all other priorities")
 end
@@ -133,7 +181,7 @@ end
 function M.test_ice_block_emergency_wins()
     local bb, recorder = make_bb({ ["player.health_pct"] = 0.10 })
     local profile = build_profile(bb)
-    profile:tick_gcd(bb)
+    tick_gcd(profile, bb, recorder)
     T.assert_equal(#recorder.calls, 1, "exactly one action should be queued")
     T.assert_equal(recorder.calls[1], "ice_block", "critical health must trigger Ice Block emergency")
 end
@@ -143,7 +191,7 @@ end
 function M.test_frost_nova_kite_fires_and_starts_kite()
     local bb, recorder = make_bb({ ["combat.enemy_count_10yd"] = 2 })
     local profile = build_profile(bb)
-    profile:tick_gcd(bb)
+    tick_gcd(profile, bb, recorder)
     T.assert_equal(#recorder.calls, 1, "only the dispatch-producing action (frost_nova) should record a queue call")
     T.assert_equal(recorder.calls[1], "frost_nova", "2+ melee attackers must trigger Frost Nova kite-start")
     T.assert_equal(bb:get("combat.kite_state"), "NOVA_PENDING",
@@ -155,7 +203,7 @@ end
 function M.test_frostbolt_filler_when_pet_present()
     local bb, recorder = make_bb({ ["combat.has_water_elemental"] = true })
     local profile = build_profile(bb)
-    profile:tick_gcd(bb)
+    tick_gcd(profile, bb, recorder)
     T.assert_equal(#recorder.calls, 1, "exactly one action should be queued")
     T.assert_equal(recorder.calls[1], "frostbolt", "standing-still filler with no other priorities active must be Frostbolt")
 end
@@ -165,7 +213,7 @@ end
 function M.test_summon_water_elemental_before_frostbolt_filler()
     local bb, recorder = make_bb()
     local profile = build_profile(bb)
-    profile:tick_gcd(bb)
+    tick_gcd(profile, bb, recorder)
     T.assert_equal(#recorder.calls, 1, "exactly one action should be queued")
     T.assert_equal(recorder.calls[1], "summon_water_elemental",
         "missing Water Elemental must be summoned ahead of the Frostbolt filler")
@@ -176,7 +224,7 @@ end
 function M.test_fallback_noop_when_gcd_not_ready()
     local bb, recorder = make_bb({ _gcd_ready = false })
     local profile = build_profile(bb)
-    local status = profile:tick_gcd(bb)
+    local status = tick_gcd(profile, bb, recorder)
     T.assert_equal(#recorder.calls, 0, "no action should be queued while GCD is not ready")
     T.assert_equal(status, "FAILURE", "tree must report FAILURE when only the noop fallback fires")
 end

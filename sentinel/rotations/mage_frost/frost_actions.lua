@@ -121,9 +121,31 @@ function Act.queue_evocation(blackboard)
 end
 
 -- ---------------------------------------------------------------------------
--- Off-GCD actions
+-- The off-GCD TREE -- which is a scheduling name, not a claim about the GCD
 -- ---------------------------------------------------------------------------
+--
+-- These three sit under `frost_tbc.lua`'s off-GCD subtree, which is ticked every cycle rather than
+-- once per global cooldown. That says when the rotation RECONSIDERS them. Whether the resulting
+-- spell triggers the global cooldown is a separate question the game answers, and the two answers
+-- do NOT agree across these three -- so `off_gcd` is declared per action, not per tree.
+--
+-- Measured in tbcmangos.sqlite (`spell_template`, TBC 2.4.3):
+--
+--     Icy Veins   12472                      StartRecoveryCategory 0    -> off the GCD
+--     Cold Snap   11958                      StartRecoveryCategory 0    -> off the GCD
+--     Ice Barrier 11426/13031/13032/13033/27134/33405
+--                                            StartRecoveryCategory 133  -> ON the GCD
+--
+-- `H.queue_target` will not honour a declaration the kernel catalog denies, so this list cannot on
+-- its own grant a bypass -- see the off-GCD section in frost_support.lua for why both must agree.
 
+--- NO `off_gcd`, DELIBERATELY, and this is the line most likely to be "corrected" by someone
+--- reading the section heading instead of the data. Ice Barrier is a mage shield, and every mage
+--- shield triggers the global cooldown in TBC -- all six ranks carry StartRecoveryCategory 133.
+--- `kernel/catalogs/spell.lua:36` currently claims otherwise (`gcd = false, ogcd = true`); it is
+--- wrong, it is outside this package, and it is reported rather than edited here. Adding
+--- `off_gcd = true` on this line is all it would take for the catalog's error to become a live
+--- bypass, which is exactly why the declaration is required in the first place.
 function Act.queue_ice_barrier(blackboard)
     local player = blackboard:get("player.object")
     return H.queue_target(blackboard, "ice_barrier", "ice_barrier", player, QueuePriorities.DEFAULT, { fast = true })
@@ -131,12 +153,14 @@ end
 
 function Act.queue_icy_veins(blackboard)
     local player = blackboard:get("player.object")
-    return H.queue_target(blackboard, "icy_veins", "icy_veins", player, QueuePriorities.DEFAULT, { fast = true })
+    return H.queue_target(blackboard, "icy_veins", "icy_veins", player, QueuePriorities.DEFAULT,
+        { fast = true, off_gcd = true })
 end
 
 function Act.queue_cold_snap(blackboard)
     local player = blackboard:get("player.object")
-    return H.queue_target(blackboard, "cold_snap", "cold_snap", player, QueuePriorities.DEFAULT, { fast = true })
+    return H.queue_target(blackboard, "cold_snap", "cold_snap", player, QueuePriorities.DEFAULT,
+        { fast = true, off_gcd = true })
 end
 
 -- ---------------------------------------------------------------------------
@@ -362,29 +386,7 @@ function Act.queue_conjure_mana_gem(blackboard)
 end
 
 -- ---------------------------------------------------------------------------
--- Mana gem USE (item, not spell — direct spell_queue access)
--- ---------------------------------------------------------------------------
-
-function Act.use_mana_gem(blackboard)
-    local gem_id = blackboard:get("combat.mana_gem_item_id")
-    if not gem_id then
-        return Status.FAILURE
-    end
-
-    -- Try queue_item_self(self, item_id, priority, message)
-    local ok, result = SpellQueue.call("queue_item_self", gem_id, QueuePriorities.DEFAULT, "mana_gem")
-    if not ok then
-        ok, result = SpellQueue.call("queue_item_self", gem_id, QueuePriorities.DEFAULT, "mana_gem")
-    end
-
-    if ok and result ~= false then
-        return Status.SUCCESS
-    end
-    return Status.FAILURE
-end
-
--- ---------------------------------------------------------------------------
--- Combat consumables (potions — off-GCD items)
+-- Combat consumables (potions and the mana gem — items, not spells)
 -- ---------------------------------------------------------------------------
 --
 -- ============================================================================
@@ -463,6 +465,41 @@ function Act.use_mana_potion(blackboard)
     return Status.FAILURE
 end
 
+-- ============================================================================
+-- THE MANA GEM, WHICH USED TO CALL A GLOBAL THAT DOES NOT EXIST
+-- ============================================================================
+-- This action lived a hundred lines further up, under a heading that announced the defect --
+-- "direct spell_queue access" -- and called `SpellQueue.call("queue_item_self", ...)` twice, once
+-- as a retry of itself. `frost_actions.lua` has never had a `local SpellQueue = require(...)`;
+-- `modules/combat/spell_dispatcher.lua:2` is the file that does. So the moment a gem was actually in
+-- the bag, the action threw `attempt to index a nil value (global 'SpellQueue')` -- and the retry,
+-- being the identical call, could only ever throw the same way.
+--
+-- IT WAS UNTESTED, AND IT AUDITED CLEAN. `tests/kernel/test_plugin_core_access_audit.lua`'s
+-- CORE_ACCESS_LEDGER matches `core.*`; an undefined global not spelled `core` is outside what it
+-- looks at. Worth stating plainly: that audit's silence is evidence about `core` usage and about
+-- nothing else. A `luacheck`-style undefined-global pass would have caught this in a second and the
+-- repo does not run one.
+--
+-- MOVED RATHER THAN REWIRED IN PLACE. A gem is an item, so it takes the route the two potions
+-- already take -- `submit_use_item`, one ITEMS lease, one `use_item` intent -- and it has to sit
+-- below that helper to reach it. Nothing about the action's decision changed: same blackboard key,
+-- same nil guard, same "no id, no gem" refusal.
+--
+-- WHAT CHANGED BEYOND NOT THROWING, and both are the item gate's doing rather than this action's:
+-- the character is now asked whether the gem is actually in the bag (`has_item`), and the client is
+-- asked for its real cooldown instead of nobody being asked at all.
+--
+-- The old `QueuePriorities.DEFAULT` argument is gone with the call that took it. A spell-queue
+-- priority is not a thing a `use_item` intent carries -- the ITEMS lease's band is what arbitrates,
+-- and it is COMBAT for the same reason the potions' is.
+function Act.use_mana_gem(blackboard)
+    local gem_id = blackboard:get("combat.mana_gem_item_id")
+    if not gem_id then return Status.FAILURE end
+    if submit_use_item(gem_id) then return Status.SUCCESS end
+    return Status.FAILURE
+end
+
 -- ---------------------------------------------------------------------------
 -- Pet management (off-GCD commands)
 -- ---------------------------------------------------------------------------
@@ -495,15 +532,16 @@ end
 -- Add finishing (target low-HP secondary enemy with Fire Blast)
 -- ---------------------------------------------------------------------------
 
+--- One of the two sites that never used `H.queue_target`. The add is neither the player nor the
+--- rotation's target, so before Phase 4c the intent vocabulary could not name it and this reached
+--- `SpellDispatcher` directly. It now goes through the kernel like everything else; the unit travels
+--- as a guid and is resolved back to a handle at commit.
 function Act.finish_low_add(blackboard)
     local add = blackboard:get("combat.low_health_add")
     if not add then return Status.FAILURE end
-    local d = H.dispatcher(blackboard)
     local spell_id = H.spell_id_for(blackboard, "fire_blast")
-    if not d or not spell_id then
-        return Status.FAILURE
-    end
-    if d:queue_target("finish_low_add", spell_id, add, QueuePriorities.DEFAULT, "finish_low_add") then
+    if not spell_id then return Status.FAILURE end
+    if H.queue_resolved_target(blackboard, "finish_low_add", spell_id, add, QueuePriorities.DEFAULT) then
         return Status.SUCCESS
     end
     return Status.FAILURE
@@ -513,13 +551,14 @@ end
 -- Emergency escape (Blink + signal hard flee)
 -- ---------------------------------------------------------------------------
 
+--- The second direct site. SUCCESS here has never depended on the Blink landing -- the flee flag is
+--- the action's real product and the cast is opportunistic -- so the return is unchanged.
 function Act.emergency_escape(blackboard)
     blackboard:set("combat.emergency_flee", true)
     local player = blackboard:get("player.object")
-    local d = H.dispatcher(blackboard)
     local blink_id = H.spell_id_for(blackboard, "blink")
-    if d and blink_id and player then
-        d:queue_target("emergency_blink", blink_id, player, QueuePriorities.DEFAULT, "emergency_blink")
+    if blink_id and player then
+        H.queue_resolved_target(blackboard, "emergency_blink", blink_id, player, QueuePriorities.DEFAULT)
     end
     return Status.SUCCESS
 end

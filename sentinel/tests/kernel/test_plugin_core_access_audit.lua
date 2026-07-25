@@ -338,8 +338,27 @@ local CORE_ACCESS_LEDGER = {
     -- frost_actions: MOVEMENT only. The two ITEMS sites are RETIRED -- both potion actions now
     -- emit a `use_item` intent under an ITEMS lease, so their entries are deleted rather than
     -- re-keyed. The movement site is untouched and merely moved down the file.
-    ["sentinel/rotations/mage_frost/frost_actions.lua:532"] = "D2: guard for move_forward_start",
-    ["sentinel/rotations/mage_frost/frost_actions.lua:533"] = "D2: core.input.move_forward_start",
+    -- Re-keyed 532/533 -> 571/572. Both causes land in one uncommitted diff against HEAD, so this
+    -- is ONE re-key and not two: `finish_low_add` and `emergency_escape` above it lost their direct
+    -- dispatcher calls and gained explanatory headers; then `use_mana_gem` stopped calling an
+    -- undefined `SpellQueue` global and moved down beside the potions to reach `submit_use_item`,
+    -- and the off-GCD actions gained the game-data note explaining why only two of the three may
+    -- bypass the GCD gate. The violation is UNCHANGED throughout -- `cancel_current_cast` still
+    -- presses a key itself, because MOVEMENT is quarantined from this conversion by scope. Same
+    -- call, same reason, different line.
+    --
+    -- The provenance above was itself wrong until Phase 4d corrected it: it claimed an intermediate
+    -- 534/535 state, which `git log -S` finds nowhere -- HEAD holds 532/533. An audit trail whose
+    -- stated purpose is human adjudication of every line shift is the last place a plausible-looking
+    -- unverified number belongs, so the check is: read the key back off HEAD, do not reconstruct it
+    -- from memory of what the edits "must have" done.
+    --
+    -- WHAT THIS RE-KEY SHOWS ABOUT THE LEDGER ITSELF: keying on `file:line` means any edit above a
+    -- known violation reports it as NEW, so the ratchet cannot tell a moved violation from an added
+    -- one and a human has to. Every time so far the answer has been "moved". That is a cost worth
+    -- naming -- it is also the property that makes the ledger refuse to drift silently, the point.
+    ["sentinel/rotations/mage_frost/frost_actions.lua:571"] = "D2: guard for move_forward_start",
+    ["sentinel/rotations/mage_frost/frost_actions.lua:572"] = "D2: core.input.move_forward_start",
 
     -- pet_controller's four calls and their guards are GONE (Phase 4b D3): every command now
     -- leaves as a `pet_command` intent under a PET lease.

@@ -240,7 +240,12 @@ local CROSS_NAMESPACE_LEDGER = {
     -- `Sentinel.forecast`, so the read left through the front door rather than being renamed.
     ["sentinel/rotations/mage_frost/frost_combat_state.lua"] = 6,
     ["sentinel/rotations/mage_frost/frost_conditions.lua"] = 5,
-    ["sentinel/rotations/mage_frost/frost_support.lua"] = 2,
+    -- 2 -> 1 in Phase 4c. `Support.dispatcher` read `module.combat.dispatcher` -- the coupling this
+    -- file's own header called out as one the require audit could not see, because it travelled
+    -- through a string key rather than an import. Casts now leave as intents, so the read is gone
+    -- and there is no dispatcher reference left in the package. The remaining 1 is
+    -- `module.combat.catalog`, which rank resolution still needs.
+    ["sentinel/rotations/mage_frost/frost_support.lua"] = 1,
     ["sentinel/rotations/mage_frost/frost_tbc.lua"] = 4,
     ["sentinel/rotations/mage_frost/maintenance_tree.lua"] = 4,
     -- combat's own `module.combat.*` traffic is legal today; only its reach into

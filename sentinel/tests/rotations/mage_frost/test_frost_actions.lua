@@ -1,5 +1,25 @@
+-- PHASE 4C: the recorder moved, the assertions did not.
+--
+-- Casts leave the plugin as `cast` intents, so there is no SpellDispatcher to record against. Every
+-- assertion below is unchanged: the dispatcher's `action_id` travels as the intent's `payload.label`
+-- and its `spell_id` as `payload.spell_id`, so `actions[1].action_id` still means what it meant.
+--
+-- `accept = false` now models a queue that REFUSES the submission rather than a dispatcher that
+-- refused the queue call. Both are "the cast did not get in", which is the only thing these
+-- assertions ever distinguished.
+--
+-- WHAT THIS FILE CANNOT SEE, and did not see before either: whether the cast ever reaches the SDK.
+-- Recording is at submit, so the GCD gate, the castability gate and the lease generation check are
+-- all downstream of everything asserted here. tests/rotations/mage_frost/test_frost_cast_intents.lua
+-- commits the queue and is where that lives.
+local Api = require("kernel/api")
 local Blackboard = require("core/blackboard")
+local ControlBroker = require("kernel/control_broker")
 local Status = require("core/bt/status")
+-- Phase 4d D5: a cast names its unit by a guid ref MINTED THROUGH THE KERNEL against the tick's
+-- frozen snapshot, so the surface needs BOTH `units` (the mint) and a scheduler (the tick).
+local Snapshot = require("kernel/snapshot")
+local Units = require("kernel/units")
 local T = require("tests/test_util")
 
 local M = {}
@@ -35,15 +55,31 @@ local function make_bb(overrides)
     local queued_actions = overrides.queued_actions or {}
     local queued_positions = overrides.queued_positions or {}
 
-    bb:set("module.combat.dispatcher", {
-        queue_target = function(_self, action_id, spell_id, _target, _priority, _message, _opts)
-            queued_actions[#queued_actions + 1] = { action_id = action_id, spell_id = spell_id }
+    -- Split by DESTINATION, the way the two dispatcher verbs used to split: a payload carrying a
+    -- point is a ground-targeted cast, anything else is a unit cast. That keeps
+    -- "blizzard should not use queue_target" meaningful without naming either verb.
+    local recording_queue = {
+        submit = function(_self, intent)
+            local payload = intent.payload or {}
+            local entry = { action_id = payload.label, spell_id = payload.spell_id }
+            if payload.point then
+                entry.position = payload.point
+                queued_positions[#queued_positions + 1] = entry
+            else
+                queued_actions[#queued_actions + 1] = entry
+            end
             return accept
         end,
-        queue_position = function(_self, action_id, spell_id, position, _priority, _message)
-            queued_positions[#queued_positions + 1] = { action_id = action_id, spell_id = spell_id, position = position }
-            return accept
-        end,
+    }
+    local broker = ControlBroker:new({ intent_queue = recording_queue })
+    -- The tick a minted guid ref is stamped with. These scenarios never commit -- the recording
+    -- queue captures the intent at submit -- so any stable tick will do; what matters is that the
+    -- mint can read ONE, because a rotation with no snapshot can name no unit.
+    local frozen = Snapshot.empty(1)
+    _G.Sentinel = Api.build({
+        blackboard = bb, broker = broker, intent_queue = recording_queue,
+        scheduler = { current_snapshot = function() return frozen end },
+        units = Units:new(),
     })
 
     return bb, queued_actions, queued_positions
@@ -51,6 +87,15 @@ end
 
 function M.run()
     local Act = require("rotations/mage_frost/frost_actions")
+    -- `make_bb` publishes `_G.Sentinel`; the offline harness's surface must go back afterwards or
+    -- every plugin suite that follows loses its kernel.
+    local saved_surface = _G.Sentinel
+    local ok, err = pcall(M._body, Act)
+    _G.Sentinel = saved_surface
+    if not ok then error(err, 0) end
+end
+
+function M._body(Act)
 
     -- queue_frostbolt returns SUCCESS when dispatcher accepts
     local bb, actions = make_bb({ accept = true })

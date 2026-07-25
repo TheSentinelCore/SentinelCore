@@ -280,10 +280,10 @@ Blackboard.HANDLE_LEDGER = {
         writers = { "sentinel/modules/combat/module.lua" },
         readers = {
             "sentinel/shared/combat_helpers.lua",
-            "sentinel/rotations/mage_frost/frost_support.lua",
         },
-        retire = "Only two readers, and both are already thin accessors that do nothing but "
-            .. "return it -- the cheapest collaborator to retire.",
+        retire = "mage_frost's reader is GONE (Phase 4c D4): its casts leave as `cast` intents and "
+            .. "the package no longer references a dispatcher at all. One reader left, in "
+            .. "shared/combat_helpers.lua -- the cheapest collaborator to retire.",
     },
     -- `module.combat.izi_bridge` WAS HERE, added in Phase 4c and RETIRED in Phase 4d D1. Its two
     -- lives are the two blind spots documented above this table, so it is recorded rather than
