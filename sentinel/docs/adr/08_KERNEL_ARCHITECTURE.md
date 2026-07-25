@@ -284,15 +284,29 @@ call validates nothing at all.
 still routed through the same gates. Reactive abilities (interrupts, defensive cooldowns) cannot
 afford a tick of latency.
 
-**One intent per channel per tick, under the lease that authorised it.** Two rules, and the second is
-the one that is easy to lose:
+**One intent *type* per channel, and every intent acts under the lease that authorised it.** Both
+halves are load-bearing, and the first is narrower than it first reads — this paragraph previously
+claimed a channel commits at most one intent per tick, which is **not what the kernel does**:
 
-- A channel commits at most one intent per tick. Two `move` intents in one tick are not "both
-  applied" — they are an unresolved contention that the broker exists to resolve *before* commit, and
-  silently taking the last one writes the arbitration policy into an ordering accident.
+- `Executors.CHANNEL_FOR` is a total map from intent *type* to channel — `cast`→CASTING,
+  `move`→MOVEMENT, `pet_command`→PET, and so on. That binding is what makes a channel claim mean
+  something specific. It says nothing about how many intents of that type may commit in one tick.
+- `IntentQueue:commit` dedupes on `type | sorted payload key=value`, so two intents of the same type
+  with **identical** payloads collapse to one (highest band wins, submission order breaks ties) while
+  two with **different** payloads both survive and both run the gates. That is deliberate and
+  load-bearing: `PetController:passive()` emits `passive` and then `follow` as two `pet_command`
+  intents in the same tick precisely so each can be individually gated, rejected and observed.
+
+  A per-channel exclusivity rule would make `follow` the silent casualty of `passive`. If one is ever
+  wanted, it must be added knowing that.
 - An intent may only act inside the lease that authorised it. An intent that outlives its lease, or
   that acts on a channel its lease does not cover, is the revocation race §6.1's generation counter
   closes. Emitting one is a defect even when it happens to work.
+
+  A corollary that is easy to get backwards: **a caller must not release its lease immediately after
+  submitting.** `is_generation_valid` resolves an intent's lease by lookup in the broker's held set,
+  so a tidy release before COMMIT kills the very intent it just emitted, as `stale_generation`. The
+  lease must outlive the submission that used it.
 
 **`move` is a desired state, not an imperative.** The name reads like a command and is not one: a
 `move` intent commits by *recording the desired key state* and touching no key. The keys are driven
@@ -458,6 +472,16 @@ broker refuses a bare integer with `band_must_be_named`; the resolved integer li
 - **All game-affecting calls hang off the lease**, not off a global. Unauthorised action becomes
   structurally impossible rather than merely discouraged. This is the object-capability pattern:
   authority travels with the reference, no ambient authority.
+
+  **The sample above is aspirational and the shipped lease does not match it.** There is no
+  `lease:cast` and no `lease:follow`. The caretaker exposes `submit`, `release`, `renew`, `has`,
+  `band`, `channels` and `generation` — one generic emit verb, not a typed one per capability. That
+  is a materially different object-capability story: `lease:cast(...)` would make authority typed per
+  verb, so a CASTING lease could not structurally express a move; `lease:submit(intent)` makes the
+  lease a **stamping** authority that attaches owner, band and generation, after which the verb rides
+  in the payload and the channel binding is enforced downstream by the gate (§3.2). The second is
+  weaker at the call site and equivalent at the commit point. Either is defensible; shipping one and
+  documenting the other is not.
 - **TTL on every lease.** A plugin that faults mid-tick cannot permanently hold `MOVEMENT`. Leases
   are Gray & Cheriton's core idea — authority reverts at term end *without the holder's cooperation*,
   which is exactly why a wedged holder cannot deadlock the resource.
@@ -653,6 +677,31 @@ function rotation:tick(ctx, leases) ... end
 Keep the **pull/combat split**: `pull(target) → PullResult` is the one part of LazyBot's rotation tier
 that demonstrably works, because pull failure (LoS, resist, path) needs different recovery than combat
 failure, and the framework acts on the returned value.
+
+### 8.4.1 Measured, not estimated
+
+The declarative tier's reach was asserted before it was counted. Counted:
+
+| Measure | Figure |
+|---|---|
+| `frost_tbc.lua` rotation entries expressible in Tier 1 | **25 / 25** |
+| Combinators in `modules/combat/condition_library.lua` | **65** |
+| Of those, blocked purely by sensors that do not exist | **42** |
+| Ported to `kernel/cond` on the `Truth` type | **17** |
+
+The 42 break down as auras (16), proximity counts (3), temporal forecast (5), bag contents (4),
+spellbook and cooldowns (4), a pet tier that the snapshot does not have at all (5), target detail
+including cast state and role (4), and one needing module state. A further 5 are not world state —
+they are rotation configuration — and 3 are superseded by `Truth`'s own combinators.
+
+**The 17 are a fixture proving the type, not a usable vocabulary**, and were chosen for coverage of
+type behaviour rather than for the mage: Unknown propagating through Kleene composition, policy
+resolving at the call site, `resolve` raising when given none, and the `TreatTrue` diagnostic. The
+Unknown that drives them comes from real missing data — there is no pet tier — rather than a stub,
+which is the only way to know the tri-state works for the reason claimed.
+
+**The gap is a sensor gap, not an expressiveness gap.** That distinction decides where Phase 1b
+spends: 42 of 65 are one warm/cold capture away, and none of them is waiting on the DSL.
 
 ----------
 
@@ -924,3 +973,68 @@ loading must exist before anything depends on it.
     cache, Objectives is the evaluator over a compiled `Predicate` AST, and Objectives consumes Facts
     as its `snapshot` argument. Both are new; the risk is that they blur under implementation
     pressure and we recreate scattered completion truth inside the kernel.
+
+----------
+
+## 13.1 Measured in Phase 4b D3 — defects, not risks
+
+Five tracks converted plugin call sites in parallel. What they found is worth more than what they
+converted, and none of it is speculative.
+
+**14. `Sentinel.snapshot` always returns `nil`, and the capability list says it works.** `api.lua`
+resolves it as `scheduler and scheduler.current_snapshot and scheduler:current_snapshot()`, and
+`current_snapshot` appears **exactly once in the whole repository — on that line.** `Scheduler` has
+no such method. The frozen snapshot exists only as a local inside `Scheduler:tick()`, passed to stage
+handlers as `ctx.snapshot`; a rotation action runs deep inside a ModuleRegistry ACT handler holding a
+blackboard and nothing else.
+
+Meanwhile `Api.KERNEL_CAPABILITIES["snapshot"] = true`. This is the **identical failure** the same
+file documents for `log` — a capability admitted at manifest time and absent at first use — except
+worse: the `and` chain makes it fail *silent* rather than at first use. **This is the single highest
+priority item in the tree.** Everything downstream is blocked on it: §8.4.1's 42 sensor-blocked
+combinators, the entire deferred handle worklist, and every predicate the tri-state was built for.
+Phase 1b's first task is not a warm tier; it is making the snapshot reachable at all.
+
+**15. Nothing in production emits an intent.** The only `:submit(` sites outside tests are the
+definition in `intent_queue.lua` and the caretaker forwarding to it in `control_broker.lua`. All six
+intent types are built, gated, tested and unwired. This is not an argument for deleting any of them —
+it is the reason none of them can be judged unused yet.
+
+**16. `report.intents` has no production consumer.** `scheduler.lua` populates `committed` /
+`deduped` / `rejected` / `failed` every tick and only tests read it. The point of routing a
+fail-silent `pcall` through the queue is that refusal becomes *named*; until something logs that
+report at runtime, every name this phase produced is observed by nobody.
+
+**17. The raw-handle count was 22 because the audit could only see `.object`.** `HANDLE_KEY` matches
+keys ending `.object`; a mechanical recount of one file — `frost_actions.lua` — found **94 distinct
+source lines touching a live handle**, including `combat.target`, `player.target` and
+`combat.low_health_add`, none of which the pattern can name. Structural rejection in `blackboard:set`
+now carries the defence and the audit is its backstop (§2.7).
+
+**18. The truthiness lint cannot see the kernel, and widening its scope alone would not help.**
+`Scope.PACKAGE_ROOTS` is `sentinel/rotations`, so no kernel file is scanned — and the kernel is now
+where `Truth` values are *produced*. But the lint seeds its detection on `Sentinel.cond` and aliases
+of it, so a kernel file doing `require("kernel/cond/…")` is not recognised as a Truth source at all.
+Running it over `sentinel/kernel` today reports **zero violations, and that zero measures nothing**.
+The seed list must learn the require form *before* the scope is widened, or widening it installs a
+check that is green because it is blind.
+
+**19. The snapshot's `target` is not the rotation's target.** The snapshot captures
+`player:get_target()`; rotations act on `combat.target` (written by the combat module) falling back to
+`player.target`. They usually agree and are not guaranteed to. Converting target reads to the snapshot
+as it stands would **silently retarget the rotation**. Phase 1b needs `selected_target.*` as a distinct
+capture, not just `target.*`.
+
+**20. Smaller, verified, and each one live:** `combat.potion_cd_until_ms` now has three readers and
+zero writers, so `potion_ready()` is permanently true. The potion path is unreachable in production
+anyway — nothing writes `combat.health_potion_id`, `mana_potion_id`, `has_health_potion` or
+`has_mana_potion`. `SpellQueue` is an undeclared global at `frost_actions.lua:375,377` and
+`use_mana_gem` would raise on first use. `tests/runtime/test_sensor_hub.lua:156` sets `_G.core` to
+`nil` mid-suite, so offline suite *order* is load-bearing. And `NavAdapter:can_claim` survives only as
+the no-broker fallback: full retirement of the second arbiter needs `chase_controller.lua` and
+`combat/module.lua` to take their own leases, neither of which was in this wave's scope.
+
+**The shape they share.** Items 14, 17 and 18 are the same defect the three earlier ones were: an
+audit that globbed its own scope, a handle pattern matching only `.object`, a force-release pin that
+could only see keys the kernel pressed. Each check was **right about what it saw and wrong about what
+it looked at**, and each reported green. Before a check is believed, state what it cannot see.
