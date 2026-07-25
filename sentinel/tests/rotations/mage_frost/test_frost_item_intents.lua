@@ -51,8 +51,6 @@ local M = {}
 local HEALTH_POTION = 22829
 local MANA_POTION = 22832
 
-local TWO_MINUTES_MS = 120000
-
 -- ---------------------------------------------------------------------------
 -- Harness
 -- ---------------------------------------------------------------------------
@@ -243,127 +241,168 @@ function M.test_cast_cancellation_is_left_on_its_direct_movement_path()
 end
 
 -- ---------------------------------------------------------------------------
--- DELTA PINS -- the hard-coded timer, as it behaves TODAY
+-- THE MEASURED DELTA -- ten pins that moved, and what each one measured
 -- ---------------------------------------------------------------------------
 --
--- Everything below describes the UNCONVERTED file. These are the pins expected to go red, and
--- each red is a behaviour delta to be reported -- input, old behaviour, new behaviour, and
--- whether the new behaviour is correct -- before any of them is touched.
+-- Each function below was written against the UNCONVERTED file, watched pass, and then watched
+-- FAIL after the conversion. Every docstring records the old behaviour it used to assert, so the
+-- delta stays readable from the test rather than only from a commit message. The assertion is
+-- the NEW behaviour; the `WAS:` line is what it replaced.
+--
+-- Six other pins in this file did NOT move. That matters as much: the conversion changed the
+-- cooldown authority and the authorisation, and changed neither the item id that is sent nor the
+-- refusal when there is no id to send.
 
---- THE SECOND SOURCE OF TRUTH ITSELF. The action writes a two-minute expiry onto the blackboard
---- after every use, and three OTHER files read that key.
-function M.test_a_used_potion_arms_a_two_minute_blackboard_timer()
+--- THE SECOND SOURCE OF TRUTH ITSELF, now deleted.
+--- WAS: after a use, `combat.potion_cd_until_ms` held `now + 120000`.
+--- Correct: yes. Three files still READ that key and every one of those reads is now permanently
+--- "ready" -- recorded as a finding, because a key with readers and no writer is a lie in slow
+--- motion, not a tidy deletion.
+function M.test_a_used_potion_no_longer_arms_a_two_minute_blackboard_timer()
     with_harness({ now_ms = 1000 }, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
         Act.use_health_potion(h.bb)
         h.commit()
-        T.assert_equal(h.bb:get("combat.potion_cd_until_ms"), 1000 + TWO_MINUTES_MS,
-            "the plugin keeps its own copy of a number the client owns")
+        T.assert_nil(h.bb:get("combat.potion_cd_until_ms"),
+            "the client owns this number -- the plugin must not keep a second copy")
     end)
 end
 
---- The near edge of the old timer: one millisecond early is refused, whatever the client thinks.
-function M.test_the_blackboard_timer_blocks_a_potion_one_millisecond_early()
+--- WAS: FAILURE and no packet, because the plugin's own expiry was one millisecond away.
+--- Correct: yes. The client reported ready; the blackboard's number was a stale local guess, and
+--- a guess must not veto the authority.
+function M.test_a_stale_blackboard_timer_no_longer_vetoes_a_ready_potion()
     with_harness({ now_ms = 499999, item_cooldown = 0 }, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
         h.bb:set("combat.potion_cd_until_ms", 500000)
-        T.assert_equal(Act.use_health_potion(h.bb), Status.FAILURE,
-            "the plugin's own timer vetoes, even though the client says ready")
+        T.assert_equal(Act.use_health_potion(h.bb), Status.SUCCESS,
+            "the client says ready, so a leftover blackboard expiry is not a veto")
         h.commit()
-        T.assert_nil(only_packet(h), "nothing leaves")
+        T.assert_not_nil(only_packet(h), "and the potion leaves")
     end)
 end
 
---- Health and mana potions DO share a cooldown in TBC, and the old code models that by writing
---- one shared key from both actions.
-function M.test_the_two_potions_share_one_hard_coded_timer()
+--- WAS: the health potion armed the shared key and the mana potion was refused BY THE ACTION.
+--- Correct: yes, with a cost worth naming. Health and mana potions really do share a cooldown in
+--- TBC, and the old code got that rule right by hard-coding it. The rule has not been lost -- it
+--- moved to the client, which is asked in the gate (`item_cooldown` is 0 in this fixture, which
+--- is the fixture speaking, not the game). What genuinely changed is that the ACTION now forms an
+--- intent it previously never formed: the rotation submits, and the gate refuses. That costs one
+--- submission per off-GCD tick and buys a refusal the tick report can name.
+function M.test_the_shared_potion_cooldown_is_now_the_clients_to_enforce()
     with_harness({ now_ms = 1000 }, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
         h.bb:set("combat.mana_potion_id", MANA_POTION)
         T.assert_equal(Act.use_health_potion(h.bb), Status.SUCCESS, "the health potion goes")
-        T.assert_equal(Act.use_mana_potion(h.bb), Status.FAILURE,
-            "and blocks the mana potion for two minutes, from the blackboard")
+        T.assert_equal(Act.use_mana_potion(h.bb), Status.SUCCESS,
+            "and the mana potion is submitted rather than pre-refused from the blackboard")
     end)
 end
 
---- THE DIVERGENCE, STATED DIRECTLY. The client reports a minute of cooldown left; the blackboard
---- timer is clear. The old code believes the blackboard and sends the packet anyway.
-function M.test_the_clients_real_item_cooldown_is_ignored()
+--- THE DIVERGENCE THIS CONVERSION EXISTS TO CLOSE.
+--- WAS: SUCCESS and a packet sent into a live 60-second cooldown, because the client was never
+--- asked and the blackboard's copy was clear.
+--- Correct: yes, unambiguously. This is the case a shared trinket cooldown produces in the game.
+function M.test_the_clients_real_item_cooldown_now_refuses_the_potion()
     with_harness({ now_ms = 1000, item_cooldown = 60000 }, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
-        T.assert_equal(Act.use_health_potion(h.bb), Status.SUCCESS,
-            "the client is never asked")
-        h.commit()
-        T.assert_not_nil(only_packet(h), "so a packet leaves during a live cooldown")
+        Act.use_health_potion(h.bb)
+        local report = h.commit()
+        T.assert_nil(only_packet(h), "the client says 60s remaining -- nothing may leave")
+        T.assert_equal(#report.rejected, 1, "the refusal must be recorded, not silent")
+        T.assert_equal(report.rejected[1].reason, "item_on_cooldown", "and recorded BY NAME")
     end)
 end
 
---- The old code never asks whether the character is carrying the potion. It reads an id off the
---- blackboard and fires.
-function M.test_a_potion_the_character_does_not_carry_is_still_sent()
+--- WAS: SUCCESS and a packet for an item that was not in the bag -- the old action read an id off
+--- the blackboard and fired without ever asking whether it was carried.
+--- Correct: yes.
+function M.test_a_potion_the_character_does_not_carry_is_now_refused()
     with_harness({ has_item = false }, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
-        T.assert_equal(Act.use_health_potion(h.bb), Status.SUCCESS,
-            "the bag is never consulted")
-        h.commit()
-        T.assert_not_nil(only_packet(h), "so a packet leaves for an item that is not there")
+        Act.use_health_potion(h.bb)
+        local report = h.commit()
+        T.assert_nil(only_packet(h), "an absent potion cannot be drunk")
+        T.assert_equal(#report.rejected, 1, "the refusal must be recorded")
+        T.assert_equal(report.rejected[1].reason, "item_absent", "and named")
     end)
 end
 
---- The old code wraps the SDK call in a bare `pcall` and returns SUCCESS regardless, so a
---- refusal is indistinguishable from a drink. ADR 08 §12's complaint about empty catch bodies.
-function M.test_a_refused_item_use_is_invisible_to_the_kernel()
+--- WAS: the SDK's refusal vanished. The old code discarded the return value inside a bare pcall
+--- and reported SUCCESS, so a refusal and a drink were indistinguishable -- ADR 08 §12's
+--- complaint about empty catch bodies, in this file.
+--- Correct: yes.
+function M.test_a_refused_item_use_is_now_visible_to_the_kernel()
     with_harness({ use_item_result = false }, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
-        T.assert_equal(Act.use_health_potion(h.bb), Status.SUCCESS,
-            "a refusal still reads as success")
+        Act.use_health_potion(h.bb)
         local report = h.commit()
-        T.assert_equal(#report.failed, 0, "and never reaches the tick report")
+        T.assert_equal(#report.failed, 1, "the SDK's refusal must reach the tick report")
+        T.assert_equal(report.failed[1].reason, "use_item_refused", "by name")
     end)
 end
 
---- Invariant 1, as it is violated today: a game-affecting call under NO authority at all.
-function M.test_using_a_potion_takes_no_control_lease()
+--- INVARIANT 1: one intent per channel, one authorising lease.
+--- WAS: nobody owned ITEMS. The potion was ambient authority -- a game-affecting call under no
+--- claim at all.
+--- Correct: yes.
+function M.test_using_a_potion_acquires_the_items_channel()
     with_harness(nil, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
+        T.assert_nil(h.broker:who_owns("ITEMS"), "nothing holds ITEMS before the action runs")
         Act.use_health_potion(h.bb)
-        T.assert_nil(h.broker:who_owns("ITEMS"),
-            "ambient authority: the potion goes without claiming the channel")
+        local owner = h.broker:who_owns("ITEMS")
+        T.assert_not_nil(owner, "a use_item intent must be authorised by an ITEMS lease")
+        T.assert_equal(owner, "sentinel.rotation.mage_frost", "and the rotation must own it")
     end)
 end
 
---- The packet reaches the SDK without the commit stage ever seeing it -- no gate, no band, no
+--- WAS: the packet reached the SDK with the commit stage never seeing it -- no gate, no band, no
 --- generation check.
-function M.test_a_potion_reaches_the_sdk_without_passing_through_the_kernel()
+---
+--- ALSO THE ONE THAT IS EASY TO GET WRONG IN THE OTHER DIRECTION. Releasing the lease on the way
+--- out of the action looks tidy and is fatal: `release` removes it from the broker's holdings,
+--- and the commit stage validates an intent's generation by looking its lease UP in those
+--- holdings. A polite release would make every potion intent fail its own generation check,
+--- silently, one stage later. This pin is what would catch that.
+function M.test_the_items_lease_outlives_the_action_so_the_intent_can_commit()
     with_harness(nil, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
         Act.use_health_potion(h.bb)
         local report = h.commit()
-        T.assert_not_nil(only_packet(h), "the packet left")
-        T.assert_equal(#report.committed, 0, "but the kernel committed nothing")
-        T.assert_equal(h.queue:pending_count(), 0, "and nothing was ever submitted")
+        T.assert_equal(#report.committed, 1,
+            "the intent must still be authorised when COMMIT runs")
+        T.assert_equal(#report.rejected, 0, "and must not be rejected as a stale generation")
+        T.assert_not_nil(only_packet(h), "so the packet leaves through the kernel")
     end)
 end
 
---- With no broker published at all, the old code is unaffected: it never asked for one.
-function M.test_a_potion_is_sent_with_no_control_broker_present()
+--- WAS: SUCCESS and a packet, because the old code never asked for a broker.
+--- Correct: yes, and deliberately fail-CLOSED. The operational consequence is real and worth
+--- stating: if the kernel is not up, potions stop. That is the same trade the castable gate makes
+--- -- an absent validator is not permission.
+function M.test_a_potion_without_a_control_broker_sends_nothing()
     with_harness({ no_broker = true }, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
-        T.assert_equal(Act.use_health_potion(h.bb), Status.SUCCESS,
-            "no broker, no problem -- which is the problem")
+        T.assert_equal(Act.use_health_potion(h.bb), Status.FAILURE,
+            "no broker is no authority, and no authority is no packet")
         h.commit()
-        T.assert_not_nil(only_packet(h), "the packet leaves regardless")
+        T.assert_nil(only_packet(h), "nothing may leave unauthorised")
     end)
 end
 
---- ITEMS held by a higher band. Today that is invisible to the action.
-function M.test_a_potion_is_sent_while_another_owner_holds_the_items_channel()
+--- WAS: SUCCESS and a packet. A higher-band holder of ITEMS was invisible to the action.
+--- Correct: yes. The rotation cannot preempt SAFETY, so it is refused at the BROKER rather than
+--- at the gate -- which is the point of making ITEMS a channel at all.
+function M.test_a_potion_refuses_when_a_higher_band_holds_the_items_channel()
     with_harness({ items_held_by = "sentinel.behavior.corpse_run" }, function(h)
         h.bb:set("combat.health_potion_id", HEALTH_POTION)
-        T.assert_equal(Act.use_health_potion(h.bb), Status.SUCCESS,
-            "a SAFETY-band holder of ITEMS does not stop the rotation")
+        T.assert_equal(Act.use_health_potion(h.bb), Status.FAILURE,
+            "ITEMS is held at SAFETY -- the rotation waits")
         h.commit()
-        T.assert_not_nil(only_packet(h), "the packet leaves anyway")
+        T.assert_nil(only_packet(h), "nothing may leave without the channel")
+        T.assert_equal(h.broker:who_owns("ITEMS"), "sentinel.behavior.corpse_run",
+            "and the incumbent keeps the channel")
     end)
 end
 

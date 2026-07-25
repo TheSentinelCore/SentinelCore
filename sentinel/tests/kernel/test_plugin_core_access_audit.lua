@@ -335,13 +335,11 @@ local CORE_ACCESS_LEDGER = {
     ["sentinel/rotations/mage_frost/kite_controller.lua:182"] = "D2: guard for look_at",
     ["sentinel/rotations/mage_frost/kite_controller.lua:183"] = "D2: core.input.look_at",
 
-    -- frost_actions: ITEMS + MOVEMENT.
-    ["sentinel/rotations/mage_frost/frost_actions.lua:396"] = "D2: guard for use_item",
-    ["sentinel/rotations/mage_frost/frost_actions.lua:397"] = "D2: core.input.use_item",
-    ["sentinel/rotations/mage_frost/frost_actions.lua:410"] = "D2: guard for use_item",
-    ["sentinel/rotations/mage_frost/frost_actions.lua:411"] = "D2: core.input.use_item",
-    ["sentinel/rotations/mage_frost/frost_actions.lua:484"] = "D2: guard for move_forward_start",
-    ["sentinel/rotations/mage_frost/frost_actions.lua:485"] = "D2: core.input.move_forward_start",
+    -- frost_actions: MOVEMENT only. The two ITEMS sites are RETIRED -- both potion actions now
+    -- emit a `use_item` intent under an ITEMS lease, so their entries are deleted rather than
+    -- re-keyed. The movement site is untouched and merely moved down the file.
+    ["sentinel/rotations/mage_frost/frost_actions.lua:532"] = "D2: guard for move_forward_start",
+    ["sentinel/rotations/mage_frost/frost_actions.lua:533"] = "D2: core.input.move_forward_start",
 
     -- pet_controller: the four the plan enumerated, plus their guards.
     ["sentinel/rotations/mage_frost/pet_controller.lua:62"] = "D2: guard for pet_attack",
