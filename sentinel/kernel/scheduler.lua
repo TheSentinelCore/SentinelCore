@@ -44,6 +44,7 @@
 
 local Snapshot = require("kernel/snapshot")
 local TickClock = require("kernel/tick_clock")
+local FaultTracker = require("kernel/fault_tracker")
 
 local Scheduler = {}
 Scheduler.__index = Scheduler
@@ -53,9 +54,12 @@ Scheduler.STAGES = { "SENSE", "EVENTS", "INTERRUPT", "ARBITRATE", "ACT", "COMMIT
 local STAGE_SET = {}
 for _, stage in ipairs(Scheduler.STAGES) do STAGE_SET[stage] = true end
 
--- Mirrors runtime/module_registry.lua's existing DEGRADED policy (ADR 08 §5.1: the
--- 3-strike quarantine is "already implemented" there and the kernel keeps the same number).
-local MAX_CONSECUTIVE_FAULTS = 3
+-- The 3-strike quarantine policy lives in kernel/fault_tracker.lua. This file used to implement it
+-- inline, which made it the SECOND copy after runtime/module_registry.lua:232-270 -- and Phase 3
+-- needed a third for the plugin lifecycle. Three copies of "what counts as too many faults" is
+-- three places for the number to drift, so the rule was extracted and this delegates to it.
+-- ModuleRegistry is the last holdout and stays untouched while it is the running path (strangler
+-- fig); Phase 4 retires it.
 
 --- Monotonic milliseconds for measuring INTERVALS.
 --- `core.time()` is seconds-since-injection: monotonic, float, and never comparable to a
@@ -97,8 +101,7 @@ function Scheduler:new(opts)
     o._handlers = {}
     for _, stage in ipairs(Scheduler.STAGES) do o._handlers[stage] = {} end
 
-    o._fault_streaks = {}
-    o._quarantined = {}
+    o._faults = FaultTracker:new()
     o._tick_index = 0
     return o
 end
@@ -144,7 +147,7 @@ local function quarantine_key(stage, owner)
 end
 
 function Scheduler:is_quarantined(stage, owner)
-    return self._quarantined[quarantine_key(stage, owner)] == true
+    return self._faults:is_quarantined(quarantine_key(stage, owner))
 end
 
 -- ---------------------------------------------------------------------------
@@ -180,17 +183,15 @@ function Scheduler:_run_handler(stage, entry, ctx, report)
 
     local key = quarantine_key(stage, entry.owner)
     if ok then
-        self._fault_streaks[key] = 0
+        self._faults:success(key)
         return
     end
 
-    local streak = (self._fault_streaks[key] or 0) + 1
-    self._fault_streaks[key] = streak
+    local quarantined_now, streak = self._faults:fault(key, err)
     report.faults[#report.faults + 1] =
         { stage = stage, owner = entry.owner, error = tostring(err), streak = streak }
 
-    if streak >= MAX_CONSECUTIVE_FAULTS then
-        self._quarantined[key] = true
+    if quarantined_now then
         self:_publish("kernel:handler_quarantined", {
             stage = stage, owner = entry.owner, faults = streak, error = tostring(err),
         })
