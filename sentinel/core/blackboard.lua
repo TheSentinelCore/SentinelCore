@@ -34,6 +34,45 @@ Blackboard.__index = Blackboard
 -- dependency runs one way only, kernel -> core). They are pinned against drift by a
 -- conformance test in tests/kernel/test_blackboard_handle_guard.lua rather than by sharing
 -- code across that boundary.
+--
+-- ===========================================================================================
+-- WHAT THIS GUARD CANNOT SEE. Stated because the last three defects in this phase were each
+-- RIGHT ABOUT WHAT THEY SAW AND WRONG ABOUT WHAT THEY LOOKED AT. Every item below is measured,
+-- not assumed.
+-- ===========================================================================================
+--
+--   1. WRITES THAT DO NOT GO THROUGH `set`. `bb._data[key] = handle` stores it. `_data` is a
+--      plain field on a plain table and nothing seals it. This guard is a front door, not a
+--      wall.
+--
+--   2. MUTATION AFTER ACCEPTANCE -- the direct price of not copying. `local t = {}` accepted
+--      clean, then `t.unit = handle` a line later, and the blackboard now holds a handle it
+--      approved when it did not. Closing this needs a read-side proxy, and LuaJIT's
+--      `__newindex` fires only for ABSENT keys, so on 5.1 that proxy breaks `pairs()`. Same
+--      wall snapshot.lua documents.
+--
+--   3. LEDGERED KEYS ARE NOT SCANNED AT ALL. An exception is total, not partial: while
+--      `player.object` is ledgered it may hold anything at any depth. The ledger trades
+--      coverage for a migration path, which is the whole point of phasing it -- but an
+--      exception is a hole for as long as it exists.
+--
+--   4. CODE PATHS THE OFFLINE SUITE NEVER EXECUTES. A runtime guard only ever inspects values
+--      that some run actually produces. Measured: the suite sets `combat.low_health_add` 32
+--      times and never once with a handle, because its mock adds are plain tables, while in the
+--      client it holds a live unit. That entry was put in the ledger by reading the writer, not
+--      by observing a run -- and a ledger harvested from runs alone would have shipped a guard
+--      that threw in-game on a path no test covers.
+--
+--   5. THE RATCHET'S EVIDENCE IS TEXTUAL. It proves a `set("<key>", …)` line still exists, not
+--      that the value at that line is still a handle. A key that quietly changed from a handle
+--      to a scalar, keeping its name and its write site, keeps its exception alive on false
+--      pretences. It fails in the safe direction -- an exception outliving its need is a
+--      to-do, not a hole -- but it is not proof.
+--
+-- The depth limit and the metatable check fail CLOSED: unproven means refused, so neither is a
+-- blind spot. Items 1 and 2 are structural and need Phase 3's sealed public API. Item 3 shrinks
+-- as the ledger does. Item 4 is why the `.object` audit is kept as a backstop -- it reads
+-- source text, so it sees what no run reaches, for the one spelling it knows.
 
 local MAX_DEPTH = 8
 
@@ -231,6 +270,22 @@ local function assert_pure(value, key, depth, seen, path)
     if depth > MAX_DEPTH then
         error(string.format("blackboard set refused %s: nested deeper than %d levels, so the "
             .. "guard cannot prove it holds no handle", describe_path(key, path), MAX_DEPTH), 0)
+    end
+
+    -- `pairs` walks the RAW table, so it cannot see through `__index`. A handle reached by
+    -- metamethod is invisible to the scan above: `setmetatable({}, {__index = handle})` has no
+    -- fields at all and would otherwise pass as an empty table. A metatable is also how
+    -- `__call` smuggles behaviour into something that is not of type "function". Refusing it
+    -- outright costs nothing measurable -- every metatable-carrying value on the blackboard
+    -- today sits under an already-ledgered key -- and closes the only evasion the field walk
+    -- has.
+    if getmetatable(value) ~= nil then
+        error(string.format(
+            "blackboard set refused %s: the table carries a metatable, and `pairs` cannot see "
+            .. "through `__index`, so the guard cannot prove it holds no handle -- a handle "
+            .. "served by a metamethod would read as an empty table (ADR 08 §2.7). Store plain "
+            .. "data, or add the key to Blackboard.HANDLE_LEDGER with a writer, a reader and a "
+            .. "retirement plan.", describe_path(key, path)), 0)
     end
 
     -- A cycle in plain data is not a handle, and nothing is copied here, so it is safe to

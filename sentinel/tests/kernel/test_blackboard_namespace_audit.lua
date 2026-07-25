@@ -20,6 +20,29 @@
 --   what ADR 08 §9.3's "every unreadable field silently becomes a plausible-looking zero"
 --   describes.
 --
+-- ===========================================================================================
+-- THE RAW-HANDLE CHECK IS NOW A BACKSTOP, NOT THE PRIMARY DEFENCE.
+-- ===========================================================================================
+-- `HANDLE_KEY` below matches keys ending in `.object`. That is a rule about SPELLING, and it
+-- was wrong about what it looked at: `combat.target`, `player.target` and
+-- `combat.low_health_add` all hold live handles under names it never agreed to inspect, so it
+-- reported a clean bill of health for the majority of the problem. Widening the pattern would
+-- only move the blind spot to the next name nobody thought of.
+--
+-- The primary defence is now `Blackboard:set` itself (core/blackboard.lua), which refuses any
+-- value carrying behaviour at any depth without ever reading the key, plus its shrink-only
+-- HANDLE_LEDGER. See tests/kernel/test_blackboard_handle_guard.lua.
+--
+-- THIS AUDIT IS KEPT ANYWAY, BECAUSE THE TWO ARE BLIND IN OPPOSITE DIRECTIONS.
+--   The runtime guard sees only code the offline suite actually EXECUTES. Measured: the suite
+--   sets `combat.low_health_add` 32 times and never once with a handle, because its mock adds
+--   are plain tables -- in the client that key holds a live unit. A guard alone would have
+--   missed it.
+--   This audit reads SOURCE TEXT, so it sees keys on paths no test covers -- but only the ones
+--   spelled `.object`.
+-- Neither is complete. The ledger in core/blackboard.lua is the union, maintained by hand, and
+-- that is precisely why it has to be justified per entry rather than harvested from a run.
+--
 -- LEDGER GRANULARITY -- WHY COUNTS AND NOT LINES HERE.
 -- Audit 3 ledgers `file:line` because it has 22 violations. This audit has ~110, and a
 -- hand-maintained 110-entry line ledger rots into noise that gets bulk-edited rather than
@@ -42,7 +65,9 @@ local M = {}
 --- access (`module.build`) cannot masquerade as a namespaced key.
 local MODULE_KEY = '"module%.([%w_]+)%.'
 
---- A raw SDK handle parked on the blackboard.
+--- A raw SDK handle parked on the blackboard, IF it happens to be spelled `.object`. See the
+--- header: this is the backstop's known limit, not a definition of what a handle is. The
+--- definition lives in `Blackboard._assert_pure`, which never reads the key at all.
 local HANDLE_KEY = '"([%w_%.]-)%.object"'
 
 ---Cross-namespace reads and writes for one package.

@@ -157,6 +157,32 @@ function M.test_set_refuses_a_list_of_handles()
     refusal(bb, "combat.some_unlisted_key", { mock_handle(), mock_handle() })
 end
 
+--- THE EVASION THE FIELD WALK CANNOT CATCH. `pairs` reads the RAW table, so a handle served
+--- through `__index` has no fields to find -- the scan sees an empty table and waves it
+--- through. Measured before closing it: every metatable-carrying value on the blackboard today
+--- sits under an already-ledgered key, so refusing metatables costs nothing.
+function M.test_set_refuses_a_table_carrying_a_metatable()
+    local bb = Blackboard:new()
+    local cases = {
+        ["__index serving a handle"] = setmetatable({}, { __index = mock_handle() }),
+        ["__index serving methods"] = setmetatable({ guid = 1 },
+            { __index = { get_hp = function() return 1 end } }),
+        ["__call"] = setmetatable({}, { __call = function() end }),
+        ["protected metatable"] = setmetatable({}, { __metatable = "locked" }),
+    }
+    for label, value in pairs(cases) do
+        local err = refusal(bb, "combat.some_unlisted_key", value)
+        T.assert_true(err:match("metatable") ~= nil, label .. ": " .. err)
+    end
+end
+
+--- ...including one buried in an otherwise plain structure.
+function M.test_set_refuses_a_metatable_nested_deep_in_plain_data()
+    local bb = Blackboard:new()
+    refusal(bb, "combat.some_unlisted_key",
+        { a = { b = { c = setmetatable({}, { __index = mock_handle() }) } } })
+end
+
 -- ---------------------------------------------------------------------------
 -- The guard does not reject data
 -- ---------------------------------------------------------------------------
@@ -294,9 +320,9 @@ function M.test_the_guard_and_the_snapshot_agree_on_what_carries_behaviour()
         .. table.concat(disagreements, "\n  "))
 end
 
---- The two DELIBERATE divergences, pinned so they stay deliberate. If either flips, the
---- separation above stopped being a considered tradeoff and became an accident.
-function M.test_the_two_deliberate_divergences_from_the_snapshot()
+--- The DELIBERATE divergences, pinned so they stay deliberate. If one flips, the separation
+--- above stopped being a considered tradeoff and became an accident.
+function M.test_the_deliberate_divergences_from_the_snapshot()
     local Snapshot = require("kernel/snapshot")
 
     -- 1. The snapshot copies; the blackboard must not, because it is live read-through state.
@@ -314,6 +340,21 @@ function M.test_the_two_deliberate_divergences_from_the_snapshot()
     Blackboard:new():set("combat.divergence", cyclic)
     T.assert_false(pcall(function() Snapshot.builder():put("combat.divergence", cyclic) end),
         "snapshot must still refuse a cycle")
+
+    -- 3. Metatables. The blackboard REFUSES them; the snapshot accepts them -- and is safe
+    --    anyway, but by accident rather than by check: its deep copy rebuilds the table from
+    --    raw fields, so the metatable (and with it the `__index` handle) is dropped on the way
+    --    in. The blackboard does not copy, so an accepted proxy would be stored LIVE. Divergence
+    --    1 is therefore the direct cause of divergence 3, and it is why the metatable check
+    --    belongs here and is not needed there.
+    local proxy = setmetatable({}, { __index = mock_handle() })
+    T.assert_false(pcall(function() Blackboard:new():set("combat.divergence", proxy) end),
+        "blackboard must refuse a metatable it cannot see through")
+
+    local captured = Snapshot.builder():put("combat.divergence", proxy):freeze()
+    T.assert_nil(captured:get("combat.divergence").get_max_health,
+        "the snapshot's copy must have dropped the metatable -- if it ever stops copying, it "
+        .. "needs this same metatable check")
 end
 
 -- ---------------------------------------------------------------------------
