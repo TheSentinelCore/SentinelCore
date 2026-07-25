@@ -27,35 +27,25 @@
 -- one bucket -- committed, deduped, rejected or failed -- and the last three carry a reason
 -- string. A gate that throws REJECTS; it never fails open.
 
+local Bands = require("kernel/bands")
+
 local IntentQueue = {}
 IntentQueue.__index = IntentQueue
 
--- ADR 08 §6.2 -- fixed bands, so numbers are not folklore.
-IntentQueue.BANDS = {
-    SAFETY    = { min = 90, max = 99 },
-    SURVIVAL  = { min = 70, max = 89 },
-    COMBAT    = { min = 50, max = 69 },
-    GOAL      = { min = 30, max = 49 },
-    HOUSEKEEP = { min = 10, max = 29 },
-    IDLE      = { min = 0,  max = 9 },
-}
+-- ADR 08 §6.2 bands live in kernel/bands.lua, which is the single authority. This module
+-- re-exports rather than copying: two independent copies of the same table is exactly how
+-- gating silently stops agreeing with arbitration.
+IntentQueue.BANDS = Bands.BANDS
 
--- ADR 08 §3.2: `immediate` is restricted to leases at band >= 70.
-local IMMEDIATE_MIN_BAND = 70
+local IMMEDIATE_MIN_BAND = Bands.IMMEDIATE_MIN_PRIORITY
 
 ---Map a Sentinel band onto the injector's own `spell_queue` arbitration (ADR 08 §6.3).
----
----The kernel does NOT own the bottom of the casting stack (§2.6): `spell_queue` is already
----a cross-plugin arbitration channel with a documented convention -- 1 for essentially
----everything you author, 7 reserved for interrupts, 9 for manual player input. Sentinel
----never emits 9; that slot belongs to the human at the keyboard.
+---Delegates to kernel/bands.lua -- see there for why the kernel maps onto the injector's
+---convention rather than owning the bottom of the casting stack.
 ---@param band number
 ---@return number 1 or 7
 function IntentQueue.spell_queue_priority(band)
-    if type(band) == "number" and band >= IntentQueue.BANDS.SURVIVAL.min then
-        return 7 -- safety + survival: reactive, must not queue behind a rotation
-    end
-    return 1
+    return Bands.spell_queue_priority(band)
 end
 
 function IntentQueue:new()

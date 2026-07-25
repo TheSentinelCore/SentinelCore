@@ -333,6 +333,9 @@ local test_modules = {
     "tests/kernel/test_intent_queue",
     "tests/kernel/test_scheduler",
 
+    -- Kernel (ADR 08 Phase 2: bands, ControlBroker, ActivityStack, enforced revocation)
+    "tests/kernel/test_bands",
+
     -- Integrations
     "tests/integrations/test_izi_bridge",
 
