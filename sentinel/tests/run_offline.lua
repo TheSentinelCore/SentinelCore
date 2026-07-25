@@ -311,6 +311,34 @@ package.path = table.concat({
 }, ";")
 
 -- Run test modules (combat + core + infrastructure + questing)
+-- ---------------------------------------------------------------------------
+-- Publish `_G.Sentinel` for plugin tests
+-- ---------------------------------------------------------------------------
+-- Plugins reach the kernel through `_G.Sentinel` and nothing else -- that is the whole point of the
+-- require audit. So a test that exercises `rotations/mage_frost/*` needs a published surface, the
+-- same way it needs the mocked `core` above. Building it here rather than in each test file keeps
+-- the plugin tests free of kernel wiring, which is exactly the coupling the audit forbids.
+--
+-- This is the REAL surface with the REAL libraries, not a stub: `Api.build` with the kernel pieces a
+-- rotation actually touches. A stubbed surface would let the plugin pass against a shape the kernel
+-- does not have.
+do
+    local Api = require("kernel/api")
+    local SpellCatalog = require("kernel/catalogs/spell")
+    local Spells = require("kernel/spells")
+    local Units = require("kernel/units")
+    local Timing = require("kernel/timing")
+    local SpellHelper = require("shared/spell_helper")
+    local AoeHelper = require("shared/aoe_helper")
+
+    _G.Sentinel = Api.build({
+        spell_catalog = SpellCatalog:new(),
+        units = Units:new(),
+        spells = Spells:new({ spell_helper = SpellHelper, spell_prediction = AoeHelper }),
+        timing = Timing:new(),
+    })
+end
+
 local test_modules = {
     -- Harness (offline-only; exercises _G.JSON mocked above)
     "tests/harness/test_json_mock",
@@ -346,6 +374,7 @@ local test_modules = {
     "tests/kernel/test_capabilities",
     "tests/kernel/test_plugin_registry",
     "tests/kernel/test_api",
+    "tests/kernel/test_rotation_lib",
     "tests/kernel/test_timing",
     "tests/kernel/test_intent_executors",
 

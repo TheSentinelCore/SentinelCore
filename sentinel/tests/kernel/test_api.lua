@@ -44,10 +44,23 @@ local function make_kernel()
     }
 end
 
+--- Runs `fn` against a pristine global namespace, then puts back whatever was there before.
+---
+--- RESTORING matters, not just clearing. The offline harness publishes a real `_G.Sentinel` so that
+--- plugin tests (`tests/rotations/*`) have a kernel to talk to -- plugins reach the kernel through
+--- `_G` and nothing else, which is the whole point of the require audit. These tests run FIRST, so
+--- leaving `_G.Sentinel = nil` behind stripped the surface out from under every plugin test that
+--- followed, and they failed with `attempt to call field 'condition' (a nil value)` a long way from
+--- the cause.
 local function with_clean_globals(fn)
+    local saved_surface = _G.Sentinel
+    local saved_pending = _G[Api.PENDING_GLOBAL]
+
     reset_globals()
     local ok, err = pcall(fn)
-    reset_globals()
+
+    _G.Sentinel = saved_surface
+    _G[Api.PENDING_GLOBAL] = saved_pending
     if not ok then error(err, 0) end
 end
 
@@ -107,10 +120,56 @@ end
 function M.test_unimplemented_services_are_absent_rather_than_nil_returning_stubs()
     with_clean_globals(function()
         Api.publish(make_kernel())
-        for _, field in ipairs({ "timing", "catalogs", "objectives", "facts", "units", "persist" }) do
+        for _, field in ipairs({ "objectives", "facts", "persist" }) do
             T.assert_nil(_G.Sentinel[field],
                 "'" .. field .. "' is Phase 5+ and must not be published as a stub")
         end
+    end)
+end
+
+--- `aura` is a stateless module and sits on the table directly. `spell` is a per-app INSTANCE and
+--- resolves live, so every plugin shares ONE catalog -- a rotation carrying its own rank table would
+--- duplicate DB-baked data per class, which is exactly the drift §5.1 says catalogs prevent.
+function M.test_catalogs_shares_one_spell_catalog_and_exposes_aura_directly()
+    with_clean_globals(function()
+        local kernel = make_kernel()
+        kernel.spell_catalog = { marker = "the-one-catalog" }
+        Api.publish(kernel)
+
+        T.assert_true(type(_G.Sentinel.catalogs.aura.has_any) == "function", "aura is a module")
+        T.assert_true(_G.Sentinel.catalogs.spell == kernel.spell_catalog,
+            "spell must resolve to the app's single instance, not a fresh one per reader")
+    end)
+end
+
+--- Absent when the app has not built one, rather than a stub that fails later at the call site.
+function M.test_an_unbuilt_spell_catalog_is_absent_rather_than_stubbed()
+    with_clean_globals(function()
+        Api.publish(make_kernel())
+        T.assert_nil(_G.Sentinel.catalogs.spell)
+    end)
+end
+
+--- The BT library needs both halves. Handing back the factory alone would make every plugin invent
+--- its own SUCCESS/FAILURE strings, and two trees that disagree on what "done" means is a bug that
+--- only shows up under composition.
+function M.test_the_bt_library_exposes_both_constructors_and_the_status_enum()
+    with_clean_globals(function()
+        Api.publish(make_kernel())
+        T.assert_true(type(_G.Sentinel.bt.sequence) == "function")
+        T.assert_true(type(_G.Sentinel.bt.priority_selector) == "function")
+        T.assert_equal(_G.Sentinel.bt.Status.SUCCESS, "SUCCESS")
+    end)
+end
+
+--- `timing` left that list in Phase 4: the frost port needs `gcd_remaining_est` to avoid
+--- double-casting, so the service was built (kernel/timing.lua) rather than worked around.
+function M.test_timing_is_published_now_that_it_exists()
+    with_clean_globals(function()
+        local kernel = make_kernel()
+        kernel.timing = { marker = "timing" }
+        Api.publish(kernel)
+        T.assert_true(_G.Sentinel.timing == kernel.timing)
     end)
 end
 
@@ -122,8 +181,9 @@ function M.test_available_enumerates_only_real_capabilities()
         for _, c in ipairs(available) do set[c] = true end
         T.assert_true(set["control"], "control is implemented")
         T.assert_true(set["intents"])
-        T.assert_nil(set["catalogs.spell"], "catalogs.spell is NOT implemented and must not be claimed")
-        T.assert_nil(set["timing.gcd"], "timing.gcd is NOT implemented and must not be claimed")
+        T.assert_true(set["timing.gcd"], "timing.gcd IS implemented as of Phase 4")
+        T.assert_true(set["catalogs.spell"], "catalogs.spell IS implemented as of Phase 4")
+        T.assert_nil(set["objectives"], "objectives is NOT implemented and must not be claimed")
     end)
 end
 
@@ -133,6 +193,92 @@ function M.test_the_surface_is_read_only()
         Api.publish(make_kernel())
         local ok = pcall(function() _G.Sentinel.control = "hijacked" end)
         T.assert_false(ok, "assigning to the API surface must fail loudly")
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- The host seam (Phase 4)
+-- ---------------------------------------------------------------------------
+-- Publication has to reconcile two surfaces, and the honest split is by OWNERSHIP, not by age.
+-- The kernel owns components (control, state, events, intents). It cannot own `reload` or
+-- `questing`, because it does not build the app -- `main.lua` does, and it is the only thing that
+-- can tear one down and stand a new one up. So the host CONTRIBUTES verbs to the surface.
+--
+-- That is a permanent seam, not a compatibility shim. What genuinely was dead got deleted rather
+-- than carried: `get_event_bus` and `get_blackboard` had zero callers and duplicated
+-- `Sentinel.events` / `Sentinel.state`.
+
+local function host_stub()
+    local calls = {}
+    return calls, {
+        combat = function() calls[#calls + 1] = "combat" return "combat-module" end,
+        questing = function() calls[#calls + 1] = "questing" return "questing-module" end,
+        reload = function() calls[#calls + 1] = "reload" return true end,
+        toggle_quest_editor = function() return false end,
+    }
+end
+
+--- HANDOFF.md's restart snippet is `_G.Sentinel.questing()`. If publication breaks that, the phase
+--- has destroyed its own verification path.
+function M.test_host_verbs_survive_publication()
+    with_clean_globals(function()
+        local calls, host = host_stub()
+        local kernel = make_kernel()
+        kernel.host = host
+        Api.publish(kernel)
+
+        T.assert_equal(_G.Sentinel.questing(), "questing-module")
+        T.assert_equal(_G.Sentinel.combat(), "combat-module")
+        T.assert_true(_G.Sentinel.reload())
+        T.assert_equal(calls[1], "questing")
+        T.assert_true(_G.Sentinel.control == kernel.broker,
+            "and the kernel surface still resolves alongside them")
+    end)
+end
+
+--- `main.lua:153` and `:201` did `_G.Sentinel.app = app`. That assignment cannot survive contact
+--- with a read-only surface, so `app` becomes a live getter -- strictly better, because it resolves
+--- whether read before or after the app is built.
+function M.test_app_resolves_through_a_live_getter_rather_than_assignment()
+    with_clean_globals(function()
+        local kernel = make_kernel()
+        local surface = Api.build(kernel)
+
+        T.assert_nil(surface.app, "no app yet")
+        kernel.app = { marker = "the-app" }
+        T.assert_true(surface.app == kernel.app,
+            "app must resolve at access time, not be captured at publish time")
+
+        local ok = pcall(function() surface.app = "hijacked" end)
+        T.assert_false(ok, "and assigning it must still fail loudly")
+    end)
+end
+
+--- A host verb silently overwriting a kernel field would shadow the new surface for every plugin
+--- that reads it -- the exact failure the read-only guard exists to prevent.
+function M.test_a_host_verb_that_shadows_a_kernel_field_is_refused()
+    with_clean_globals(function()
+        local kernel = make_kernel()
+        kernel.host = { control = function() return "shadowed" end }
+        local ok, err = pcall(Api.build, kernel)
+        T.assert_false(ok, "a colliding host verb must fail at build time")
+        T.assert_true(tostring(err):find("control") ~= nil, "and must name the collision")
+    end)
+end
+
+--- Deleted, not carried. Both duplicated a kernel field and had no callers; keeping them would mean
+--- two ways to reach the same object, which is how the surfaces drift apart again.
+function M.test_the_dead_duplicate_accessors_are_gone()
+    with_clean_globals(function()
+        local _, host = host_stub()
+        local kernel = make_kernel()
+        kernel.host = host
+        Api.publish(kernel)
+
+        T.assert_nil(_G.Sentinel.get_event_bus, "superseded by Sentinel.events")
+        T.assert_nil(_G.Sentinel.get_blackboard, "superseded by Sentinel.state")
+        T.assert_true(_G.Sentinel.events == kernel.event_bus)
+        T.assert_true(_G.Sentinel.state == kernel.blackboard)
     end)
 end
 

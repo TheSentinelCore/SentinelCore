@@ -77,6 +77,8 @@ function SentinelApp:new()
     -- and questing; Phase 4 migrates the first real consumer. Nothing is deleted before then,
     -- because deleting the working path while this one has no consumer leaves nothing running.
     o._kernel_config = KernelConfig:new()
+    -- ADR §2.5 -- GCD state, derived from the kernel's own cast timestamps on the game_time ms axis.
+    -- Constructed before the intent queue's executors, which are what feed it.
     -- One spell catalog for the whole app. §5.1: catalogs are kernel precisely because duplicating
     -- reference data "costs memory and drifts".
     o._spell_catalog = SpellCatalog:new()
@@ -84,8 +86,6 @@ function SentinelApp:new()
     -- `shared/aoe_helper` is the existing wrapper over the injector's `spell_prediction` module; the
     -- kernel adapts it rather than re-deriving optimal AoE placement.
     o._spells = Spells:new({ spell_helper = SpellHelper, spell_prediction = AoeHelper })
-    -- ADR §2.5 -- GCD state, derived from the kernel's own cast timestamps on the game_time ms axis.
-    -- Constructed before the intent queue's executors, which are what feed it.
     -- GCD membership comes from the catalog rather than a second hardcoded list, so "is this on the
     -- GCD" has exactly one answer.
     o._timing = Timing:new({
@@ -139,6 +139,8 @@ function SentinelApp:new()
         blackboard = o._blackboard,
         event_bus = o._event_bus,
         scheduler = o._scheduler,
+        timing = o._timing,
+        spell_catalog = o._spell_catalog,
         nav = o._nav_adapter,
     })
 
@@ -147,23 +149,14 @@ end
 
 ---Publish the kernel surface at `_G.Sentinel`.
 ---
----NOT called from main.lua in Phase 3, and that is a deliberate hold rather than an omission.
----`main.lua` currently owns `_G.Sentinel`: it builds the table at main.lua:160 and ASSIGNS into it
----(`_G.Sentinel.app = app`, main.lua:153 and :201). The kernel surface is read-only by design --
----a plugin must not be able to mutate what every other plugin reads -- so publishing over it would
----throw on the first assignment.
----
----Worse, the legacy table is what the live-debug workflow uses: HANDOFF.md's restart snippet calls
----`_G.Sentinel.questing()`, and `.combat()` / `.reload()` are the documented entry points for
----in-game verification. Clobbering them in a phase whose own deliverables cannot be verified
----in-game would break the only workflow that can verify anything.
----
----Phase 4 merges the two surfaces when the first real plugin needs `_G.Sentinel`, at which point
----the legacy accessors move onto the kernel surface as static fields and this becomes a one-line
----call from main.lua. Publication semantics are fully covered by tests/kernel/test_api.lua.
-function SentinelApp:publish_api()
+---@param host table|nil Verbs the host contributes to the surface (`reload`, `questing`, ...). The
+---kernel owns components; it does not own these, because it does not build the app -- `main.lua`
+---does, and only the host can tear one down and stand a new one up. A host verb colliding with a
+---kernel field is refused at build time rather than silently shadowing it.
+function SentinelApp:publish_api(host)
     return Api.publish({
         app = self,
+        host = host,
         registry = self._plugin_registry,
         config = self._kernel_config,
         broker = self._control_broker,
@@ -172,6 +165,10 @@ function SentinelApp:publish_api()
         blackboard = self._blackboard,
         event_bus = self._event_bus,
         scheduler = self._scheduler,
+        timing = self._timing,
+        spell_catalog = self._spell_catalog,
+        units = self._units,
+        spells = self._spells,
         nav = self._nav_adapter,
     })
 end

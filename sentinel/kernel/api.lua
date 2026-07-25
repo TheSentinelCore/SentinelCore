@@ -36,6 +36,11 @@
 local Bands = require("kernel/bands")
 local Status = require("kernel/status")
 local ControlBroker = require("kernel/control_broker")
+local PriorityBuilder = require("kernel/lib/priority_builder")
+local BTFactory = require("core/bt/factory")
+local BTStatus = require("core/bt/status")
+local BTRunner = require("core/bt/runner")
+local AuraCatalog = require("kernel/catalogs/aura")
 
 local Api = {}
 
@@ -44,9 +49,10 @@ local Api = {}
 Api.API_VERSION = "1.0.0"
 
 --- Capabilities the KERNEL satisfies, i.e. what a manifest's `requires` may name without another
---- plugin providing it. Honest about Phase 1-3: `catalogs.spell` and `timing.gcd` from ADR §8.2's
---- sample manifest are absent, because those services do not exist yet and claiming them would
---- admit plugins that then fail at first use.
+--- plugin providing it. Honest about what is built: `catalogs.spell` from ADR §8.2's sample manifest
+--- is still absent, because that service does not exist yet and claiming it would admit plugins that
+--- then fail at first use. `timing.gcd` joined the list in Phase 4, when the frost port needed
+--- `gcd_remaining_est` and the service was built instead of worked around.
 Api.KERNEL_CAPABILITIES = {
     ["control"] = true,     -- ControlBroker: channels, leases, revocation
     ["state"] = true,       -- Blackboard
@@ -58,6 +64,12 @@ Api.KERNEL_CAPABILITIES = {
     ["bands"] = true,       -- band arithmetic
     ["nav"] = true,         -- NavAdapter, via the app
     ["bt"] = true,          -- behaviour-tree library
+    ["rotation"] = true,    -- PriorityBuilder, the Tier-1 rotation DSL (§5.4)
+    ["timing.gcd"] = true,  -- kernel/timing.lua: gcd_duration_ms, gcd_remaining_est (§2.5)
+    ["units"] = true,       -- kernel/units.lua: player, target, hostiles_within
+    ["spells"] = true,      -- kernel/spells.lua: is_castable, is_in_los, find_aoe_position
+    ["catalogs.aura"] = true,  -- kernel/catalogs/aura.lua
+    ["catalogs.spell"] = true, -- kernel/catalogs/spell.lua: rank resolution by level
     ["log"] = true,
 }
 
@@ -87,16 +99,47 @@ function Api.build(kernel)
         Status = Status,
         Channel = ControlBroker.Channel,
         Band = Bands.BANDS,
+        -- Libraries, not kernel instances: stateless, constructed by the plugin, identical for
+        -- every caller. They are static because there is nothing per-app to resolve at access time.
+        rotation = PriorityBuilder,
+        -- The behaviour-tree library (§10 `Sentinel.bt`). A rotation composing subtrees needs the
+        -- node constructors AND the status enum -- returning the factory alone would force every
+        -- plugin to invent its own SUCCESS/FAILURE strings, which is how two trees stop agreeing on
+        -- what "done" means.
+        -- `Runner` rides along because a rotation does not merely BUILD a tree, it has to TICK one,
+        -- and the frost profile wraps each of its three trees in a Runner. Handing over node
+        -- constructors without the thing that drives them would force every plugin to reimplement
+        -- the tick loop, including its RUNNING semantics.
+        bt = setmetatable({ Status = BTStatus, Runner = BTRunner }, { __index = BTFactory }),
+        -- Catalogs: shared reference data (§5.1 -- "duplicating it costs memory and drifts").
+        --
+        -- `aura` is a stateless module, so it sits here directly. `spell` is a per-app INSTANCE
+        -- (it caches rank resolution against the live spell book), so it resolves through the
+        -- kernel table at access time -- one catalog for every plugin, which is the whole point:
+        -- a rotation carrying its own rank table would duplicate DB-baked data per class.
+        catalogs = setmetatable({ aura = AuraCatalog }, {
+            __index = function(_, key)
+                if key == "spell" then return kernel.spell_catalog end
+                return nil
+            end,
+        }),
     }
 
     -- Live getters. Each is a function of the kernel table rather than a captured value.
     local live = {
+        -- The app itself, for the in-game debug console. A GETTER, not a field: `main.lua` used to
+        -- assign `_G.Sentinel.app = app` after init, which a read-only surface cannot accept, and
+        -- resolving at access time is what makes the assignment unnecessary in the first place.
+        app = function() return kernel.app end,
         control = function() return kernel.broker end,
         activities = function() return kernel.activity_stack end,
         state = function() return kernel.blackboard end,
         events = function() return kernel.event_bus end,
         intent = function() return kernel.intent_queue end,
         config = function() return kernel.config end,
+        timing = function() return kernel.timing end,
+        units = function() return kernel.units end,
+        spells = function() return kernel.spells end,
         scheduler = function() return kernel.scheduler end,
         nav = function() return kernel.nav end,
         plugins = function() return kernel.registry end,
@@ -123,6 +166,20 @@ function Api.build(kernel)
         for capability in pairs(Api.KERNEL_CAPABILITIES) do out[#out + 1] = capability end
         table.sort(out)
         return out
+    end
+
+    -- Host verbs. The kernel owns components; it does not own `reload` or `questing`, because it
+    -- does not build the app -- `main.lua` does, and only the host can tear one down and stand a new
+    -- one up. So the host contributes those verbs here rather than the kernel guessing at them.
+    --
+    -- A collision is refused rather than resolved. Silently letting a host verb win would shadow a
+    -- kernel field for every plugin that reads the surface, which is the same failure the read-only
+    -- guard exists to prevent -- just arriving through the front door.
+    for name, fn in pairs(kernel.host or {}) do
+        if surface[name] ~= nil or live[name] ~= nil then
+            error("Sentinel API: host verb '" .. tostring(name) .. "' collides with a kernel field", 2)
+        end
+        surface[name] = fn
     end
 
     return setmetatable(surface, {

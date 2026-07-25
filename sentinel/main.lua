@@ -122,6 +122,10 @@ end
 local _cache_cleared = false
 local _cache_clear_count = 0 -- exposed for offline testing only (F1 regression guard)
 
+-- Forward declaration: publication needs the host verbs, which are defined below because `reload`
+-- has to re-publish after it stands a new app up.
+local publish_surface
+
 local function ensure_initialized()
     if initialized and app then
         return true
@@ -150,80 +154,94 @@ local function ensure_initialized()
     app = result
     initialized = true
     last_init_error = nil
-    _G.Sentinel.app = app
+    publish_surface(app)
     ensure_diagnostics_wired()
     ensure_editor_wired()
     log_info("SentinelCore loaded (Combat Engine)")
     return true
 end
 
-_G.Sentinel = {
-    app = nil,
-    get_event_bus = function()
-        if ensure_initialized() then return app:get_event_bus() end
-        return nil
-    end,
-    get_blackboard = function()
-        if ensure_initialized() then return app:get_blackboard() end
-        return nil
-    end,
-    combat = function()
-        if ensure_initialized() then return app:get_module("combat") end
-        return nil
-    end,
-    questing = function()
-        if ensure_initialized() then
-            local q = app:get_module("questing")
-            -- Return inner QuestingModule for direct access
-            return q and q._questing or nil
-        end
-        return nil
-    end,
-    reload = function()
-        log_info("Forcing full reload...")
-        if app and type(app.shutdown) == "function" then
-            pcall(app.shutdown, app)
-        end
-        app = nil
-        initialized = false
-        last_init_error = nil
-        clear_module_cache()
-        _cache_cleared = true -- already cleared above; ensure_initialized must not clear again
-        _cache_clear_count = _cache_clear_count + 1
-        local ok, result = pcall(function()
-            local next_app = SentinelApp:new()
-            next_app:initialize()
-            return next_app
-        end)
-        if ok then
-            app = result
-            initialized = true
-            _G.Sentinel.app = app
-            _editor_subscribed = false      -- re-subscribe with new event bus
-            _diagnostics_subscribed = false -- re-subscribe with new event bus
-            ensure_diagnostics_wired()
-            ensure_editor_wired()
-            log_info("Reloaded successfully")
-            return true
-        else
-            log_error("Reload failed: " .. tostring(result))
-            return false
-        end
-    end,
+-- ---------------------------------------------------------------------------
+-- Host verbs on `_G.Sentinel` (ADR 08 §10)
+-- ---------------------------------------------------------------------------
+-- The kernel owns COMPONENTS -- control, state, events, intents, plugins -- and publishes them
+-- behind live getters. It cannot own the verbs below, because it does not build the app: this file
+-- does, and it is the only thing that can tear one down and stand a new one up. So the host
+-- contributes them and the kernel refuses any name that collides with one of its own fields.
+--
+-- `app` is no longer assigned here. It resolves through a live getter on the surface, which is what
+-- makes the old `_G.Sentinel.app = app` unnecessary -- and necessary to remove, since the published
+-- surface is read-only by design.
+--
+-- `get_event_bus` and `get_blackboard` used to sit here too. Both had zero callers and duplicated
+-- `Sentinel.events` / `Sentinel.state`, so they are deleted rather than carried: two ways to reach
+-- one object is exactly how the surfaces drift apart again.
+local host_verbs = {}
 
-    -- Editor control
-    toggle_quest_editor = function()
-        if ensure_initialized() then
-            local q = app:get_module("questing")
-            -- QuestingModuleInit wraps QuestingModule which has toggle_editor
-            if q and q._questing and type(q._questing.toggle_editor) == "function" then
-                q._questing:toggle_editor()
-                return true
-            end
+function host_verbs.combat()
+    if ensure_initialized() then return app:get_module("combat") end
+    return nil
+end
+
+function host_verbs.questing()
+    if ensure_initialized() then
+        local q = app:get_module("questing")
+        -- Return inner QuestingModule for direct access
+        return q and q._questing or nil
+    end
+    return nil
+end
+
+function host_verbs.toggle_quest_editor()
+    if ensure_initialized() then
+        local q = app:get_module("questing")
+        -- QuestingModuleInit wraps QuestingModule which has toggle_editor
+        if q and q._questing and type(q._questing.toggle_editor) == "function" then
+            q._questing:toggle_editor()
+            return true
         end
+    end
+    return false
+end
+
+function host_verbs.reload()
+    log_info("Forcing full reload...")
+    if app and type(app.shutdown) == "function" then
+        pcall(app.shutdown, app)
+    end
+    app = nil
+    initialized = false
+    last_init_error = nil
+    clear_module_cache()
+    _cache_cleared = true -- already cleared above; ensure_initialized must not clear again
+    _cache_clear_count = _cache_clear_count + 1
+    local ok, result = pcall(function()
+        local next_app = SentinelApp:new()
+        next_app:initialize()
+        return next_app
+    end)
+    if ok then
+        app = result
+        initialized = true
+        publish_surface(app)
+        _editor_subscribed = false      -- re-subscribe with new event bus
+        _diagnostics_subscribed = false -- re-subscribe with new event bus
+        ensure_diagnostics_wired()
+        ensure_editor_wired()
+        log_info("Reloaded successfully")
+        return true
+    else
+        log_error("Reload failed: " .. tostring(result))
         return false
-    end,
-}
+    end
+end
+
+--- Assigns the forward-declared local. `_G.Sentinel` therefore appears on the first successful
+--- init rather than at load: a plugin that loads before us registers through the
+--- `__SentinelPending` queue, which exists for precisely that ordering (ADR 08 §2.4).
+publish_surface = function(instance)
+    return instance:publish_api(host_verbs)
+end
 
 core.register_on_pre_tick_callback(function()
     if ensure_initialized() then
@@ -285,7 +303,7 @@ core.register_on_render_menu_callback(function()
     if not ensure_initialized() then return end
     _menu_tree:render("SentinelCore", function()
         if _toggle_editor_btn:render("Open Runner Cockpit") then
-            _G.Sentinel.toggle_quest_editor()
+            host_verbs.toggle_quest_editor()
         end
     end)
 end)

@@ -195,7 +195,53 @@ function M.test_ensure_initialized_does_not_reclear_cache_every_frame_after_a_fa
     end)
 end
 
+--- The other init test drives the FAILURE path, so nothing here ever exercised publication. This
+--- one drives the success path with the same stub technique and asserts the host seam: main.lua
+--- must hand its verbs to `publish_api`, and must NOT hand over the two accessors that were deleted
+--- for duplicating `Sentinel.events` / `Sentinel.state`.
+---
+--- The stub deliberately omits `get_event_bus`, which makes both wiring helpers return early --
+--- this test is about publication, not about diagnostics wiring.
+function M.test_successful_init_publishes_the_surface_with_host_verbs()
+    with_main_loadable(function()
+        local saved_app_mod = package.loaded["runtime/app"]
+        local published_host = nil
+        package.loaded["runtime/app"] = {
+            new = function()
+                return {
+                    initialize = function() end,
+                    publish_api = function(_, host) published_host = host end,
+                }
+            end,
+        }
+        package.loaded["main"] = nil
+
+        local ok, err = pcall(function()
+            local main_mod = require("main")
+            capture_logs(function()
+                T.assert_true(main_mod._ensure_initialized_for_test(), "init must succeed")
+            end)
+
+            T.assert_not_nil(published_host, "a successful init must publish the surface")
+            for _, verb in ipairs({ "combat", "questing", "reload", "toggle_quest_editor" }) do
+                T.assert_true(type(published_host[verb]) == "function",
+                    "host verb '" .. verb .. "' must reach the surface")
+            end
+            T.assert_nil(published_host.get_event_bus, "deleted: duplicated Sentinel.events")
+            T.assert_nil(published_host.get_blackboard, "deleted: duplicated Sentinel.state")
+            T.assert_nil(published_host.app,
+                "app resolves through a kernel live getter, not a host verb")
+        end)
+
+        package.loaded["runtime/app"] = saved_app_mod
+        package.loaded["main"] = nil
+
+        if not ok then error(err, 0) end
+    end)
+end
+
 local tests = {
+    test_successful_init_publishes_the_surface_with_host_verbs = M.test_successful_init_publishes_the_surface_with_host_verbs,
     test_module_fault_is_observed_by_the_diagnostics_sink = M.test_module_fault_is_observed_by_the_diagnostics_sink,
     test_questing_error_is_observed_by_the_diagnostics_sink = M.test_questing_error_is_observed_by_the_diagnostics_sink,
     test_module_state_changed_is_observed_by_the_diagnostics_sink = M.test_module_state_changed_is_observed_by_the_diagnostics_sink,
