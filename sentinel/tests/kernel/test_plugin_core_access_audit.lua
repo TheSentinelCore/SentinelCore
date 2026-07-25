@@ -346,10 +346,9 @@ local CORE_ACCESS_LEDGER = {
     -- pet_controller's four calls and their guards are GONE (Phase 4b D3): every command now
     -- leaves as a `pet_command` intent under a PET lease.
 
-    -- frost_tbc: diagnostics, not a game-affecting action. Needs a logging facility on the
-    -- public API rather than an intent type.
-    ["sentinel/rotations/mage_frost/frost_tbc.lua:386"] = "D2: guard for core.log",
-    ["sentinel/rotations/mage_frost/frost_tbc.lua:411"] = "D2: core.log -- needs Sentinel.log",
+    -- frost_tbc's `core.log` is GONE (Phase 4b D3): §10's `Sentinel.log` now carries the GCD
+    -- diagnostic, attributed from the call site. Logging was never an intent -- it contends
+    -- for no channel -- so it needed a facility on the public API, and kernel/log.lua is it.
 }
 
 function M.test_no_plugin_touches_the_sdk_directly()

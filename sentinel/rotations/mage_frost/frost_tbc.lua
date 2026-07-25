@@ -383,9 +383,24 @@ function Profile:tick_gcd(blackboard)
         local actually_evaluated = (now - cd_last) > 5
         if actually_evaluated and (not self._last_gcd_diag_ms or (now - self._last_gcd_diag_ms) >= 2000) then
             self._last_gcd_diag_ms = now
-            if core and type(core.log) == "function" then
+            -- ADR 08 §10: `Sentinel.log` -- `:debug, :info, :warn, :error (auto-attributed)`.
+            -- This was `pcall(core.log, ...)` behind an `if core and core.log` guard, which is a
+            -- plugin reaching past the public API for the one facility §10 says the API
+            -- provides. Attribution now comes from the CALL SITE, so the package name on the
+            -- line cannot disagree with where the line came from.
+            --
+            -- Logging is deliberately NOT an intent: it contends for no channel, so routing it
+            -- through the commit stage would put a diagnostic behind a generation check and a
+            -- plugin whose lease had just died would lose the log line explaining why.
+            local log = API.log
+            if log then
                 local catalog = blackboard:get("module.combat.catalog")
                 local fb_id = catalog and catalog:resolve_best_rank("frostbolt")
+                -- STILL LIVE HANDLES, and they have to be. `is_spell_castable` takes
+                -- `game_object`s, and kernel/snapshot.lua REFUSES to store one by construction
+                -- (§2.7: "a raw 8-byte pointer that can become invalid BETWEEN USES"), so there
+                -- is no frozen value to read instead. Deferred rather than faked; see the API
+                -- gap log.
                 local player = blackboard:get("player.object")
                 local target = blackboard:get("combat.target")
                 -- Test is_spell_castable directly
@@ -408,7 +423,10 @@ function Profile:tick_gcd(blackboard)
                     los_str = string.format("plain=%s/%s method=%s/%s",
                         tostring(ok3), tostring(v3), tostring(ok4), tostring(v4))
                 end
-                pcall(core.log, string.format(
+                -- No pcall: `Log:write` never throws -- a diagnostic that can crash the tick is
+                -- a liability, and this one runs where the ErrorBoundary would blame the
+                -- rotation for the logger's fault.
+                log:debug(string.format(
                     "[FrostGCD] fb_id=%s castable=[%s] los=[%s]",
                     tostring(fb_id), castable_str, los_str))
             end
