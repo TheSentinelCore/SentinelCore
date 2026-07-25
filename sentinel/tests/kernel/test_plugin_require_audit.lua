@@ -17,50 +17,33 @@
 -- If a plugin needs something the public API lacks, the fix is to ADD IT TO THE API and log the gap
 -- in 08a_API_GAPS.md -- never to import the internal module.
 
+-- SCOPE (Phase 4b Deliverable 3). This audit used to discover its own packages by globbing
+-- `sentinel/rotations`. It now shares `tests/kernel/audit_scope`, because a per-audit scope is
+-- how the `core.input` count in rotations/ came to be reported as ONE when the real number was
+-- an order of magnitude higher: the audit was not wrong about what it saw, it was wrong about
+-- what it looked at. One scope, asserted non-empty once, consumed by all three audits.
+
 local T = require("tests/test_util")
+local Scope = require("tests/kernel/audit_scope")
 
 local M = {}
-
-local PLUGIN_ROOT = "sentinel/rotations"
 
 -- ---------------------------------------------------------------------------
 -- The audit itself
 -- ---------------------------------------------------------------------------
 
-local function read_file(path)
-    local handle = io.open(path, "r")
-    if not handle then return nil end
-    local source = handle:read("*a")
-    handle:close()
-    return source
-end
-
-local function list_lua_files(dir)
-    local files = {}
-    -- `find` rather than a recursive Lua walk: this is offline test-harness code running under
-    -- luajit on Linux, not sandboxed in-game code, so a subprocess is available and honest.
-    local pipe = io.popen('find "' .. dir .. '" -type f -name "*.lua" 2>/dev/null | sort')
-    if not pipe then return files end
-    for line in pipe:lines() do
-        files[#files + 1] = line
-    end
-    pipe:close()
-    return files
-end
+local read_file = Scope.read_file
+local list_lua_files = Scope.lua_files
 
 --- Extract every `require("...")` target from a source string, with its line number.
+--- Whole-line comments are skipped, so prose about `require("modules/...")` is not a violation.
 local function requires_in(source)
     local found = {}
-    local line_number = 0
-    for line in (source .. "\n"):gmatch("([^\n]*)\n") do
-        line_number = line_number + 1
-        -- Skip whole-line comments so prose about `require("modules/...")` is not a violation.
-        if not line:match("^%s*%-%-") then
-            for target in line:gmatch('require%s*%(?%s*"([^"]+)"') do
-                found[#found + 1] = { target = target, line = line_number }
-            end
+    Scope.each_code_line(source, function(line, line_number)
+        for target in line:gmatch('require%s*%(?%s*"([^"]+)"') do
+            found[#found + 1] = { target = target, line = line_number }
         end
-    end
+    end)
     return found
 end
 
@@ -101,14 +84,20 @@ end
 --- An audit with nothing to audit passes for free, which is indistinguishable from an audit that
 --- works. This is the guard against the whole file becoming decorative.
 function M.test_there_is_at_least_one_plugin_package_to_audit()
-    local dirs = {}
-    local pipe = io.popen('find "' .. PLUGIN_ROOT .. '" -mindepth 1 -maxdepth 1 -type d 2>/dev/null')
-    if pipe then
-        for line in pipe:lines() do dirs[#dirs + 1] = line end
-        pipe:close()
+    T.assert_true(#Scope.PACKAGES > 0, "no packages in scope -- the require audit would be vacuous")
+
+    local requires_seen = 0
+    for _, pkg in ipairs(Scope.PACKAGES) do
+        T.assert_true(Scope.dir_exists(pkg.dir), "package dir missing: " .. pkg.dir)
+        for _, path in ipairs(list_lua_files(pkg.dir)) do
+            local source = read_file(path)
+            if source then requires_seen = requires_seen + #requires_in(source) end
+        end
     end
-    T.assert_true(#dirs > 0,
-        "no plugin packages found under " .. PLUGIN_ROOT .. " -- the require audit would be vacuous")
+    -- Scanning files is not the same as scanning requires. A pattern that matched nothing
+    -- would still see files and still report zero violations.
+    T.assert_true(requires_seen > 0,
+        "no require() calls found anywhere in scope -- the extraction pattern is broken")
 end
 
 --- Proves the audit actually catches the thing it exists to catch. Without this, a bug in the
@@ -138,21 +127,35 @@ end
 -- ---------------------------------------------------------------------------
 
 --- ADR §12's Phase 4 exit criterion: the ported rotation uses only the public API.
+---
+--- Packages marked `migrating` are exempt from the assertion but NOT from the scan -- combat
+--- is still a `ModuleRegistry` module and legitimately requires `core/*` until Phase 4b
+--- Deliverable 4 moves it. Its count is reported so the migration knows its own size.
 function M.test_every_plugin_requires_nothing_outside_its_own_package()
-    local dirs = {}
-    local pipe = io.popen('find "' .. PLUGIN_ROOT .. '" -mindepth 1 -maxdepth 1 -type d 2>/dev/null')
-    if pipe then
-        for line in pipe:lines() do dirs[#dirs + 1] = line end
-        pipe:close()
+    for _, pkg in ipairs(Scope.PACKAGES) do
+        local violations = audit(pkg.dir, pkg.require_prefix)
+        if not pkg.migrating then
+            T.assert_equal(#violations, 0,
+                "plugin '" .. pkg.name .. "' reached past the public API:\n  "
+                .. describe(violations)
+                .. "\nAdd what it needs to the API and log the gap in 08a_API_GAPS.md; do not "
+                .. "import the internal module.")
+        end
     end
+end
 
-    for _, dir in ipairs(dirs) do
-        local name = dir:match("([^/]+)$")
-        local violations = audit(dir, "rotations/" .. name)
-        T.assert_equal(#violations, 0,
-            "plugin '" .. name .. "' reached past the public API:\n  " .. describe(violations)
-            .. "\nAdd what it needs to the API and log the gap in 08a_API_GAPS.md; do not import "
-            .. "the internal module.")
+--- The scope must not silently miss a plugin that exists on disk. This is the exact failure
+--- mode that under-reported the SDK-access count.
+function M.test_no_plugin_package_on_disk_escapes_the_scope()
+    local registered = {}
+    for _, pkg in ipairs(Scope.PACKAGES) do registered[pkg.dir] = true end
+
+    for _, root in ipairs(Scope.PACKAGE_ROOTS) do
+        for _, dir in ipairs(Scope.subdirs(root)) do
+            T.assert_true(registered[dir],
+                "package '" .. dir .. "' exists on disk but is not in Scope.PACKAGES -- "
+                .. "it is invisible to all three audits")
+        end
     end
 end
 

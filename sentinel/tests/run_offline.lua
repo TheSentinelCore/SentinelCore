@@ -376,7 +376,11 @@ local test_modules = {
     "tests/kernel/test_plugin_registry",
     "tests/kernel/test_api",
     "tests/kernel/test_rotation_lib",
+    -- The three Phase 4b audits. They share tests/kernel/audit_scope so they cannot disagree
+    -- about what they cover.
     "tests/kernel/test_plugin_require_audit",
+    "tests/kernel/test_blackboard_namespace_audit",
+    "tests/kernel/test_plugin_core_access_audit",
     "tests/kernel/test_timing",
     "tests/kernel/test_intent_executors",
 
