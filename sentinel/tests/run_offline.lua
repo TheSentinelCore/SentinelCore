@@ -335,6 +335,8 @@ local test_modules = {
 
     -- Kernel (ADR 08 Phase 2: bands, ControlBroker, ActivityStack, enforced revocation)
     "tests/kernel/test_bands",
+    "tests/kernel/test_movement_release",
+    "tests/kernel/test_control_broker",
 
     -- Integrations
     "tests/integrations/test_izi_bridge",
