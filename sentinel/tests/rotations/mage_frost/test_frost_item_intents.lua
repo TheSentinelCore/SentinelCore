@@ -39,6 +39,7 @@ local Api = require("kernel/api")
 local IntentQueue = require("kernel/intent_queue")
 local Executors = require("kernel/intent_executors")
 local ControlBroker = require("kernel/control_broker")
+local Bands = require("kernel/bands")
 local Snapshot = require("kernel/snapshot")
 local Blackboard = require("core/blackboard")
 local Status = require("core/bt/status")
@@ -374,6 +375,22 @@ function M.test_the_items_lease_outlives_the_action_so_the_intent_can_commit()
             "the intent must still be authorised when COMMIT runs")
         T.assert_equal(#report.rejected, 0, "and must not be rejected as a stale generation")
         T.assert_not_nil(only_packet(h), "so the packet leaves through the kernel")
+    end)
+end
+
+--- The band a potion competes at, pinned because nothing else pins it and it is a one-word edit
+--- away from being wrong. `submit` stamps the intent with the LEASE's resolved priority, so this
+--- is the number the dedupe and the band sort actually see. COMBAT.min, deliberately: a health
+--- potion at 30% is arguably defensive, but promoting these two entries into SURVIVAL is a
+--- separate arguable change and would not be measurable alongside the item conversion.
+function M.test_a_potion_competes_at_the_rotations_own_combat_band()
+    with_harness(nil, function(h)
+        h.bb:set("combat.health_potion_id", HEALTH_POTION)
+        Act.use_health_potion(h.bb)
+        local report = h.commit()
+        T.assert_equal(#report.committed, 1, "the intent committed")
+        T.assert_equal(report.committed[1].band, Bands.BANDS.COMBAT.min,
+            "a potion arbitrates at COMBAT, not above it")
     end)
 end
 
