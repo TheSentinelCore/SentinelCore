@@ -75,6 +75,23 @@ unobservable, which makes owning it in the broker more important, not less.
 MOVEMENT · FACING · CASTING · TARGETING · INTERACTION · ITEMS · MODAL_UI
 ```
 
+### 2.2.1 `PET` is the eighth, added in Phase 4b
+
+A pet command contends with other pet commands and with nothing else. Ordering it against
+`CASTING` would be wrong — commanding the water elemental to freeze does not compete with the
+mage's own global cooldown — and leaving it *inside* `CASTING` is worse: a rotation holding
+`CASTING` would then implicitly own the pet, which is precisely the ambient authority the
+channel split exists to remove.
+
+It is a channel rather than a column on some permission table for the same reason every other
+channel is: it is a genuinely separate arbitration surface.
+
+**Net: eight channels.**
+
+```
+MOVEMENT · FACING · CASTING · TARGETING · INTERACTION · ITEMS · MODAL_UI · PET
+```
+
 ## 2.3 Separate Sylvanas plugins buy less than the proposal assumed
 
 | Verified constraint | Consequence |
@@ -175,6 +192,37 @@ keeps running.** `on_revoke` is not a courtesy callback; it is the only thing st
 preemption and the bot sprinting into a lake. The broker must therefore treat MOVEMENT revocation as a
 kernel-enforced key-release, not as a request the plugin may ignore.
 
+### 2.8.1 The force-release must reach navigation, not just the keys
+
+Releasing the eight movement keys is necessary and **not sufficient**, because the keys are not the
+only authority over the character's motion. Four authorities exist, and the key sweep reaches one:
+
+| Authority | Reached by the key sweep? |
+|---|---|
+| Kernel `move` intent → `movement_release` | yes |
+| SDK `simple_movement` driven through NavClient's `MovementService` | no |
+| NavClient's `Jump.lua` / `MoveBackward.lua`, calling `core.input` directly | no |
+| `NavAdapter`'s own owner/preempt mechanism — a **second arbiter** over the same resource | no |
+
+So the broker can revoke `MOVEMENT`, the sweep can stop all eight keys, and navigation can press them
+again on the next tick. A revocation that the character does not obey is not a revocation.
+
+Two consequences, both binding:
+
+- **`release_all` stops navigation as well as keys**, via NavClient's high-level `client:stop()` —
+  which stops all movement *and* resets active navigation state. Not `MovementService:stop()`, which
+  only stops the follow. And the nav stop inherits the key sweep's fault tolerance: an absent or
+  throwing nav client must not prevent the eight keys from being released. A safety path that a
+  dependency can abort is not a safety path.
+- **Navigation acquires the `MOVEMENT` lease** like any other consumer, and `NavAdapter`'s private
+  owner/preempt mechanism retires in favour of the broker. Its own comments describe chase_controller
+  preempting a questing Travel — a band-ordered preemption the broker expresses properly. Two
+  arbiters over one resource is the condition the broker exists to end.
+
+**Recorded and not fixed:** `Jump.lua` and `MoveBackward.lua` call `core.input` directly from a
+separate Sylvanas plugin. That is ambient authority the kernel cannot reach (§2.3 — plugin A cannot
+require plugin B), and it is a known hole rather than a solved one.
+
 ## 2.9 LazyBot's declarative rotation tier was never actually used
 
 ADR-000 §6.4 says "LazyBot's `CombatEngine` gets this right and it's worth copying directly," praising
@@ -235,6 +283,26 @@ call validates nothing at all.
 **Latency mitigation:** an `immediate = true` flag on the intent, restricted to leases at band ≥ 70,
 still routed through the same gates. Reactive abilities (interrupts, defensive cooldowns) cannot
 afford a tick of latency.
+
+**One intent per channel per tick, under the lease that authorised it.** Two rules, and the second is
+the one that is easy to lose:
+
+- A channel commits at most one intent per tick. Two `move` intents in one tick are not "both
+  applied" — they are an unresolved contention that the broker exists to resolve *before* commit, and
+  silently taking the last one writes the arbitration policy into an ordering accident.
+- An intent may only act inside the lease that authorised it. An intent that outlives its lease, or
+  that acts on a channel its lease does not cover, is the revocation race §6.1's generation counter
+  closes. Emitting one is a defect even when it happens to work.
+
+**`move` is a desired state, not an imperative.** The name reads like a command and is not one: a
+`move` intent commits by *recording the desired key state* and touching no key. The keys are driven
+later in the same COMMIT stage by `movement_release.reconcile`, once the queue has drained and the
+tick's desire is final. That ordering is deliberate — reconciling mid-drain would act on a desire that
+a later intent in the same tick could still change.
+
+Two things follow. Reconciliation is COMMIT's work and not ACCOUNT's, so it sits inside the frame
+budget it costs rather than after the measurement. And because `move` declares rather than acts,
+`release_all` can clear the desire without the broker needing to know the reconciler exists.
 
 ## 3.3 The kernel ships zero behaviour not expressible through the public API
 
@@ -364,10 +432,10 @@ strategies. Profile authoring tooling.
 ## 6.1 Channels and leases
 
 ```
-MOVEMENT · FACING · CASTING · TARGETING · INTERACTION · ITEMS · MODAL_UI
+MOVEMENT · FACING · CASTING · TARGETING · INTERACTION · ITEMS · MODAL_UI · PET
 ```
 
-(`CAMERA` deleted per §2.1; `MODAL_UI` added per §2.2.)
+(`CAMERA` deleted per §2.1; `MODAL_UI` added per §2.2; `PET` added per §2.2.1.)
 
 ```lua
 local lease = Sentinel.control:acquire{
@@ -395,7 +463,11 @@ broker refuses a bare integer with `band_must_be_named`; the resolved integer li
   which is exactly why a wedged holder cannot deadlock the resource.
 - **Preemption fires `on_revoke`.** For `MOVEMENT` this is safety-critical, not cosmetic (§2.8): the
   kernel force-releases movement keys after calling `on_revoke`, because a plugin that ignores the
-  callback would otherwise leave the character running.
+  callback would otherwise leave the character running. The force-release must also stop navigation,
+  which is a co-authority over the same motion and is not reached by releasing keys (§2.8.1).
+- **One intent per channel per tick, and only under the lease that authorised it** (§3.2). The lease
+  is what makes an intent legible: an intent that cannot be traced to a live lease cannot be gated,
+  cannot be revoked, and cannot be attributed when it misbehaves.
 - **Re-acquire by the same owner is a renewal**, not a conflict.
 - **Channels are independent.** This is what buys kiting: the rotation holds `CASTING`+`TARGETING`
   while the activity keeps `MOVEMENT` and backpedals. The current fixed-priority module design cannot
@@ -625,6 +697,30 @@ example reports a failed quest as COMPLETE; and the profession API returns safe 
 
 The `Predicate` enum and its 15 required additions are specified in ADR 07 §5.1.1.
 
+### 9.2.1 The tri-state's one unclosable hole: Lua has no `__toboolean`
+
+`Truth` composes through Kleene AND / OR / NOT, and `Truth.resolve` **raises when given no policy** —
+there is deliberately no default, because a default policy is how a tri-state quietly degrades back
+into a boolean at the one call site nobody reviewed.
+
+But the type cannot defend its own truthiness. Lua dispatches `if x then` on the value being neither
+`nil` nor `false`, and offers **no `__toboolean` metamethod to intercept it**. A `Truth` is a table.
+Therefore:
+
+```lua
+if truth then          -- ALWAYS taken. True, False and Unknown are all truthy tables.
+if truth == Truth.True -- correct, but only if you remember
+```
+
+`False` and `Unknown` are *indistinguishable from `True`* in a bare conditional, which means the exact
+mistake the type exists to prevent is one forgotten `.resolve` away, and it fails **open and silent**.
+This is the same failure shape as the externally-tagged `RuntimeCondition` in §9.1: gating that
+stopped gating without anything going red.
+
+No metamethod closes it, so the mitigations are structural rather than typed — make the mistake hard
+to reach and loud when reached, and treat any bare `if <truth>` as a review-blocking defect. Anything
+consuming a `Truth` resolves it at the call site, with an explicit policy, or does not consume it.
+
 ## 9.3 Normalize at the sensor boundary — and model unavailability
 
 Raw Sylvanas types stop at the sensor boundary. `get_class()` returns a numeric id;
@@ -680,7 +776,14 @@ registration queue drained on init and re-drained for the first ~60 ticks.
 # 11. D11 — Migration from the current tree
 
 The inventory verdict, condensed. **This is promotion, not a rewrite** — and the offline suite
-currently reports **127 passed / 1 failed** (the failure is in questing vendor maintenance).
+currently reports **605 passed / 0 failed**.
+
+That figure previously read *"127 passed / 1 failed (the failure is in questing vendor maintenance)"*.
+Both halves were stale, and the second half was also a misattribution: the vendor failure was not a
+pre-existing module bug but a symptom of an uncommitted re-scan in `execute_vendor` on the working
+tree at the time. Committed `HEAD` was green. **A baseline recorded from a dirty tree is not a
+baseline** — it attributes the author's work-in-progress to the codebase, and the resulting "known
+failure" then gets budgeted for rather than fixed.
 
 ## 11.1 Promote to kernel — largely as-is
 
@@ -713,13 +816,26 @@ Quest Activity's execution engine, which is exactly the policy the plugin tier e
 `core/geometry.lua` (64) · `core/JSON.lua` (579, **required** — the sandbox ships no JSON) ·
 `shared/compat.lua` · `shared/class_names.lua` · `shared/humanization.lua` · `shared/spell_helper.lua`.
 
-## 11.4 Rewrite
+## 11.4 Promote with rework
 
 `combat/module.lua` (1,170 — becomes the combat *service*) · `spell_catalog.lua` (270) ·
 `aura_catalog.lua` (167) · `condition_library.lua` (536) · `context_builder.lua` (205) ·
 `profiles/registry.lua` (43) · `strategies/factory.lua` (15).
 
-**Layering inversion to fix while rewriting:** `runtime/sensors/aura_sensor.lua` requires
+**This section previously read "Rewrite", and that was the wrong verdict.** These files are not being
+replaced; they are moving into the kernel with specific, enumerable defects corrected on the way. The
+distinction is not cosmetic — it decides whether their existing tests are a liability to be discarded
+or an asset to be carried, and the tests are an asset. Calling promotion a rewrite licenses throwing
+away the only evidence that the behaviour was ever right.
+
+It also has a concrete consequence the audits already encode. `tests/kernel/audit_scope.lua` tracks
+these as `PROMOTION_CANDIDATES` and counts every `module.*` blackboard key they touch — **including
+keys in what is currently their own namespace**, because kernel code owns no `module.*` namespace and
+"its own" stops being its own the moment the file lands in the kernel. Those reads are legal today
+and illegal after promotion, which is exactly why they are tracked separately from a cross-namespace
+violation. The violation list is the migration worklist.
+
+**Layering inversion to fix during the rework:** `runtime/sensors/aura_sensor.lua` requires
 `modules/combat/aura_catalog` and writes paladin seal policy — a kernel sensor reaching into module
 policy.
 
