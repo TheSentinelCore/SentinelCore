@@ -38,9 +38,51 @@ local arcane_intellect_aura_ids = { 1459, 1460, 1461, 10156, 10157, 27126 }
 -- Closures (return a function)
 -- ---------------------------------------------------------------------------
 
+-- ---------------------------------------------------------------------------
+-- Snapshot-backed health (Phase 4c D5)
+-- ---------------------------------------------------------------------------
+-- The rotation's first consumer of `Sentinel.cond`, and the first place a `Truth` crosses into
+-- plugin code.
+--
+-- WHY THE HEALTH PAIR AND NOT SOMETHING ELSE. These two gate Ice Block, Mana Shield and the
+-- emergency Blink, and the blackboard version read
+-- `H.num(blackboard:get("player.health_pct", 0)) < threshold`. That default of 0 means UNREADABLE
+-- HEALTH READS AS 0% -- so on any tick the sensor had not filled the key, `health_below(0.15)`
+-- answered true and the profile fired Ice Block: a ten-second self-stun caused by missing data
+-- rather than by danger. That is the exact fail-open shape ADR 07 §5.1.2 built the tri-state for,
+-- sitting on the most expensive action in the profile.
+--
+-- THE POLICY IS STATED, NOT DEFAULTED. `Truth.resolve` refuses to run without one, which is the
+-- point: `TreatFalse` here says "if I cannot read health, do not treat that as an emergency" in the
+-- open, where a reviewer sees it. `TreatTrue` would announce itself on every use, and would be
+-- wrong for both of these -- one would panic, the other would claim health it never read.
+--
+-- WHAT THIS DOES NOT CONVERT: the other fifteen conditions in this file still read the blackboard.
+-- ADR §8.4.1 measured why -- 42 of the 65 combinators are blocked on warm/cold snapshot tiers that
+-- do not exist, and inventing live reads for them would reintroduce the mid-tick inconsistency the
+-- snapshot exists to prevent. `health_pct` is in the HOT tier, which is why it can move today.
+
+---Resolve one kernel predicate against the tick's frozen snapshot.
+---
+---Reads `Sentinel.snapshot` and `Sentinel.cond` at CALL time through the plugin's API shim, so a
+---condition built before the kernel published still works once it has.
+---@param name string a predicate on `Sentinel.cond`
+---@return boolean
+local function snapshot_predicate(name, ...)
+    local snapshot, cond, Truth = API.snapshot, API.cond, API.Truth
+    -- No kernel, or no snapshot yet, is NOT a reading. Answering false here is the same decision
+    -- `TreatFalse` makes below, taken one step earlier because there is nothing to bind against.
+    if snapshot == nil or cond == nil or Truth == nil then return false end
+    local ok, predicates = pcall(cond.bind, snapshot)
+    if not ok then return false end
+    local answered, verdict = pcall(predicates[name], ...)
+    if not answered then return false end
+    return Truth.resolve(verdict, Truth.Policy.TreatFalse) == true
+end
+
 function Cond.health_below(threshold)
-    return function(blackboard)
-        return H.num(blackboard:get("player.health_pct", 0)) < threshold
+    return function()
+        return snapshot_predicate("health_below", threshold)
     end
 end
 
@@ -51,8 +93,8 @@ function Cond.mana_below(threshold)
 end
 
 function Cond.health_above(threshold)
-    return function(blackboard)
-        return H.num(blackboard:get("player.health_pct", 0)) > threshold
+    return function()
+        return snapshot_predicate("health_above", threshold)
     end
 end
 

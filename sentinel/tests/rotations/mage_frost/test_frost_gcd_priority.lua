@@ -132,10 +132,15 @@ local function make_bb(overrides)
     }
     local broker = ControlBroker:new({ intent_queue = recording_queue })
 
-    -- The tick a minted guid ref is stamped with. These scenarios record at SUBMIT and never
-    -- commit, so any stable tick will do; what matters is that the mint can read ONE, because a
-    -- rotation with no snapshot can name no unit and every action would refuse.
-    local frozen = Snapshot.empty(1)
+    -- PHASE 4C: `health_below` / `health_above` read the frozen snapshot, not the blackboard, so a
+    -- scenario that only sets `player.health_pct` on the blackboard now describes a player whose
+    -- health the rotation cannot read. The snapshot carries the SAME figure the blackboard does --
+    -- these scenarios are about which action the tree picks, not about disagreeing sensors.
+    local snapshot = Snapshot.builder({ tick_index = 1 })
+    snapshot:put("player.available", true)
+    snapshot:put("player.health_pct",
+        (overrides and overrides["player.health_pct"]) or 1.0)
+    local frozen = snapshot:freeze()
 
     recorder.surface = Api.build({
         blackboard = bb, broker = broker, intent_queue = recording_queue,

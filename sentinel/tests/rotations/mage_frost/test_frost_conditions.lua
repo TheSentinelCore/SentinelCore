@@ -1,7 +1,43 @@
+-- PHASE 4C: `health_below` / `health_above` read the FROZEN SNAPSHOT through `Sentinel.cond`.
+--
+-- They are the rotation's first consumers of the kernel's predicate set, and the first place a
+-- `Truth` value crosses into plugin code. `make_bb` therefore publishes a real surface carrying a
+-- real frozen snapshot built from the same health figure the blackboard gets, so the four original
+-- assertions below are unchanged -- the reading moved, the answers did not.
+--
+-- What DID change is the unreadable case, and it changed on purpose. See
+-- `test_unreadable_health_no_longer_reads_as_critical` at the bottom.
+local Api = require("kernel/api")
 local Blackboard = require("core/blackboard")
+local Snapshot = require("kernel/snapshot")
 local T = require("tests/test_util")
 
 local M = {}
+
+--- A surface whose `snapshot` getter hands back `frozen`.
+---
+--- The real `Sentinel.snapshot` resolves through `scheduler:current_snapshot()`, so the smallest
+--- honest stand-in is a scheduler that answers that one question. Stubbing the surface field
+--- directly would bypass the getter these conditions actually read through.
+local function publish_snapshot(frozen)
+    _G.Sentinel = Api.build({ scheduler = { current_snapshot = function() return frozen end } })
+end
+
+local function with_published(frozen, fn)
+    local saved = _G.Sentinel
+    publish_snapshot(frozen)
+    local ok, err = pcall(fn)
+    _G.Sentinel = saved
+    if not ok then error(err, 0) end
+end
+
+--- A frozen snapshot of a readable player at `health_pct`.
+local function snapshot_with_health(health_pct)
+    local builder = Snapshot.builder({ tick_index = 1 })
+    builder:put("player.available", true)
+    builder:put("player.health_pct", health_pct)
+    return builder:freeze()
+end
 
 local function make_unit(opts)
     opts = opts or {}
@@ -67,17 +103,70 @@ local function make_bb(overrides)
     return bb
 end
 
-function M.run()
-    -- health_below: returns true when health is below threshold
-    local bb = make_bb({ health_pct = 0.30 })
+--- The health pair, now read from the snapshot. Assertions unchanged from the blackboard era.
+function M.test_health_conditions_read_the_frozen_snapshot()
     local Cond = require("rotations/mage_frost/frost_conditions")
-    T.assert_true(Cond.health_below(0.50)(bb), "health_below 0.50 should be true at 0.30")
-    T.assert_false(Cond.health_below(0.20)(bb), "health_below 0.20 should be false at 0.30")
+    local bb = make_bb({ health_pct = 0.30 })
+    with_published(snapshot_with_health(0.30), function()
+        T.assert_true(Cond.health_below(0.50)(bb), "health_below 0.50 should be true at 0.30")
+        T.assert_false(Cond.health_below(0.20)(bb), "health_below 0.20 should be false at 0.30")
+    end)
 
-    -- health_above: returns true when health is above threshold
     bb = make_bb({ health_pct = 0.80 })
-    T.assert_true(Cond.health_above(0.50)(bb), "health_above 0.50 should be true at 0.80")
-    T.assert_false(Cond.health_above(0.90)(bb), "health_above 0.90 should be false at 0.80")
+    with_published(snapshot_with_health(0.80), function()
+        T.assert_true(Cond.health_above(0.50)(bb), "health_above 0.50 should be true at 0.80")
+        T.assert_false(Cond.health_above(0.90)(bb), "health_above 0.90 should be false at 0.80")
+    end)
+end
+
+--- THE MEASURED BEHAVIOUR CHANGE, and the reason the conversion is worth making.
+---
+--- The blackboard version was `H.num(blackboard:get("player.health_pct", 0)) < threshold`. The
+--- default of 0 means UNREADABLE HEALTH READ AS 0% -- so on any tick the sensor had not filled that
+--- key, `health_below(0.15)` answered true and the profile fired Ice Block: a ten-second self-stun,
+--- triggered by missing data rather than by danger, on every such tick.
+---
+--- The snapshot answers Unknown instead, and the call site resolves it with `TreatFalse` -- stated
+--- in the open, because `Truth.resolve` refuses to be called without a policy. Unreadable health is
+--- no longer a panic signal.
+function M.test_unreadable_health_no_longer_reads_as_critical()
+    local Cond = require("rotations/mage_frost/frost_conditions")
+    local bb = make_bb({})
+    local builder = Snapshot.builder({ tick_index = 1 })
+    builder:put("player.available", true)   -- the tier ran; health specifically is missing
+    with_published(builder:freeze(), function()
+        T.assert_false(Cond.health_below(0.15)(bb),
+            "unreadable health must not fire the emergency defensive")
+        T.assert_false(Cond.health_above(0.60)(bb),
+            "and must not claim the player is healthy either -- Unknown is neither")
+    end)
+end
+
+--- A tick where SENSE never ran at all, or a plugin that loaded before the kernel published.
+function M.test_health_conditions_are_false_when_there_is_no_kernel()
+    local Cond = require("rotations/mage_frost/frost_conditions")
+    local bb = make_bb({ health_pct = 0.10 })
+    local saved = _G.Sentinel
+    _G.Sentinel = nil
+    local ok, err = pcall(function()
+        T.assert_false(Cond.health_below(0.15)(bb),
+            "no kernel means no reading, and no reading must not mean 'critically hurt'")
+    end)
+    _G.Sentinel = saved
+    if not ok then error(err, 0) end
+end
+
+function M.run()
+    local bb
+    local Cond = require("rotations/mage_frost/frost_conditions")
+
+    -- CALLED EXPLICITLY. `run_offline.lua` runs a suite's `run()` OR its `test*` functions, never
+    -- both -- so a `test_` function added to a file that already has `run()` is silently never
+    -- executed, and the suite count does not move to tell you. These three were written and
+    -- appeared to pass for exactly that reason.
+    M.test_health_conditions_read_the_frozen_snapshot()
+    M.test_unreadable_health_no_longer_reads_as_critical()
+    M.test_health_conditions_are_false_when_there_is_no_kernel()
 
     -- mana_below: returns true when mana is below threshold
     bb = make_bb({ mana_pct = 0.15 })
