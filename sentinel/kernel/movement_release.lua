@@ -85,12 +85,96 @@ local function live_input()
     return core and core.input or nil
 end
 
----Release every movement key. Never throws, never partially aborts, safe to call twice.
+-- ================================================================================
+-- THE EIGHT KEYS WERE NEVER THE ONLY AUTHORITY OVER MOVEMENT
+-- ================================================================================
+-- The key sweep above releases what the KERNEL pressed. It was written, and tested, against an
+-- input double -- which is exactly the shape of its blind spot, because the thing that actually
+-- moves the character in production is a different authority entirely:
+--
+--   SentinelNavClient drives the SDK's own `simple_movement` on its own tick. Revoking MOVEMENT
+--   lifted eight keys and told nav nothing, so nav pressed them back down on its next
+--   `process()`. §2.8's guarantee held for one frame and no test could see it, because the only
+--   witness was blind to the authority doing the running.
+--
+-- So the release stops NAVIGATION as well as keys. `tests/kernel/test_nav_under_broker.lua`
+-- supplies the missing witness.
+--
+-- ================================================================================
+-- WHY `client:stop()` AND NOT `client.movement:stop()`
+-- ================================================================================
+-- docs/SylvannasAPI/dev/api/sentinel-navigation.md:264 -- `client:stop()` "stops all movement
+-- and RESETS THE ACTIVE NAVIGATION STATE". `client.movement:stop()` (:631) sits under "Advanced
+-- APIs -- Use With Care: these are lower-level services ... more likely to change" (:597) and
+-- only stops the waypoint follow: the client's state machine stays live and resumes. Stopping
+-- the follow while leaving the navigation armed is the same one-frame guarantee in a new place.
+--
+-- ================================================================================
+-- WHY NOT THROUGH `NavAdapter:stop` -- THE SILENT NO-OP
+-- ================================================================================
+-- The adapter is the obvious route and it is WRONG. `NavAdapter:stop(reason, owner)` is
+-- owner-scoped: it returns false without touching the real client whenever the adapter is held
+-- by someone other than the caller. A revocation arrives from the BROKER, which is never the
+-- adapter's owner, so exactly in the case that matters -- a preemption tearing a lease away from
+-- a holder mid-path -- the stop would be refused and nothing would happen. It would read
+-- correctly, test green, and do nothing in game.
+--
+-- The kernel therefore resolves and calls the client DIRECTLY. Safety enforcement does not ask
+-- an arbiter's permission; that is what makes it enforcement.
+
+--- The kernel's ONE resolution of the live nav client, for the same reason `live_input` is the
+--- one resolution of `core.input`: a second call site is a second thing to keep in step.
+---
+--- `rawget` because `_G.SentinelNavClient` belongs to a separate plugin that may be absent, and
+--- a metatable on `_G` must not be able to synthesise one.
+local function live_nav_client()
+    local root = rawget(_G, "SentinelNavClient")
+    return root and root.client or nil
+end
+
+---Stop navigation, folding the outcome into `report`.
+---
+---Fault tolerance is the whole contract here. This runs AHEAD of the eight keys on the safety
+---path, so a nav client that throws, is absent, or exposes no `stop` must cost the keys nothing.
+---Its failures are reported in their OWN fields rather than bumping `report.errors`, which
+---counts key releases and is read by the broker's `control:revoked` event.
+local function stop_navigation(nav_client, report)
+    report.nav_stopped = false
+    report.nav_missing = false
+    report.nav_error = nil
+
+    if nav_client == nil or type(nav_client.stop) ~= "function" then
+        -- A separate plugin that is not loaded, or an older build without the verb. Nothing
+        -- went wrong; the capability simply is not there -- same verdict as a missing
+        -- `<key>_stop`.
+        report.nav_missing = true
+        return
+    end
+
+    local ok, err = pcall(nav_client.stop, nav_client)
+    if ok then
+        report.nav_stopped = true
+    else
+        report.nav_error = tostring(err)
+    end
+end
+
+---Release every movement key AND stop navigation. Never throws, never partially aborts, safe
+---to call twice.
+---
+---ORDER: navigation first, keys last. It mirrors `ControlBroker:_revoke`'s reasoning that the
+---force-release is "the final word" -- whatever the nav client does on its way down, the
+---unconditional key sweep lands after it.
 ---@param input table|nil The `core.input` table; defaults to the live SDK.
----@return table report { attempted, released, missing, errors, failed_keys }
-function MovementRelease.release_all(input)
+---@param nav_client table|nil The SentinelNavClient client; defaults to the live plugin.
+---@return table report { attempted, released, missing, errors, failed_keys,
+---                       nav_stopped, nav_missing, nav_error }
+function MovementRelease.release_all(input, nav_client)
     if input == nil then
         input = live_input()
+    end
+    if nav_client == nil then
+        nav_client = live_nav_client()
     end
 
     local report = {
@@ -100,6 +184,8 @@ function MovementRelease.release_all(input)
         errors = 0,
         failed_keys = {},
     }
+
+    stop_navigation(nav_client, report)
 
     for _, key in ipairs(MovementRelease.KEYS) do
         local fn = input and input[key .. "_stop"] or nil

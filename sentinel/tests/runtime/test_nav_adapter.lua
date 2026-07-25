@@ -210,6 +210,19 @@ end
 
 -- B4: ownership contract -- a claimed adapter rejects other callers (including
 -- unowned ones) unless they preempt; only the owner may release or stop it.
+--
+-- WHAT THIS TEST NOW PINS, AND WHAT IT NO LONGER DOES.
+-- Navigation is arbitrated by the kernel's ControlBroker (MOVEMENT channel, band ordering,
+-- TTL, revocation). Every fixture in this file runs with NO `_G.Sentinel`, so no broker is
+-- reachable and the adapter's private `can_claim` gate answers instead. That makes the two
+-- ownership tests below a pin on the NO-KERNEL FALLBACK -- the configurations that predate
+-- the kernel, where deleting the private gate would have left nav with no arbitration at
+-- all -- and NOT a pin on the primary arbiter.
+--
+-- The broker-arbitrated behaviour these two describe (a lower band cannot take a held
+-- channel; a higher band preempts) lives in tests/kernel/test_nav_under_broker.lua, which
+-- installs a real broker. If you change arbitration, that is the file to read: green here
+-- proves only that the fallback still works.
 function M.test_ownership_blocks_other_callers_until_release()
     _G.SentinelNavClient = {
         client = {

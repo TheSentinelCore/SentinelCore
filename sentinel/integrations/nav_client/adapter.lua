@@ -76,16 +76,45 @@ function NavAdapter:_client()
     return root and root.client or nil
 end
 
--- B4: ownership gate shared by move_to/follow_path/plan_route. `nil` means "unowned" --
--- once a caller claims the adapter with `opts.owner`, every other caller (including one
--- that passes no owner at all) is rejected until the owner calls `release`, unless the
--- new caller sets `opts.preempt` (e.g. combat interrupting an in-flight questing Travel).
--- VERIFY-IN-GAME: with a live SentinelNavClient, confirm that while combat holds
--- ownership (chase_controller preempted a questing Travel), a subsequent unowned
--- questing move_to (ctx.nav:move_to in runtime_action.lua / runtime_profile.lua) is
--- rejected at the ADAPTER level (returns false, "owned_by_other") *and* the underlying
--- client:move_to is never dispatched -- i.e. combat's in-flight path is not silently
--- overwritten by questing re-issuing its Travel mid-chase.
+-- ================================================================================
+-- NAV IS A CONSUMER OF THE MOVEMENT CHANNEL, NOT A SECOND ARBITER OVER IT
+-- ================================================================================
+-- B4 gave this adapter its own owner/preemption mechanism, and the comment it shipped with
+-- describes the case exactly: "combat holds ownership (chase_controller preempted a questing
+-- Travel)". That is a BAND-ORDERED PREEMPTION, and the kernel's ControlBroker was built to
+-- express precisely that -- with a resolved priority, a TTL, a generation stamp, and a
+-- revocation that force-releases the keys AND stops navigation (ADR 08 §2.8, §6.1).
+--
+-- Two arbiters over one resource is what the broker exists to end. They disagree in the
+-- direction that matters: the private gate could hand combat the client while the broker still
+-- believed questing held MOVEMENT, so the intent path and the nav path were arbitrating the
+-- same character against two different books.
+--
+-- WHAT THE BROKER REPLACES, CALLER BY CALLER:
+--   * "unowned caller rejected by an owner"  -> a lower band cannot take a held channel
+--     (`_plan_channel` returns "channel_held"; ties go to the incumbent).
+--   * `preempt = true`                        -> COMBAT (50) outranks GOAL (30). Note this is
+--     NOT a same-tick handover: the broker revokes the loser immediately -- safety cannot wait
+--     to STOP something -- but withholds the grant for a cool-down tick to break the livelock
+--     two retrying callers would otherwise sustain. Callers re-enter every tick, so they
+--     converge one tick later than the private gate did.
+--   * `release(owner)`                        -> hands the channel back so the next caller is
+--     not rejected forever.
+--   * `stop(reason)` with no owner            -> the holder stopping its own navigation.
+--
+-- ================================================================================
+-- WHY `can_claim` SURVIVES AS A FALLBACK RATHER THAN BEING DELETED
+-- ================================================================================
+-- SentinelNavClient and the questing module both predate the kernel and run in configurations
+-- where `_G.Sentinel` was never built. Deleting the private gate outright would leave those
+-- callers with NO arbitration at all -- strictly worse than the second arbiter it replaces.
+-- So: when a broker is reachable it is the ONLY arbiter consulted, and `can_claim` is dead
+-- code; when none is, the old gate still holds the line. Exactly one arbiter is ever active.
+--
+-- THIS IS A PARTIAL RETIREMENT AND IT IS PARTIAL ON PURPOSE. The full one needs
+-- chase_controller and combat/module.lua to acquire their own leases and stop passing
+-- `owner`/`preempt` down here; until then those two callers still speak the old vocabulary and
+-- this adapter still has to answer it.
 local function can_claim(current_owner, new_owner, preempt)
     if current_owner == nil then
         return true
@@ -96,13 +125,164 @@ local function can_claim(current_owner, new_owner, preempt)
     return preempt == true
 end
 
-function NavAdapter:_claim_or_reject(opts)
-    opts = opts or {}
-    if not can_claim(self._owner, opts.owner, opts.preempt) then
-        return false, "owned_by_other"
+--- Whoever drives navigation without naming themselves. Questing's `ctx.nav:move_to(pos, {})`
+--- passes no owner at all, and a lease needs one, so the channel gets a name for it rather than
+--- refusing the call.
+local NAV_LEASE_OWNER = "sentinel.nav"
+
+--- Two ticks: one to act, one of grace. The adapter renews on every `poll()` (which app.lua
+--- registers in SENSE, every tick) and on every re-dispatch, so a lease only reaches expiry when
+--- its driver has genuinely stopped watching -- a module unloaded mid-path, a faulted handler,
+--- an activity popped off the stack. §6.1: "A plugin that faults mid-tick cannot permanently
+--- hold MOVEMENT." With nav under the broker that sentence finally covers navigation, and the
+--- expiry's force-release is what actually halts the character.
+local NAV_LEASE_TTL_TICKS = 2
+
+--- Map a legacy call onto a band. `opts.band` is the honest way to ask; the `preempt` shim is
+--- there because chase_controller and combat/module.lua still speak B4's vocabulary and neither
+--- is in this change's scope to edit.
+local function band_for(opts)
+    if type(opts.band) == "string" then
+        return opts.band
     end
+    if opts.preempt == true then
+        return "COMBAT"
+    end
+    return "GOAL"
+end
+
+--- The adapter's ONE resolution of the live broker, mirroring `movement_release.live_input`.
+---
+--- `rawget` and a pcall'd read because `_G.Sentinel` is a read-only surface built by
+--- `kernel/api.lua` whose fields resolve through `__index` at ACCESS time -- reaching for
+--- `.control` before the kernel finished standing up must return nil, not throw on the nav path.
+function NavAdapter:_broker()
+    if self._broker_override ~= nil then
+        return self._broker_override
+    end
+    local api = rawget(_G, "Sentinel")
+    if api == nil then
+        return nil
+    end
+    local ok, broker = pcall(function() return api.control end)
+    if ok then
+        return broker
+    end
+    return nil
+end
+
+---Inject a broker explicitly. Per-INSTANCE rather than a module-level static: a static would
+---leak one test's arbiter into the next, and `get_shared` already hands distinct buses distinct
+---adapters precisely so they stay isolated.
+function NavAdapter:set_broker(broker)
+    self._broker_override = broker
+end
+
+---Acquire (or renew) the MOVEMENT lease that authorises driving navigation.
+---
+---FAILS OPEN WITH NO BROKER, and that is the riskiest line in this change, so here is the
+---reasoning. Failing closed would mean "no kernel" implies "no movement at all" -- a certain,
+---total regression for every configuration that predates the kernel. The safety property this
+---track exists to deliver (a revoked MOVEMENT lease stops navigation) is carried by
+---`MovementRelease.release_all`, which needs no lease and enforces unconditionally. Absence of
+---an arbiter is not the same as an arbiter's refusal.
+---@return boolean claimed, string|nil reason
+function NavAdapter:_claim_movement(opts)
+    opts = opts or {}
+    local broker = self:_broker()
+
+    if broker == nil then
+        if not can_claim(self._owner, opts.owner, opts.preempt) then
+            return false, "owned_by_other"
+        end
+        self._owner = opts.owner
+        return true
+    end
+
+    local request = {
+        channel = "MOVEMENT",
+        owner = opts.owner or NAV_LEASE_OWNER,
+        band = band_for(opts),
+        offset = tonumber(opts.offset) or 0,
+        ttl_ticks = NAV_LEASE_TTL_TICKS,
+        on_revoke = function(reason) self:_on_movement_revoked(reason) end,
+    }
+
+    local ok, caretaker, reason = pcall(function()
+        return broker:acquire(request)
+    end)
+    if not ok then
+        -- A throwing broker must not take navigation down with it: degrade to the same
+        -- fail-open posture as no broker at all rather than wedging every caller.
+        return true
+    end
+    if caretaker == nil then
+        return false, reason or "movement_unavailable"
+    end
+
+    self._lease = caretaker
+    self._lease_request = request
     self._owner = opts.owner
     return true
+end
+
+---The broker tore the lease away. It has already stopped the real client (§2.8's force-release
+---now stops navigation, not just keys), so this only has to stop the adapter BELIEVING it is
+---still navigating -- a stale `_active` is what makes an executor wait forever on a path that
+---no longer exists.
+function NavAdapter:_on_movement_revoked(reason)
+    self._lease = nil
+    self._lease_request = nil
+    self._owner = nil
+    self._last_dispatch = nil
+    if self._active then
+        self._active.state = "idle"
+        self._active.stop_reason = "movement_revoked:" .. tostring(reason)
+    end
+end
+
+---Hand the MOVEMENT channel back. Idempotent: a second call finds no lease and does nothing,
+---which matters because `stop()` releases and chase_controller calls `stop` then `release`.
+function NavAdapter:_release_movement()
+    local lease = self._lease
+    self._lease = nil
+    self._lease_request = nil
+    if lease == nil then
+        return
+    end
+    local broker = self:_broker()
+    if broker == nil then
+        return
+    end
+    pcall(function() broker:release(lease) end)
+end
+
+---Renew the lease behind an in-flight navigation. Called from `poll()`, which is the one thing
+---guaranteed to run every tick while a path is live.
+---
+---A renewal that FAILS is not a no-op: it means the channel went somewhere else, so the adapter
+---must stop believing it is driving. It does not stop the client here -- whatever took MOVEMENT
+---away already did, through the revocation path.
+function NavAdapter:_renew_movement()
+    if self._lease_request == nil then
+        return
+    end
+    local broker = self:_broker()
+    if broker == nil then
+        return
+    end
+    local ok, caretaker = pcall(function()
+        return broker:acquire(self._lease_request)
+    end)
+    if not ok then
+        return
+    end
+    if caretaker == nil then
+        self._lease = nil
+        self._lease_request = nil
+        return
+    end
+    self._lease = caretaker
 end
 
 -- Minimum seconds between identical move_to dispatches to the real client. The executor
@@ -117,7 +297,10 @@ local function same_target(a, b)
 end
 
 function NavAdapter:move_to(target, opts)
-    local claimed, claim_err = self:_claim_or_reject(opts)
+    -- The claim happens BEFORE the debounce window below, deliberately: an executor re-entering
+    -- its Travel handler every tick is exactly what renews the lease, and skipping the renewal
+    -- on a debounced tick would let the TTL expire underneath a navigation that is fine.
+    local claimed, claim_err = self:_claim_movement(opts)
     if not claimed then
         return false, claim_err
     end
@@ -182,7 +365,7 @@ function NavAdapter:get_last_error()
 end
 
 function NavAdapter:follow_path(nodes, opts)
-    local claimed, claim_err = self:_claim_or_reject(opts)
+    local claimed, claim_err = self:_claim_movement(opts)
     if not claimed then
         return false, claim_err
     end
@@ -214,7 +397,7 @@ function NavAdapter:follow_path(nodes, opts)
 end
 
 function NavAdapter:plan_route(nodes, opts)
-    local claimed, claim_err = self:_claim_or_reject(opts)
+    local claimed, claim_err = self:_claim_movement(opts)
     if not claimed then
         return false, claim_err
     end
@@ -247,13 +430,19 @@ function NavAdapter:plan_route(nodes, opts)
     return true, nil
 end
 
--- B4: owner-scoped stop -- a non-owner cannot stop another owner's motion. `owner` is
--- optional for backward compatibility: when nobody currently owns the adapter, any
--- caller may stop it (matches pre-B4 behavior for callers that never declare an owner).
--- VERIFY-IN-GAME: with a live client, confirm that while combat owns the adapter, a
--- questing `ctx.nav:stop(reason)` call (no owner arg, so `owner == nil ~= "combat"`)
--- returns false and does NOT call the real client's stop() -- i.e. questing arriving
--- at a stale waypoint cannot halt combat's chase movement out from under it.
+-- Owner-scoped stop -- a caller that does not hold navigation cannot stop another caller's
+-- motion. Under the broker this reads as "you must hold the lease to stop what it authorises":
+-- questing arriving at a stale waypoint cannot halt combat's chase out from under it.
+--
+-- ================================================================================
+-- THIS IS NOT THE KERNEL'S PATH, AND MUST NOT BECOME IT
+-- ================================================================================
+-- The scoping below is the reason `MovementRelease.release_all` resolves and calls the nav
+-- client DIRECTLY instead of coming through here. A revocation arrives from the BROKER, which
+-- is never `self._owner`, so a kernel force-release routed through this method would take the
+-- early return, never touch the real client, and leave the character running -- while every
+-- test that only watched key presses stayed green. `tests/kernel/test_nav_under_broker.lua`
+-- holds an adapter under a foreign owner and demands the kernel's stop land anyway.
 function NavAdapter:stop(reason, owner)
     if self._owner ~= nil and self._owner ~= owner then
         return false, "owned_by_other"
@@ -268,16 +457,23 @@ function NavAdapter:stop(reason, owner)
     -- allowed to immediately re-dispatch the same target (stuck recovery does exactly
     -- stop → move_to).
     self._last_dispatch = nil
+    -- Not navigating means not holding MOVEMENT. Squatting a channel it is no longer using is
+    -- how this adapter blocked callers for whole seconds at a time before the broker existed.
+    -- Idempotent, so the repeated `ctx.nav:stop("arrived")` an executor issues while parked on
+    -- a waypoint costs one release and then nothing.
+    self:_release_movement()
     return true
 end
 
--- B4: release ownership. Only the current owner can clear it -- this is what lets the
--- next tick's questing Travel (or any other caller) re-claim the adapter after combat
--- is done chasing.
+-- Release navigation. Only the current owner can clear it -- this is what lets the next tick's
+-- questing Travel (or any other caller) take over after combat is done chasing. The MOVEMENT
+-- lease goes back to the broker with it, because a channel held by nobody in particular is the
+-- state the whole arbiter exists to avoid.
 function NavAdapter:release(owner)
     if self._owner ~= owner then
         return false, "owned_by_other"
     end
+    self:_release_movement()
     self._owner = nil
     return true
 end
@@ -286,7 +482,29 @@ function NavAdapter:get_owner()
     return self._owner
 end
 
+---Which owner currently holds the MOVEMENT lease behind this adapter, per the BROKER rather
+---than per this adapter's own bookkeeping. Nil when no broker is reachable or the channel is
+---free. Exposed so a diagnostic can tell "the adapter thinks it owns nav" apart from "the
+---arbiter agrees", which is precisely the disagreement the second arbiter used to hide.
+function NavAdapter:get_movement_holder()
+    local broker = self:_broker()
+    if broker == nil then
+        return nil
+    end
+    local ok, holder = pcall(function() return broker:who_owns("MOVEMENT") end)
+    if not ok then
+        return nil
+    end
+    return holder
+end
+
 function NavAdapter:poll()
+    -- ADR 08 §7 registers this in SENSE, every tick, and it is the one thing guaranteed to run
+    -- for as long as anybody is watching a path. That makes it the renewal point: a navigation
+    -- still being polled must not have MOVEMENT expire underneath it, and one that stopped
+    -- being polled SHOULD expire -- that is the whole value of a TTL on this channel.
+    self:_renew_movement()
+
     local client = self:_client()
     local state = "idle"
     local full_state = "idle"
