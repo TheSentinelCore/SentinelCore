@@ -50,11 +50,27 @@ end
 local function wire_diagnostics(bus)
     if not bus then return end
 
+    -- `phase` is logged because ModuleRegistry tags every fault with it "so the two are
+    -- distinguishable at the receiving end" -- and this sink IS the receiving end. Formatting
+    -- module/count/error alone made that claim false: a module that DIED AT BOOT (SHUTDOWN,
+    -- refused reinitialisation, dead until the operator reloads) and a module that hiccupped on
+    -- one tick (streak cleared by the next clean tick) produced byte-identical log lines.
+    --
+    -- An absent phase reads `unknown`, NOT `tick`. Defaulting to `tick` would round every
+    -- unlabelled fault towards the milder, self-healing reading -- the one direction a boot death
+    -- must never be rounded in.
+    --
+    -- WHAT THIS SINK CANNOT SEE: it observes only what was PUBLISHED. A fault raised before the
+    -- bus exists, or on a different bus (`ensure_diagnostics_wired` binds exactly one), is
+    -- invisible here regardless of its phase. It also cannot distinguish a module that recovered
+    -- from one that stayed dead -- there is no recovery event; the cockpit's `system.module_faults`
+    -- map is the only channel that carries that.
     bus:subscribe("module:fault", function(payload)
         payload = payload or {}
         log_error(string.format(
-            "module:fault module=%s count=%s error=%s",
-            tostring(payload.module), tostring(payload.count or 1), tostring(payload.error)))
+            "module:fault module=%s phase=%s count=%s error=%s",
+            tostring(payload.module), tostring(payload.phase or "unknown"),
+            tostring(payload.count or 1), tostring(payload.error)))
     end)
 
     bus:subscribe("questing:error", function(payload)

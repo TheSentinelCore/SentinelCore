@@ -106,6 +106,65 @@ function M.test_module_fault_is_observed_by_the_diagnostics_sink()
     end)
 end
 
+--- `ModuleRegistry:_report_init_failure` tags its fault `phase = "init"` and states the reason in
+--- so many words: "so the two are distinguishable at the receiving end". The sink WAS the
+--- receiving end, and it formatted module/count/error only -- so a module that died at boot and a
+--- module that faulted once on a tick produced byte-identical log lines, and the field's stated
+--- purpose was false.
+---
+--- The distinction is not decoration. A boot death is terminal: the module is set SHUTDOWN and
+--- `initialize_module` refuses to reinitialise it, so it stays dead for the life of the client and
+--- the operator must reload. A tick fault is transient: the streak resets on the next clean tick.
+--- "combat count=1" told the operator nothing about which of those two they were reading.
+---
+--- WHAT THIS CANNOT SEE: it proves the two lines DIFFER and each names its phase. It does not
+--- prove an operator reading the log understands what to do about it, and it says nothing about
+--- faults published by anything other than the registry.
+function M.test_module_fault_log_line_distinguishes_a_boot_death_from_a_tick_fault()
+    with_main_loadable(function()
+        local wire_diagnostics = load_wire_diagnostics()
+        local bus = EventBus:new()
+        wire_diagnostics(bus)
+
+        -- Identical in every field the sink used to read. Only `phase` differs.
+        local init_errors = capture_logs(function()
+            bus:publish("module:fault",
+                { module = "combat", count = 1, error = "boom", phase = "init" })
+        end)
+        local tick_errors = capture_logs(function()
+            bus:publish("module:fault",
+                { module = "combat", count = 1, error = "boom", phase = "tick" })
+        end)
+
+        T.assert_equal(#init_errors, 1, "one fault, one line")
+        T.assert_equal(#tick_errors, 1, "one fault, one line")
+        T.assert_true(init_errors[1] ~= tick_errors[1],
+            "a boot death and a tick fault must not log the same bytes: got " .. tostring(init_errors[1]))
+        T.assert_true(any_contains(init_errors, "init"), "the boot line must name the init phase")
+        T.assert_true(any_contains(tick_errors, "tick"), "the tick line must name the tick phase")
+    end)
+end
+
+--- A publisher that omits `phase` must be reported as UNKNOWN, never silently folded into either
+--- bucket. Defaulting an absent phase to "tick" would make the cheaper reading the default one --
+--- exactly the direction a boot death must never be rounded towards.
+function M.test_a_fault_without_a_phase_is_reported_as_unknown()
+    with_main_loadable(function()
+        local wire_diagnostics = load_wire_diagnostics()
+        local bus = EventBus:new()
+        wire_diagnostics(bus)
+
+        local errors = capture_logs(function()
+            bus:publish("module:fault", { module = "combat", error = "boom" })
+        end)
+        T.assert_true(any_contains(errors, "unknown"),
+            "an unphased fault must read unknown, not be rounded to the milder phase: "
+            .. tostring(errors[1]))
+        T.assert_false(any_contains(errors, "phase=tick"), "and must not claim it was a tick")
+        T.assert_false(any_contains(errors, "phase=init"), "nor claim it was an init")
+    end)
+end
+
 function M.test_questing_error_is_observed_by_the_diagnostics_sink()
     with_main_loadable(function()
         local wire_diagnostics = load_wire_diagnostics()
@@ -243,6 +302,10 @@ end
 local tests = {
     test_successful_init_publishes_the_surface_with_host_verbs = M.test_successful_init_publishes_the_surface_with_host_verbs,
     test_module_fault_is_observed_by_the_diagnostics_sink = M.test_module_fault_is_observed_by_the_diagnostics_sink,
+    test_module_fault_log_line_distinguishes_a_boot_death_from_a_tick_fault =
+        M.test_module_fault_log_line_distinguishes_a_boot_death_from_a_tick_fault,
+    test_a_fault_without_a_phase_is_reported_as_unknown =
+        M.test_a_fault_without_a_phase_is_reported_as_unknown,
     test_questing_error_is_observed_by_the_diagnostics_sink = M.test_questing_error_is_observed_by_the_diagnostics_sink,
     test_module_state_changed_is_observed_by_the_diagnostics_sink = M.test_module_state_changed_is_observed_by_the_diagnostics_sink,
     test_wire_diagnostics_is_a_real_subscriber_not_a_noop = M.test_wire_diagnostics_is_a_real_subscriber_not_a_noop,

@@ -232,6 +232,17 @@ end
 ---Initialize all registered modules
 ---@param app table The application context to pass to module:init()
 ---@return boolean success
+---Drive every enabled module's `init`.
+---
+---A FAILING INIT IS REPORTED, exactly as a failing tick is. It used to be swallowed: the pcall's
+---error was discarded, the module was set to SHUTDOWN, and `all_ok = false` was returned to
+---`SentinelApp:initialize()`, which does not inspect it. Combat threw on its first blackboard write
+---from Phase 4b onward -- the handle guard refused `module.combat.izi_bridge` -- and the whole
+---module was dead in every real boot with nothing anywhere saying so.
+---
+---A module that dies at boot is strictly worse than one that dies on a tick, so it cannot be the
+---quieter of the two. `tick_all` publishes `module:fault` and writes `system.module_faults`; this
+---does the same, tagged `phase = "init"` so the two are distinguishable at the receiving end.
 function ModuleRegistry:initialize_all(app)
 	local all_ok = true
 	for _, name in ipairs(self._enabled_names) do
@@ -243,11 +254,81 @@ function ModuleRegistry:initialize_all(app)
 				if not ok then
 					self:_set_state(name, MODULE_STATES.SHUTDOWN)
 					all_ok = false
+					self:_report_init_failure(name, err)
 				end
 			end
 		end
 	end
 	return all_ok
+end
+
+---Mirror the fault map onto the blackboard. GUARDED, on every path that writes it.
+---
+---The mirror is a DIAGNOSTIC: it exists so a fault the operator would otherwise only find in the
+---log also shows up in the cockpit. It must never be able to do more damage than the fault it is
+---reporting. The guard used to live inline in `_report_init_failure` only, which made it look like
+---a local nicety; it is not, and the ORDER is what makes it load-bearing:
+---
+---On BOTH paths the blackboard write happens BEFORE the `module:fault` publish. An unguarded `set`
+---that throws therefore skips the publish entirely -- the fault reaches nobody, which is exactly
+---the silence Deliverable 2 exists to kill. And the throw does not stay local:
+---  * from `tick_all` it escapes the per-module pcall (which wraps only `instance.tick`) up into
+---    the scheduler's ACT-stage `module_registry` handler (runtime/app.lua §ACT), which has its own
+---    3-strike quarantine. ONE module's tick fault plus a refusing blackboard would escalate into
+---    quarantining the handler that ticks EVERY module -- re-entering, through the diagnostic path,
+---    the precise blast radius the per-module pcall exists to prevent.
+---  * from `initialize_all` it escapes into `SentinelApp:initialize()` and kills the whole boot.
+---
+---WHAT THIS CANNOT SEE: swallowing the write means a blackboard that refuses this key PERMANENTLY
+---leaves the cockpit's fault map silently stale, and the guard itself raises no signal about that.
+---The surviving channels are the `module:fault` event and `core.log_error`. It also cannot see a
+---blackboard that accepts the write and stores something else.
+---
+---The `module:fault` publish in `tick_all` is deliberately NOT wrapped to match. `EventBus:publish`
+---already pcalls every subscriber (core/event_bus.lua), so a real bus cannot throw from a handler;
+---the pcall around the publish in `_report_init_failure` guards only against a collaborator that is
+---not an EventBus at all. Wrapping the tick publish alone would be cosmetic anyway, because
+---`_set_state` publishes through the same bus, unguarded, a few lines later.
+function ModuleRegistry:_mirror_faults()
+	if not self._blackboard then return end
+	pcall(function() self._blackboard:set("system.module_faults", self._module_faults) end)
+end
+
+---Surface a boot failure on both channels the cockpit and the logs already watch.
+function ModuleRegistry:_report_init_failure(name, err)
+	self._module_faults[name] = {
+		-- LITERAL 1, AND DELIBERATELY NOT `self._faults:fault(name, err)`. The FaultTracker counts
+		-- CONSECUTIVE TICK faults against a 3-strike budget; an init failure is not a tick and must
+		-- not spend one of those strikes. It also cannot need counting: `initialize_all` sets the
+		-- module SHUTDOWN on the line above, and `initialize_module` refuses to reinitialise a
+		-- SHUTDOWN module, so a given module can reach this function at most once per registry --
+		-- the count cannot exceed 1 by construction. Routing it through the tracker would merge two
+		-- authorities that answer different questions ("is this tick flapping?" vs "did this module
+		-- ever come up?") and would let a boot death silently consume a tick strike.
+		count = 1,
+		-- The phase is what makes a boot death actionable rather than merely visible: this module
+		-- is SHUTDOWN and will not be retried, so the operator must reload -- whereas a `tick` fault
+		-- at count 1 clears itself on the next clean tick. Read by main.lua's diagnostics sink and
+		-- by RunnerState.build; see the header of `_mirror_faults` for what the map cannot say.
+		phase = "init",
+		last_error = tostring(err),
+	}
+	self:_mirror_faults()
+	if self._event_bus then
+		pcall(function()
+			self._event_bus:publish("module:fault", {
+				module = name,
+				phase = "init",
+				error = tostring(err),
+				count = 1,
+			})
+		end)
+	end
+	if core and type(core.log_error) == "function" then
+		pcall(core.log_error,
+			"[ModuleRegistry] module '" .. tostring(name) .. "' FAILED TO INITIALISE and is "
+			.. "shut down: " .. tostring(err))
+	end
 end
 
 ---Tick all active modules
@@ -267,13 +348,17 @@ function ModuleRegistry:tick_all(delta)
 						-- quarantining is the registry's own policy: a degraded module's tick
 						-- is skipped while every other module keeps running.
 						local degrade_now, count = self._faults:fault(name, err)
-						self._module_faults[name] = { count = count, last_error = tostring(err) }
-						if self._blackboard then
-							self._blackboard:set("system.module_faults", self._module_faults)
-						end
+						-- `phase` is written on BOTH paths so its absence is never an answer.
+						-- While only `_report_init_failure` set it, a reader could not tell
+						-- "this is a tick fault" from "this writer predates the field", so the
+						-- field could not be read defensively -- and so it was read by nobody.
+						self._module_faults[name] =
+							{ count = count, phase = "tick", last_error = tostring(err) }
+						self:_mirror_faults()
 						if self._event_bus then
 							self._event_bus:publish("module:fault", {
 								module = name,
+								phase = "tick",
 								error = tostring(err),
 								count = count,
 							})
@@ -285,9 +370,7 @@ function ModuleRegistry:tick_all(delta)
 						-- Only CONSECUTIVE faults degrade: a clean tick resets the streak.
 						self._faults:success(name)
 						self._module_faults[name] = nil
-						if self._blackboard then
-							self._blackboard:set("system.module_faults", self._module_faults)
-						end
+						self:_mirror_faults()
 					end
 				end
 			end

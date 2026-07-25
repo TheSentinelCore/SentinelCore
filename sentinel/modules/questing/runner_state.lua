@@ -105,6 +105,38 @@ local function humanize_action(action)
     return t
 end
 
+--- Operator-facing sentence for a faulting module.
+---
+--- WHY THE PHASE IS SURFACED AT ALL. `system.module_faults` carries `phase` ("init" | "tick") from
+--- `ModuleRegistry`, and this view-model used to reduce only `count` and `last_error` -- so a module
+--- that DIED AT BOOT and one that hiccupped on a single tick both rendered as "x1". They demand
+--- opposite operator responses, and the difference is not visible in the count:
+---   * init -- `initialize_all` set the module SHUTDOWN and `initialize_module` refuses to
+---     reinitialise a SHUTDOWN module. It is dead for the life of this client session; the count is
+---     pinned at 1 forever and will never clear on its own. The only fix is a reload.
+---   * tick -- the fault streak resets on the very next clean tick, and only three CONSECUTIVE
+---     faults degrade the module. At count 1 the correct action is usually to do nothing.
+--- Rendering "combat x1" for both told the operator to wait for a recovery that could never come.
+---
+--- The alternative -- dropping `phase` from the blackboard map because nobody read it -- was
+--- rejected: the map is the ONLY channel that carries a boot death to the cockpit (the event is
+--- published once, at boot, before any UI exists to subscribe), so removing the field would make
+--- the two permanently indistinguishable rather than merely undistinguished.
+---
+--- WHAT THIS CANNOT SEE: it reports the phase the registry claimed, not the module's live state --
+--- it never reads `ModuleRegistry:get_state`, so a module that was manually restarted after a boot
+--- death would still read DEAD here until the map entry is replaced. An absent phase is reported as
+--- unknown rather than assumed to be the milder "tick".
+local function humanize_module_fault(name, count, phase)
+    if phase == "init" then
+        return string.format("%s DIED AT BOOT (init failed) - it will not retry, reload to recover",
+            tostring(name))
+    elseif phase == "tick" then
+        return string.format("%s faulted on tick x%d", tostring(name), count)
+    end
+    return string.format("%s faulted x%d (phase unknown)", tostring(name), count)
+end
+
 --- Is the executor currently holding on a Completion-role gate?
 local function waiting_info(executor, now, stall_threshold_s)
     if not executor or executor._wait_action_key == nil or executor._wait_started_at == nil then
@@ -131,7 +163,8 @@ end
 ---   max_events        cap on the returned event list
 ---   nav_error         { command, reason, at, target } from NavAdapter:get_last_error()
 ---   status_message    the executor's last execute() status message
----   module_faults     map module_name -> { count, last_error } (system.module_faults)
+---   module_faults     map module_name -> { count, phase, last_error } (system.module_faults);
+---                     `phase` is "init" (boot death, terminal) or "tick" (transient streak)
 ---   maintenance       the module's _maintenance table { state, vendor_entry, started_at }
 ---   paused_s          accumulated paused time, excluded from elapsed/ETA
 ---   recent_completions ascending timestamps of the last few step completions
@@ -254,7 +287,13 @@ function RunnerState.build(opts)
         local count = num(info and info.count, 0)
         if count > 0 and (module_fault == nil or count > module_fault.count
             or (count == module_fault.count and name < module_fault.name)) then
-            module_fault = { name = name, count = count, last_error = info.last_error }
+            module_fault = {
+                name = name,
+                count = count,
+                phase = info.phase,
+                last_error = info.last_error,
+                human_text = humanize_module_fault(name, count, info.phase),
+            }
         end
     end
     local severity

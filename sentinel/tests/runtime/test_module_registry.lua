@@ -130,6 +130,214 @@ function M.run()
     print("  PASS")
 
     -- =====================================================================
+    -- Test 6b: A module whose init THROWS must be reported, not silently dropped
+    -- =====================================================================
+    -- FOUND BY THE PHASE 4C END-TO-END PIN, and it had been live in production since Phase 4b.
+    --
+    -- `initialize_all` wrapped each `init` in a bare pcall, discarded the error, set the module to
+    -- SHUTDOWN and returned `false` -- which `SentinelApp:initialize()` does not check. The combat
+    -- module threw on its FIRST blackboard write (`module.combat.izi_bridge`, refused by the handle
+    -- guard that landed in Phase 4b D3), so combat was dead in every real boot: no profile, no
+    -- catalog, no rotation, no cast. Nothing logged it. Every offline suite stayed green because
+    -- they construct SentinelCombat directly instead of going through `initialize_all`.
+    --
+    -- `tick_all` had reported faults to the blackboard AND the event bus since Phase 1. The
+    -- asymmetry is the bug: a module that dies at boot is strictly worse than one that dies on a
+    -- tick, and it was the one being reported to nobody.
+    print("Test 6b: a failing init is reported")
+    local bb6b = Blackboard:new()
+    local eb6b = EventBus:new()
+    local registry6b = ModuleRegistry:new()
+
+    local published = {}
+    eb6b:subscribe("module:fault", function(payload) published[#published + 1] = payload end)
+
+    registry6b:register("exploding_mod", {
+        namespace = "boom",
+        capabilities = { "test" },
+        configuration = { enabled = true },
+        init = function() return { init = function() error("init blew up", 0) end } end,
+    })
+    registry6b:initialize_module("exploding_mod", bb6b, eb6b)
+
+    local all_ok = registry6b:initialize_all({})
+
+    T.assert_false(all_ok, "initialize_all must report that something failed")
+    T.assert_equal(#published, 1, "a failing init must publish module:fault, like a failing tick")
+    T.assert_equal(published[1].module, "exploding_mod")
+    T.assert_equal(published[1].phase, "init", "and must say it was INIT that failed, not a tick")
+    T.assert_true(tostring(published[1].error):find("init blew up", 1, true) ~= nil,
+        "carrying the error the pcall used to swallow: " .. tostring(published[1].error))
+
+    local faults6b = bb6b:get("system.module_faults")
+    T.assert_not_nil(faults6b and faults6b["exploding_mod"],
+        "and it must be visible on the blackboard where the cockpit reads faults")
+    print("  PASS")
+
+    -- =====================================================================
+    -- Test 6c: `phase` must be TOTAL on the blackboard map, not init-only
+    -- =====================================================================
+    -- Test 6b pins that the EVENT carries `phase = "init"`. The blackboard map did not: the tick
+    -- mirror wrote `{ count, last_error }` with no phase at all, so a reader of
+    -- `system.module_faults` could only ever see phase on the entries that happened to come from
+    -- init. `nil` there was ambiguous -- "this is a tick fault" and "this writer predates the
+    -- field" are the same absence -- which is why the field could not be read defensively and
+    -- therefore was not read at all.
+    --
+    -- WHAT THIS CANNOT SEE: it proves the two entries carry DIFFERENT phase strings, not that any
+    -- consumer branches on them. Test 6f pins the cockpit end; nothing here pins the log line
+    -- (tests/test_main_diagnostics.lua does).
+    print("Test 6c: init and tick faults are distinguishable on the blackboard map")
+    local bb6c = Blackboard:new()
+    local eb6c = EventBus:new()
+    local registry6c = ModuleRegistry:new()
+
+    registry6c:register("boot_mod", {
+        namespace = "boot", capabilities = {}, configuration = { enabled = true },
+        init = function() return { init = function() error("boot blew up", 0) end } end,
+    })
+    registry6c:register("tick_mod", {
+        namespace = "ticker", capabilities = {}, configuration = { enabled = true },
+        init = function() return { tick = function() error("tick blew up", 0) end } end,
+    })
+    registry6c:initialize_module("boot_mod", bb6c, eb6c)
+    registry6c:initialize_module("tick_mod", bb6c, eb6c)
+    registry6c:initialize_all({})
+    registry6c:tick_all(16)
+
+    local faults6c = bb6c:get("system.module_faults")
+    T.assert_not_nil(faults6c, "both paths write the same map")
+    T.assert_equal(faults6c["boot_mod"] and faults6c["boot_mod"].phase, "init",
+        "a boot death must say so ON THE MAP, not only on the event")
+    T.assert_equal(faults6c["tick_mod"] and faults6c["tick_mod"].phase, "tick",
+        "and a tick fault must say tick, so absence of the field is never the answer")
+    print("  PASS")
+
+    -- =====================================================================
+    -- Test 6d: the fault REPORT must survive a blackboard that refuses the write
+    -- =====================================================================
+    -- `_report_init_failure` guards its mirror with pcall and says why: "a blackboard that refuses
+    -- it must not replace one silent failure with another". `tick_all`'s two mirrors were
+    -- unguarded, and deleting the init pcall turned nothing red -- so neither half was pinned.
+    --
+    -- The asymmetry is not cosmetic. The blackboard write happens BEFORE the publish on both
+    -- paths, so a throwing `set` skips the publish entirely: the fault reaches nobody. Worse, the
+    -- throw does not stay local. `tick_all` runs as the scheduler's ACT-stage `module_registry`
+    -- handler (runtime/app.lua), which has its own 3-strike quarantine -- so ONE module's tick
+    -- fault plus a refusing blackboard escalates into quarantining the handler that ticks EVERY
+    -- module. That is the exact blast radius the per-module pcall exists to prevent, re-entered
+    -- through the diagnostic path. On the init side the throw lands in `SentinelApp:initialize()`
+    -- and kills the whole boot.
+    --
+    -- WHAT THIS CANNOT SEE: it uses a blackboard that refuses EVERY key. A real handle guard
+    -- refuses selectively, and this says nothing about which keys a real Blackboard rejects.
+    print("Test 6d: a refusing blackboard must not swallow the fault or escape the registry")
+    local refusing_bb = {
+        set = function() error("blackboard refuses this key", 0) end,
+        get = function() return nil end,
+    }
+    local eb6d = EventBus:new()
+    local published6d = {}
+    eb6d:subscribe("module:fault", function(payload) published6d[#published6d + 1] = payload end)
+
+    local registry6d = ModuleRegistry:new()
+    registry6d:register("boot_mod", {
+        namespace = "boot", capabilities = {}, configuration = { enabled = true },
+        init = function() return { init = function() error("boot blew up", 0) end } end,
+    })
+    -- Faults on its first tick, then runs clean -- driving the fault mirror AND the streak-reset
+    -- mirror, both of which write the blackboard.
+    local tick_n = 0
+    registry6d:register("flappy_mod", {
+        namespace = "flappy", capabilities = {}, configuration = { enabled = true },
+        init = function()
+            return { tick = function()
+                tick_n = tick_n + 1
+                if tick_n == 1 then error("tick blew up", 0) end
+            end }
+        end,
+    })
+    registry6d:initialize_module("boot_mod", refusing_bb, eb6d)
+    registry6d:initialize_module("flappy_mod", refusing_bb, eb6d)
+
+    local init_ok6d = pcall(function() registry6d:initialize_all({}) end)
+    T.assert_true(init_ok6d, "a refusing blackboard must not turn a module boot death into an app boot death")
+    T.assert_equal(#published6d, 1, "the init fault must still reach the event bus (the write is BEFORE the publish)")
+
+    local tick_ok6d = pcall(function() registry6d:tick_all(16) end)
+    T.assert_true(tick_ok6d, "a refusing blackboard must not escape tick_all into the scheduler's ACT handler")
+    T.assert_equal(#published6d, 2, "the tick fault must still reach the event bus")
+    T.assert_equal(published6d[2] and published6d[2].phase, "tick")
+
+    local clean_ok6d = pcall(function() registry6d:tick_all(16) end)
+    T.assert_true(clean_ok6d, "and the streak-reset mirror must be guarded too, not just the fault mirror")
+    T.assert_equal(#published6d, 2, "a clean tick publishes nothing")
+    print("  PASS")
+
+    -- =====================================================================
+    -- Test 6e: an init failure must NOT advance the tick fault streak
+    -- =====================================================================
+    -- `_report_init_failure` hardcodes `count = 1` and never touches the FaultTracker, while
+    -- `tick_all` calls `self._faults:fault(...)`. That is deliberate and provable, not an
+    -- oversight -- see the comment on the literal in module_registry.lua. This pins it so the two
+    -- authorities cannot quietly merge later: if someone "unifies" them by routing init through
+    -- the tracker, a boot death would start consuming strikes from a budget that only tick faults
+    -- are supposed to spend.
+    --
+    -- WHAT THIS CANNOT SEE: the streak is a private field, so this asserts on `_faults` directly.
+    -- There is no observable route -- an init-failed module is SHUTDOWN and never ticks again, so
+    -- its streak can never be witnessed through behaviour. That unobservability IS the argument
+    -- for `count = 1`; the assertion is the only thing that can hold it.
+    print("Test 6e: an init failure does not spend a tick strike")
+    local bb6e = Blackboard:new()
+    local eb6e = EventBus:new()
+    local registry6e = ModuleRegistry:new()
+    registry6e:register("boot_mod", {
+        namespace = "boot", capabilities = {}, configuration = { enabled = true },
+        init = function() return { init = function() error("boot blew up", 0) end } end,
+    })
+    registry6e:initialize_module("boot_mod", bb6e, eb6e)
+    registry6e:initialize_all({})
+
+    T.assert_equal(registry6e._faults:streak("boot_mod"), 0,
+        "the tick streak is a tick authority; a boot death must not spend one of its three strikes")
+    T.assert_nil(registry6e._faults:report()["boot_mod"],
+        "and the tracker must not claim a module it never ticked")
+    T.assert_equal(bb6e:get("system.module_faults")["boot_mod"].count, 1,
+        "the map still reports the boot death, counted by construction rather than by the tracker")
+    print("  PASS")
+
+    -- =====================================================================
+    -- Test 6f: the cockpit view-model must carry the phase through
+    -- =====================================================================
+    -- Deliverable 2's whole point is that a boot death reaches a RECEIVER. The blackboard map is
+    -- transport, not a receiver; `RunnerState.build` is the first thing that reduces it for a
+    -- human. It reduced `count` and `last_error` and dropped `phase`, so "combat x1, permanently
+    -- dead until you reload" and "combat x1, cleared on the next tick" rendered identically.
+    --
+    -- Driven end-to-end from a REAL registry rather than a hand-written fixture, because the bug
+    -- being pinned lives in the seam between the two, not in either side.
+    print("Test 6f: the cockpit view-model distinguishes a boot death from a tick fault")
+    local RunnerState = require("modules/questing/runner_state")
+    local vm_boot = RunnerState.build({ module_faults = bb6c:get("system.module_faults") })
+    T.assert_not_nil(vm_boot.health.module_fault, "the view-model surfaces the worst faulting module")
+    T.assert_not_nil(vm_boot.health.module_fault.phase,
+        "and must say WHICH phase killed it -- a boot-dead module needs a reload, a tick fault does not")
+
+    local vm_only_boot = RunnerState.build({
+        module_faults = { combat = { count = 1, phase = "init", last_error = "boom" } },
+    })
+    local vm_only_tick = RunnerState.build({
+        module_faults = { combat = { count = 1, phase = "tick", last_error = "boom" } },
+    })
+    T.assert_equal(vm_only_boot.health.module_fault.phase, "init")
+    T.assert_equal(vm_only_tick.health.module_fault.phase, "tick")
+    T.assert_true(vm_only_boot.health.module_fault.human_text
+        ~= vm_only_tick.health.module_fault.human_text,
+        "two faults that differ only in phase must not reduce to the same operator sentence")
+    print("  PASS")
+
+    -- =====================================================================
     -- Test 7: Module shutdown lifecycle
     -- =====================================================================
     print("Test 7: Module shutdown lifecycle")
