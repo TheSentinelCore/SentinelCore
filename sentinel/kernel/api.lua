@@ -41,6 +41,7 @@ local BTFactory = require("core/bt/factory")
 local BTStatus = require("core/bt/status")
 local BTRunner = require("core/bt/runner")
 local AuraCatalog = require("kernel/catalogs/aura")
+local Log = require("kernel/log")
 
 local Api = {}
 
@@ -70,6 +71,9 @@ Api.KERNEL_CAPABILITIES = {
     ["spells"] = true,      -- kernel/spells.lua: is_castable, is_in_los, find_aoe_position
     ["catalogs.aura"] = true,  -- kernel/catalogs/aura.lua
     ["catalogs.spell"] = true, -- kernel/catalogs/spell.lua: rank resolution by level
+    -- `log` was listed here from Phase 3 while the surface had NO `log` field, so a manifest
+    -- requiring it was admitted and then failed at first use -- the exact failure this list
+    -- exists to prevent. kernel/log.lua closed that in Phase 4b.
     ["log"] = true,
 }
 
@@ -117,6 +121,10 @@ function Api.build(kernel)
         -- (it caches rank resolution against the live spell book), so it resolves through the
         -- kernel table at access time -- one catalog for every plugin, which is the whole point:
         -- a rotation carrying its own rank table would duplicate DB-baked data per class.
+        -- ADR §10: `:debug, :info, :warn, :error (auto-attributed)`. A single shared instance,
+        -- not one per plugin: attribution is derived from the CALL SITE, so per-plugin loggers
+        -- would carry a name that could disagree with where the call actually came from.
+        log = Log.new(),
         catalogs = setmetatable({ aura = AuraCatalog }, {
             __index = function(_, key)
                 if key == "spell" then return kernel.spell_catalog end

@@ -381,6 +381,7 @@ local test_modules = {
     "tests/kernel/test_plugin_require_audit",
     "tests/kernel/test_blackboard_namespace_audit",
     "tests/kernel/test_plugin_core_access_audit",
+    "tests/kernel/test_log",
     "tests/kernel/test_timing",
     "tests/kernel/test_intent_executors",
 

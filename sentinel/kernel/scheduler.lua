@@ -93,6 +93,10 @@ function Scheduler:new(opts)
     o._blackboard = opts.blackboard
     o._error_boundary = opts.error_boundary
     o._intent_queue = opts.intent_queue
+    -- kernel/movement_release.lua, or a double. Optional: a scheduler without it simply never
+    -- reconciles, which is what every test predating Phase 4b expects.
+    o._movement = opts.movement
+    o._movement_input = opts.movement_input
     o._frame_budget_ms = opts.frame_budget_ms
     o._monotonic_ms = opts.monotonic_ms or default_monotonic_ms
     o._game_time_ms = opts.game_time_ms
@@ -277,6 +281,31 @@ function Scheduler:tick()
         end
     else
         report.intents = { committed = {}, deduped = {}, rejected = {}, failed = {} }
+    end
+
+    -- MOVEMENT RECONCILIATION -- still part of COMMIT, deliberately.
+    --
+    -- A `move` intent commits by recording a DESIRED STATE and touching no key; the keys move
+    -- here. That makes this the execution half of a `move`, which is COMMIT's job ("execute"),
+    -- not ACCOUNT's ("frame budget, quarantine checks, telemetry"). Putting it in ACCOUNT would
+    -- read as accounting and would sit after the budget measurement it belongs inside.
+    --
+    -- It must run AFTER the queue drains, because that is when this tick's desire is final.
+    if self._movement then
+        local started = self._monotonic_ms()
+        local ok, result = pcall(function()
+            return self._movement.reconcile(self._movement_input)
+        end)
+        local cost = self._monotonic_ms() - started
+        if cost < 0 then cost = 0 end
+        report.stages.COMMIT.ms = report.stages.COMMIT.ms + cost
+        report.total_ms = report.total_ms + cost
+        if ok then
+            report.movement = result
+        else
+            report.faults[#report.faults + 1] =
+                { stage = "COMMIT", owner = "movement_reconcile", error = tostring(result), streak = 1 }
+        end
     end
 
     -- STAGE 7 -- ACCOUNT.

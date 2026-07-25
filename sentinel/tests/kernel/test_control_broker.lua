@@ -77,11 +77,15 @@ end
 -- Channels (ADR 08 §2.1 / §2.2)
 -- ---------------------------------------------------------------------------
 
-function M.test_exactly_seven_channels()
+--- Eight since Phase 4b. PET is a channel rather than a flag on CASTING because it is a
+--- separate arbitration surface: a pet command contends with other pet commands and with
+--- nothing else. Folding it into CASTING would mean whoever holds CASTING implicitly commands
+--- the pet -- ambient authority, arriving through the channel table.
+function M.test_exactly_eight_channels()
     local expected = {
-        "MOVEMENT", "FACING", "CASTING", "TARGETING", "INTERACTION", "ITEMS", "MODAL_UI",
+        "MOVEMENT", "FACING", "CASTING", "TARGETING", "INTERACTION", "ITEMS", "MODAL_UI", "PET",
     }
-    T.assert_equal(#ControlBroker.CHANNELS, 7)
+    T.assert_equal(#ControlBroker.CHANNELS, #expected)
     for _, name in ipairs(expected) do
         T.assert_not_nil(Channel[name], name .. " must be a channel")
     end

@@ -160,6 +160,133 @@ function M.test_release_is_idempotent()
     T.assert_equal(#calls, #MovementRelease.KEYS * 2)
 end
 
+-- ---------------------------------------------------------------------------
+-- The desired-state reconciler (Phase 4b Deliverable 2)
+-- ---------------------------------------------------------------------------
+--
+-- WHY THE RECONCILER LIVES IN THE SAME MODULE AS THE FORCE-RELEASE.
+-- Movement is stateful key start/stop pairs, so whoever presses a key and whoever guarantees
+-- it comes up must be the SAME owner. Two owners of that state is precisely how §2.8's
+-- guarantee rots: the releaser stops the key, and a reconciler that still believes the
+-- character should be running presses it again on the next tick. Keeping both here means
+-- `release_all` clears the desire as a matter of course, and the broker's safety path needs
+-- no new wiring it could forget.
+--
+-- WHY DESIRED STATE IS A KEY SET AND NOT A POINT.
+-- "Move toward this point" cannot be honoured by MOVEMENT alone -- with key-based movement it
+-- requires TURNING, and turning is the FACING channel, held under a different lease. A `move`
+-- intent that quietly faced the character would be acting outside the lease that authorised
+-- it, which is the whole failure the channel split exists to prevent. So `move` says which
+-- keys it wants down, and a plugin that wants to run at something emits `face` too.
+
+local function reconcile_harness(opts)
+    local input, calls = make_input(opts)
+    MovementRelease.release_all(input)   -- a known-stopped starting point
+    for i = #calls, 1, -1 do calls[i] = nil end
+    return input, calls
+end
+
+function M.test_no_desire_presses_nothing()
+    local input, calls = reconcile_harness()
+    local report = MovementRelease.reconcile(input)
+    T.assert_equal(#calls, 0, "an empty desire must touch no key")
+    T.assert_equal(#report.pressed, 0)
+    T.assert_equal(#report.released, 0)
+end
+
+function M.test_a_desired_key_is_pressed_once_not_every_tick()
+    local input, calls = reconcile_harness()
+    MovementRelease.set_desired({ move_forward = true })
+
+    local first = MovementRelease.reconcile(input)
+    T.assert_equal(#first.pressed, 1, "the first reconcile must press")
+    T.assert_equal(first.pressed[1], "move_forward")
+    T.assert_equal(#calls, 1)
+    T.assert_equal(calls[1], "move_forward_START")
+
+    -- Key state is stateful: pressing an already-held key every tick is the SDK spam the
+    -- imperative start/stop pair was causing in the first place.
+    local second = MovementRelease.reconcile(input)
+    T.assert_equal(#second.pressed, 0, "an already-held key must not be re-pressed")
+    T.assert_equal(#calls, 1, "no further SDK traffic while the desire is unchanged")
+
+    MovementRelease.release_all(input)
+end
+
+function M.test_clearing_the_desire_releases_the_key()
+    local input, calls = reconcile_harness()
+    MovementRelease.set_desired({ move_forward = true })
+    MovementRelease.reconcile(input)
+    for i = #calls, 1, -1 do calls[i] = nil end
+
+    MovementRelease.set_desired(nil)
+    local report = MovementRelease.reconcile(input)
+
+    T.assert_equal(#report.released, 1, "dropping the desire must release the key")
+    T.assert_equal(report.released[1], "move_forward")
+    T.assert_equal(calls[1], "move_forward", "the stop half of the pair, not the start")
+end
+
+--- THE exit-criterion test for Phase 4b: revocation clears desired state, and the keys come up
+--- as a CONSEQUENCE of the reconciler -- not because a plugin cooperated. The plugin in this
+--- test never runs at all; it is not even represented.
+function M.test_revocation_clears_the_desire_so_the_reconciler_cannot_re_press()
+    local input, calls = reconcile_harness()
+    MovementRelease.set_desired({ move_forward = true })
+    MovementRelease.reconcile(input)
+
+    -- The broker's force-release, exactly as ControlBroker:_revoke calls it.
+    MovementRelease.release_all(input)
+    T.assert_true(MovementRelease.desired() == nil,
+        "release_all must clear the desire, or the next tick presses the key straight back down")
+
+    for i = #calls, 1, -1 do calls[i] = nil end
+    local report = MovementRelease.reconcile(input)
+    T.assert_equal(#report.pressed, 0, "a revoked movement claim must not re-press on the next tick")
+    T.assert_equal(#calls, 0)
+end
+
+--- The reconciler runs every tick on the hot path, so a partial injector build must degrade
+--- rather than throw -- same rule the releaser follows.
+function M.test_a_missing_start_function_is_counted_not_fatal()
+    local input, calls = reconcile_harness()
+    input.move_forward_start = nil
+    MovementRelease.set_desired({ move_forward = true })
+
+    local ok, report = pcall(function() return MovementRelease.reconcile(input) end)
+    T.assert_true(ok, "a missing start function must not throw: " .. tostring(report))
+    T.assert_equal(#report.pressed, 0)
+    T.assert_equal(report.missing, 1)
+    T.assert_equal(#calls, 0)
+
+    MovementRelease.release_all(input)
+end
+
+function M.test_a_throwing_start_does_not_abort_the_other_keys()
+    local input, calls = reconcile_harness()
+    input.strafe_left_start = function() error("SDK exploded", 0) end
+    MovementRelease.set_desired({ strafe_left = true, move_forward = true })
+
+    local ok, report = pcall(function() return MovementRelease.reconcile(input) end)
+    T.assert_true(ok, "a throwing start must not propagate: " .. tostring(report))
+    T.assert_equal(report.errors, 1)
+    T.assert_equal(#report.pressed, 1, "the surviving key must still be pressed")
+    T.assert_equal(report.pressed[1], "move_forward")
+
+    MovementRelease.release_all(input)
+end
+
+--- An unknown key is refused rather than passed through to a `<name>_start` that does not
+--- exist. The desire is a closed vocabulary for the same reason the unit reference is.
+function M.test_an_unknown_key_is_refused()
+    local input = reconcile_harness()
+    local ok, reason = MovementRelease.set_desired({ jump = true })
+    T.assert_false(ok, "an undocumented movement key must be refused")
+    T.assert_equal(reason, "unknown_movement_key")
+    T.assert_true(MovementRelease.desired() == nil, "a refused desire must not be stored")
+    MovementRelease.release_all(input)
+end
+
 --- With no argument it must reach the real SDK. This is the one call site, so if it silently
 --- did nothing when handed no double, the safety net would be absent in-game and present in
 --- every test.

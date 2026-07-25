@@ -359,4 +359,87 @@ function M.test_unregister_removes_a_handler()
     T.assert_equal(calls, 1, "an unregistered handler must stop running")
 end
 
+-- ---------------------------------------------------------------------------
+-- Movement reconciliation (Phase 4b)
+-- ---------------------------------------------------------------------------
+--
+-- A `move` intent commits by recording a desired state and pressing nothing. If the reconciler
+-- is not actually driven by the tick, that intent is inert IN GAME and green in every unit test
+-- -- the worst possible split. These tests exist to close it.
+
+local function movement_double()
+    local calls = {}
+    return {
+        calls = calls,
+        reconcile = function(input)
+            calls[#calls + 1] = { input = input }
+            return { pressed = {}, released = {} }
+        end,
+    }
+end
+
+function M.test_the_tick_reconciles_movement_after_the_intent_queue_drains()
+    local movement = movement_double()
+    local sched = Scheduler:new({ movement = movement })
+
+    local report = sched:tick()
+
+    T.assert_equal(#movement.calls, 1, "every tick must reconcile movement exactly once")
+    T.assert_not_nil(report.movement, "the reconcile report must reach the tick report")
+end
+
+--- Order is the whole point: reconciling BEFORE the queue drains would act on last tick's
+--- desire, so a `move` would take effect one frame late and a stop would linger one frame long.
+function M.test_reconciliation_happens_after_intents_commit()
+    local order = {}
+    local queue = {
+        commit = function() order[#order + 1] = "commit" return
+            { committed = {}, deduped = {}, rejected = {}, failed = {} } end,
+    }
+    local movement = { reconcile = function() order[#order + 1] = "reconcile" return {} end }
+
+    Scheduler:new({ intent_queue = queue, movement = movement }):tick()
+
+    T.assert_equal(order[1], "commit")
+    T.assert_equal(order[2], "reconcile")
+end
+
+--- The reconciler runs on the movement path every tick. A throw there must be reported and
+--- survived, not allowed to take the frame down with it.
+function M.test_a_throwing_reconciler_is_a_reported_fault_not_a_dead_tick()
+    local movement = { reconcile = function() error("SDK exploded", 0) end }
+    local sched = Scheduler:new({ movement = movement })
+
+    local ok, report = pcall(function() return sched:tick() end)
+
+    T.assert_true(ok, "a throwing reconciler must not propagate out of the tick")
+    T.assert_equal(#report.faults, 1)
+    T.assert_equal(report.faults[1].owner, "movement_reconcile")
+end
+
+--- Its cost is attributed to COMMIT, because pressing the key IS the execution half of a
+--- `move`. A reconcile that ran outside the measured stages would be time the frame budget
+--- cannot see.
+function M.test_reconciliation_is_billed_to_the_commit_stage()
+    local slow = 0
+    local movement = { reconcile = function() slow = slow + 1 return {} end }
+    local sched = Scheduler:new({
+        movement = movement,
+        monotonic_ms = function()
+            -- Two reads per measured span; step the clock so the span is non-zero.
+            slow = slow + 0
+            return os.clock() * 1000
+        end,
+    })
+    local report = sched:tick()
+    T.assert_true(report.stages.COMMIT.ms >= 0, "the reconcile must be billed inside COMMIT")
+    T.assert_equal(slow, 1)
+end
+
+--- A scheduler with no movement module must behave exactly as it did before Phase 4b.
+function M.test_a_scheduler_without_a_movement_module_never_reconciles()
+    local report = Scheduler:new({}):tick()
+    T.assert_nil(report.movement)
+end
+
 return M

@@ -59,6 +59,13 @@ ControlBroker.__index = ControlBroker
 -- API exists anywhere in the SDK docs) and MODAL_UI is added (§2.2, vendor/bank/mail/trainer/
 -- gossip/profession frames are modal and block movement, and reading a profession's skill
 -- rank requires OPENING its window -- a sensor read that needs a control claim).
+--
+-- PET joined in Phase 4b. It is a CHANNEL rather than a column on some permission table
+-- because it is a genuinely separate arbitration surface: a pet command contends with other
+-- pet commands and with nothing else. Ordering it against CASTING would be wrong -- commanding
+-- the water elemental to freeze does not compete with the mage's own global cooldown -- and
+-- leaving it inside CASTING would mean a rotation that holds CASTING implicitly owns the pet,
+-- which is exactly the ambient authority the channel split exists to remove.
 ControlBroker.CHANNELS = {
     "MOVEMENT",
     "FACING",
@@ -67,6 +74,7 @@ ControlBroker.CHANNELS = {
     "INTERACTION",
     "ITEMS",
     "MODAL_UI",
+    "PET",
 }
 
 ControlBroker.Channel = {}

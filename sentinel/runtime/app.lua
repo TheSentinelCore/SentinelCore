@@ -19,6 +19,7 @@ local Spells = require("kernel/spells")
 local Units = require("kernel/units")
 local AoeHelper = require("shared/aoe_helper")
 local IntentExecutors = require("kernel/intent_executors")
+local MovementRelease = require("kernel/movement_release")
 local SpellHelper = require("shared/spell_helper")
 local Api = require("kernel/api")
 
@@ -124,6 +125,10 @@ function SentinelApp:new()
         error_boundary = o._error_boundary,
         intent_queue = o._intent_queue,
         frame_budget_ms = FRAME_BUDGET_MS,
+        -- Drives the `move` intent's desired state onto real keys after COMMIT.
+        -- `movement_input` is left unset for the same reason the broker's is: the module
+        -- resolves the live `core.input` itself, in the kernel's one permitted place.
+        movement = MovementRelease,
     })
     o:_register_kernel_stages()
 
