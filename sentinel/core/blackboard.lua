@@ -69,10 +69,44 @@ Blackboard.__index = Blackboard
 --      pretences. It fails in the safe direction -- an exception outliving its need is a
 --      to-do, not a hole -- but it is not proof.
 --
+--   6. THE LEDGER ENUMERATES KEYS READ ACROSS A PACKAGE BOUNDARY, NOT KEYS THE GUARD REFUSES.
+--      Those are DIFFERENT SETS, and the difference is not academic: it is why combat was dead
+--      in every real boot for a whole phase.
+--
+--      The list was harvested from the cross-namespace READ audit in
+--      tests/kernel/test_blackboard_namespace_audit.lua. `module.combat.izi_bridge` was written
+--      by combat and, at the time, believed to be read only inside combat -- so no
+--      cross-namespace finding ever named it, and it was never a candidate for this list. The
+--      guard then refused it on the FIRST line of `SentinelCombat:initialize()`,
+--      `initialize_all` swallowed the throw, and no test noticed because every combat suite
+--      constructs SentinelCombat directly. A key can be refused by the guard and invisible to
+--      the audit that seeds the ledger AT THE SAME TIME, and that combination is silent in both
+--      directions.
+--
+--      The general shape: a private key that carries behaviour needs an entry just as much as a
+--      shared one, and the only thing that produces such an entry today is a human reading a
+--      writer. Nothing derives this list from what `assert_pure` would actually reject.
+--
+--   7. A DECLARED READER LIST USED TO BE CHECKED FOR EXISTENCE, NOT FOR TRUTH -- and while it
+--      was, it was wrong. `module.combat.izi_bridge` named the two target strategies as its
+--      readers; NEITHER reads that key (both take the bridge by constructor), and the six files
+--      that really read it were named by nobody. The entry's retirement plan followed from the
+--      false list and was impossible to execute, because four of the six real readers are handed
+--      a blackboard and nothing else. Re-measuring in Phase 4d found the same error, less
+--      dramatically, in three more entries: `player.object` declared 7 readers of 22,
+--      `player.target` 6 of 16, `combat.target` 9 of 16.
+--
+--      `test_every_ledger_entry_names_its_readers_accurately` now asserts both directions. What
+--      IT cannot see is stated at that test: it excludes `sentinel/tests`, so "no readers" means
+--      "no readers in production", and it matches `get("<key>"` textually, so a read through a
+--      computed key name is invisible to it.
+--
 -- The depth limit and the metatable check fail CLOSED: unproven means refused, so neither is a
 -- blind spot. Items 1 and 2 are structural and need Phase 3's sealed public API. Item 3 shrinks
 -- as the ledger does. Item 4 is why the `.object` audit is kept as a backstop -- it reads
--- source text, so it sees what no run reaches, for the one spelling it knows.
+-- source text, so it sees what no run reaches, for the one spelling it knows. Item 6 is the one
+-- with no mechanism behind it at all: the only defence is that a refused write throws loudly at
+-- the writer, which is worth nothing while a caller pcalls it into silence.
 
 local MAX_DEPTH = 8
 
@@ -101,35 +135,70 @@ Blackboard.HANDLE_LEDGER = {
     -- =======================================================================
     -- sdk_handle -- live game pointers. Retiring these is the safety work.
     -- =======================================================================
+    -- READER LISTS BELOW WERE RE-MEASURED IN PHASE 4D D1, AND THEY WERE WRONG.
+    --
+    -- `player.object` declared 7 readers and has 22. `player.target` declared 6 and has 16.
+    -- `combat.target` declared 9 and has 16. Nothing had ever compared a declared list against the
+    -- tree, so every `retire` estimate below ("largest reader set", "smallest -- retire first") was
+    -- an ordering derived from lists that were roughly a third of the truth.
+    -- `test_every_ledger_entry_names_its_readers_accurately` now checks both directions.
     ["player.object"] = {
         kind = "sdk_handle",
         writers = { "sentinel/runtime/sensors/player_sensor.lua" },
         readers = {
-            "sentinel/runtime/sensors/aura_sensor.lua",
-            "sentinel/runtime/app.lua",
             "sentinel/modules/combat/action_library.lua",
+            "sentinel/modules/combat/combat_zone_detector.lua",
             "sentinel/modules/combat/condition_library.lua",
+            "sentinel/modules/combat/context_builder.lua",
+            "sentinel/modules/combat/module.lua",
+            "sentinel/modules/combat/profiles/paladin/retribution_actions.lua",
+            "sentinel/modules/combat/profiles/paladin/retribution_conditions.lua",
+            "sentinel/modules/combat/profiles/warlock/pet_controller.lua",
+            "sentinel/modules/combat/shared_subtrees.lua",
             "sentinel/modules/combat/strategies/default_target_strategy.lua",
             "sentinel/modules/combat/strategies/grind_target_strategy.lua",
-            "sentinel/modules/combat/profiles/paladin/retribution_actions.lua",
+            "sentinel/modules/combat/swing_tracker.lua",
+            "sentinel/rotations/mage_frost/frost_actions.lua",
+            "sentinel/rotations/mage_frost/frost_combat_state.lua",
+            "sentinel/rotations/mage_frost/frost_conditions.lua",
+            "sentinel/rotations/mage_frost/frost_support.lua",
+            "sentinel/rotations/mage_frost/frost_tbc.lua",
+            "sentinel/rotations/mage_frost/kite_controller.lua",
+            "sentinel/rotations/mage_frost/pet_controller.lua",
+            "sentinel/runtime/app.lua",
+            "sentinel/runtime/sensors/aura_sensor.lua",
+            "sentinel/shared/combat_helpers.lua",
         },
         retire = "app.lua already feeds SnapshotSource.capture_player() FROM this key, so the "
             .. "snapshot path exists -- readers move to snapshot player fields and the sensor "
-            .. "stops publishing the handle. Largest reader set; retire last.",
+            .. "stops publishing the handle. 22 readers, the largest set of any entry, and 16 of "
+            .. "them reach it through `shared/combat_helpers.player_and_target` or its mage_frost "
+            .. "twin `frost_support.player_and_target` -- so those two helpers are the real "
+            .. "migration surface, not 22 call sites. Retire last.",
     },
     ["player.target"] = {
         kind = "sdk_handle",
         writers = { "sentinel/runtime/sensors/player_sensor.lua" },
         readers = {
-            "sentinel/runtime/sensor_hub.lua",
             "sentinel/modules/combat/action_library.lua",
+            "sentinel/modules/combat/condition_library.lua",
             "sentinel/modules/combat/context_builder.lua",
+            "sentinel/modules/combat/module.lua",
+            "sentinel/modules/combat/shared_subtrees.lua",
             "sentinel/modules/combat/strategies/default_target_strategy.lua",
             "sentinel/modules/combat/strategies/grind_target_strategy.lua",
+            "sentinel/modules/combat/swing_tracker.lua",
+            "sentinel/rotations/mage_frost/frost_actions.lua",
+            "sentinel/rotations/mage_frost/frost_combat_state.lua",
+            "sentinel/rotations/mage_frost/frost_conditions.lua",
+            "sentinel/rotations/mage_frost/frost_support.lua",
             "sentinel/rotations/mage_frost/kite_controller.lua",
+            "sentinel/runtime/app.lua",
+            "sentinel/runtime/sensor_hub.lua",
+            "sentinel/shared/combat_helpers.lua",
         },
-        retire = "Snapshot target fields plus the symbolic UNIT_TARGET ref. Every reader is a "
-            .. "`get(\"combat.target\") or get(\"player.target\")` fallback pair, so this "
+        retire = "Snapshot target fields plus the symbolic UNIT_TARGET ref. Almost every reader is "
+            .. "a `get(\"combat.target\") or get(\"player.target\")` fallback pair, so this "
             .. "retires together with combat.target or not at all.",
     },
     ["combat.target"] = {
@@ -137,17 +206,25 @@ Blackboard.HANDLE_LEDGER = {
         writers = { "sentinel/modules/combat/module.lua" },
         readers = {
             "sentinel/modules/combat/action_library.lua",
+            "sentinel/modules/combat/condition_library.lua",
             "sentinel/modules/combat/context_builder.lua",
+            "sentinel/modules/combat/module.lua",
+            "sentinel/modules/combat/shared_subtrees.lua",
             "sentinel/modules/combat/strategies/default_target_strategy.lua",
             "sentinel/modules/combat/strategies/grind_target_strategy.lua",
+            "sentinel/modules/combat/swing_tracker.lua",
             "sentinel/rotations/mage_frost/frost_actions.lua",
             "sentinel/rotations/mage_frost/frost_combat_state.lua",
             "sentinel/rotations/mage_frost/frost_conditions.lua",
             "sentinel/rotations/mage_frost/frost_support.lua",
             "sentinel/rotations/mage_frost/frost_tbc.lua",
+            "sentinel/rotations/mage_frost/kite_controller.lua",
+            "sentinel/runtime/app.lua",
+            "sentinel/shared/combat_helpers.lua",
         },
         retire = "The selected target becomes a snapshot-derived record (guid + scalars) plus "
-            .. "UNIT_TARGET for intents. Paired with player.target above.",
+            .. "UNIT_TARGET for intents. Paired with player.target above -- the two share 14 of "
+            .. "their 16 readers, because the fallback pair is written as one expression.",
     },
     ["combat.low_health_add"] = {
         kind = "sdk_handle",
@@ -208,6 +285,22 @@ Blackboard.HANDLE_LEDGER = {
         retire = "Only two readers, and both are already thin accessors that do nothing but "
             .. "return it -- the cheapest collaborator to retire.",
     },
+    -- `module.combat.izi_bridge` WAS HERE, added in Phase 4c and RETIRED in Phase 4d D1. Its two
+    -- lives are the two blind spots documented above this table, so it is recorded rather than
+    -- silently deleted:
+    --
+    --   * IT WAS NOT LISTED WHEN IT SHOULD HAVE BEEN (blind spot 6 below). The guard refused it,
+    --     `SentinelCombat:initialize()` threw on its first statement, `initialize_all` swallowed the
+    --     error, and combat was dead in every real boot from Phase 4b D3 until Phase 4c -- with no
+    --     test seeing it, because every combat suite constructs SentinelCombat directly.
+    --   * ITS READER LIST WAS WRONG WHEN IT WAS LISTED (blind spot 7 below). It named the two target
+    --     strategies, which receive the bridge BY CONSTRUCTOR and never read this key at all. The
+    --     six real readers were condition_library (x3), retribution_conditions, frost_combat_state
+    --     and frost_conditions -- four of which cannot be reached by constructor, which is why the
+    --     retirement plan built on that false premise could not have worked.
+    --
+    -- Retired by MOVING THE STORAGE, not by widening the guard: the bridge is now published as
+    -- `Sentinel.forecast` (kernel/forecast.lua) and the write in modules/combat/module.lua is gone.
     ["module.combat.pet_controller"] = {
         kind = "collaborator",
         writers = {

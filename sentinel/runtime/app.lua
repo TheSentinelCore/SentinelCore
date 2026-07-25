@@ -17,6 +17,7 @@ local Timing = require("kernel/timing")
 local SpellCatalog = require("kernel/catalogs/spell")
 local Spells = require("kernel/spells")
 local Units = require("kernel/units")
+local Forecast = require("kernel/forecast")
 local AoeHelper = require("shared/aoe_helper")
 local IntentExecutors = require("kernel/intent_executors")
 local MovementRelease = require("kernel/movement_release")
@@ -49,7 +50,14 @@ function SentinelApp:new()
     -- B4: shared adapter (see integrations/nav_client/adapter.lua) so combat and
     -- questing stop stealing the nav client from each other via private instances.
     o._nav_adapter = NavAdapter.get_shared(o._event_bus)
+    -- THE ONLY IziBridge in the process. `modules/combat/init.lua` used to build a second one, so
+    -- the app's instance and combat's instance kept independent IZI state and the app's was
+    -- unreachable (ADR 08 §7 recorded it as "constructed and never read"). Combat now takes THIS one
+    -- at `init(app)` time -- see modules/combat/init.lua.
     o._izi_bridge = IziBridge:new()
+    -- ADR 08 §5.1. The public face of that bridge: `Sentinel.forecast`, the service the six former
+    -- readers of `module.combat.izi_bridge` consult now that the blackboard holds values only.
+    o._forecast = Forecast:new({ bridge = o._izi_bridge })
 
     -- ADR 08 §3.2 -- the commit choke point. Phase 4 registers the real cast/target executors on
     -- it, so from here on this is the single path by which the kernel affects the game.
@@ -139,20 +147,7 @@ function SentinelApp:new()
 
     -- The API surface is BUILT but deliberately NOT published to `_G.Sentinel` -- see
     -- SentinelApp:publish_api() for why.
-    o._api = Api.build({
-        app = o,
-        registry = o._plugin_registry,
-        config = o._kernel_config,
-        broker = o._control_broker,
-        activity_stack = o._activity_stack,
-        intent_queue = o._intent_queue,
-        blackboard = o._blackboard,
-        event_bus = o._event_bus,
-        scheduler = o._scheduler,
-        timing = o._timing,
-        spell_catalog = o._spell_catalog,
-        nav = o._nav_adapter,
-    })
+    o._api = Api.build(o:_kernel_table())
 
     return o
 end
@@ -182,14 +177,17 @@ function SentinelApp:unit_target_resolver()
     return function() return self:selected_target() end
 end
 
----Publish the kernel surface at `_G.Sentinel`.
+--- The components the kernel surface resolves against.
 ---
----@param host table|nil Verbs the host contributes to the surface (`reload`, `questing`, ...). The
----kernel owns components; it does not own these, because it does not build the app -- `main.lua`
----does, and only the host can tear one down and stand a new one up. A host verb colliding with a
----kernel field is refused at build time rather than silently shadowing it.
-function SentinelApp:publish_api(host)
-    return Api.publish({
+--- ONE builder, because there used to be two. `new()` and `publish_api()` each hand-maintained
+--- their own literal, and they had already drifted: `units` and `spells` were passed by
+--- `publish_api` and forgotten by `new`, so `app:get_api().units` was nil while `_G.Sentinel.units`
+--- worked. Nothing failed -- the live getter returns nil for an absent component, which is the same
+--- silent shape as the `snapshot` defect. `tests/kernel/test_capability_resolution.lua` found it by
+--- checking both surfaces; this makes the two impossible to disagree.
+---@param host table|nil verbs the host contributes (see publish_api)
+function SentinelApp:_kernel_table(host)
+    return {
         app = self,
         host = host,
         registry = self._plugin_registry,
@@ -204,8 +202,19 @@ function SentinelApp:publish_api(host)
         spell_catalog = self._spell_catalog,
         units = self._units,
         spells = self._spells,
+        forecast = self._forecast,
         nav = self._nav_adapter,
-    })
+    }
+end
+
+---Publish the kernel surface at `_G.Sentinel`.
+---
+---@param host table|nil Verbs the host contributes to the surface (`reload`, `questing`, ...). The
+---kernel owns components; it does not own these, because it does not build the app -- `main.lua`
+---does, and only the host can tear one down and stand a new one up. A host verb colliding with a
+---kernel field is refused at build time rather than silently shadowing it.
+function SentinelApp:publish_api(host)
+    return Api.publish(self:_kernel_table(host))
 end
 
 --- Wire the existing 4-step frame onto the 7-stage pipeline (ADR 08 §7).
@@ -411,12 +420,27 @@ function SentinelApp:get_api()
     return self._api
 end
 
---- ADR 08 §7 names `_izi_bridge` as constructed-and-never-read. It is a real collaborator
---- -- modules/combat/strategies/{default,grind}_target_strategy.lua both consume an
---- izi_bridge for time-to-die scoring -- so the fix is to make the app's instance
---- REACHABLE rather than to delete it and leave each module building a private one.
+--- The one IziBridge, for the collaborators that take it BY CONSTRUCTOR.
+---
+--- ADR 08 §7 named `_izi_bridge` as constructed-and-never-read, and until Phase 4d it genuinely had
+--- zero callers -- the accessor existed, and combat built its own bridge anyway, so the two
+--- instances never met. `modules/combat/init.lua:init(app)` is now its ONE caller, and that is what
+--- makes this the single instance rather than one of two.
+---
+--- The comment this replaces named `strategies/{default,grind}_target_strategy.lua` as the readers.
+--- They are consumers, but they never called this: they receive the bridge through
+--- `SentinelCombat -> TargetSelector -> StrategyFactory`, which is why the reach had to be closed at
+--- the top of that chain and not at the bottom.
+---
+--- Prefer `get_forecast()` for anything that only needs the predictions. This returns the raw
+--- injector adapter, and its surface is the SDK's shape rather than the kernel's.
 function SentinelApp:get_izi_bridge()
     return self._izi_bridge
+end
+
+--- The kernel's forecast service (`Sentinel.forecast`). One per app, wrapping the one bridge.
+function SentinelApp:get_forecast()
+    return self._forecast
 end
 
 --- The MEASURED tick cadence (ADR 08 §13 q7). Returns nil plus a reason until the

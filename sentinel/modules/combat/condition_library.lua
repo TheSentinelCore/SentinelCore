@@ -7,6 +7,26 @@ local SpellHelper = require("shared/spell_helper")
 
 local ConditionLibrary = {}
 
+--- The kernel's forecast service, RESOLVED AT CALL TIME.
+---
+--- Phase 4d D1: this used to be `blackboard:get("module.combat.izi_bridge")`. The blackboard holds
+--- VALUES (ADR 08 §2.7) and the handle guard was right to refuse a live bridge; the fix was to move
+--- the storage, not to widen the guard.
+---
+--- Call time, never load time, and never `initialize` time: `main.lua` runs `app:initialize()`
+--- BEFORE `publish_surface(app)`, so `_G.Sentinel` is still nil while combat initialises. A module
+--- that captured this at the top of the file, or in a constructor, would hold nil for the whole
+--- session -- the exact bug §2.4's live getter exists to prevent, reintroduced one layer up.
+---
+--- Returns nil when the kernel has not published yet. Every caller below must keep its non-forecast
+--- fallback for that window; a condition that went false on an unpublished surface would silently
+--- change the rotation for the first ticks of every boot.
+local function forecast()
+    local surface = _G.Sentinel
+    if surface == nil then return nil end
+    return surface.forecast
+end
+
 -- ============================================================================
 -- BASIC CONDITIONS
 -- ============================================================================
@@ -456,9 +476,9 @@ function ConditionLibrary.time_to_die_below(seconds)
     return function(blackboard)
         local _, target = H.player_and_target(blackboard)
         if not target then return false end
-        local izi_bridge = blackboard:get("module.combat.izi_bridge")
-        if izi_bridge then
-            local ttd = izi_bridge:get_time_to_die(target)
+        local f = forecast()
+        if f then
+            local ttd = f:time_to_die(target)
             if ttd and ttd < seconds then
                 return true
             end
@@ -473,12 +493,19 @@ function ConditionLibrary.incoming_damage_above(threshold_pct, time_seconds)
     return function(blackboard)
         local player = blackboard:get("player.object")
         if not player then return false end
-        local izi_bridge = blackboard:get("module.combat.izi_bridge")
-        if izi_bridge then
-            local incoming = izi_bridge:get_incoming_damage(player, time_seconds)
-            local max_hp = player:get_max_health()
-            local incoming_pct = incoming / max_hp
-            return incoming_pct >= threshold_pct
+        -- `izi_bridge:get_incoming_damage(player, time_seconds)` used to stand here. THAT METHOD HAS
+        -- NEVER EXISTED on integrations/izi_bridge.lua -- it exposes `predict_hp_pct`,
+        -- `get_forecast`, `get_time_to_die`, `get_player` and `is_battleground`, and nothing else.
+        -- This combinator has no callers, which is the only reason the missing method never threw;
+        -- the first caller would have crashed inside the rotation. The old code also divided by
+        -- `player:get_max_health()` unguarded. The service derives the same quantity from the
+        -- prediction the bridge really has, and answers nil when it cannot.
+        local f = forecast()
+        if f then
+            local incoming_pct = f:incoming_damage_pct(player, time_seconds)
+            if incoming_pct then
+                return incoming_pct >= threshold_pct
+            end
         end
         return false
     end
@@ -488,9 +515,9 @@ function ConditionLibrary.health_prediction_below(threshold_pct, time_seconds)
     return function(blackboard)
         local player = blackboard:get("player.object")
         if not player then return false end
-        local izi_bridge = blackboard:get("module.combat.izi_bridge")
-        if izi_bridge then
-            local predicted_hp_pct = izi_bridge:predict_hp_pct(player, time_seconds)
+        local f = forecast()
+        if f then
+            local predicted_hp_pct = f:predicted_health_pct(player, time_seconds)
             if predicted_hp_pct then
                 return predicted_hp_pct < threshold_pct
             end

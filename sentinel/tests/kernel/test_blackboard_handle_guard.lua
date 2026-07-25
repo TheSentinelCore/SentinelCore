@@ -409,6 +409,106 @@ function M.test_every_ledger_entry_names_its_writer_and_its_readers()
     end
 end
 
+-- ---------------------------------------------------------------------------
+-- THE READER HALF, WHICH IS THE CHECK THAT MISSED THE BUG
+-- ---------------------------------------------------------------------------
+
+--- Where a reader may live. Everything shipped, and nothing under `sentinel/tests`.
+---
+--- Tests are excluded ON PURPOSE and it is the main blind spot of this check: a suite that reads a
+--- ledgered key is invisible here, so a key whose ONLY remaining readers are tests reads as
+--- reader-free and its `readers = {}` passes. That direction is the safe one -- a test reading a key
+--- is not a shipped coupling, and retiring the key is still correct -- but it means "no readers"
+--- means "no readers in production", never "nothing reads this".
+local SOURCE_ROOT = "sentinel"
+local TEST_PREFIX = "^sentinel/tests/"
+
+---Every shipped file whose code contains a literal `get("<key>"`.
+---
+---Same evidence standard as `writer_still_sets`, and for the same reason: `Scope.each_code_line`
+---skips whole-line comments, so prose ABOUT a key -- including the ledger's own retirement plans --
+---is not evidence that anything reads it.
+---@param key string
+---@return table<string, boolean> paths
+local function files_reading(key)
+    local get_of_key = 'get%(%s*"' .. key:gsub("%.", "%%.") .. '"'
+    local found = {}
+    for _, path in ipairs(Scope.lua_files(SOURCE_ROOT)) do
+        if not path:match(TEST_PREFIX) then
+            local source = Scope.read_file(path)
+            if source then
+                Scope.each_code_line(source, function(line)
+                    if line:match(get_of_key) then found[path] = true end
+                end)
+            end
+        end
+    end
+    return found
+end
+
+M._files_reading = files_reading
+
+--- THE ACCURACY OF THE READER LIST, NOT MERELY ITS PRESENCE.
+---
+--- ================================================================================
+--- THIS IS THE CHECK THAT MISSED THE BUG. MEASURED, NOT ARGUED.
+--- ================================================================================
+--- `test_every_ledger_entry_names_its_writer_and_its_readers` asserted `entry.readers ~= nil` and
+--- stopped there. So `module.combat.izi_bridge` sat green for a whole phase declaring
+--- `strategies/{default,grind}_target_strategy.lua` as its readers -- and NEITHER of them reads that
+--- key. Both receive the bridge by constructor (`o._izi_bridge = izi_bridge`). The six files that
+--- really read it -- condition_library (three times), retribution_conditions, frost_combat_state and
+--- frost_conditions -- were named by nobody.
+---
+--- That is not a cosmetic error. The entry's `retire` plan said "combat constructs both readers, so
+--- it can pass the bridge to them directly", and that plan was IMPOSSIBLE: four of the six real
+--- readers are handed a blackboard and nothing else, and combat constructs none of them. A wrong
+--- reader list produced a retirement plan that could not be executed, and the wrongness was
+--- invisible because nothing compared the list to the tree.
+---
+--- Both directions are asserted, because each alone fails silently in the other:
+---   * A DECLARED FILE THAT DOES NOT READ -- the `izi_bridge` defect. Makes the reader set look
+---     smaller and more tractable than it is.
+---   * AN UNDECLARED FILE THAT DOES READ -- makes a retirement look finished when readers remain.
+function M.test_every_ledger_entry_names_its_readers_accurately()
+    local problems = {}
+    for key, entry in pairs(Blackboard.HANDLE_LEDGER) do
+        local actual = files_reading(key)
+        local declared = {}
+        for _, path in ipairs(entry.readers) do
+            declared[path] = true
+            if not actual[path] then
+                problems[#problems + 1] = key .. ": declares reader " .. path
+                    .. " which contains no `get(\"" .. key .. "\"` line -- delete it or fix the path"
+            end
+        end
+        for path in pairs(actual) do
+            if not declared[path] then
+                problems[#problems + 1] = key .. ": " .. path
+                    .. " reads the key and is NOT declared -- add it, or the retirement plan is "
+                    .. "built on a reader set smaller than the real one"
+            end
+        end
+    end
+    table.sort(problems)
+    T.assert_equal(#problems, 0, "HANDLE_LEDGER reader lists disagree with the tree:\n  "
+        .. table.concat(problems, "\n  "))
+end
+
+--- The reader scan's own mechanism, driven against known answers -- so a bug in the pattern cannot
+--- make every ledger entry "accurate" forever, which is exactly how the wrong list survived.
+function M.test_the_reader_scan_finds_real_readers_and_not_comments()
+    local readers = files_reading("player.object")
+    T.assert_true(readers["sentinel/runtime/sensors/aura_sensor.lua"] == true,
+        "a file that plainly reads player.object must be found")
+    T.assert_nil(readers["sentinel/core/blackboard.lua"],
+        "and the ledger's own file -- which MENTIONS the key in prose and in the entry -- must not "
+        .. "count, or every entry would be its own evidence")
+
+    T.assert_equal(next(files_reading("combat.a_key_nobody_reads")), nil,
+        "a key nothing reads must produce an empty set, or the scan is matching something else")
+end
+
 --- THE SHRINK-ONLY DIRECTION. A key that no longer stores a handle must fail exactly as
 --- loudly as a key that stores one without being listed. Without this, the ledger is a list
 --- of permissions that outlives its reasons.

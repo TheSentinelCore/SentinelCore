@@ -235,8 +235,11 @@ end
 local CROSS_NAMESPACE_LEDGER = {
     ["sentinel/rotations/mage_frost/aoe_tree.lua"] = 2,
     ["sentinel/rotations/mage_frost/frost_actions.lua"] = 3,
-    ["sentinel/rotations/mage_frost/frost_combat_state.lua"] = 7,
-    ["sentinel/rotations/mage_frost/frost_conditions.lua"] = 6,
+    -- 7 -> 6 and 6 -> 5 in Phase 4d D1. Both files read `module.combat.izi_bridge` to reach the IZI
+    -- adapter across the package boundary; that key is gone and the adapter is published as
+    -- `Sentinel.forecast`, so the read left through the front door rather than being renamed.
+    ["sentinel/rotations/mage_frost/frost_combat_state.lua"] = 6,
+    ["sentinel/rotations/mage_frost/frost_conditions.lua"] = 5,
     ["sentinel/rotations/mage_frost/frost_support.lua"] = 2,
     ["sentinel/rotations/mage_frost/frost_tbc.lua"] = 4,
     ["sentinel/rotations/mage_frost/maintenance_tree.lua"] = 4,
@@ -250,7 +253,11 @@ local CROSS_NAMESPACE_LEDGER = {
 --- become violations the moment the file lands in the kernel, which is the point of counting
 --- them before the move rather than during it.
 local PROMOTION_BLOCKER_LEDGER = {
-    ["sentinel/modules/combat/condition_library.lua"] = 10,
+    -- 10 -> 7 in Phase 4d D1. Three of the ten were `module.combat.izi_bridge` reads
+    -- (`time_to_die_below`, `incoming_damage_above`, `health_prediction_below`). They now read
+    -- `Sentinel.forecast`, which is kernel-owned and therefore survives the promotion this ledger
+    -- counts down to.
+    ["sentinel/modules/combat/condition_library.lua"] = 7,
 }
 
 --- `file` -> number of raw handle reads still tolerated. `condition_library.lua`'s 7 are the

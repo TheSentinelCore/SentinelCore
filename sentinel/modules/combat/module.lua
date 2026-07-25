@@ -83,8 +83,12 @@ function SentinelCombat:initialize()
     self._combat_zone = CombatZoneDetector:new(self._event_bus, self._blackboard)
     self._humanization = Humanization.new()
 
-    -- Store izi_bridge in blackboard for profiles to access
-    self._blackboard:set("module.combat.izi_bridge", self._izi_bridge)
+    -- `self._blackboard:set("module.combat.izi_bridge", self._izi_bridge)` used to be the FIRST
+    -- statement past the constructors here, and it is why combat was dead in every real boot from
+    -- Phase 4b until Phase 4c: IziBridge carries a metatable, the handle guard refuses anything it
+    -- cannot see through, and `initialize_all` swallowed the throw. Phase 4c reopened the guard by
+    -- ledgering the key; Phase 4d D1 removed the write instead. The six readers that fetched it back
+    -- out now consult `Sentinel.forecast` (kernel/forecast.lua). The blackboard holds VALUES.
     self._blackboard:set("module.combat.rotation_engine", "dsl")
 
     -- Class detection: a real numeric class_id must be read before the

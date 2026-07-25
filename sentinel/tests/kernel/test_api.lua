@@ -173,6 +173,64 @@ function M.test_timing_is_published_now_that_it_exists()
     end)
 end
 
+--- ADR 08 §13.1 item 14: this getter resolved through `scheduler.current_snapshot and
+--- scheduler:current_snapshot()`, an identifier that appeared exactly once in the repository -- on
+--- that line. The `and` chain meant the miss was SILENT, so the capability list claimed a service
+--- that returned nil forever. `Sentinel.snapshot` is the read path Phase 1b's whole worklist queues
+--- behind, so it is pinned here as well as at the scheduler.
+function M.test_snapshot_resolves_the_schedulers_frozen_tick_view()
+    with_clean_globals(function()
+        local kernel = make_kernel()
+        local Scheduler = require("kernel/scheduler")
+        kernel.scheduler = Scheduler:new({ event_bus = kernel.event_bus })
+        kernel.scheduler:register("SENSE", "vitals", function(ctx)
+            ctx.snapshot:put("player.health_pct", 0.31)
+        end)
+        Api.publish(kernel)
+
+        T.assert_not_nil(_G.Sentinel.snapshot, "readable before the first tick, not nil")
+
+        kernel.scheduler:tick()
+        T.assert_near(_G.Sentinel.snapshot:get("player.health_pct"), 0.31, 0.0001,
+            "the surface must hand back the tick's frozen snapshot")
+        T.assert_true(_G.Sentinel.snapshot == kernel.scheduler:current_snapshot(),
+            "and it must be the scheduler's snapshot, not a second one built for the surface")
+    end)
+end
+
+--- The getter resolves AT ACCESS TIME, so a plugin holding `_G.Sentinel` across ticks reads this
+--- tick's view rather than the one that existed when it took the reference. A captured field would
+--- serve stale world state to every rotation, forever.
+function M.test_snapshot_advances_with_the_tick_for_a_reference_taken_once()
+    with_clean_globals(function()
+        local kernel = make_kernel()
+        local Scheduler = require("kernel/scheduler")
+        kernel.scheduler = Scheduler:new({ event_bus = kernel.event_bus })
+        local n = 0
+        kernel.scheduler:register("SENSE", "counter", function(ctx)
+            n = n + 1
+            ctx.snapshot:put("player.level", n)
+        end)
+        local surface = Api.build(kernel)
+
+        kernel.scheduler:tick()
+        T.assert_equal(surface.snapshot:get("player.level"), 1)
+        kernel.scheduler:tick()
+        T.assert_equal(surface.snapshot:get("player.level"), 2,
+            "the SAME surface reference must resolve tick 2's snapshot")
+    end)
+end
+
+--- A kernel with no scheduler at all -- the pre-init window -- must be absent rather than a stub,
+--- for the reason the file's header gives: an absent field fails at lookup, where the cause is
+--- visible, and a nil-returning one fails arbitrarily far away.
+function M.test_snapshot_is_absent_when_there_is_no_scheduler_yet()
+    with_clean_globals(function()
+        local surface = Api.build({})
+        T.assert_nil(surface.snapshot)
+    end)
+end
+
 function M.test_available_enumerates_only_real_capabilities()
     with_clean_globals(function()
         Api.publish(make_kernel())
@@ -180,7 +238,8 @@ function M.test_available_enumerates_only_real_capabilities()
         local set = {}
         for _, c in ipairs(available) do set[c] = true end
         T.assert_true(set["control"], "control is implemented")
-        T.assert_true(set["intents"])
+        T.assert_true(set["intent"], "SINGULAR -- it names the `Sentinel.intent` field ADR §10 gives")
+        T.assert_nil(set["intents"], "the plural never had a field behind it and must not return")
         T.assert_true(set["timing.gcd"], "timing.gcd IS implemented as of Phase 4")
         T.assert_true(set["catalogs.spell"], "catalogs.spell IS implemented as of Phase 4")
         T.assert_nil(set["objectives"], "objectives is NOT implemented and must not be claimed")

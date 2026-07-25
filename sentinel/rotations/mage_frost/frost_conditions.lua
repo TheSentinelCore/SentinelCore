@@ -370,9 +370,12 @@ function Cond.safe_to_evocate(blackboard)
     local player = blackboard:get("player.object")
     local hp_pct = H.num(blackboard:get("player.health_pct", 0))
     if player then
-        local izi_bridge = blackboard:get("module.combat.izi_bridge")
-        if izi_bridge then
-            local predicted_pct = izi_bridge:predict_hp_pct(player, 6.0)
+        -- Phase 4d D1: was `blackboard:get("module.combat.izi_bridge")` -- a cross-package read of
+        -- combat's namespace for a live SDK adapter. Now the published forecast service, resolved
+        -- at CALL time through `API` (sentinel_api.lua), like every other kernel read here.
+        local forecast = API.forecast
+        if forecast then
+            local predicted_pct = forecast:predicted_health_pct(player, 6.0)
             if predicted_pct and predicted_pct < 0.30 then
                 return false
             end

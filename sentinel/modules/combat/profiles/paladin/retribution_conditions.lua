@@ -4,6 +4,18 @@ local SpellHelper = require("shared/spell_helper")
 
 local Cond = {}
 
+--- The kernel's forecast service, RESOLVED AT CALL TIME.
+---
+--- Phase 4d D1: this used to be `blackboard:get("module.combat.izi_bridge")`. See
+--- `modules/combat/condition_library.lua` for the full reasoning; the short version is that the
+--- blackboard holds VALUES, the handle guard was right to refuse a live bridge, and `_G.Sentinel`
+--- does not exist yet while combat initialises -- so the read has to happen per call, not once.
+local function forecast()
+    local surface = _G.Sentinel
+    if surface == nil then return nil end
+    return surface.forecast
+end
+
 function Cond.target_valid(blackboard)
     local _, target = H.player_and_target(blackboard)
     if not target then
@@ -96,9 +108,9 @@ function Cond.target_execute(blackboard)
     end
 
     -- Use TTD if available for more reliable execute detection
-    local izi_bridge = blackboard:get("module.combat.izi_bridge")
-    if izi_bridge then
-        local ttd = izi_bridge:get_time_to_die(target)
+    local f = forecast()
+    if f then
+        local ttd = f:time_to_die(target)
         if ttd and ttd < 3.0 then
             return true
         end

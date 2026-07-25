@@ -95,10 +95,15 @@ function FrostCombatState:_refresh_kill_secure(bb, target)
         return
     end
 
-    -- Use TTD if available for more accurate kill-secure detection
-    local izi_bridge = bb:get("module.combat.izi_bridge")
-    if izi_bridge then
-        local ttd = izi_bridge:get_time_to_die(target)
+    -- Use TTD if available for more accurate kill-secure detection.
+    --
+    -- Phase 4d D1: this used to be `bb:get("module.combat.izi_bridge")` -- a cross-package read of
+    -- combat's namespace for a live SDK adapter the blackboard should never have held. It now comes
+    -- off the public surface through `API`, resolved at CALL time like every other kernel read in
+    -- this package (see sentinel_api.lua).
+    local forecast = API.forecast
+    if forecast then
+        local ttd = forecast:time_to_die(target)
         if ttd and ttd < 0.3 then
             bb:set("combat.target_killable_instant", true)
             return

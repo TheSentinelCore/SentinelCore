@@ -41,6 +41,10 @@ local BTFactory = require("core/bt/factory")
 local BTStatus = require("core/bt/status")
 local BTRunner = require("core/bt/runner")
 local AuraCatalog = require("kernel/catalogs/aura")
+-- `kernel/cond/init` spelled out: the Sylvannas `package.path` has no `?/init.lua` entry, so
+-- `require("kernel/cond")` resolves to a `kernel/cond.lua` that does not exist.
+local Cond = require("kernel/cond/init")
+local Truth = require("kernel/truth")
 local Log = require("kernel/log")
 
 local Api = {}
@@ -59,9 +63,17 @@ Api.KERNEL_CAPABILITIES = {
     ["state"] = true,       -- Blackboard
     ["snapshot"] = true,    -- frozen per-tick snapshot
     ["events"] = true,      -- EventBus
-    ["intents"] = true,     -- IntentQueue
+    -- `intent`, SINGULAR, matching the field ADR §10 names (`Sentinel.intent`). It was `intents`
+    -- for three phases -- a capability a manifest could require and then find nothing under, since
+    -- `Sentinel.intents` has never existed. Renamed rather than aliased: two spellings for one
+    -- service is how the next reader learns the wrong one.
+    ["intent"] = true,      -- IntentQueue
     ["activities"] = true,  -- ActivityStack
     ["config"] = true,      -- Config
+    -- The band ARITHMETIC (`permits`, `resolve`, `name_for`, `spell_queue_priority`), not just the
+    -- `Band` enum. Only the enum was ever published, so a plugin admitted on this capability could
+    -- read the band table and had no way to turn its manifest priority into an intent's `band`
+    -- number -- which is precisely what emitting an intent requires.
     ["bands"] = true,       -- band arithmetic
     ["nav"] = true,         -- NavAdapter, via the app
     ["bt"] = true,          -- behaviour-tree library
@@ -69,12 +81,82 @@ Api.KERNEL_CAPABILITIES = {
     ["timing.gcd"] = true,  -- kernel/timing.lua: gcd_duration_ms, gcd_remaining_est (§2.5)
     ["units"] = true,       -- kernel/units.lua: player, target, hostiles_within
     ["spells"] = true,      -- kernel/spells.lua: is_castable, is_in_los, find_aoe_position
+    -- `forecast` joined in Phase 4d D1, when the IZI bridge stopped being a blackboard key. Six
+    -- readers needed it and four of them are handed only a blackboard, so a service was the only
+    -- route that reached them all -- see kernel/forecast.lua's header.
+    ["forecast"] = true,    -- kernel/forecast.lua: time to die, predicted HP, incoming damage
     ["catalogs.aura"] = true,  -- kernel/catalogs/aura.lua
     ["catalogs.spell"] = true, -- kernel/catalogs/spell.lua: rank resolution by level
     -- `log` was listed here from Phase 3 while the surface had NO `log` field, so a manifest
     -- requiring it was admitted and then failed at first use -- the exact failure this list
     -- exists to prevent. kernel/log.lua closed that in Phase 4b.
     ["log"] = true,
+    -- kernel/cond: 17 snapshot predicates answering in `Truth`. Claimed only now that it is
+    -- REACHABLE -- it existed for a whole phase with no field behind it, which is the same shape
+    -- as the `log` and `snapshot` defects, arrived at from the other side: unclaimed AND unusable
+    -- rather than claimed and absent.
+    ["cond"] = true,
+}
+
+--- WHERE each capability actually lives on the surface, and what must be callable there.
+---
+--- `KERNEL_CAPABILITIES` alone is free text: a name on it is checked against nothing, which is how
+--- `log` shipped for a whole phase with no field behind it and how `snapshot` resolved through a
+--- method that existed nowhere. This table turns each claim into an assertion
+--- (`tests/kernel/test_capability_resolution.lua` enforces it), so a capability cannot be added
+--- without naming the thing that satisfies it.
+---
+--- `path` is walked from the surface root, so a dotted capability whose name IS a path -- like
+--- `catalogs.aura` -- says so, and one whose name is a FEATURE of a service -- like `timing.gcd`,
+--- which is not a field but two functions on `timing` -- names the service and the functions.
+---
+--- ================================================================================
+--- WHAT THIS TABLE CANNOT SEE: IT IS A ONE-WAY CHECK
+--- ================================================================================
+--- It catches OVER-claiming -- a capability naming a member that does not exist. It cannot catch
+--- UNDER-declaring: a member that exists on the surface and is named by no binding.
+---
+--- A plugin discovers what it may call from its manifest's `requires` and from this table, so a
+--- verb that works but is undeclared is one a careful plugin author will never find, and one a
+--- careless one will depend on without ever having been admitted for it. Recorded rather than
+--- fixed, because the closing assertion belongs in the capability-resolution suite that owns the
+--- other direction.
+Api.CAPABILITY_BINDINGS = {
+    ["control"] = { path = { "control" },
+        members = { "acquire", "release", "delegate", "who_owns" } },
+    ["state"] = { path = { "state" }, members = { "get", "set", "has", "clear" } },
+    ["snapshot"] = { path = { "snapshot" },
+        members = { "get", "has", "keys", "tick_index", "is_frozen" } },
+    ["events"] = { path = { "events" }, members = { "subscribe", "unsubscribe", "publish" } },
+    ["intent"] = { path = { "intent" }, members = { "submit", "pending_count" } },
+    ["activities"] = { path = { "activities" },
+        members = { "push", "pop", "current", "depth", "delegate" } },
+    ["config"] = { path = { "config" }, members = { "get", "set", "declare" } },
+    ["bands"] = { path = { "bands" },
+        members = { "permits", "resolve", "name_for", "spell_queue_priority" } },
+    ["nav"] = { path = { "nav" }, members = { "move_to", "follow_path", "stop", "poll" } },
+    ["bt"] = { path = { "bt" },
+        members = { "sequence", "selector", "priority_selector", "condition", "action" } },
+    ["rotation"] = { path = { "rotation" }, members = { "new" } },
+    ["timing.gcd"] = { path = { "timing" },
+        members = { "gcd_duration_ms", "gcd_remaining_est", "is_gcd_ready" } },
+    ["units"] = { path = { "units" },
+        members = { "player", "target", "hostiles_within" } },
+    ["spells"] = { path = { "spells" },
+        members = { "is_castable", "is_in_los", "find_aoe_position" } },
+    -- `is_available` is named alongside the four answers deliberately. Every accessor returns nil
+    -- when it cannot say, so without a way to ask WHY, a plugin cannot tell "the target has no
+    -- time-to-die estimate yet" from "the IZI SDK is not loaded" (ADR 08 §9.3). A binding that
+    -- promised the answers and not the availability check would ship a service whose nils are
+    -- uninterpretable.
+    ["forecast"] = { path = { "forecast" },
+        members = { "is_available", "time_to_die", "predicted_health_pct",
+                    "incoming_damage_pct", "fight_seconds_remaining" } },
+    ["catalogs.aura"] = { path = { "catalogs", "aura" }, members = { "has_any", "get_stacks" } },
+    ["catalogs.spell"] = { path = { "catalogs", "spell" },
+        members = { "resolve_best_rank", "is_gcd_spell" } },
+    ["log"] = { path = { "log" }, members = { "debug", "info", "warn", "error" } },
+    ["cond"] = { path = { "cond" }, members = { "bind" } },
 }
 
 --- How many ticks to keep re-draining the pending queue after init (§10: "re-drained for the first
@@ -103,9 +185,29 @@ function Api.build(kernel)
         Status = Status,
         Channel = ControlBroker.Channel,
         Band = Bands.BANDS,
+        -- The tri-state, published WITH `cond` because it is unusable without it. Predicates answer
+        -- in Truth values, and a plugin may not `require("kernel/truth")` -- the require audit
+        -- forbids reaching into the kernel -- so without this field it could call a predicate and
+        -- then have no way to name `Truth.True` or to reach `Truth.resolve`, which is what turns a
+        -- tri-state into the boolean a BT condition has to return.
+        Truth = Truth,
         -- Libraries, not kernel instances: stateless, constructed by the plugin, identical for
         -- every caller. They are static because there is nothing per-app to resolve at access time.
         rotation = PriorityBuilder,
+        -- Band ARITHMETIC. `Band` above is the enum -- the six named ranges. This is the module that
+        -- operates on them: `resolve` turns a manifest's `{ band, offset }` into the integer an
+        -- intent carries, `permits` answers whether a tier may claim a band at all, and
+        -- `spell_queue_priority` maps a band onto the injector's own queue. Publishing the enum
+        -- without them satisfied nobody: a plugin cannot emit an intent without computing a band.
+        bands = Bands,
+        -- Condition predicates: frozen snapshot in, `Truth` out. A LIBRARY, like `bt` and
+        -- `rotation` -- stateless, bound per tick by the caller against the snapshot it is reading.
+        --
+        -- It was built in Phase 4b and published by nobody. ADR §13.1 item 18 blamed the truthiness
+        -- lint's seed for not recognising `require("kernel/cond")` consumers; the deeper reason the
+        -- lint measured zero is that there were no consumers of EITHER form, because `Sentinel.cond`
+        -- did not exist as a field. Seventeen predicates, a test suite, and no route to a plugin.
+        cond = Cond,
         -- The behaviour-tree library (§10 `Sentinel.bt`). A rotation composing subtrees needs the
         -- node constructors AND the status enum -- returning the factory alone would force every
         -- plugin to invent its own SUCCESS/FAILURE strings, which is how two trees stop agreeing on
@@ -148,12 +250,23 @@ function Api.build(kernel)
         timing = function() return kernel.timing end,
         units = function() return kernel.units end,
         spells = function() return kernel.spells end,
+        -- A GETTER, not a captured value, for the same reason as every other per-app instance: the
+        -- surface is built in `SentinelApp:new()` and published later still, and a plugin that took
+        -- a reference before either would otherwise hold nil forever (§2.4).
+        forecast = function() return kernel.forecast end,
         scheduler = function() return kernel.scheduler end,
         nav = function() return kernel.nav end,
         plugins = function() return kernel.registry end,
+        -- ADR 08 §13.1 item 14. This used to read
+        -- `scheduler and scheduler.current_snapshot and scheduler:current_snapshot() or nil`, and
+        -- `Scheduler` had no such method -- so the middle term made a MISSING SERVICE indistinguishable
+        -- from an absent scheduler, and the capability list claimed it worked for three phases.
+        -- The feature test is gone on purpose: an absent scheduler is a real state (pre-init) and
+        -- returns nil, but a scheduler that cannot answer is a defect and must raise where it is.
         snapshot = function()
             local scheduler = kernel.scheduler
-            return scheduler and scheduler.current_snapshot and scheduler:current_snapshot() or nil
+            if scheduler == nil then return nil end
+            return scheduler:current_snapshot()
         end,
     }
 
