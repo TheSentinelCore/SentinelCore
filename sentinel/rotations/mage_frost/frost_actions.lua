@@ -386,32 +386,80 @@ end
 -- ---------------------------------------------------------------------------
 -- Combat consumables (potions — off-GCD items)
 -- ---------------------------------------------------------------------------
+--
+-- ============================================================================
+-- WHY THE TWO-MINUTE TIMER IS GONE
+-- ============================================================================
+-- Both actions used to track a hard-coded 120000 ms shared cooldown on
+-- `combat.potion_cd_until_ms`, and gate themselves on it. The kernel's ITEMS gate asks
+-- the client instead (`get_item_cooldown`), and the client is the one that actually
+-- owns that number.
+--
+-- Two sources of truth for one fact do not merely duplicate -- they DIVERGE, and here in
+-- both directions:
+--
+--   * TOO PERMISSIVE. A potion drunk by the human at the keyboard, or a trinket sharing
+--     the potion cooldown, moves the client's number and not the blackboard's. The old
+--     code then sent a packet into a live cooldown.
+--   * TOO STRICT. Anything that clears the cooldown early leaves a stale blackboard
+--     expiry vetoing a potion the client would have allowed.
+--
+-- The timer is therefore not re-implemented anywhere. `combat.potion_cd_until_ms` now has
+-- NO writer -- see 08a_API_GAPS.md; three files still read it and each of those reads is
+-- now permanently "ready".
+--
+-- ============================================================================
+-- WHAT SUCCESS MEANS NOW
+-- ============================================================================
+-- SUCCESS is "the intent was accepted for this tick", not "the character drank". The
+-- packet leaves later, in COMMIT, if the gate agrees. That is strictly more information
+-- than before -- the old path could not tell a refusal from a drink, because it discarded
+-- the SDK's return value inside a bare pcall.
+
+--- The lease a potion acts under. ITEMS is a control channel, so drinking is an
+--- authorised action rather than an ambient one: two plugins reaching for the same shared
+--- potion cooldown in one tick is exactly the collision the broker exists to resolve.
+---
+--- COMBAT, not SURVIVAL, even though a health potion at 30% is defensive. The band is the
+--- rotation's own; promoting these two entries into the defensive band is a separate,
+--- arguable change and would not be measurable alongside the item conversion.
+local ITEMS_LEASE = {
+    channel = "ITEMS",
+    owner = "sentinel.rotation.mage_frost",
+    band = "COMBAT",
+    offset = 0,
+    tier = "rotation",
+    ttl_ticks = 2,
+}
+
+---Emit a `use_item` intent under an ITEMS lease.
+---
+---THE LEASE IS DELIBERATELY NOT RELEASED HERE. `release` removes it from the broker's
+---holdings, and the commit stage validates an intent's generation by looking its lease UP
+---in those holdings -- so a tidy-looking release on the way out would make every intent
+---this function submits fail its own generation check, one stage later and silently. The
+---TTL retires the lease instead, which is what TTLs are for.
+---@param item_id number
+---@return boolean submitted
+local function submit_use_item(item_id)
+    local broker = API.control
+    if not broker then return false end
+    local caretaker = broker:acquire(ITEMS_LEASE)
+    if not caretaker then return false end
+    return caretaker:submit({ type = "use_item", payload = { item_id = item_id } }) == true
+end
 
 function Act.use_health_potion(blackboard)
     local pot_id = blackboard:get("combat.health_potion_id")
     if not pot_id then return Status.FAILURE end
-    local now = blackboard:get("system.now_ms", 0)
-    local cd = blackboard:get("combat.potion_cd_until_ms", 0)
-    if now < cd then return Status.FAILURE end
-    if core and core.input and type(core.input.use_item) == "function" then
-        pcall(core.input.use_item, pot_id)
-        blackboard:set("combat.potion_cd_until_ms", now + 120000) -- 2min shared CD
-        return Status.SUCCESS
-    end
+    if submit_use_item(pot_id) then return Status.SUCCESS end
     return Status.FAILURE
 end
 
 function Act.use_mana_potion(blackboard)
     local pot_id = blackboard:get("combat.mana_potion_id")
     if not pot_id then return Status.FAILURE end
-    local now = blackboard:get("system.now_ms", 0)
-    local cd = blackboard:get("combat.potion_cd_until_ms", 0)
-    if now < cd then return Status.FAILURE end
-    if core and core.input and type(core.input.use_item) == "function" then
-        pcall(core.input.use_item, pot_id)
-        blackboard:set("combat.potion_cd_until_ms", now + 120000)
-        return Status.SUCCESS
-    end
+    if submit_use_item(pot_id) then return Status.SUCCESS end
     return Status.FAILURE
 end
 
