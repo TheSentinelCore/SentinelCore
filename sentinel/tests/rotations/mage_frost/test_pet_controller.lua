@@ -24,9 +24,12 @@
 local Api = require("kernel/api")
 local Blackboard = require("core/blackboard")
 local ControlBroker = require("kernel/control_broker")
+local ErrorBoundary = require("core/error_boundary")
+local EventBus = require("core/event_bus")
 local Executors = require("kernel/intent_executors")
 local IntentQueue = require("kernel/intent_queue")
 local PetController = require("rotations/mage_frost/pet_controller")
+local Scheduler = require("kernel/scheduler")
 local T = require("tests/test_util")
 
 local M = {}
@@ -605,6 +608,147 @@ function M.test_a_caretaker_does_not_survive_the_tick_that_issued_it()
         T.assert_true(ok, "a new tick must yield a fresh caretaker: " .. tostring(reason))
         local report = h.commit()
         T.assert_equal(#report.committed, 1, "and its intent must still commit")
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- The real pipeline
+-- ---------------------------------------------------------------------------
+--
+-- Everything above drives the broker and the queue BY HAND, so it proves the pieces behave and
+-- nothing about whether they are plugged together. That distinction is not academic here:
+-- ARBITRATE (which expires leases) runs BEFORE ACT (where the rotation commands the pet), and
+-- ACCOUNT (which kills caretakers) runs after COMMIT. A one-tick TTL is correct only if that
+-- ordering holds -- and a wiring bug is invisible to unit tests by construction, because every
+-- collaborator can be perfect while nothing is connected.
+
+---Assemble the kernel with the SAME stage registrations runtime/app.lua uses.
+local function with_pipeline(fn)
+    local bus = EventBus:new(function() end)
+    local queue = IntentQueue:new()
+    local broker = ControlBroker:new({ event_bus = bus, intent_queue = queue })
+    queue:set_generation_validator(function(intent)
+        return broker:is_generation_valid(intent)
+    end)
+
+    local calls = {}
+    local target = { id = "target" }
+    Executors.install({
+        intent_queue = queue,
+        object_manager = {
+            get_local_player = function()
+                return { get_pet = function() return { is_alive = function() return true end } end }
+            end,
+        },
+        unit_target = function() return target end,
+        input = {
+            pet_attack = function(unit) calls[#calls + 1] = { verb = "pet_attack", unit = unit } return true end,
+            set_pet_passive = function() calls[#calls + 1] = { verb = "set_pet_passive" } return true end,
+            set_pet_follow = function() calls[#calls + 1] = { verb = "set_pet_follow" } return true end,
+        },
+    })
+
+    local game_time = 1000
+    local sched = Scheduler:new({
+        event_bus = bus,
+        blackboard = Blackboard:new(),
+        error_boundary = ErrorBoundary:new(bus),
+        intent_queue = queue,
+        monotonic_ms = function() return 0 end,
+        game_time_ms = function() game_time = game_time + 16 return game_time end,
+    })
+    sched:register("SENSE", "control_broker.clock", function(ctx) broker:begin_tick(ctx.tick_index) end)
+    sched:register("ARBITRATE", "control_broker", function(ctx) broker:arbitrate(ctx.tick_index) end)
+    sched:register("ACCOUNT", "control_broker.end_tick", function() broker:end_tick() end)
+
+    local previous = _G.Sentinel
+    _G.Sentinel = Api.build({ broker = broker, intent_queue = queue })
+    local ok, err = pcall(fn, {
+        sched = sched, broker = broker, queue = queue, calls = calls, target = target,
+    })
+    _G.Sentinel = previous
+    if not ok then error(err, 0) end
+end
+
+function M.test_a_command_issued_in_act_commits_in_the_same_tick()
+    with_pipeline(function(k)
+        local pc = PetController:new()
+        k.sched:register("ACT", "module_registry", function()
+            pc:attack(make_unit({ guid = "mob1" }))
+        end)
+
+        local report = k.sched:tick()
+        T.assert_equal(#report.intents.committed, 1,
+            "ACT emits and COMMIT drains, in one tick")
+        T.assert_equal(#report.intents.rejected, 0)
+        T.assert_equal(#k.calls, 1, "and the SDK verb is reached inside the pipeline")
+        T.assert_true(k.calls[1].unit == k.target)
+    end)
+end
+
+--- The one-tick TTL is the tightest value that works, and "works" is a claim about ordering:
+--- ARBITRATE expires last tick's lease BEFORE ACT asks for a new one. If those two ever
+--- swapped, the pet would obey on the first tick and go silent on every one after.
+function M.test_a_command_still_commits_on_every_subsequent_tick()
+    with_pipeline(function(k)
+        local pc = PetController:new()
+        local mobs = { make_unit({ guid = "mob1" }), make_unit({ guid = "mob2" }), make_unit({ guid = "mob3" }) }
+        local n = 0
+        k.sched:register("ACT", "module_registry", function()
+            n = n + 1
+            pc:attack(mobs[n])
+        end)
+
+        for tick = 1, 3 do
+            local report = k.sched:tick()
+            T.assert_equal(#report.intents.committed, 1,
+                "tick " .. tick .. " must commit its own pet command")
+            T.assert_equal(#report.intents.rejected, 0,
+                "tick " .. tick .. " must not strand the command on a dead lease")
+        end
+        T.assert_equal(#k.calls, 3, "three ticks, three packets")
+    end)
+end
+
+--- A recall crosses the whole pipeline as two intents and lands as two SDK verbs. This is the
+--- claim that matters at the kite moment: the pet must both stop attacking AND come back.
+function M.test_a_recall_crosses_the_pipeline_as_two_commands()
+    with_pipeline(function(k)
+        k.sched:register("ACT", "module_registry", function()
+            PetController:new():passive()
+        end)
+
+        local report = k.sched:tick()
+        T.assert_equal(#report.intents.committed, 2, "both halves of the recall must commit")
+        T.assert_equal(#k.calls, 2)
+        T.assert_equal(k.calls[1].verb, "set_pet_passive")
+        T.assert_equal(k.calls[2].verb, "set_pet_follow")
+    end)
+end
+
+--- ACCOUNT retires caretakers AFTER COMMIT (§6.1). If it ran before, every command would die
+--- of `caretaker_stale` -- and it would die silently, since nothing reads the commit report.
+---
+--- The second half is the other edge of the same TTL: a rotation that STOPS commanding must
+--- let PET go. One tick of quiet and ARBITRATE takes it back, so a safety plugin does not have
+--- to preempt a channel nobody is using.
+function M.test_the_lease_outlives_commit_and_one_quiet_tick_ends_it()
+    with_pipeline(function(k)
+        local commanded = false
+        k.sched:register("ACT", "module_registry", function()
+            if commanded then return end
+            commanded = true
+            PetController:new():attack(make_unit({ guid = "mob1" }))
+        end)
+
+        local report = k.sched:tick()
+        T.assert_equal(#report.intents.committed, 1, "COMMIT runs while the caretaker is live")
+        T.assert_equal(k.broker:who_owns(ControlBroker.Channel.PET), OWNER,
+            "the lease must survive the tick that used it")
+
+        k.sched:tick()
+        T.assert_nil(k.broker:who_owns(ControlBroker.Channel.PET),
+            "one quiet tick and ARBITRATE takes PET back")
     end)
 end
 
