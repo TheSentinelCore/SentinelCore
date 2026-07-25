@@ -86,8 +86,10 @@ end
 ---@param spell_id number
 ---@param source table|nil
 ---@param dest table|nil
+---@param skip_facing boolean|nil defaults false — see below
+---@param skip_range boolean|nil defaults false
 ---@return boolean|string true, false, or SpellHelper.UNKNOWN when the helper is unresolved
-function SpellHelper.is_spell_castable(spell_id, source, dest)
+function SpellHelper.is_spell_castable(spell_id, source, dest, skip_facing, skip_range)
     local helper = SpellHelper.resolve_cached()
     if not helper or type(helper.is_spell_castable) ~= "function" then
         return SpellHelper.UNKNOWN -- C3: unresolved helper, not a verified castable=true
@@ -95,11 +97,16 @@ function SpellHelper.is_spell_castable(spell_id, source, dest)
     -- C2: trailing params are (skip_facing, skips_range). Every documented
     -- example (spellbook-helper.md:163) passes false, false — the caller
     -- wants a real castability check, not one that ignores facing/range.
+    --
+    -- Both default to false so every existing caller keeps the strict check. They became
+    -- parameters for the kernel's commit gate (kernel/intent_executors.lua), which needs to skip
+    -- them for SELF-CASTS only: a self-buff has no meaningful facing or range, and asking whether
+    -- the player is facing itself rejects every buff in the game.
     -- VERIFY-IN-GAME:
     --   game_eval("return tostring(spell_helper:is_spell_castable(133, core.object_manager.get_local_player(), core.object_manager.get_local_player(), false, false))")
     local ok, castable = SpellHelper.call_method(
         helper.is_spell_castable, helper,
-        spell_id, source, dest, false, false
+        spell_id, source, dest, skip_facing == true, skip_range == true
     )
     return ok and castable == true
 end
