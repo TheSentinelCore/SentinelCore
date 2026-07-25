@@ -347,6 +347,7 @@ local test_modules = {
     "tests/kernel/test_plugin_registry",
     "tests/kernel/test_api",
     "tests/kernel/test_timing",
+    "tests/kernel/test_intent_executors",
 
     -- Integrations
     "tests/integrations/test_izi_bridge",

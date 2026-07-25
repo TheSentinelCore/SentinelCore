@@ -15,6 +15,11 @@ local PluginRegistry = require("kernel/plugin_registry")
 local KernelConfig = require("kernel/config")
 local Timing = require("kernel/timing")
 local SpellCatalog = require("kernel/catalogs/spell")
+local Spells = require("kernel/spells")
+local Units = require("kernel/units")
+local AoeHelper = require("shared/aoe_helper")
+local IntentExecutors = require("kernel/intent_executors")
+local SpellHelper = require("shared/spell_helper")
 local Api = require("kernel/api")
 
 local SentinelApp = {}
@@ -45,9 +50,8 @@ function SentinelApp:new()
     o._nav_adapter = NavAdapter.get_shared(o._event_bus)
     o._izi_bridge = IziBridge:new()
 
-    -- ADR 08 §3.2 -- the commit choke point. Still no executors registered: the queue gates
-    -- and refuses by name (`no_executor`) until Phase 4 ports a real rotation. That is the
-    -- intended fail-closed behaviour, not an oversight.
+    -- ADR 08 §3.2 -- the commit choke point. Phase 4 registers the real cast/target executors on
+    -- it, so from here on this is the single path by which the kernel affects the game.
     o._intent_queue = IntentQueue:new()
 
     -- ADR 08 §6 -- the arbiter. `input` is left unset so the broker reaches the live
@@ -76,12 +80,37 @@ function SentinelApp:new()
     -- One spell catalog for the whole app. §5.1: catalogs are kernel precisely because duplicating
     -- reference data "costs memory and drifts".
     o._spell_catalog = SpellCatalog:new()
+    o._units = Units:new()
+    -- `shared/aoe_helper` is the existing wrapper over the injector's `spell_prediction` module; the
+    -- kernel adapts it rather than re-deriving optimal AoE placement.
+    o._spells = Spells:new({ spell_helper = SpellHelper, spell_prediction = AoeHelper })
     -- ADR §2.5 -- GCD state, derived from the kernel's own cast timestamps on the game_time ms axis.
+    -- Constructed before the intent queue's executors, which are what feed it.
     -- GCD membership comes from the catalog rather than a second hardcoded list, so "is this on the
     -- GCD" has exactly one answer.
     o._timing = Timing:new({
         is_gcd_spell = function(id) return o._spell_catalog:is_gcd_spell(id) end,
     })
+
+    -- ADR 08 §3.2/§6.3 -- intents become packets here, and nowhere else.
+    --
+    -- `common/modules/spell_queue` and the spell-book helper exist only inside the injector, so both
+    -- are resolved through a GUARDED require for the same reason the IziBridge one is: a top-level
+    -- require of an injector-only module makes the entire composition root unloadable offline, and
+    -- an untestable composition root is how a file that sends packets ends up with no tests.
+    local ok_sq, spell_queue = pcall(require, "common/modules/spell_queue")
+    IntentExecutors.install({
+        intent_queue = o._intent_queue,
+        timing = o._timing,
+        spell_catalog = o._spell_catalog,
+        units = o._units,
+        spells = o._spells,
+        spell_queue = ok_sq and spell_queue or nil,
+        object_manager = core and core.object_manager or nil,
+        spell_helper = SpellHelper,
+        input = core and core.input or nil,
+    })
+
     o._plugin_registry = PluginRegistry:new({
         api_version = Api.API_VERSION,
         kernel_provides = Api.KERNEL_CAPABILITIES,
