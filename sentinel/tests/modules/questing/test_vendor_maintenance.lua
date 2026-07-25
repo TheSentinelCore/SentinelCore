@@ -17,6 +17,58 @@ local function make_item(item_id)
     return obj
 end
 
+--- A bag that actually loses what it sells.
+---
+--- The previous fixture returned a fresh three-item list on EVERY call, so
+--- use_container_item removed nothing and bag 0 reported the same grey forever. No game
+--- state can produce that. It only started to matter once execute_vendor began re-scanning
+--- after the sell pass to prove the sale landed: against an immutable bag the re-scan
+--- always finds the grey it just sold, so the stop can never complete.
+---
+--- get_items_in_bag hands back a COPY, mirroring an API that rebuilds its list from live
+--- game state per call -- so selling mid-scan cannot disturb the loop in flight, while the
+--- next scan correctly sees the item gone.
+---
+--- opts.merchant_window_closed models the live failure mode: interact_with_object opens the
+--- merchant window ASYNCHRONOUSLY, so the sell call is issued but nothing leaves the bag.
+local function install_bags(sold, opts)
+    opts = opts or {}
+    local bags = {
+        [0] = {
+            { object = make_item(100), slot_id = 1 }, -- grey
+            { object = make_item(200), slot_id = 2 }, -- white
+            { object = make_item(300), slot_id = 3 }, -- unknown to QueryServer
+        },
+    }
+
+    local function remove(bag, slot_id)
+        local contents = bags[bag]
+        if not contents then return end
+        for i, si in ipairs(contents) do
+            if si.slot_id == slot_id then
+                table.remove(contents, i)
+                return
+            end
+        end
+    end
+
+    _G.core.input = {
+        interact_with_object = function() end,
+        use_container_item = function(bag, slot)
+            sold[#sold + 1] = { bag = bag, slot = slot }
+            if not opts.merchant_window_closed then remove(bag, slot) end
+        end,
+        repair_all_items = function() end,
+    }
+    _G.core.inventory = {
+        get_items_in_bag = function(bag)
+            local snapshot = {}
+            for i, si in ipairs(bags[bag] or {}) do snapshot[i] = si end
+            return snapshot
+        end,
+    }
+end
+
 --- ctx double for execute_vendor: at the NPC, with a scripted item-quality lookup.
 local function make_vendor_ctx(qualities)
     local ctx = {
@@ -53,23 +105,7 @@ function M.test_vendor_sells_only_known_greys()
     local sold = {}
     _G.core = _G.core or {}
     local prev_input, prev_inv = _G.core.input, _G.core.inventory
-    _G.core.input = {
-        interact_with_object = function() end,
-        use_container_item = function(bag, slot) sold[#sold + 1] = { bag = bag, slot = slot } end,
-        repair_all_items = function() end,
-    }
-    _G.core.inventory = {
-        get_items_in_bag = function(bag)
-            if bag == 0 then
-                return {
-                    { object = make_item(100), slot_id = 1 }, -- grey
-                    { object = make_item(200), slot_id = 2 }, -- white
-                    { object = make_item(300), slot_id = 3 }, -- unknown to QueryServer
-                }
-            end
-            return {}
-        end,
-    }
+    install_bags(sold)
     _G.core.object_manager = _G.core.object_manager or {}
 
     local ctx = make_vendor_ctx({ [100] = 0, [200] = 1 }) -- 300 intentionally missing
@@ -83,12 +119,60 @@ function M.test_vendor_sells_only_known_greys()
         "unknown quality must be cached as unsellable, never sold")
 
     -- Async pending: the lookup is in flight — hold the vendor stop and do NOT cache.
+    -- Restock the bag: the case above genuinely sold item 100, and this assertion is only
+    -- meaningful while the grey is still there to have its quality looked up.
+    install_bags({})
     local ctx2 = make_vendor_ctx({})
     ctx2.query.get_item = function(_self, _item_id) return nil, true end
     local status2 = RuntimeAction.execute_vendor({ npc_entry = 5, sell_grey = true }, ctx2)
     T.assert_equal(status2, "retry", "pending quality lookups must hold the vendor stop")
     T.assert_equal(ctx2.persist._item_quality[100], nil,
         "a pending lookup must never be cached as unsellable")
+
+    _G.core.input = prev_input
+    _G.core.inventory = prev_inv
+end
+
+--- The live-caught fail-open. interact_with_object opens the merchant window
+--- ASYNCHRONOUSLY, so the first tick's use_container_item calls are issued into a window
+--- that is not open yet and sell nothing. execute_vendor reported "success" regardless,
+--- which cleared player.bags_full and sent the bot back on route with the bags still
+--- 16/16 full and unable to loot. The stop must hold until the greys have actually gone.
+function M.test_vendor_holds_the_stop_until_greys_actually_leave_the_bag()
+    local sold = {}
+    _G.core = _G.core or {}
+    local prev_input, prev_inv = _G.core.input, _G.core.inventory
+    install_bags(sold, { merchant_window_closed = true })
+    _G.core.object_manager = _G.core.object_manager or {}
+
+    local ctx = make_vendor_ctx({ [100] = 0, [200] = 1 })
+    local status = RuntimeAction.execute_vendor({ npc_entry = 5, sell_grey = true }, ctx)
+
+    T.assert_equal(status, "retry",
+        "a known grey still in the bag after the sell pass means the sale never landed")
+    T.assert_equal(#sold, 1, "the sell call must still have been issued")
+
+    _G.core.input = prev_input
+    _G.core.inventory = prev_inv
+end
+
+--- ...and that hold is BOUNDED. A grey the merchant genuinely refuses must not wedge the
+--- detour forever; after the tick budget the stop completes and the route resumes.
+function M.test_vendor_stop_gives_up_on_a_grey_that_never_sells()
+    local sold = {}
+    _G.core = _G.core or {}
+    local prev_input, prev_inv = _G.core.input, _G.core.inventory
+    install_bags(sold, { merchant_window_closed = true })
+    _G.core.object_manager = _G.core.object_manager or {}
+
+    local ctx = make_vendor_ctx({ [100] = 0, [200] = 1 })
+    local status
+    for _ = 1, 12 do
+        status = RuntimeAction.execute_vendor({ npc_entry = 5, sell_grey = true }, ctx)
+    end
+
+    T.assert_equal(status, "success",
+        "an unsellable grey must not wedge the vendor detour forever")
 
     _G.core.input = prev_input
     _G.core.inventory = prev_inv
@@ -129,6 +213,10 @@ end
 local tests = {
     test_ui_error_sets_bags_full_flag = M.test_ui_error_sets_bags_full_flag,
     test_vendor_sells_only_known_greys = M.test_vendor_sells_only_known_greys,
+    test_vendor_holds_the_stop_until_greys_actually_leave_the_bag =
+        M.test_vendor_holds_the_stop_until_greys_actually_leave_the_bag,
+    test_vendor_stop_gives_up_on_a_grey_that_never_sells =
+        M.test_vendor_stop_gives_up_on_a_grey_that_never_sells,
     test_maintenance_needed_reads_flag_and_repair_cost = M.test_maintenance_needed_reads_flag_and_repair_cost,
     test_maintenance_fails_safe_without_vendor = M.test_maintenance_fails_safe_without_vendor,
 }

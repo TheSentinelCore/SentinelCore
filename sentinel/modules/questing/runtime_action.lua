@@ -1058,6 +1058,35 @@ function RuntimeAction.execute_vendor(payload, ctx)
             -- from the vendor having sold nothing.
             return "retry"
         end
+        -- Verify the sale actually landed before declaring the stop done. interact_with_object
+        -- opens the merchant window ASYNCHRONOUSLY, so the first tick's use_container_item calls
+        -- are no-ops (no window yet) — and the old code still returned "success", clearing
+        -- bags_full with the bags untouched (live-caught: detoured to the vendor, sold nothing,
+        -- bags stayed 16/16 full). Re-scan for known-grey items; while any remain, retry so the
+        -- sale lands once the window is open. Bounded so a genuinely unsellable grey can't wedge
+        -- the detour (the maintenance timeout also bounds it).
+        local greys_remaining = false
+        for bag = 0, 4 do
+            local ok_items, items = pcall(core.inventory.get_items_in_bag, bag)
+            if ok_items and type(items) == "table" then
+                for _, si in ipairs(items) do
+                    local o = si and si.object
+                    if o and o.get_item_id then
+                        local ok_id, iid = pcall(o.get_item_id, o)
+                        if ok_id and iid and P._item_quality[iid] == 0 then
+                            greys_remaining = true
+                        end
+                    end
+                end
+            end
+        end
+        if greys_remaining then
+            P._vendor_sell_ticks = (P._vendor_sell_ticks or 0) + 1
+            if P._vendor_sell_ticks < 12 then
+                return "retry"
+            end
+        end
+        P._vendor_sell_ticks = nil
         attempted = true
     end
 
