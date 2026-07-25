@@ -94,4 +94,32 @@ function M.test_missing_objective_index_is_not_complete()
     T.assert_false(result, "out-of-range objective is not complete")
 end
 
+--- A quest turned in long ago is GONE from the log, yet the client still flags it completed.
+--- is_quest_completed consulted only the log cache (_refresh_quest_log), so it answered FALSE
+--- for any rewarded quest that had left the log -- and the QuestCompleted / QuestRewarded gate
+--- handlers route through it, so the runtime kept running steps for finished quests (live
+--- symptom: "keeps going to wolves when we've long completed that quest"). This mirrors the
+--- is_quest_flagged_completed check already in is_objective_complete.
+function M.test_rewarded_quest_absent_from_log_reads_completed()
+    _G.core = _G.core or {}
+    _G.core.quests = _G.core.quests or {}
+    -- The log holds only a header and one unrelated active quest; quest 783 was turned in
+    -- and is no longer present in the log.
+    local titles = {
+        { quest_id = 0, title = "Northshire Valley" },
+        { quest_id = 54, title = "A Threat Within" },
+    }
+    _G.core.quests.get_num_quest_log_entries = function() return #titles end
+    _G.core.quests.get_quest_log_title = function(i) return titles[i] end
+    _G.core.quests.get_num_quest_leader_boards = function() return 0 end
+    _G.core.quests.get_quest_log_leader_board = function() return nil end
+    _G.core.quests.is_on_quest = function(qid) return qid == 54 end
+    -- The client still knows quest 783 was rewarded, even though it left the log.
+    _G.core.quests.is_quest_flagged_completed = function(qid) return qid == 783 end
+
+    local ctx = make_ctx()
+    T.assert_true(ctx:is_quest_completed(783),
+        "a rewarded quest that has left the quest log must still read as completed")
+end
+
 return M

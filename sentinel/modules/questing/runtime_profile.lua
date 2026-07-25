@@ -914,6 +914,17 @@ function ContextMethods:_refresh_quest_log()
 end
 
 function ContextMethods:is_quest_completed(quest_entry)
+    -- A REWARDED quest stays "completed" after it leaves the log, but the log-derived
+    -- _completed_quests cache below only knows quests still IN the log -- so it answered false
+    -- for any turned-in quest, and the QuestCompleted / QuestRewarded gate handlers route
+    -- through here (live symptom: "keeps going to wolves when we've long completed that quest").
+    -- Consult the rewarded flag first, mirroring is_objective_complete.
+    if core and core.quests and core.quests.is_quest_flagged_completed then
+        local ok, done = pcall(core.quests.is_quest_flagged_completed, quest_entry)
+        if ok and done == true then
+            return true
+        end
+    end
     if self._quest_log_dirty then
         self:_refresh_quest_log()
     end
