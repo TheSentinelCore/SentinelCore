@@ -129,15 +129,17 @@ local function dispatch(commands)
     local all_ok, first_reason = true, nil
     for _, payload in ipairs(commands) do
         local ok, reason = caretaker:submit({ type = "pet_command", payload = payload })
-        results[#results + 1] = {
-            command = payload.command,
-            ok = ok == true,
-            reason = ok and nil or (reason or "submit_refused"),
-        }
-        if not ok then
+        local result = { command = payload.command, ok = ok == true }
+        if not result.ok then
+            -- Spelled out rather than `ok and nil or reason`: that idiom collapses to the
+            -- fallback whenever the middle term is nil, so every ACCEPTED command would have
+            -- carried a refusal reason. A result that names a failure on a success is worse
+            -- than no result at all, because it reads exactly like a real one.
+            result.reason = reason or "submit_refused"
             all_ok = false
-            if first_reason == nil then first_reason = reason or "submit_refused" end
+            if first_reason == nil then first_reason = result.reason end
         end
+        results[#results + 1] = result
     end
 
     return all_ok, first_reason, results

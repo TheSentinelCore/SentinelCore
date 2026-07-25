@@ -72,13 +72,36 @@ end
 ---`_G.Sentinel` is process-global and the offline runner publishes one for every plugin test,
 ---so the swap is undone through pcall: a throwing assertion must not leave the next suite
 ---looking at this one's broker.
----@param opts table|nil { pet?, pet_alive?, target?, omit?, no_kernel? }
+---@param opts table|nil {
+---   pet?, pet_alive?, target?, omit?, no_kernel?,
+---   broker_has_no_queue?  -- a mis-wired kernel: leases are granted, submission has nowhere to go
+---   refuse_submit_after?  -- accept N submissions, then refuse, to reach a PARTIAL failure
+--- }
 ---@param fn fun(h: table)
 local function with_kernel(opts, fn)
     opts = opts or {}
 
     local queue = IntentQueue:new()
-    local broker = ControlBroker:new({ intent_queue = queue })
+
+    -- What the BROKER hands intents to. Usually the real queue; the two overrides exist because
+    -- a refusal between "the lease was granted" and "the intent is pending" is otherwise
+    -- unreachable from outside, and that is precisely the window in which a controller that
+    -- discarded its submit result would look identical to one that checked it.
+    local broker_queue = queue
+    if opts.broker_has_no_queue then
+        broker_queue = nil
+    elseif opts.refuse_submit_after then
+        local seen = 0
+        broker_queue = {
+            submit = function(_self, intent)
+                seen = seen + 1
+                if seen > opts.refuse_submit_after then return false, "queue_full" end
+                return queue:submit(intent)
+            end,
+        }
+    end
+
+    local broker = ControlBroker:new({ intent_queue = broker_queue })
     -- ADR 08 §6.1 -- the revocation race check, wired exactly as runtime/app.lua wires it.
     queue:set_generation_validator(function(intent)
         return broker:is_generation_valid(intent)
@@ -522,6 +545,47 @@ function M.test_a_pet_channel_held_at_a_higher_band_refuses_the_rotation()
         T.assert_equal(reason, "channel_held")
         T.assert_equal(h.queue:pending_count(), 0)
         T.assert_equal(pet_owner(h), "sentinel.safety.leash", "and the holder keeps it")
+    end)
+end
+
+--- A lease is not the same thing as delivery. The broker grants PET, and submission STILL
+--- fails -- which is exactly the window a controller that discarded its submit result would
+--- report as success, because it never got as far as a gate that could name anything.
+function M.test_a_granted_lease_with_nowhere_to_submit_is_refused_by_name()
+    with_kernel({ broker_has_no_queue = true }, function(h)
+        local ok, reason, results = PetController:new():attack(make_unit({ guid = "mob1" }))
+        T.assert_false(ok, "a granted lease is not delivery")
+        T.assert_equal(reason, "no_intent_queue")
+        T.assert_equal(#results, 1, "the refused command must still be reported")
+        T.assert_false(results[1].ok)
+        T.assert_equal(results[1].reason, "no_intent_queue")
+        T.assert_equal(pet_owner(h), OWNER, "the lease was genuinely granted")
+        T.assert_equal(h.queue:pending_count(), 0, "and nothing reached the queue")
+    end)
+end
+
+--- THE PARTIAL FAILURE, which is the whole argument for two intents. `passive` lands, `follow`
+--- is refused, and the caller can tell WHICH -- something a single compound command could not
+--- express, because it would have one verdict for two verbs.
+function M.test_passive_reports_which_of_the_two_commands_was_refused()
+    with_kernel({ refuse_submit_after = 1 }, function(h)
+        local ok, reason, results = PetController:new():passive()
+        T.assert_false(ok, "a partial recall is not a success")
+        T.assert_equal(reason, "queue_full", "the refusal must be named, not swallowed")
+
+        T.assert_equal(#results, 2, "one result per command, refused or not")
+        T.assert_equal(results[1].command, "passive")
+        T.assert_true(results[1].ok, "passive was accepted")
+        T.assert_nil(results[1].reason)
+        T.assert_equal(results[2].command, "follow")
+        T.assert_false(results[2].ok, "follow was refused")
+        T.assert_equal(results[2].reason, "queue_full")
+
+        local report = h.commit()
+        T.assert_equal(#report.committed, 1, "only the accepted half may reach the SDK")
+        T.assert_not_nil(h.called("set_pet_passive"))
+        T.assert_nil(h.called("set_pet_follow"),
+            "the pet must not be recorded as recalled when the recall never left")
     end)
 end
 
