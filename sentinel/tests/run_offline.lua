@@ -337,6 +337,8 @@ local test_modules = {
     "tests/kernel/test_bands",
     "tests/kernel/test_movement_release",
     "tests/kernel/test_control_broker",
+    "tests/kernel/test_activity_stack",
+    "tests/kernel/test_arbitration_pipeline",
 
     -- Integrations
     "tests/integrations/test_izi_bridge",

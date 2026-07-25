@@ -9,6 +9,8 @@ local IziBridge = require("integrations/izi_bridge")
 local Scheduler = require("kernel/scheduler")
 local IntentQueue = require("kernel/intent_queue")
 local SnapshotSource = require("kernel/snapshot_source")
+local ControlBroker = require("kernel/control_broker")
+local ActivityStack = require("kernel/activity_stack")
 
 local SentinelApp = {}
 SentinelApp.__index = SentinelApp
@@ -38,11 +40,29 @@ function SentinelApp:new()
     o._nav_adapter = NavAdapter.get_shared(o._event_bus)
     o._izi_bridge = IziBridge:new()
 
-    -- ADR 08 §3.2 -- the commit choke point. No executors are registered in Phase 1: the
-    -- queue is structure and gates only until the ControlBroker (Phase 2) can issue the
-    -- leases that authorize an intent. Anything submitted now is refused by name
-    -- (`no_executor`), which is the intended fail-closed behaviour, not an oversight.
+    -- ADR 08 §3.2 -- the commit choke point. Still no executors registered: the queue gates
+    -- and refuses by name (`no_executor`) until Phase 4 ports a real rotation. That is the
+    -- intended fail-closed behaviour, not an oversight.
     o._intent_queue = IntentQueue:new()
+
+    -- ADR 08 §6 -- the arbiter. `input` is left unset so the broker reaches the live
+    -- `core.input` through kernel/movement_release.lua, which is the kernel's ONLY
+    -- `core.input.*` call site. Tests inject a double there.
+    o._control_broker = ControlBroker:new({
+        event_bus = o._event_bus,
+        intent_queue = o._intent_queue,
+    })
+    o._activity_stack = ActivityStack:new({
+        broker = o._control_broker,
+        event_bus = o._event_bus,
+    })
+
+    -- ADR 08 §6.1 -- close the revocation race. The generation stamped on an intent when it
+    -- was emitted is re-checked here at the commit point, so an intent emitted early in the
+    -- tick under a lease that was revoked later in the SAME tick does not commit.
+    o._intent_queue:set_generation_validator(function(intent)
+        return o._control_broker:is_generation_valid(intent)
+    end)
 
     o._scheduler = Scheduler:new({
         event_bus = o._event_bus,
@@ -68,6 +88,13 @@ end
 function SentinelApp:_register_kernel_stages()
     local sched = self._scheduler
 
+    -- The broker's tick index must be current before INTERRUPT (§7 step 3) can evaluate
+    -- cool-downs, and INTERRUPT runs before ARBITRATE (step 4). This publishes the index only;
+    -- all arbitration stays in ARBITRATE where §7 puts it.
+    sched:register("SENSE", "control_broker.clock", function(ctx)
+        self._control_broker:begin_tick(ctx.tick_index)
+    end)
+
     -- 1. SENSE -- sense once, freeze for the tick.
     sched:register("SENSE", "sensor_hub", function()
         self._sensor_hub:refresh()
@@ -90,9 +117,18 @@ function SentinelApp:_register_kernel_stages()
         self._callback_bridge:on_update()
     end)
 
-    -- 3. INTERRUPT and 4. ARBITRATE have no kernel occupants in Phase 1. The safety
-    --    evaluators and the ControlBroker are Phase 2; the stages exist so that work plugs
-    --    in rather than re-cutting the pipeline.
+    -- 3. INTERRUPT -- safety evaluators may push/pop the ActivityStack. No evaluators are
+    --    registered yet (anti-stuck and corpse recovery are Phase 5 built-in plugins); the
+    --    stage runs the real hook so those plug in rather than re-cutting the pipeline.
+    sched:register("INTERRUPT", "activity_stack", function(ctx)
+        self._activity_stack:evaluate(ctx)
+    end)
+
+    -- 4. ARBITRATE -- "ControlBroker resolves leases, expires TTLs, fires revocations,
+    --    force-releases keys." In that order, inside ControlBroker:arbitrate.
+    sched:register("ARBITRATE", "control_broker", function(ctx)
+        self._control_broker:arbitrate(ctx.tick_index)
+    end)
 
     -- 5. ACT -- the existing module registry, driven as one attributed handler.
     sched:register("ACT", "module_registry", function(ctx)
@@ -100,7 +136,13 @@ function SentinelApp:_register_kernel_stages()
     end)
 
     -- 6. COMMIT is driven by the scheduler itself (it owns the IntentQueue).
-    -- 7. ACCOUNT is the scheduler's own budget/telemetry pass.
+
+    -- 7. ACCOUNT -- retire this tick's caretakers (ADR 08 §6.1: "the kernel flips its
+    --    `revoked` flag at TICK END"). Deliberately here and not in COMMIT: an intent
+    --    submitted during ACT must still validate against its live lease while COMMIT runs.
+    sched:register("ACCOUNT", "control_broker.end_tick", function()
+        self._control_broker:end_tick()
+    end)
 end
 
 function SentinelApp:initialize()
@@ -196,6 +238,14 @@ end
 
 function SentinelApp:get_intent_queue()
     return self._intent_queue
+end
+
+function SentinelApp:get_control_broker()
+    return self._control_broker
+end
+
+function SentinelApp:get_activity_stack()
+    return self._activity_stack
 end
 
 --- ADR 08 §7 names `_izi_bridge` as constructed-and-never-read. It is a real collaborator
