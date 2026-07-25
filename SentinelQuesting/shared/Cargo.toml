@@ -11,3 +11,4 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
+schemars = { version = "0.8", default-features = false, features = ["derive"] }

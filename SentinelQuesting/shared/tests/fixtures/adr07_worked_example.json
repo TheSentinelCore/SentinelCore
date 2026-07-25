@@ -1,0 +1,362 @@
+{
+  "magic": "SNTL",
+  "schema_version": 1,
+  "schema_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "tags_used": [
+    "Travel",
+    "TurnIn",
+    "UseItem",
+    "QuestComplete",
+    "QuestObjective",
+    "QuestInLog",
+    "QuestTurnedIn",
+    "InArea",
+    "XpAtLeast",
+    "And"
+  ],
+  "integrity": {
+    "content_hash": "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+    "world_source": "tbcmangos.sqlite",
+    "world_build": "sha256:…; quest_template=6599 creature_template=18799 gameobject_template=14216"
+  },
+  "archetype": {
+    "class": "Hunter",
+    "race": "NightElf",
+    "faction": "Alliance",
+    "expansion": "Tbc",
+    "allegiance": null,
+    "hardcore": false,
+    "self_found": false,
+    "can_fly": false,
+    "content_phase": null,
+    "mode": "SpeedRoute"
+  },
+  "meta": {
+    "name": "10-14 Darkshore",
+    "group": "RestedXP TBC Guide (A)",
+    "subgroup": "RestedXP Alliance 1-20",
+    "source_version": 7,
+    "next": []
+  },
+  "defaults": {
+    "combat": {
+      "stance": { "type": "Defensive" },
+      "targets": [],
+      "watch_units": [],
+      "leash_yards": 40,
+      "allow_adds": true,
+      "expect_group": { "type": "Solo" }
+    },
+    "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } }
+  },
+  "waypoint_pool": [
+    { "map_id": 1439, "x": 36.051, "y": 44.757, "z": null },
+    { "map_id": 1439, "x": 36.280, "y": 50.071, "z": null },
+    { "map_id": 1439, "x": 35.275, "y": 53.464, "z": null },
+    { "map_id": 1439, "x": 36.091, "y": 51.501, "z": null },
+    { "map_id": 1439, "x": 37.115, "y": 52.368, "z": null },
+    { "map_id": 1439, "x": 37.130, "y": 53.663, "z": null },
+    { "map_id": 1439, "x": 36.740, "y": 55.221, "z": null },
+    { "map_id": 1439, "x": 35.655, "y": 55.872, "z": null },
+    { "map_id": 1439, "x": 35.088, "y": 55.085, "z": null },
+    { "map_id": 1439, "x": 36.523, "y": 48.554, "z": null },
+    { "map_id": 1439, "x": 35.977, "y": 48.408, "z": null },
+    { "map_id": 1439, "x": 35.902, "y": 47.145, "z": null },
+    { "map_id": 1439, "x": 35.759, "y": 45.455, "z": null },
+    { "map_id": 1439, "x": 36.371, "y": 50.920, "z": null },
+    { "map_id": 1439, "x": 38.226, "y": 52.780, "z": null },
+    { "map_id": 1439, "x": 39.129, "y": 59.176, "z": null },
+    { "map_id": 1439, "x": 38.527, "y": 54.661, "z": null },
+    { "map_id": 1439, "x": 38.037, "y": 56.815, "z": null },
+    { "map_id": 1439, "x": 38.095, "y": 58.395, "z": null },
+    { "map_id": 1439, "x": 38.696, "y": 57.874, "z": null },
+    { "map_id": 1439, "x": 38.90, "y": 53.59, "z": null },
+    { "map_id": 1439, "x": 36.634, "y": 46.250, "z": null }
+  ],
+  "tasks": [
+    {
+      "id": 0,
+      "deps": [],
+      "blocking": true,
+      "lifetime": {
+        "type": "Background",
+        "payload": {
+          "channels": ["MOVEMENT"],
+          "band": 34,
+          "terminate_on": { "type": "QuestTurnedIn", "payload": { "id": 983 } }
+        }
+      },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": { "type": "QuestInLog", "payload": { "id": 983 } },
+      "complete_when": { "type": "QuestObjective", "payload": { "id": 983, "index": 1, "need": 6 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
+      "ops": [
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Circuit", "payload": { "close": true } },
+              "mode": "Ground",
+              "points": [0, 1, 2, 3, 4, 5, 6, 7, 8, 2, 3, 1, 9, 10, 11, 12, 0],
+              "radii": [0, 0, 0, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60]
+            }
+          }
+        }
+      ],
+      "interact_target": null,
+      "combat": {
+        "stance": { "type": "Aggressive" },
+        "targets": [
+          { "entry": 2231, "expect_name": "Pygmy Tide Crawler", "pos": null },
+          { "entry": 2234, "expect_name": "Young Reef Crawler", "pos": null }
+        ],
+        "watch_units": [],
+        "leash_yards": 60,
+        "allow_adds": true,
+        "expect_group": { "type": "Solo" }
+      },
+      "loot_filter": [{ "item": 5385, "for_quest": 983 }],
+      "serves_quests": [983],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 211, "line_end": 237 }
+    },
+
+    {
+      "id": 1,
+      "deps": [],
+      "blocking": true,
+      "lifetime": { "type": "Exclusive" },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": { "type": "QuestInLog", "payload": { "id": 3524 } },
+      "complete_when": { "type": "QuestObjective", "payload": { "id": 3524, "index": 1, "need": 1 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
+      "ops": [
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Destination" },
+              "mode": "Any",
+              "points": [13],
+              "radii": [5]
+            }
+          }
+        }
+      ],
+      "interact_target": null,
+      "combat": null,
+      "loot_filter": [{ "item": 12242, "for_quest": 3524 }],
+      "serves_quests": [3524],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 238, "line_end": 242 }
+    },
+
+    {
+      "id": 2,
+      "deps": [],
+      "blocking": true,
+      "lifetime": {
+        "type": "Background",
+        "payload": {
+          "channels": ["MOVEMENT"],
+          "band": 35,
+          "terminate_on": {
+            "type": "QuestObjective",
+            "payload": { "id": 2118, "index": 1, "need": 1 }
+          }
+        }
+      },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": { "type": "QuestInLog", "payload": { "id": 2118 } },
+      "complete_when": { "type": "QuestObjective", "payload": { "id": 2118, "index": 1, "need": 1 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
+      "ops": [
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Circuit", "payload": { "close": true } },
+              "mode": "Ground",
+              "points": [14, 15, 14, 16, 17, 18, 19, 15],
+              "radii": [0, 0, 50, 50, 50, 50, 50, 50]
+            }
+          }
+        },
+        { "type": "UseItem", "payload": { "item": 7586 } }
+      ],
+      "interact_target": null,
+      "combat": {
+        "stance": { "type": "Objective" },
+        "targets": [{ "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null }],
+        "watch_units": [{ "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null }],
+        "leash_yards": 50,
+        "allow_adds": false,
+        "expect_group": { "type": "Solo" }
+      },
+      "loot_filter": [],
+      "serves_quests": [2118],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 243, "line_end": 260 }
+    },
+
+    {
+      "id": 3,
+      "deps": [],
+      "blocking": true,
+      "lifetime": { "type": "Exclusive" },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": { "type": "QuestInLog", "payload": { "id": 984 } },
+      "complete_when": { "type": "QuestObjective", "payload": { "id": 984, "index": 1, "need": 0 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
+      "ops": [
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Destination" },
+              "mode": "Any",
+              "points": [20],
+              "radii": [5]
+            }
+          }
+        }
+      ],
+      "interact_target": null,
+      "combat": null,
+      "loot_filter": [],
+      "serves_quests": [984],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 261, "line_end": 264 }
+    },
+
+    {
+      "id": 4,
+      "deps": [2, 0],
+      "blocking": false,
+      "lifetime": { "type": "Exclusive" },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": null,
+      "complete_when": {
+        "type": "And",
+        "payload": [
+          { "type": "QuestObjective", "payload": { "id": 2118, "index": 1, "need": 1 } },
+          { "type": "QuestObjective", "payload": { "id": 983, "index": 1, "need": 6 } }
+        ]
+      },
+      "abort_when": null,
+      "unknown_policy": { "type": "Block" },
+      "ops": [],
+      "interact_target": null,
+      "combat": null,
+      "loot_filter": [],
+      "serves_quests": [2118, 983],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 265, "line_end": 268 }
+    },
+
+    {
+      "id": 5,
+      "deps": [],
+      "blocking": false,
+      "lifetime": { "type": "Exclusive" },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": null,
+      "complete_when": { "type": "XpAtLeast", "payload": { "level": 10, "xp_offset": 6760 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "TreatFalse" },
+      "ops": [],
+      "interact_target": null,
+      "combat": {
+        "stance": { "type": "Aggressive" },
+        "targets": [],
+        "watch_units": [],
+        "leash_yards": 40,
+        "allow_adds": true,
+        "expect_group": { "type": "Solo" }
+      },
+      "loot_filter": [],
+      "serves_quests": [],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 269, "line_end": 271 }
+    },
+
+    {
+      "id": 6,
+      "deps": [],
+      "blocking": true,
+      "lifetime": {
+        "type": "Background",
+        "payload": {
+          "channels": [],
+          "band": 30,
+          "terminate_on": { "type": "InArea", "payload": { "area": 442, "kind": "SubArea" } }
+        }
+      },
+      "completion": { "type": "LinkedTo", "payload": 7 },
+      "applies_when": null,
+      "complete_when": { "type": "InArea", "payload": { "area": 442, "kind": "SubArea" } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 30 } },
+      "ops": [],
+      "interact_target": null,
+      "combat": null,
+      "loot_filter": [],
+      "serves_quests": [],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 272, "line_end": 275 }
+    },
+
+    {
+      "id": 7,
+      "deps": [0],
+      "blocking": true,
+      "lifetime": { "type": "Exclusive" },
+      "completion": { "type": "OwnPredicate" },
+      "applies_when": { "type": "QuestComplete", "payload": { "id": 983 } },
+      "complete_when": { "type": "QuestTurnedIn", "payload": { "id": 983 } },
+      "abort_when": null,
+      "unknown_policy": { "type": "Block" },
+      "ops": [
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Destination" },
+              "mode": "Any",
+              "points": [21],
+              "radii": [5]
+            }
+          }
+        },
+        {
+          "type": "TurnIn",
+          "payload": {
+            "quest": 983,
+            "any_of": [],
+            "reward_choice": null,
+            "optional": false,
+            "repeatable": false
+          }
+        }
+      ],
+      "interact_target": null,
+      "combat": null,
+      "loot_filter": [],
+      "serves_quests": [983],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 276, "line_end": 280 }
+    }
+  ]
+}

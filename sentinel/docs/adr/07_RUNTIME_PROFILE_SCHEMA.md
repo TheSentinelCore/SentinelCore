@@ -226,9 +226,25 @@ Decisive disambiguation: `A-11-23.lua:247` and `:249` give the *same coordinates
 `.goto 1439,38.226,52.780,0` and `.goto 1439,38.226,52.780,50,0`. The lone trailing `0` in the 4-arg
 form is therefore not a radius.
 
-**Importer gotcha:** 553 steps (461 of them `#loop`) emit the same `zone,x,y` twice — once 4-arg, once
-5-arg — producing 1,252 duplicated coordinate triples. An importer treating each `.goto` as a distinct
-route node doubles the path. The compiler deduplicates (§7.3).
+**Importer gotcha — every figure here is measured over the 7-file corpus.** 1,723 steps (1,304 of them
+`#loop`) contain at least one repeated `zone,x,y`, giving **4,190** distinct repeated coordinate
+triples across **4,600** redundant emissions. An importer treating each `.goto` as a distinct route
+node doubles the path. The compiler deduplicates — a **route-level** collapse, one that shortens the
+route. It is *not* the `waypoint_pool` interning of §7.1 and §7.3.3, which shrinks the pool and
+provably never changes a route's length (§9 item 26).
+
+**No section of this document demonstrates the route-level collapse yet.** An earlier revision cited
+§7.3 as its own proof; that forward reference was wrong and is withdrawn. §7.3.3 prints task 2 in the
+doubled form it is supposed to fix — 8 route points where 6 suffice, because `A-11-23.lua:247`/`:248`
+state the loop's anchors in 4-arg form and `:249`/`:254` re-emit the same two coordinates in 5-arg
+form. When the collapse lands, that route becomes the worked example for it.
+
+**Do not key that collapse on "once 4-arg, once 5-arg".** That shape is the plurality, not the rule: it
+covers 2,897 of the 4,190 triples (**69%**). 779 are (5,5), 154 are (3,5), and 285 triples repeat three
+or more times, so a predicate matching only a 4-arg/5-arg pair misses 31% of the duplicates.
+
+*(An earlier revision of this section stated 553 steps and 1,252 triples. Both are refuted: roughly
+3.3× too low, and not reproducible under any of 21 tried definitions of* step *and* duplicate*.)*
 
 ----------
 
@@ -588,7 +604,7 @@ This is not defensive design; the API forces it. Three documented facts:
 | Policy | Behaviour on `Unknown` | Compiler default |
 |---|---|---|
 | `Block` | Task does not start; the runner reports `blocked_reason`. Nothing advances. | `complete_when` on any task with a `DELEGATE` or irreversible op (turn-in, abandon, destroy, deathskip) |
-| `Defer` | Task yields this tick, retries next; after `unknown_budget` ticks escalates to `Block`. | Default for `complete_when` |
+| `Defer` | Task yields this tick, retries next; after `budget_ticks` ticks escalates to `Block`. | Default for `complete_when` |
 | `Treat(False)` | Proceed as if not satisfied — re-do the work. Safe only when the work is idempotent. | `applies_when` on pure-travel tasks |
 | `Treat(True)` | Proceed as if satisfied — skip the work. **Never a default.** Requires an explicit compiler opt-in and emits a diagnostic. | never |
 
@@ -710,12 +726,37 @@ carries the whole route.
 
 ## 5.4 C4 — The artifact is fail-closed
 
-**Contract.** `schema_hash`, `tags_used`, adjacently-tagged enums, refuse-don't-degrade.
+**Contract.** `schema_hash`, `tags_used`, adjacently-tagged **dispatched** enums, refuse-don't-degrade.
 
-Present on the profile root (§7.1): `schema_hash: [u8; 32]`, `tags_used: Vec<String>`. Every enum
-crossing the boundary carries `#[serde(tag = "type", content = "payload")]`. This repository has
-already been bitten by the alternative — `RuntimeCondition` was externally tagged and every non-unit
-condition fell through to fail-open `true`, so gating silently stopped gating.
+Present on the profile root (§7.1): `schema_hash: [u8; 32]`, `tags_used: Vec<String>`.
+
+**The tagging rule is by role, not by arity.** Sum types the kernel **dispatches on** carry
+`#[serde(tag = "type", content = "payload")]` — `Lifetime`, `CompletionSource`, `UnknownPolicy`,
+`Op`, `RouteKind`, `GossipPolicy`, `DelegatePayload`, `CombatStance`, `GroupExpectation`, `Cmp`,
+`Predicate` — **even where every variant happens to be a unit variant.** `Cmp` (five unit variants),
+`CombatStance` and `GroupExpectation` are all fully unit-variant and all adjacently tagged, which is
+why §7.3.3 prints `{"type": "Aggressive"}` and `{"type": "Solo"}` rather than bare strings: Lua
+switches on `.type`, and a value that is sometimes a string and sometimes an object cannot be
+dispatched on uniformly.
+
+**Leaf vocabulary enums serialise as bare strings.** They only name a value and are never dispatched
+on: `Class`, `Race`, `Faction`, `Expansion`, `Allegiance`, `ProfileMode`, `Channel`, `TravelMode`,
+`BehaviorId`, `VendorMode`, `FlightMode`, `HearthMode`, `BankMode`, `StableMode`, `CorpseIntent`,
+`UnitRef`, `SkillLine`, `Standing`, `CooldownKind`, `AreaKind`, `ItemStat` (all 21 declared in §7.1).
+Each emits the Rust variant name verbatim; `Channel` alone is SCREAMING_SNAKE, per §7.2. §7.3.3
+requires this: `"class": "Hunter"`, `"mode": "Ground"`, `"kind": "SubArea"`,
+`"channels": ["MOVEMENT"]`.
+
+**The failure C4 guards against is _external_ tagging on a dispatched sum type — not the absence of
+a wrapper on a leaf.** This repository has already been bitten by exactly that: `RuntimeCondition`
+was externally tagged (`{"QuestInLog": {"id": 983}}`) and every non-unit condition fell through to
+fail-open `true`, so gating silently stopped gating.
+
+One consequence of serde's canonical adjacent tagging is worth stating once, because §7.3.3 used to
+print it the other way: **the content key is omitted for a unit variant.** The emitted form is
+`{"type": "Exclusive"}`, never `{"type": "Exclusive", "payload": null}`. §7.2's `$defs` require only
+`["type"]` on those objects, deserialisation accepts both spellings, and in Lua an absent key and a
+`null` key are both `nil`, so older artifacts still load (§9 item 23).
 
 ### 5.4.1 The content-integrity gap
 
@@ -831,8 +872,8 @@ not interchangeable.**
 *The case for destinations only.* 16,231 `.goto` lines are 3-arg — a bare `zone,x,y` with no radius and
 no successor. For those, RXP's coordinate is just "the place the NPC stands", and the engine's navmesh
 will path there better than a 2004-era hand-placed waypoint chain. Carrying redundant intermediate
-points would fight the navmesh, and 553 steps already contain duplicated coordinates (§2.6) that would
-double a naively-imported path.
+points would fight the navmesh, and 1,723 steps already contain duplicated coordinates (§2.6, measured)
+that would double a naively-imported path.
 
 *The case for baked routes.* Some chains encode intent no navmesh can infer. The decisive witness is
 `A-11-23.lua:215–231`:
@@ -862,8 +903,9 @@ pub enum RouteKind {
 ```
 
 The compiler emits `Destination` for isolated `.goto`, `Corridor` for a run of `.goto`/`.waypoint` in a
-non-loop task, and `Circuit` for `#loop` tasks — and deduplicates the 1,252 duplicated coordinate
-triples on the way in.
+non-loop task, and `Circuit` for `#loop` tasks — and deduplicates the 4,190 measured duplicated
+coordinate triples (§2.6) on the way in. That is the route-level collapse, distinct from the pool
+interning of §7.1; §7.3.3 demonstrates the interning only (§9 item 26).
 
 **Coordinate normalisation.** Both corpus coordinate systems (§2.6) normalise to
 `{ map_id: u32, x: f32, y: f32, z: Option<f32> }` **in world coordinates**, resolved offline. The
@@ -940,8 +982,17 @@ The tension C4 names is real, and it is resolved by putting the two policies at 
   the 60%-coverage failure. Malformed `.goto` arity is a hard error, not a guess: `20.6,60,4` could be
   `60.4` or `60` with a stray field, and guessing wrong sends the bot to the wrong coordinates.
 - **The artifact is strict.** By the time a profile is emitted, every token is canonical, every label
-  is resolved to a `TaskId`, and `tags_used` lists only registered tags. Nothing malformed survives
-  compilation, so the fail-closed loader has nothing to forgive.
+  is resolved to a `TaskId`, and `tags_used` lists **exactly** the registered op and predicate tags
+  the artifact references — no more, no fewer. Nothing malformed survives compilation, so the
+  fail-closed loader has nothing to forgive.
+
+  `tags_used` is a **census**, not a subset of the registry, and it has to be exact in *both*
+  directions because C4 makes each error a different failure. A **spurious** tag makes a fail-closed
+  kernel refuse an artifact it could actually have run — the loader declines a tag it does not
+  implement, for work no task ever asks it to do. A **missing** tag is worse and quieter: the
+  loader's check passes on an artifact the kernel cannot fully evaluate, and the unimplemented tag
+  is discovered mid-run, which is precisely the check the field exists to prevent. A census that is
+  merely a superset therefore defeats the mechanism entirely.
 
 The alias table is closed and versioned: a *new* typo is a compile error and a one-line patch, not a
 silent normalisation. That is the difference between tolerating known damage and tolerating unknown
@@ -1337,6 +1388,81 @@ pub enum Predicate {
     LevelAtMost    { level: u8 },
 }
 
+// ─── Leaf vocabulary: bare strings on the wire, never dispatched on ──────────
+//
+// These 21 enums only NAME a value. They carry no payload, the kernel never switches
+// on them, and they therefore carry NO tagging attribute: each serializes as the Rust
+// variant name verbatim. §7.3.3 forces exactly this — `"class": "Hunter"`,
+// `"expansion": "Tbc"`, `"mode": "Ground"`, `"kind": "SubArea"`. `Channel` alone is
+// SCREAMING_SNAKE, per §7.2's channel enum. Class / Race / Faction are reused from the
+// ADR-02 authoring vocabulary rather than redefined (§5.2); their variant names are
+// already the wire spellings.
+
+#[derive(Serialize, Deserialize)]
+pub enum Class { Warrior, Paladin, Hunter, Rogue, Priest, Shaman, Mage, Warlock, Druid }
+
+#[derive(Serialize, Deserialize)]
+pub enum Race { Human, Orc, Dwarf, NightElf, Undead, Tauren, Gnome, Troll, BloodElf, Draenei }
+
+#[derive(Serialize, Deserialize)]
+pub enum Faction { Alliance, Horde, Neutral }
+
+#[derive(Serialize, Deserialize)]
+pub enum Expansion { Classic, Tbc, Wotlk }              // #classic / #tbc / #wotlk
+
+#[derive(Serialize, Deserialize)]
+pub enum Allegiance { Aldor, Scryer }                   // #aldor / #scryer
+
+#[derive(Serialize, Deserialize)]
+pub enum ProfileMode { SpeedRoute, QuestGuide, Dungeon } // absence of #questguide / #questguide / .dungeon
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]           // the ONE exception (§7.2)
+pub enum Channel { Movement, Facing, Casting, Targeting, Interaction, Items, Camera }
+
+#[derive(Serialize, Deserialize)]
+pub enum TravelMode { Any, Ground, Air }                // .goto/.waypoint / .groundgoto / .flygoto
+
+#[derive(Serialize, Deserialize)]
+pub enum BehaviorId { Vendor, Trainer, FlightPath, Hearth, Bank, Stable, Corpse }  // C5; five are K3
+
+#[derive(Serialize, Deserialize)]
+pub enum VendorMode { Sell, Buy }                       // bare .vendor / .vendor <entry> (K4)
+
+#[derive(Serialize, Deserialize)]
+pub enum FlightMode { Fly, Discover }                   // .fly / .fp
+
+#[derive(Serialize, Deserialize)]
+pub enum HearthMode { Use, Bind }                       // .hs / .home
+
+#[derive(Serialize, Deserialize)]
+pub enum BankMode { Withdraw, Deposit }                 // .bankwithdraw / .bankdeposit
+
+#[derive(Serialize, Deserialize)]
+pub enum StableMode { Visit, Store, Retrieve }          // .stable is always bare ⇒ Visit
+
+#[derive(Serialize, Deserialize)]
+pub enum CorpseIntent { Accidental, DeliberateDeath }   // .deathskip ⇒ DeliberateDeath (K5)
+
+#[derive(Serialize, Deserialize)]
+pub enum UnitRef { Player, Target }                     // .aura only ever names the player
+
+#[derive(Serialize, Deserialize)]                       // .skill — the 10 distinct corpus lines
+pub enum SkillLine { Cooking, Enchanting, Engineering, FirstAid, Herbalism,
+                     Lockpicking, Mining, Riding, Skinning, Tailoring }
+
+#[derive(Serialize, Deserialize)]                       // .reputation — the 6 bands the corpus names
+pub enum Standing { Unfriendly, Neutral, Friendly, Honored, Revered, Exalted }
+
+#[derive(Serialize, Deserialize)]
+pub enum CooldownKind { Item, Spell }                   // .cooldown item,… / .cooldown spell,…
+
+#[derive(Serialize, Deserialize)]
+pub enum AreaKind { Zone, SubArea }                     // .zone/.zoneskip / .subzone/.subzoneskip
+
+#[derive(Serialize, Deserialize)]
+pub enum ItemStat { Quality, DamagePerSecond }          // QUALITY / ITEM_MOD_DAMAGE_PER_SECOND_SHORT
+
 // ─── Resume (C3, closing the ADR-000 gap) ────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
@@ -1560,16 +1686,50 @@ Three cross-checks that validate the whole pipeline, not just the ids:
 
 ### 7.3.3 Compiled output
 
-Archetype resolved for a Night Elf Hunter, Alliance, TBC, softcore, AH-permitted. Waypoint indices
-refer to `waypoint_pool`; coordinates shown inline for readability.
+Archetype resolved for a Night Elf Hunter, Alliance, TBC, softcore, AH-permitted. Every route's
+`points` are indices into `waypoint_pool`, which is printed in full below.
+
+The pool is **interned**: one entry per *distinct* `(map_id, x, y, z)`, not one per source route
+line. The 28 route lines of `A-11-23.lua:211–280` visit only **22** distinct coordinates, so the
+pool is 22 entries. An entry may therefore be referenced **more than once**, and the two routes
+that do so do it for two different reasons that must not be conflated:
+
+- **Task 0 repeats indices 0, 1, 2 and 3 because the bot physically walks those coordinates
+  twice.** `:224` re-walks `:217`, `:225` re-crosses the circuit's own first waypoint `:218`,
+  `:226` re-walks `:216`, and `:231` returns to `:215` to close the circuit. All four repeats are
+  geometrically real and survive route-level dedup. *Do not justify them by the arrival radius* —
+  three of the four change it (0 on the approach, 60 on the circuit). The sound justification is
+  that the route visits the coordinate twice.
+- **Task 2 repeats indices 14 and 15 because of the §2.6 double emission, not because it re-crosses
+  anything.** `:247` and `:248` are 4-arg `.goto`s naming the loop's two anchors; `:249`–`:254`
+  then walk the real circuit and re-emit those same two coordinates in 5-arg form. The radii
+  corroborate it — task 2's are `[0,0,50,50,50,50,50,50]`, the two 4-arg emissions carrying 0 and
+  their 5-arg twins 50. That two-line preamble is redundant, and route-level dedup will take task 2
+  from **8 points to 6**.
+
+A route that re-crosses a point says so by **repeating the index**, never by carrying a second copy
+of the point.
+
+**What this listing does and does not demonstrate.** It demonstrates the **pool interning** of
+§7.1 (`waypoint_pool` "deduplicated; routes index into this") and §6.4 ("deduplicates shared points
+across tasks"): only the pool shrinks, no `points` array changes length, and no `radii` array
+changes at all. It does **not** demonstrate the **route-level dedup** of §2.6 ("An importer treating
+each `.goto` as a distinct route node doubles the path"), §8 ("an importer that does not doubles
+every affected route") and §5.7 ("deduplicates the 4,190 measured duplicated coordinate triples on
+the way in"). Those three state a route-*length* consequence, which interning provably cannot
+deliver — as the previous sentence says. Route-level dedup is a later deliverable, and task 2's
+route is printed below in its **un-deduplicated** 8-point form.
+
+The `_comment` keys are prose for the reader — `RuntimeProfile` is `deny_unknown_fields`, so a
+real artifact carries none of them.
 
 ```json
 {
   "magic": "SNTL",
   "schema_version": 1,
   "schema_hash": "<blake3-of-tagset>",
-  "tags_used": ["Travel","TurnIn","UseItem","Wait","Delegate","QuestObjective","QuestInLog",
-                "QuestTurnedIn","InArea","XpAtLeast","And","Or","Not"],
+  "tags_used": ["Travel","TurnIn","UseItem","QuestComplete","QuestObjective","QuestInLog",
+                "QuestTurnedIn","InArea","XpAtLeast","And"],
   "integrity": {
     "content_hash": "<blake3-of-resolved-ids>",
     "world_source": "tbcmangos.sqlite",
@@ -1581,6 +1741,37 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
                  "mode": "SpeedRoute" },
   "meta": { "name": "10-14 Darkshore", "group": "RestedXP TBC Guide (A)",
             "subgroup": "RestedXP Alliance 1-20", "source_version": 7, "next": [] },
+
+  "defaults": {
+    "combat": { "stance": { "type": "Defensive" }, "targets": [], "watch_units": [],
+                "leash_yards": 40, "allow_adds": true, "expect_group": { "type": "Solo" } },
+    "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } }
+  },
+
+  "waypoint_pool": [
+    { "map_id": 1439, "x": 36.051, "y": 44.757, "z": null },
+    { "map_id": 1439, "x": 36.280, "y": 50.071, "z": null },
+    { "map_id": 1439, "x": 35.275, "y": 53.464, "z": null },
+    { "map_id": 1439, "x": 36.091, "y": 51.501, "z": null },
+    { "map_id": 1439, "x": 37.115, "y": 52.368, "z": null },
+    { "map_id": 1439, "x": 37.130, "y": 53.663, "z": null },
+    { "map_id": 1439, "x": 36.740, "y": 55.221, "z": null },
+    { "map_id": 1439, "x": 35.655, "y": 55.872, "z": null },
+    { "map_id": 1439, "x": 35.088, "y": 55.085, "z": null },
+    { "map_id": 1439, "x": 36.523, "y": 48.554, "z": null },
+    { "map_id": 1439, "x": 35.977, "y": 48.408, "z": null },
+    { "map_id": 1439, "x": 35.902, "y": 47.145, "z": null },
+    { "map_id": 1439, "x": 35.759, "y": 45.455, "z": null },
+    { "map_id": 1439, "x": 36.371, "y": 50.920, "z": null },
+    { "map_id": 1439, "x": 38.226, "y": 52.780, "z": null },
+    { "map_id": 1439, "x": 39.129, "y": 59.176, "z": null },
+    { "map_id": 1439, "x": 38.527, "y": 54.661, "z": null },
+    { "map_id": 1439, "x": 38.037, "y": 56.815, "z": null },
+    { "map_id": 1439, "x": 38.095, "y": 58.395, "z": null },
+    { "map_id": 1439, "x": 38.696, "y": 57.874, "z": null },
+    { "map_id": 1439, "x": 38.90,  "y": 53.59,  "z": null },
+    { "map_id": 1439, "x": 36.634, "y": 46.250, "z": null }
+  ],
 
   "tasks": [
     {
@@ -1607,14 +1798,14 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
             "route": {
               "kind": { "type": "Circuit", "payload": { "close": true } },
               "mode": "Ground",
-              "points": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17],
-              "radii":  [0,0,0,60,60,60,60,60,60,60,60,60,60,60,60,60,60,60]
+              "points": [0,1,2,3,4,5,6,7,8,2,3,1,9,10,11,12,0],
+              "radii":  [0,0,0,60,60,60,60,60,60,60,60,60,60,60,60,60,60]
             }
           } }
       ],
       "interact_target": null,
       "combat": {
-        "stance": { "type": "Aggressive", "payload": null },
+        "stance": { "type": "Aggressive" },
         "targets": [
           { "entry": 2231, "expect_name": "Pygmy Tide Crawler", "pos": null },
           { "entry": 2234, "expect_name": "Young Reef Crawler", "pos": null }
@@ -1622,7 +1813,7 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
         "watch_units": [],
         "leash_yards": 60,
         "allow_adds": true,
-        "expect_group": { "type": "Solo", "payload": null }
+        "expect_group": { "type": "Solo" }
       },
       "loot_filter": [ { "item": 5385, "for_quest": 983 } ],
       "serves_quests": [983],
@@ -1635,7 +1826,7 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
       "id": 1,
       "deps": [],
       "blocking": true,
-      "lifetime": { "type": "Exclusive", "payload": null },
+      "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
       "applies_when":  { "type": "QuestInLog",     "payload": { "id": 3524 } },
       "complete_when": { "type": "QuestObjective", "payload": { "id": 3524, "index": 1, "need": 1 } },
@@ -1643,8 +1834,8 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
       "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
       "ops": [
         { "type": "Travel",
-          "payload": { "route": { "kind": { "type": "Destination", "payload": null },
-                                  "mode": "Any", "points": [18], "radii": [5] } } }
+          "payload": { "route": { "kind": { "type": "Destination" },
+                                  "mode": "Any", "points": [13], "radii": [5] } } }
       ],
       "interact_target": null,
       "combat": null,
@@ -1677,18 +1868,18 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
         { "type": "Travel",
           "payload": { "route": { "kind": { "type": "Circuit", "payload": { "close": true } },
                                   "mode": "Ground",
-                                  "points": [19,20,21,22,23,24,25,26],
+                                  "points": [14,15,14,16,17,18,19,15],
                                   "radii":  [0,0,50,50,50,50,50,50] } } },
         { "type": "UseItem", "payload": { "item": 7586 } }
       ],
       "interact_target": null,
       "combat": {
-        "stance": { "type": "Objective", "payload": null },
+        "stance": { "type": "Objective" },
         "targets": [ { "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null } ],
         "watch_units": [ { "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null } ],
         "leash_yards": 50,
         "allow_adds": false,
-        "expect_group": { "type": "Solo", "payload": null }
+        "expect_group": { "type": "Solo" }
       },
       "loot_filter": [], "serves_quests": [2118], "suppress": [], "jump_to": null,
       "source": { "file": "A-11-23.lua", "line_start": 243, "line_end": 260 }
@@ -1699,7 +1890,7 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
       "deps": [],
       "blocking": true,
       "_comment": "zone NAME in source (Darkshore) normalises to the same map_id 1439 as tasks 0-2",
-      "lifetime": { "type": "Exclusive", "payload": null },
+      "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
       "applies_when": { "type": "QuestInLog", "payload": { "id": 984 } },
       "complete_when": { "type": "QuestObjective",
@@ -1708,8 +1899,8 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
       "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
       "ops": [
         { "type": "Travel",
-          "payload": { "route": { "kind": { "type": "Destination", "payload": null },
-                                  "mode": "Any", "points": [27], "radii": [5] } } }
+          "payload": { "route": { "kind": { "type": "Destination" },
+                                  "mode": "Any", "points": [20], "radii": [5] } } }
       ],
       "interact_target": null, "combat": null, "loot_filter": [],
       "serves_quests": [984], "suppress": [], "jump_to": null,
@@ -1721,7 +1912,7 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
       "_comment": "P1 — THE MULTI-DEPENDENCY TASK. Source lines 265-268 are the author's XXREQ hack: an empty #optional step carrying #requires, used because RXP allows only one requires per step. The compiler folds the placeholder away and emits BOTH predecessors directly in deps.",
       "deps": [2, 0],
       "blocking": false,
-      "lifetime": { "type": "Exclusive", "payload": null },
+      "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
       "applies_when": null,
       "complete_when": {
@@ -1732,7 +1923,7 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
         ]
       },
       "abort_when": null,
-      "unknown_policy": { "type": "Block", "payload": null },
+      "unknown_policy": { "type": "Block" },
       "ops": [],
       "interact_target": null, "combat": null, "loot_filter": [],
       "serves_quests": [2118, 983], "suppress": [], "jump_to": null,
@@ -1744,18 +1935,18 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
       "deps": [],
       "blocking": false,
       "_comment": "#optional + .xp 10+6760 -> fallback grind objective",
-      "lifetime": { "type": "Exclusive", "payload": null },
+      "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
       "applies_when": null,
       "complete_when": { "type": "XpAtLeast", "payload": { "level": 10, "xp_offset": 6760 } },
       "abort_when": null,
-      "unknown_policy": { "type": "TreatFalse", "payload": null },
+      "unknown_policy": { "type": "TreatFalse" },
       "ops": [],
       "interact_target": null,
       "combat": {
-        "stance": { "type": "Aggressive", "payload": null },
+        "stance": { "type": "Aggressive" },
         "targets": [], "watch_units": [], "leash_yards": 40,
-        "allow_adds": true, "expect_group": { "type": "Solo", "payload": null }
+        "allow_adds": true, "expect_group": { "type": "Solo" }
       },
       "loot_filter": [], "serves_quests": [], "suppress": [], "jump_to": null,
       "source": { "file": "A-11-23.lua", "line_start": 269, "line_end": 271 }
@@ -1788,16 +1979,16 @@ refer to `waypoint_pool`; coordinates shown inline for readability.
       "deps": [0],
       "blocking": true,
       "_comment": "#requires BuzzBox1 -> deps [0]. Turn-in target is GAMEOBJECT 17182, so interact_target is null and the op carries the object. Verified: quest 983 ender is gameobject_involvedrelation 17182.",
-      "lifetime": { "type": "Exclusive", "payload": null },
+      "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
       "applies_when":  { "type": "QuestComplete", "payload": { "id": 983 } },
       "complete_when": { "type": "QuestTurnedIn", "payload": { "id": 983 } },
       "abort_when": null,
-      "unknown_policy": { "type": "Block", "payload": null },
+      "unknown_policy": { "type": "Block" },
       "ops": [
         { "type": "Travel",
-          "payload": { "route": { "kind": { "type": "Destination", "payload": null },
-                                  "mode": "Any", "points": [28], "radii": [5] } } },
+          "payload": { "route": { "kind": { "type": "Destination" },
+                                  "mode": "Any", "points": [21], "radii": [5] } } },
         { "type": "TurnIn",
           "payload": { "quest": 983, "any_of": [], "reward_choice": null,
                        "optional": false, "repeatable": false } }
@@ -1844,7 +2035,7 @@ because this excerpt contains no vendor/flight/hearth step.
 | **Loading screens and zone transitions** | Two distinct effects, both handled. (1) **In-flight sticky tasks:** a zone transition is a band 90–99 interrupt, so every `Background` task loses its leases and receives `on_revoke`; it writes its `ResumeCursor` and parks. On the far side it re-acquires and resumes at `(op_index, waypoint, loop_iter)` — a 15-node circuit does not restart. (2) **Cold-tier predicate truth:** the quest log has **no readiness contract and no events** (§5.1.2), so every cold predicate must read `Unknown`, not `False`, across the transition. `UnknownPolicy::Defer` holds the cursor until the log repopulates; `Block` is used where an irreversible op would otherwise fire on stale data. Guard on `core.object_manager.get_local_player()` being non-nil, and treat a zero-length quest log as `Unknown`. | Scheduler §4.2 band 90–99; sensor tiering §5 |
 | **Additional: contested turn-in objects** | Quest 983's ender is a **gameobject**, not an NPC (verified §7.3.2). `interact_target: None` with the object in the op is correct; a schema assuming every turn-in has an NPC target would emit a null target and stall. | Quest Activity |
 | **Additional: exploration objectives with no count** | Quest 984 has no `Req*` columns; `QuestObjective.need` must permit `0`. A schema requiring a positive count would make the objective unsatisfiable. | `Sentinel.objectives` |
-| **Additional: duplicated waypoints** | 553 steps emit the same coordinate twice (§2.6). Compiler deduplicates into `waypoint_pool`; an importer that does not doubles every affected route. | Compiler |
+| **Additional: duplicated waypoints** | 1,723 steps emit the same coordinate twice (§2.6, measured). The compiler collapses the redundant **route** emissions; an importer that does not doubles every affected route. Distinct from the `waypoint_pool` interning of §7.1, which shrinks the pool but never a route (§9 item 26); §7.3.3 prints the interned pool and the still-un-deduplicated routes. | Compiler |
 | **Additional: reputation-gated content** | Reputation is **unreadable** (§5.8). `Predicate::ReputationCmp` evaluates `Unknown` and `UnknownPolicy::Block` stops the profile with a named reason rather than looping. The compiler pre-resolves what it can from `quest_template.RequiredMinRepFaction`. | Sensor gap — see §9 |
 
 ----------
@@ -1924,6 +2115,91 @@ because this excerpt contains no vendor/flight/hearth step.
     load-bearing claim — that conditions were embedded C# expression strings — is well corroborated;
     exact element spellings are not.
 
+**Internal discrepancies found by the R1 model audit.**
+
+Items 1–7 above are corpus semantics that could not be determined from the evidence. Items 21–24
+and 26 below are different in kind: authoring errors in *this* document with a determinate right
+answer, surfaced by building the §7.1 model and testing it against §7.3.3. All five are resolved in
+place, above, and are recorded here only so the correction is traceable. Item 25 is a genuine open
+question that the same audit exposed but cannot settle from this document.
+
+21. **§7.3.3's task 0 route was one point too long — resolved.** `A-11-23.lua:215–231` is 3 `.goto`
+    (radius 0) plus 14 `.waypoint` (radius 60) = **17** route points, not 18. That route-length
+    finding stands: task 0 carries 17 points and 17 radii, and no 18th was reinstated. The pool
+    arithmetic that originally accompanied it did not stand. This item first recorded a pool of
+    **28** entries — one per source route line, "each referenced exactly once" — and both halves of
+    that claim are now superseded by item 26: the pool is **interned** to the 22 *distinct*
+    coordinates those 28 lines visit, and six of the 22 are referenced twice — **four by task 0,
+    which genuinely re-crosses its own path, and two by task 2, which re-crosses nothing and is
+    instead carrying the §2.6 double emission** (item 26). Task 0's four survive the route-level
+    collapse untouched; task 2's two do not, and that collapse will take its route from 8 points to
+    6. Nothing was invented in either correction (§7.3.2). §7.3.1's own elisions were already correct
+    and are unchanged.
+22. **§7.3.3 was not a loadable artifact as printed — resolved.** §7.2's root `required` array names
+    `waypoint_pool` and `defaults`; the listing printed neither, so the worked example could not
+    satisfy its own schema. Both are now present, with **22 distinct real coordinates drawn from the
+    28 source route lines** of `A-11-23.lua:211–280` (item 26), every one of them taken from the
+    corpus.
+    The `defaults` block takes its *shape* from §5.1.2 (`Defer` is the default for `complete_when`)
+    and §5.6 (`stance: Defensive`), but two of its magnitudes — `leash_yards: 40` and
+    `budget_ticks: 60` — are stated in **no** section of this ADR and originate in the worked example
+    alone. They are therefore illustrative, not normative, and §7.3.2's "Nothing is invented" claim
+    covers the coordinates, not these two numbers. Choosing them deliberately is open item 25.
+23. **`"payload": null` on unit variants was the wrong spelling — resolved.** Serde's adjacent
+    tagging **omits** the content key for a unit variant, and §7.2's `$defs` require only `["type"]`,
+    so the emitted and canonical form is `{"type": "Exclusive"}`. The 17 printed `"payload": null`
+    members are removed, so all 26 unit-variant envelopes in §7.3.3 — the 24 that were already there
+    plus the two inside the newly printed `defaults` (item 22) — read `{"type": "X"}`. Deserialisation
+    accepts both spellings, so artifacts written against the old printed form still load. The
+    alternative — hand-written `Serialize` impls for eleven enums, to make the code match the prose —
+    is strictly worse and is rejected.
+24. **`tags_used` was wrong in both directions — resolved.** It listed `Wait`, `Delegate`, `Or` and
+    `Not`, which no task in the example references, and omitted `QuestComplete`, which task 7's
+    `applies_when` uses. `tags_used` is a **census**, not a subset of the registry; the definition in
+    §5.10 has been tightened to say so and §7.3.3 now lists exactly the 10 tags the artifact
+    references.
+25. **Two `defaults` magnitudes have no stated source — open.** `leash_yards: 40` and
+    `budget_ticks: 60` appear only inside §7.3.3's listing (item 22). §5.6 states the default
+    *stance*, and §5.1.2 states that `Defer` is the default *policy*, but neither fixes a magnitude,
+    and no other section does either. A leash distance and an escalation budget are behavioural
+    constants that belong in §5.6 and §5.1.2 with a justification, not in a worked example. Until
+    they are chosen deliberately, treat the printed values as illustrative.
+26. **§7.3.3's `waypoint_pool` was not interned — resolved.** The listing printed a **28**-slot
+    pool, one slot per source route line, in which **six coordinates were stored twice**: old slots
+    9≡2, 10≡3, 11≡1, 16≡0 (task 0's circuit) and 20≡18, 25≡19 (task 2's). Two sections of this
+    document assert the opposite of that pool shape — §7.1 annotates the field "deduplicated; routes
+    index into this", and §6.4 says the pool "deduplicates shared points across tasks". §7.3.3 is the
+    artifact those two point at, so as printed it was the counter-example to its own schema rather
+    than the demonstration of it.
+
+    The pool is now **interned**: one entry per distinct `(map_id, x, y, z)`, first occurrence kept,
+    giving **22** entries. The six duplicate slots are gone and the five `points` arrays are remapped
+    onto the surviving indices. **A route referencing an entry more than once is correct and
+    expected**, for either of two unrelated reasons:
+
+    - **Task 0 names indices 0, 1, 2 and 3 twice each because it walks those coordinates twice.**
+      It is a `Circuit` with `close: true`, and `A-11-23.lua:224`, `:225`, `:226` and `:231` really
+      do re-visit `:217`, `:218`, `:216` and `:215`. Radius is *not* the justification — three of
+      the four repeats change it — the geometry is.
+    - **Task 2 names 14 and 15 twice because of the §2.6 double emission, not because it re-crosses
+      anything.** `A-11-23.lua:247`–`:248` are 4-arg `.goto`s naming the anchors that `:249` and
+      `:254` re-emit in 5-arg form; the radii `[0,0,50,50,50,50,50,50]` corroborate it. That is a
+      route-level defect, still present in the printed route, and collapsing it will take task 2
+      from 8 points to 6.
+
+    Interning is a *pool* operation, never a route one: every route walks exactly the same sequence
+    of world coordinates it walked before, task 0 still has 17 points and task 2 still has 8, no
+    `points` array changed length, and no `radii` array changed at all. Every one of the 22 entries
+    is reachable and every index is in bounds; "each referenced exactly once" (item 21) is retired,
+    because for a closed circuit it was never achievable without duplicating points.
+
+    **Interning is therefore not what §2.6 and §8 are asking for.** §2.6 says an importer treating
+    each `.goto` as a distinct route node "doubles the path", §8 says an importer that does not
+    deduplicate "doubles every affected route", and §5.7 says the compiler "deduplicates the 4,190
+    measured duplicated coordinate triples on the way in" — all three name a route-*length*
+    consequence, and interning changes no route's length. That route-level collapse is a **separate,
+    later deliverable**; §7.3.3 demonstrates the pool interning of §7.1 and §6.4 alone.
+
 ----------
 
 # 10. Self-verification
@@ -1938,7 +2214,7 @@ Run before finishing. Failures were fixed, not reported.
 | 4 | Worked example violates no exclusion rule stated in this document | **PASS.** The example is archetype-resolved for a Night Elf Hunter and contains no class-gated content — the source region `A-11-23.lua:211–280` carries no `<<` gate on any step or command, so nothing was excluded and nothing class-specific was smuggled in. No dropped token appears in the output. |
 | 5 | `#sticky`/`#completewith` modeled via channels and leases, not desugared, not a background flag, not dropped | **PASS.** `Lifetime::Background { channels, band, terminate_on }` and `CompletionSource::LinkedTo` are **separate fields** on `Task`, justified by the disjointness measurement (§2.4). Tasks 0, 2 and 6 in §7.3 exercise all three combinations. Full lifecycle in §5.3. |
 | 6 | Every runtime condition lowers to a `Predicate`; no second condition system | **PASS.** All three predicate slots on `Task` hold the same type. `Cmp` is a shared operator enum, not a parallel language. Static gates do not survive compilation (§5.2), so they are not a second system either. |
-| 7 | All enums adjacently tagged; `schema_hash` / `tags_used` / content-integrity present | **PASS.** Every `enum` in §7.1 carries `#[serde(tag = "type", content = "payload")]`; the JSON Schema mirrors it with `{type, payload}` and an explicit `$comment`. Root has `schema_hash`, `tags_used`, and `integrity: ContentIntegrity`. |
+| 7 | Every **dispatched** sum type adjacently tagged; `schema_hash` / `tags_used` / content-integrity present | **PASS — restated by the R1 model audit (§9 item 23).** The original claim, "all enums adjacently tagged", was false: §7.1 also declares 21 **leaf vocabulary** enums that serialise as bare strings, exactly as §7.3.3 prints them (`"class": "Hunter"`, `"mode": "Ground"`, `"kind": "SubArea"`, `"channels": ["MOVEMENT"]`). The rule is by **role**, not arity. The eleven sum types the kernel dispatches on — `Lifetime`, `CompletionSource`, `UnknownPolicy`, `Op`, `RouteKind`, `GossipPolicy`, `DelegatePayload`, `CombatStance`, `GroupExpectation`, `Cmp`, `Predicate` — each carry `#[serde(tag = "type", content = "payload")]`, including `Cmp`, `CombatStance` and `GroupExpectation` where every variant happens to be a unit variant; the JSON Schema mirrors them with `{type, payload}` and an explicit `$comment`. Root has `schema_hash`, `tags_used`, and `integrity: ContentIntegrity`. |
 | 8 | Unknown/unavailable predicate state handled explicitly, not collapsed to false | **PASS.** `Truth { True, False, Unknown }` (K2) plus a four-way per-task `UnknownPolicy`. `TreatFalse` is never the default for `complete_when`; `TreatTrue` requires explicit opt-in and emits a diagnostic. Grounded in three documented API facts (§5.1.2). |
 | 9 | D5 lists every required kernel change, or states none required | **PASS.** Eight changes, K1–K8, in §5.9, each with an ADR-000 section reference and a forcing reason. Explicitly *not* "none". |
 | 10 | No files created or modified other than this ADR | **PASS.** One file written: `sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md`. All corpus analysis ran read-only or wrote to the session scratchpad outside the repository. No source file, test, or config touched. |
