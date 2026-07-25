@@ -18,15 +18,37 @@ ADR §8.4 asserts Tier 1 declarative authoring should "target ~90% of rotations"
 rotation:damage { spell = "Ice Lance", priority = 20, when = Cond.TargetHasAura("Frozen") }
 ```
 
-Measured against `modules/combat/profiles/mage/frost_tbc.lua`:
+Measured against `rotations/mage_frost/`. **Re-derived in Phase 4c**, because the original table's
+`0` and `0` were recorded with no stated method and stopped being true the moment `Sentinel.cond`
+was published. Each row below names how it was counted, so the next reader can re-run it.
 
-| Measure | Count | Expressible in Tier 1 today |
-|---|---:|---|
-| Priority entries | 25 | **25** — the *shape* ports exactly |
-| Distinct conditions (`Cond.*`) | 37 | **0** |
-| Distinct actions (`Act.*`) | 32 | **0** |
+| Measure | Count | Expressible today | Method |
+|---|---:|---:|---|
+| Priority entries in `frost_tbc.lua` | 25 | **25** | the *shape* ports exactly onto `PriorityBuilder`; unchanged since Phase 4 |
+| Distinct `Cond.*` referenced by `frost_tbc.lua` | 37 | **7** | `rg -o "Cond\.[a-z_]+" frost_tbc.lua \| sort -u`, then mapped name-by-name onto the 17 predicates `kernel/cond/init.lua` publishes |
+| …of those 7, actually converted | — | **2** | `health_below`, `health_above` (Phase 4c D5) |
+| Distinct `Act.*` referenced by `frost_tbc.lua` | 32 | **0** | same grep for `Act\.`; the kernel publishes no action vocabulary at all |
+| `Act.*` functions defined in `frost_actions.lua` | 43 | **28** are a *single* cast | body contains exactly one `H.queue_*` call and no `if` — i.e. a declarative spell entry with no plugin-local logic |
 
-**The shape is 100% declarative. The vocabulary is 0% provided.**
+The seven expressible conditions, and what each maps to:
+
+| `frost_conditions.lua` | `Sentinel.cond` |
+|---|---|
+| `health_below` / `health_above` | `health_below` / `health_above` — **converted** |
+| `in_combat` | `in_combat` |
+| `level_at_least` | `level_at_least` |
+| `mana_below` | `power_below` |
+| `player_is_moving` | `is_moving` |
+| `target_in_range` | `target_within` |
+
+**An asymmetry worth naming:** `mana_above` has no counterpart. `kernel/cond` publishes `power_below`
+and no `power_above`, while it publishes both directions for health. Nothing justifies the
+difference — it is an omission, not a decision, and it is the cheapest of the remaining 30 to close.
+
+**The shape is 100% declarative. The condition vocabulary is 19% provided (7/37) and 5% consumed
+(2/37). The action vocabulary is still 0% provided** — 28 of the 43 defined actions are a single
+cast and would need nothing but a `{ spell, target }` entry, but there is no `Act.*` surface to
+express them on.
 
 This is a more interesting result than a simple shortfall. `PriorityBuilder` — now
 `kernel/lib/priority_builder.lua`, published as `Sentinel.rotation` — already expresses the *entire*
