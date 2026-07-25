@@ -107,6 +107,11 @@ function Scheduler:new(opts)
 
     o._faults = FaultTracker:new()
     o._tick_index = 0
+    -- The tick's frozen view, RETAINED so it outlives the tick that built it (ADR 08 §13.1 item 14).
+    -- Seeded with an empty frozen snapshot rather than nil, for the same reason `tick()` hands one to
+    -- a stage whose sensor threw: a nil here would put a nil-check in every consumer, and the pre-init
+    -- window is exactly when a plugin taking a reference to `Sentinel.snapshot` would hit it.
+    o._snapshot = Snapshot.empty(0)
     return o
 end
 
@@ -243,6 +248,10 @@ function Scheduler:tick()
     -- A sensor that threw must not cost the tick its snapshot: an empty frozen snapshot is
     -- readable and honest, whereas a nil one forces every downstream consumer to nil-check.
     local frozen = builder:freeze()
+    -- Retained, not just passed. `ctx.snapshot` reaches only the handlers the scheduler itself
+    -- calls; a rotation running deep inside an ACT handler, or any plugin holding `_G.Sentinel`,
+    -- has no route to `ctx`. This assignment IS the read path behind `Sentinel.snapshot`.
+    self._snapshot = frozen
 
     local ctx = {
         tick_index = self._tick_index,
@@ -350,6 +359,16 @@ function Scheduler:_account(report)
             self._blackboard:set("system.delta_time_unit", self._clock:delta_time_unit())
         end)
     end
+end
+
+---This tick's frozen world view, readable from outside the pipeline.
+---
+---Never nil: before tick 1 it is an empty frozen snapshot. The value is the SAME object the tick's
+---stages received, so what a plugin reads is what COMMIT gated on -- a copy would answer a subtly
+---different question and drift as capture changed.
+---@return table frozen snapshot
+function Scheduler:current_snapshot()
+    return self._snapshot
 end
 
 ---@return table|nil stats, string|nil reason -- the MEASURED tick cadence (ADR 08 §13 q7)

@@ -261,6 +261,93 @@ function M.test_a_faulting_sensor_still_yields_a_usable_snapshot()
 end
 
 -- ---------------------------------------------------------------------------
+-- Retention: the frozen snapshot must OUTLIVE the tick that froze it
+-- ---------------------------------------------------------------------------
+-- ADR 08 §13.1 item 14. The snapshot existed only as a `local` inside `tick()`, reachable solely by
+-- a handler the scheduler itself called with `ctx`. Everything else in the tree -- a rotation deep
+-- inside an ACT handler, a plugin holding `_G.Sentinel` -- had no route to it, and `Sentinel.snapshot`
+-- resolved through a `Scheduler:current_snapshot()` that did not exist. Retention is the read path.
+
+--- Before the first tick there is no sensed data, but there IS a snapshot: an EMPTY frozen one.
+--- The same choice `tick()` already makes when a sensor throws -- "an empty frozen snapshot is
+--- readable and honest, whereas a nil one forces every downstream consumer to nil-check" -- applied
+--- to the interval before tick 1. A nil here would put a nil-check in every plugin.
+function M.test_current_snapshot_is_an_empty_frozen_snapshot_before_the_first_tick()
+    local sched = make_scheduler()
+    local snap = sched:current_snapshot()
+    T.assert_not_nil(snap, "there must be a snapshot to read before tick 1, not nil")
+    T.assert_true(snap:is_frozen(), "and it must be frozen, like every other snapshot")
+    T.assert_equal(snap:tick_index(), 0, "tick 0 -- nothing has been sensed yet")
+    T.assert_equal(snap:get("player.health_pct", "absent"), "absent")
+end
+
+function M.test_current_snapshot_returns_what_this_tick_sensed()
+    local sched = make_scheduler()
+    sched:register("SENSE", "vitals", function(ctx)
+        ctx.snapshot:put("player.health_pct", 0.42)
+    end)
+    sched:tick()
+
+    local snap = sched:current_snapshot()
+    T.assert_near(snap:get("player.health_pct"), 0.42, 0.0001,
+        "a caller outside the pipeline must read the same values ACT saw")
+    T.assert_equal(snap:tick_index(), 1)
+end
+
+--- The retained snapshot is the SAME object the stages read, not a copy taken afterwards. A copy
+--- would drift the moment anything about the capture changed, and would silently answer a different
+--- question than the one COMMIT gated on.
+function M.test_the_retained_snapshot_is_the_identical_object_the_stages_received()
+    local sched = make_scheduler()
+    local from_ctx = nil
+    sched:register("ACT", "reader", function(ctx) from_ctx = ctx.snapshot end)
+    sched:tick()
+    T.assert_true(sched:current_snapshot() == from_ctx,
+        "current_snapshot() must hand back the tick's frozen snapshot itself")
+end
+
+function M.test_each_tick_replaces_the_retained_snapshot()
+    local sched = make_scheduler()
+    local n = 0
+    sched:register("SENSE", "counter", function(ctx)
+        n = n + 1
+        ctx.snapshot:put("player.level", n)
+    end)
+
+    sched:tick()
+    local first = sched:current_snapshot()
+    sched:tick()
+    local second = sched:current_snapshot()
+
+    T.assert_equal(first:get("player.level"), 1)
+    T.assert_equal(second:get("player.level"), 2, "the retained snapshot must advance with the tick")
+    T.assert_false(first == second, "and must not be the same object two ticks running")
+end
+
+--- Retention must survive the failure modes the tick already handles. A sensor that throws yields
+--- an empty snapshot rather than none; retaining nil instead would reintroduce the nil-check.
+function M.test_a_faulting_sensor_still_leaves_a_readable_retained_snapshot()
+    local sched = make_scheduler()
+    sched:register("SENSE", "broken", function() error("sensor died", 0) end)
+    sched:tick()
+
+    local snap = sched:current_snapshot()
+    T.assert_not_nil(snap)
+    T.assert_equal(snap:get("player.health_pct", "absent"), "absent")
+    T.assert_equal(snap:tick_index(), 1, "the tick happened, even though its sensor did not")
+end
+
+--- The retained snapshot is handed out to arbitrary callers, so it must be as unwritable as the one
+--- the pipeline passes -- otherwise `Sentinel.snapshot` becomes a shared mutable scratchpad that
+--- every plugin can poison for the rest of the tick.
+function M.test_the_retained_snapshot_is_not_writable_by_its_readers()
+    local sched = make_scheduler()
+    sched:tick()
+    local ok = pcall(function() sched:current_snapshot():put("player.level", 70) end)
+    T.assert_false(ok, "a caller must not be able to write into the tick's frozen view")
+end
+
+-- ---------------------------------------------------------------------------
 -- COMMIT wiring
 -- ---------------------------------------------------------------------------
 
