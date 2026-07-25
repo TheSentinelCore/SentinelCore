@@ -20,6 +20,8 @@ local Timing = require("kernel/timing")
 local ControlBroker = require("kernel/control_broker")
 local EventBus = require("core/event_bus")
 local Bands = require("kernel/bands")
+local Units = require("kernel/units")
+local Snapshot = require("kernel/snapshot")
 local T = require("tests/test_util")
 
 local M = {}
@@ -32,7 +34,21 @@ local M = {}
 --- is load-bearing (§2.6: "it also uses the colon call convention, as do all `common/` modules"), so
 --- the double asserts on the receiver rather than discarding it.
 local function spell_queue_double()
-    local sq = { calls = {} }
+    local sq = { calls = {}, position_calls = {}, fast_calls = {}, fast_position_calls = {} }
+    function sq:queue_spell_target_fast(spell_id, target, priority, message)
+        self.fast_calls[#self.fast_calls + 1] = {
+            receiver_ok = (self == sq),
+            spell_id = spell_id, target = target, priority = priority, message = message,
+        }
+        return true
+    end
+    function sq:queue_spell_position_fast(spell_id, position, priority, message)
+        self.fast_position_calls[#self.fast_position_calls + 1] = {
+            receiver_ok = (self == sq),
+            spell_id = spell_id, position = position, priority = priority, message = message,
+        }
+        return true
+    end
     function sq:queue_spell_target(spell_id, target, priority, message)
         self.calls[#self.calls + 1] = {
             receiver_ok = (self == sq),
@@ -40,11 +56,21 @@ local function spell_queue_double()
         }
         return true
     end
+    --- The ground-targeted form. Recorded SEPARATELY from `calls`, because "a cast happened" is not
+    --- the assertion that matters -- a point cast routed through `queue_spell_target` would send the
+    --- position where a unit handle belongs, and a shared log could not tell the two apart.
+    function sq:queue_spell_position(spell_id, position, priority, message)
+        self.position_calls[#self.position_calls + 1] = {
+            receiver_ok = (self == sq),
+            spell_id = spell_id, position = position, priority = priority, message = message,
+        }
+        return true
+    end
     return sq
 end
 
-local PLAYER = { id = "player" }
-local TARGET = { id = "target" }
+local PLAYER = { id = "player", get_guid = function() return "guid-player" end }
+local TARGET = { id = "target", get_guid = function() return "guid-target" end }
 
 ---@param opts table { castable?, timing?, gcd_spell? }
 local function harness(opts)
@@ -53,6 +79,12 @@ local function harness(opts)
     local timing = opts.timing or Timing:new({ now_ms = function() return 0 end })
     local sq = spell_queue_double()
     local castable_calls = {}
+    --- Units addressable only by guid: the secondary enemy Polymorph picks, the low-health add
+    --- Fire Blast finishes. Neither is nameable in the closed symbolic vocabulary.
+    local units_by_guid = {
+        ["guid-add-1"] = { id = "low-health-add", get_guid = function() return "guid-add-1" end },
+        ["guid-player"] = PLAYER,
+    }
 
     Executors.install({
         intent_queue = queue,
@@ -60,6 +92,7 @@ local function harness(opts)
         spell_queue = sq,
         object_manager = {
             get_local_player = function() return PLAYER end,
+            get_object_from_guid = function(guid) return units_by_guid[guid] end,
         },
         unit_target = function() return TARGET end,
         spell_helper = {
@@ -75,7 +108,10 @@ local function harness(opts)
         input = { set_target = function(unit) sq.last_set_target = unit return true end },
     })
 
-    return { queue = queue, timing = timing, sq = sq, castable_calls = castable_calls }
+    return {
+        queue = queue, timing = timing, sq = sq,
+        castable_calls = castable_calls, units_by_guid = units_by_guid,
+    }
 end
 
 local function cast_intent(overrides)
@@ -92,6 +128,15 @@ local function first_rejection(report)
     if not r then return nil end
     return r.gate, r.reason
 end
+
+--- The tick the guid-addressed tests below mint and commit under.
+---
+--- A guid ref carries a generation stamp re-checked at commit (see the UnitRef section further
+--- down), so a test that means to pin RESOLUTION has to carry a valid stamp -- otherwise it stops
+--- at `unstamped_unit_ref` and measures the freshness check instead of the thing it was written
+--- for. One constant so the two cannot drift apart per-test.
+local TICK = 1
+local function this_tick() return Snapshot.empty(TICK) end
 
 -- ---------------------------------------------------------------------------
 -- The band -> spell_queue mapping (§6.3)
@@ -287,6 +332,217 @@ function M.test_a_cast_at_a_vanished_target_is_refused()
     local gate, reason = first_rejection(report)
     T.assert_equal(gate, "castable")
     T.assert_equal(reason, "unit_unresolved")
+end
+
+-- ---------------------------------------------------------------------------
+-- Ground-targeted casts, and units the closed vocabulary cannot name
+-- ---------------------------------------------------------------------------
+-- Both gaps were found by RE-MEASURING the frost cast path for Phase 4c D4 rather than by reading
+-- the kernel. The rotation has 38 cast sites; the `cast` intent as built could express 30 of them.
+--
+--   * SIX are GROUND-TARGETED (Blizzard x3, Flamestrike x3). `cast_executor` only ever called
+--     `queue_spell_target`, so a point cast had no route through the kernel at all -- even though
+--     the SDK documents `spell_queue:queue_spell_position(spell_id, position, priority, message)`.
+--   * TWO name a unit that is neither the player, the current target, nor the pet: Polymorph picks
+--     a secondary enemy and `finish_low_add` casts at `combat.low_health_add`. The symbolic
+--     vocabulary is closed (`player`/`target`/`pet`) and a handle may never ride in a payload
+--     (§2.7), so there was no way to say "that one".
+--
+-- A GUID is the resolution: it is a VALUE, so it satisfies §2.7, and the executor turns it back
+-- into a handle at commit -- inside the tick, at the moment of use, which is what the SDK asks for.
+
+local POINT = { x = 10.5, y = -20.25, z = 3.0 }
+
+function M.test_a_ground_targeted_cast_reaches_queue_spell_position()
+    local h = harness()
+    h.queue:submit(cast_intent({ payload = { spell_id = 10, point = POINT } }))
+    local report = h.queue:commit({})
+
+    T.assert_equal(#report.committed, 1, "a well-formed point cast must commit")
+    T.assert_equal(#h.sq.position_calls, 1, "and must reach queue_spell_position, not _target")
+    T.assert_equal(#h.sq.calls, 0, "a point cast is not a unit cast")
+    T.assert_equal(h.sq.position_calls[1].spell_id, 10)
+    T.assert_equal(h.sq.position_calls[1].position.x, 10.5)
+    T.assert_equal(h.sq.position_calls[1].priority, 1, "§6.3 band mapping applies to points too")
+    T.assert_true(h.sq.position_calls[1].receiver_ok, "colon convention, same as every common/ module")
+end
+
+function M.test_a_ground_targeted_cast_with_a_malformed_point_is_refused_by_name()
+    local h = harness()
+    h.queue:submit(cast_intent({ payload = { spell_id = 10, point = { x = 1, y = 2 } } }))
+    local report = h.queue:commit({})
+    T.assert_equal(#report.committed, 0)
+    local gate, reason = first_rejection(report)
+    T.assert_equal(gate, "castable")
+    T.assert_equal(reason, "malformed_point")
+end
+
+--- The reduced check, stated rather than implied. `is_spell_castable` takes a TARGET UNIT; a patch
+--- of ground is not one. So a point cast is asked the only question the SDK can answer about it --
+--- do I know this spell and is it off cooldown -- with facing and range skipped. Range TO THE POINT
+--- is NOT verified by the kernel, and pretending otherwise would be worse than saying so.
+function M.test_a_ground_targeted_cast_is_still_asked_whether_the_spell_is_castable_at_all()
+    local h = harness()
+    h.queue:submit(cast_intent({ payload = { spell_id = 10, point = POINT } }))
+    h.queue:commit({})
+
+    T.assert_equal(#h.castable_calls, 1, "the spell itself must still be checked")
+    local call = h.castable_calls[1]
+    T.assert_equal(call.spell_id, 10)
+    T.assert_true(call.caster == PLAYER)
+    T.assert_true(call.skip_facing, "no unit to face")
+    T.assert_true(call.skip_range, "the SDK cannot answer range to a point through this call")
+end
+
+function M.test_a_ground_targeted_cast_the_spellbook_refuses_does_not_reach_the_queue()
+    local h = harness({ castable = false })
+    h.queue:submit(cast_intent({ payload = { spell_id = 10, point = POINT } }))
+    local report = h.queue:commit({})
+    T.assert_equal(#report.committed, 0)
+    T.assert_equal(#h.sq.position_calls, 0)
+    local _, reason = first_rejection(report)
+    T.assert_equal(reason, "not_castable")
+end
+
+function M.test_a_cast_addressed_by_guid_resolves_the_unit_at_commit()
+    local h = harness()
+    h.queue:submit(cast_intent({
+        payload = { spell_id = 116, unit_guid = "guid-add-1", unit_ref_tick = TICK },
+    }))
+    local report = h.queue:commit(this_tick())
+
+    T.assert_equal(#report.committed, 1)
+    T.assert_equal(#h.sq.calls, 1)
+    T.assert_true(h.sq.calls[1].target == h.units_by_guid["guid-add-1"],
+        "the guid must resolve to the live handle the object manager hands back")
+end
+
+--- A guid whose object has gone -- the add died between the rotation choosing it and COMMIT running
+--- -- must be refused, not passed as nil into a call that "only sends a packet". This is the whole
+--- reason the guid is resolved at commit rather than at submit.
+--- Self-ness is decided by the KERNEL, not asserted by the caller.
+---
+--- A self-buff addressed by guid must still skip facing and range, or every one of them is refused
+--- for not facing itself. The plugin cannot make that call without reading `player.object` off the
+--- blackboard -- a raw handle read the namespace audit counts, and one the kernel does not need it
+--- to make, because the executor is already holding the player.
+function M.test_a_guid_that_resolves_to_the_player_is_treated_as_a_self_cast()
+    local h = harness()
+    h.queue:submit(cast_intent({
+        payload = { spell_id = 27088, unit_guid = "guid-player", unit_ref_tick = TICK },
+    }))
+    h.queue:commit(this_tick())
+
+    T.assert_equal(#h.castable_calls, 1)
+    T.assert_true(h.castable_calls[1].skip_facing, "a self-cast has no facing to check")
+    T.assert_true(h.castable_calls[1].skip_range, "nor any range")
+end
+
+function M.test_a_guid_that_resolves_to_someone_else_is_not_a_self_cast()
+    local h = harness()
+    h.queue:submit(cast_intent({
+        payload = { spell_id = 116, unit_guid = "guid-add-1", unit_ref_tick = TICK },
+    }))
+    h.queue:commit(this_tick())
+    T.assert_false(h.castable_calls[1].skip_facing, "facing must be checked on another unit")
+    T.assert_false(h.castable_calls[1].skip_range)
+end
+
+function M.test_a_cast_addressed_by_a_guid_that_no_longer_resolves_is_refused()
+    local h = harness()
+    h.queue:submit(cast_intent({
+        payload = { spell_id = 116, unit_guid = "guid-vanished", unit_ref_tick = TICK },
+    }))
+    local report = h.queue:commit(this_tick())
+    T.assert_equal(#report.committed, 0)
+    T.assert_equal(#h.sq.calls, 0)
+    local gate, reason = first_rejection(report)
+    T.assert_equal(gate, "castable")
+    T.assert_equal(reason, "unit_unresolved")
+end
+
+--- Naming a unit two ways at once is a bug in the caller, not a preference to resolve silently.
+function M.test_a_cast_naming_both_a_point_and_a_unit_is_refused()
+    local h = harness()
+    h.queue:submit(cast_intent({ payload = { spell_id = 10, point = POINT, unit = "target" } }))
+    local report = h.queue:commit({})
+    T.assert_equal(#report.committed, 0)
+    local _, reason = first_rejection(report)
+    T.assert_equal(reason, "overspecified_cast_destination")
+end
+
+--- The third gap the re-measurement found. `spell_dispatcher.lua` routes `opts.fast` to
+--- `queue_spell_target_fast`, and three frost entries use it (Ice Barrier, Icy Veins, Cold Snap) --
+--- instants where the dispatcher's post-queue snapshot verification costs more than it proves.
+--- Without a `fast` payload the conversion would have quietly downgraded all three to the verifying
+--- form, which is a behaviour change wearing no name.
+function M.test_a_fast_cast_reaches_the_fast_queue_verb()
+    local h = harness()
+    h.queue:submit(cast_intent({ payload = { spell_id = 27101, unit = "player", fast = true } }))
+    local report = h.queue:commit({})
+
+    T.assert_equal(#report.committed, 1)
+    T.assert_equal(#h.sq.fast_calls, 1, "a fast cast must reach queue_spell_target_fast")
+    T.assert_equal(#h.sq.calls, 0, "and must not also take the verifying path")
+    T.assert_equal(h.sq.fast_calls[1].spell_id, 27101)
+end
+
+function M.test_a_fast_ground_targeted_cast_reaches_the_fast_position_verb()
+    local h = harness()
+    h.queue:submit(cast_intent({ payload = { spell_id = 10, point = POINT, fast = true } }))
+    h.queue:commit({})
+    T.assert_equal(#h.sq.fast_position_calls, 1)
+    T.assert_equal(#h.sq.position_calls, 0)
+end
+
+--- An SDK without the fast verb must be REFUSED, not silently served by the slow one. A rotation
+--- that asked for `fast` did so because the verifying round-trip was the cost it was avoiding.
+function M.test_a_fast_cast_is_refused_when_the_sdk_has_no_fast_verb()
+    local queue = IntentQueue:new()
+    Executors.install({
+        intent_queue = queue,
+        timing = Timing:new({ now_ms = function() return 0 end }),
+        spell_queue = { queue_spell_target = function() return true end },
+        object_manager = { get_local_player = function() return PLAYER end },
+        unit_target = function() return TARGET end,
+        spell_helper = { is_spell_castable = function() return true end },
+        input = {},
+    })
+    queue:submit(cast_intent({ payload = { spell_id = 27101, unit = "player", fast = true } }))
+    local report = queue:commit({})
+    T.assert_equal(#report.committed, 0)
+    T.assert_equal(report.failed[1].reason, "no_spell_queue")
+end
+
+--- The SDK's `message` argument is a debugging breadcrumb ("Leave Breadcrumbs", input.md §137), and
+--- the dispatcher era filled it with the ACTION name -- `frostbolt`, `emergency_blink`. Sending the
+--- plugin id instead would make every cast in the log read `sentinel.rotation.mage_frost`, which
+--- identifies the plugin and not the decision. ADR §13.1 item 16 already notes that named refusals
+--- observed by nobody are worth little; anonymising the accepted ones too would be the same loss.
+function M.test_a_cast_carries_its_action_label_as_the_sdk_breadcrumb()
+    local h = harness()
+    h.queue:submit(cast_intent({
+        payload = { spell_id = 116, unit = "target", label = "ice_lance_frozen" },
+    }))
+    h.queue:commit({})
+    T.assert_equal(h.sq.calls[1].message, "ice_lance_frozen")
+end
+
+function M.test_a_cast_without_a_label_falls_back_to_the_owner()
+    local h = harness()
+    h.queue:submit(cast_intent())
+    h.queue:commit({})
+    T.assert_equal(h.sq.calls[1].message, "rotations.mage_frost",
+        "an unlabelled cast is still attributable, just less precisely")
+end
+
+function M.test_a_cast_naming_no_destination_at_all_is_refused()
+    local h = harness()
+    h.queue:submit(cast_intent({ payload = { spell_id = 10 } }))
+    local report = h.queue:commit({})
+    T.assert_equal(#report.committed, 0)
+    local _, reason = first_rejection(report)
+    T.assert_equal(reason, "no_cast_destination")
 end
 
 -- ---------------------------------------------------------------------------
@@ -727,6 +983,157 @@ function M.test_a_pet_attack_at_a_vanished_target_is_refused()
     local report = queue:commit({})
     T.assert_equal(#report.rejected, 1)
     T.assert_equal(report.rejected[1].reason, "unit_unresolved")
+end
+
+-- ---------------------------------------------------------------------------
+-- The generation-stamped UnitRef (ADR 08 §2.7, §6.1; Phase 4d D5)
+-- ---------------------------------------------------------------------------
+--
+-- ================================================================================
+-- WHAT THESE PIN, AND WHY THE LEASE GENERATION DOES NOT ALREADY COVER IT
+-- ================================================================================
+-- A guid is a VALUE, so it may ride in a payload -- but a value has no expiry, and that is the
+-- whole hole. The lease generation cannot close it: a lease legitimately spans many ticks (its TTL
+-- is counted in ticks), so an intent submitted in tick N+5 under a lease granted in tick N passes
+-- the generation check by design. A guid CACHED in tick N and submitted in tick N+5 therefore
+-- commits a packet aimed by reasoning five ticks old, and every existing check says yes.
+--
+-- So the ref carries its OWN stamp, minted by the kernel against the tick's frozen snapshot and
+-- re-checked at commit against the snapshot COMMIT is running under. Two tests, deliberately a
+-- pair: the refusal alone could be satisfied by a blanket no, and a blanket no would silently
+-- disable every guid-addressed cast in the frost rotation.
+--
+-- ================================================================================
+-- WHAT THESE TESTS CANNOT SEE
+-- ================================================================================
+--   * THEY SAY NOTHING ABOUT THE UNIT. A ref minted this tick proves only WHEN it was minted. The
+--     mob may have died, moved out of range, or been replaced by another entity that inherited
+--     nothing but the guid's stability. `unit_unresolved` (pinned separately, above) is the only
+--     check that speaks to existence, and even that is a resolve, not a liveness proof.
+--   * THEY DO NOT PROVE THE ROTATION MINTS. `frost_support.name_unit` is covered on its own side;
+--     these drive the kernel through hand-built payloads, which is what makes the refusal
+--     attributable to the executor rather than to the caller.
+
+local ADD = { id = "low-health-add", get_guid = function() return "guid-add-1" end }
+
+--- Mint through the KERNEL, exactly as a plugin would. Built by hand nowhere: a test that
+--- hand-writes `{ unit_guid = ..., unit_ref_tick = ... }` would keep passing after the mint site
+--- stopped producing that shape.
+local function mint(unit, tick)
+    return Units:new():mint_ref(Snapshot.empty(tick), unit)
+end
+
+function M.test_a_unit_ref_minted_last_tick_is_refused()
+    local h = harness()
+    local guid, stamp = mint(ADD, 7)
+    h.queue:submit(cast_intent({
+        payload = { spell_id = 116, unit_guid = guid, unit_ref_tick = stamp },
+    }))
+    -- COMMIT runs one tick later. The lease is irrelevant here -- the point is that a ref which
+    -- survived into the next tick is refused even though everything else about the intent is fine.
+    local report = h.queue:commit(Snapshot.empty(8))
+
+    T.assert_equal(#report.committed, 0, "a ref minted last tick must not commit")
+    T.assert_equal(#h.sq.calls, 0, "and nothing may reach the SDK boundary")
+    local gate, reason = first_rejection(report)
+    T.assert_equal(gate, "castable", "the refusal must name the gate that made it")
+    T.assert_equal(reason, "stale_unit_ref",
+        "with a reason distinguishable from `unit_unresolved` (the unit is gone) and "
+        .. "`unstamped_unit_ref` (the caller never minted)")
+end
+
+--- THE POSITIVE TWIN. Without it, `stale_unit_ref` could be implemented as a blanket refusal of
+--- every guid-addressed cast and this suite would still be green -- while the frost rotation, which
+--- names EVERY cast target by guid, would stop casting entirely.
+function M.test_a_unit_ref_minted_this_tick_commits()
+    local h = harness()
+    local guid, stamp = mint(ADD, 7)
+    h.queue:submit(cast_intent({
+        payload = { spell_id = 116, unit_guid = guid, unit_ref_tick = stamp },
+    }))
+    local report = h.queue:commit(Snapshot.empty(7))
+
+    T.assert_equal(#report.committed, 1, "a ref minted this tick must commit: " ..
+        tostring(report.rejected[1] and report.rejected[1].reason))
+    T.assert_equal(#h.sq.calls, 1)
+    T.assert_true(h.sq.calls[1].target == h.units_by_guid["guid-add-1"],
+        "and must still resolve to the live handle, not to the guid string")
+end
+
+--- THE ESCAPE HATCH, CLOSED. An unstamped guid is the shape that existed before this deliverable:
+--- resolved verbatim in any tick. It is refused rather than grandfathered, for the reason
+--- `no_castable_check` is refused -- an absent check is not permission, and a stamp that may be
+--- omitted is a stamp that is never enforced.
+function M.test_a_guid_carried_without_a_generation_stamp_is_refused()
+    local h = harness()
+    h.queue:submit(cast_intent({ payload = { spell_id = 116, unit_guid = "guid-add-1" } }))
+    local report = h.queue:commit(Snapshot.empty(7))
+
+    T.assert_equal(#report.committed, 0)
+    local gate, reason = first_rejection(report)
+    T.assert_equal(gate, "castable")
+    T.assert_equal(reason, "unstamped_unit_ref")
+end
+
+--- A snapshot that cannot say what tick it is fails CLOSED. The alternative -- treating an
+--- unanswerable tick as "close enough" -- would make the whole check evaporate wherever the
+--- snapshot is a stub, which is precisely where nobody is looking.
+function M.test_a_ref_is_refused_when_the_snapshot_cannot_name_the_tick()
+    local h = harness()
+    local guid, stamp = mint(ADD, 7)
+    h.queue:submit(cast_intent({
+        payload = { spell_id = 116, unit_guid = guid, unit_ref_tick = stamp },
+    }))
+    local report = h.queue:commit({})
+
+    T.assert_equal(#report.committed, 0)
+    local _, reason = first_rejection(report)
+    T.assert_equal(reason, "no_tick_index")
+end
+
+--- THE STAMP IS THE KERNEL'S, NOT THE CALLER'S. The caller hands over a handle and a snapshot; it
+--- never chooses the number. Handing an OLD snapshot is therefore not a bypass -- it yields an old
+--- stamp, which commit then refuses -- and that is the property this asserts.
+function M.test_the_kernel_stamps_the_ref_from_the_snapshots_tick_index()
+    local guid, stamp = mint(ADD, 42)
+    T.assert_equal(guid, "guid-add-1")
+    T.assert_equal(stamp, 42, "the stamp must be the snapshot's tick index, nothing else")
+
+    local _, older = mint(ADD, 41)
+    T.assert_equal(older, 41, "a caller reasoning against an older snapshot gets an older stamp")
+end
+
+--- FLAT SCALARS, NOT A NESTED REF TABLE. `IntentQueue:dedupe_key` flattens exactly ONE level with
+--- `tostring(payload[k])`, so a `{ guid, generation }` table would key on its ADDRESS: two refs to
+--- the SAME unit would dedupe as distinct, and the same ref submitted twice would not dedupe at
+--- all. Pinned on the mint's return shape because that is what decides how callers store it.
+function M.test_a_minted_ref_is_two_scalars_so_it_survives_dedupe()
+    local guid, stamp = mint(ADD, 7)
+    T.assert_true(type(guid) ~= "table", "the guid must be a scalar, not a wrapper table")
+    T.assert_equal(type(stamp), "number", "and the stamp a plain number")
+
+    -- Two intents naming the same unit in the same tick must collapse to one packet.
+    local h = harness()
+    for _ = 1, 2 do
+        h.queue:submit(cast_intent({
+            payload = { spell_id = 116, unit_guid = guid, unit_ref_tick = stamp },
+        }))
+    end
+    local report = h.queue:commit(Snapshot.empty(7))
+    T.assert_equal(#report.committed, 1, "identical refs must dedupe to one")
+    T.assert_equal(#report.deduped, 1)
+end
+
+--- A handle with no `get_guid` mints NOTHING rather than a half-formed ref. The caller then has no
+--- payload to build, which is the loud failure -- a ref carrying a stamp and a nil guid would be
+--- refused one stage later as `no_cast_destination`, blaming the wrong thing.
+function M.test_a_handle_that_cannot_name_itself_mints_no_ref()
+    local guid, stamp = Units:new():mint_ref(Snapshot.empty(7), { id = "no-guid-here" })
+    T.assert_nil(guid)
+    T.assert_nil(stamp)
+
+    local nothing = Units:new():mint_ref(Snapshot.empty(7), nil)
+    T.assert_nil(nothing)
 end
 
 -- ---------------------------------------------------------------------------

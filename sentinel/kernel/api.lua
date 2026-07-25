@@ -79,7 +79,10 @@ Api.KERNEL_CAPABILITIES = {
     ["bt"] = true,          -- behaviour-tree library
     ["rotation"] = true,    -- PriorityBuilder, the Tier-1 rotation DSL (§5.4)
     ["timing.gcd"] = true,  -- kernel/timing.lua: gcd_duration_ms, gcd_remaining_est (§2.5)
-    ["units"] = true,       -- kernel/units.lua: player, target, hostiles_within
+    -- `mint_ref` joined in Phase 4d: naming a unit the closed symbolic vocabulary cannot reach is
+    -- the kernel's job precisely because the ref has to be generation-stamped, and a stamp a
+    -- plugin applies to itself is not a stamp.
+    ["units"] = true,       -- kernel/units.lua: player, target, hostiles_within, mint_ref
     ["spells"] = true,      -- kernel/spells.lua: is_castable, is_in_los, find_aoe_position
     -- `forecast` joined in Phase 4d D1, when the IZI bridge stopped being a blackboard key. Six
     -- readers needed it and four of them are handed only a blackboard, so a service was the only
@@ -116,11 +119,17 @@ Api.KERNEL_CAPABILITIES = {
 --- It catches OVER-claiming -- a capability naming a member that does not exist. It cannot catch
 --- UNDER-declaring: a member that exists on the surface and is named by no binding.
 ---
---- A plugin discovers what it may call from its manifest's `requires` and from this table, so a
---- verb that works but is undeclared is one a careful plugin author will never find, and one a
---- careless one will depend on without ever having been admitted for it. Recorded rather than
---- fixed, because the closing assertion belongs in the capability-resolution suite that owns the
---- other direction.
+--- MEASURED, not argued (Phase 4d D5, re-measured at the end of the phase). With `mint_ref` deleted
+--- from the `units` members list below and left present on `kernel/units.lua`, the FULL suite stays
+--- green at 869 -- including
+--- `tests/kernel/test_capability_resolution.lua`, whose whole job this is. Nothing anywhere asserts
+--- that the surface holds no more than it declares.
+---
+--- That gap matters most for exactly the kind of member added here. A plugin discovers what it may
+--- call from its manifest's `requires` and from this table; a verb that works but is undeclared is
+--- one a careful plugin author will never find, and one a careless one will depend on without ever
+--- having been admitted for it. Recorded rather than fixed, because the closing assertion belongs
+--- in the capability-resolution suite that owns the other direction.
 Api.CAPABILITY_BINDINGS = {
     ["control"] = { path = { "control" },
         members = { "acquire", "release", "delegate", "who_owns" } },
@@ -140,8 +149,12 @@ Api.CAPABILITY_BINDINGS = {
     ["rotation"] = { path = { "rotation" }, members = { "new" } },
     ["timing.gcd"] = { path = { "timing" },
         members = { "gcd_duration_ms", "gcd_remaining_est", "is_gcd_ready" } },
+    -- `mint_ref` is named here and not merely in the capability comment: it is the ONLY sanctioned
+    -- way for a plugin to put an arbitrary unit into an intent payload, so a surface that claimed
+    -- `units` while `mint_ref` was absent would admit a rotation that then has no legal way to aim
+    -- at the add it chose. That is exactly the defect this table's header describes.
     ["units"] = { path = { "units" },
-        members = { "player", "target", "hostiles_within" } },
+        members = { "player", "target", "hostiles_within", "mint_ref" } },
     ["spells"] = { path = { "spells" },
         members = { "is_castable", "is_in_los", "find_aoe_position" } },
     -- `is_available` is named alongside the four answers deliberately. Every accessor returns nil

@@ -47,9 +47,17 @@
 --
 -- This is logged as an API gap (08a_API_GAPS.md): the vocabulary is currently two words, and a
 -- rotation that wants to cast at "the add that is casting" cannot say so.
+--
+-- The escape hatch from that closed vocabulary is a GUID, and a guid is a value with no expiry --
+-- so it carries a generation stamp minted by `kernel/units.lua` and re-checked here. See
+-- `resolve_unit_by_guid` below for what that check does and does not prove.
 
 local Bands = require("kernel/bands")
 local MovementRelease = require("kernel/movement_release")
+-- For `generation_of` and the two payload field names. The re-check MUST read the tick the same way
+-- the mint wrote it, and a second local reading here is exactly how the two drift into
+-- always-equal or never-equal.
+local Units = require("kernel/units")
 
 local Executors = {}
 
@@ -129,6 +137,136 @@ local function resolve_unit(deps, reference)
     return nil, false
 end
 
+---Resolve a unit named by GUID.
+---
+---The escape hatch from the closed symbolic vocabulary, added in Phase 4c when re-measuring the
+---frost cast path found two sites naming a unit that is neither player, target nor pet -- Polymorph's
+---secondary enemy and `combat.low_health_add`. A guid is a VALUE, so it may ride in a payload
+---without violating §2.7, and it is resolved HERE, at commit, in the tick that uses it: exactly the
+---"guard before every use" discipline the SDK asks for. A handle captured at submit time and stored
+---for one stage is the unsound artefact §2.7 forbids.
+local function resolve_unit_by_guid(deps, guid)
+    local om = deps.object_manager
+    if not om or type(om.get_object_from_guid) ~= "function" then return nil end
+    local ok, unit = pcall(om.get_object_from_guid, guid)
+    if not ok then return nil end
+    return unit
+end
+
+---Re-check the generation stamp a guid ref carries (Phase 4d D5).
+---
+---================================================================================
+---WHY A GUID NEEDS A STAMP WHEN THE LEASE ALREADY HAS A GENERATION
+---================================================================================
+---The lease generation closes the REVOCATION race: an intent emitted under a lease that died later
+---in the same tick does not commit. It cannot close the STALENESS one, and not by oversight -- a
+---lease is measured in ticks and is SUPPOSED to span many of them, so an intent submitted five
+---ticks after the grant passes the lease check by design. A guid cached in tick N and submitted in
+---tick N+5 rides that entirely legitimate lease while aiming by reasoning five ticks old.
+---
+---So the ref carries its own generation, minted against the snapshot the caller reasoned against
+---and compared here against the snapshot COMMIT is running under. `kernel/units.lua` owns both the
+---mint and the reading of the tick; this is only the comparison.
+---
+---Three distinct refusals, because they are three different bugs in three different places:
+---  * `unstamped_unit_ref` -- the caller built the payload by hand instead of minting. FAIL CLOSED,
+---    for the reason `no_castable_check` does: a stamp that may be omitted is never enforced, and
+---    grandfathering the pre-4d shape would leave the hole open under a new name.
+---  * `no_tick_index`      -- the snapshot cannot say what tick it is, so the check cannot run.
+---    Also closed. Treating an unanswerable tick as "close enough" would evaporate the check
+---    wherever the snapshot is a stub, which is precisely where nobody is looking.
+---  * `stale_unit_ref`     -- minted in another tick. The case the deliverable exists for.
+---
+---================================================================================
+---WHAT THIS CHECK CANNOT SEE
+---================================================================================
+---It proves the ref was minted THIS tick, and nothing else:
+---  * NOT that the unit still exists -- the mob can die between ACT and COMMIT in the same tick.
+---    `unit_unresolved` below is the separate refusal that speaks to that, and it is a resolve
+---    rather than a liveness proof even then.
+---  * NOT that the unit is in range or in front of the caster. That is the castable gate, asked of
+---    the SDK, and it runs after this.
+---  * NOT that the unit is the same entity the rotation reasoned about. A guid is stable; the world
+---    is not. Fear, phasing, mind control and CC all leave the guid untouched and the reasoning
+---    void, and this check reads such a ref as fresh -- because it IS fresh.
+---@return true|nil ok, string|nil reason
+local function check_unit_ref_generation(payload, snapshot)
+    local stamped = payload[Units.REF_TICK_FIELD]
+    if type(stamped) ~= "number" then return nil, "unstamped_unit_ref" end
+    local now = Units.generation_of(snapshot)
+    if now == nil then return nil, "no_tick_index" end
+    if stamped ~= now then return nil, "stale_unit_ref" end
+    return true
+end
+
+---A world position: three numbers, all present.
+local function is_point(value)
+    return type(value) == "table"
+        and type(value.x) == "number"
+        and type(value.y) == "number"
+        and type(value.z) == "number"
+end
+
+---What a `cast` intent is aimed at, and how it must be sent.
+---
+---A cast names EXACTLY ONE destination. Naming two is a caller bug and is refused rather than
+---resolved by precedence, because a silent precedence rule means the site that got it wrong keeps
+---working while aiming somewhere the author did not choose.
+---
+---`unit_ref_tick` is NOT counted as naming a destination -- it is the stamp on `unit_guid`, not a
+---fourth way to name a unit, and counting it would make every correctly minted ref look
+---overspecified.
+---@param snapshot table|nil the snapshot COMMIT is running under -- the authority the guid ref's
+---       generation stamp is re-checked against
+---@return table|nil resolved { kind = "unit"|"point", unit?, is_self?, point? }
+---@return string|nil reason
+local function resolve_cast_destination(deps, payload, snapshot)
+    local named = 0
+    if payload.unit ~= nil then named = named + 1 end
+    if payload.unit_guid ~= nil then named = named + 1 end
+    if payload.point ~= nil then named = named + 1 end
+    if named == 0 then return nil, "no_cast_destination" end
+    if named > 1 then return nil, "overspecified_cast_destination" end
+
+    if payload.point ~= nil then
+        if not is_point(payload.point) then return nil, "malformed_point" end
+        return { kind = "point", point = payload.point }
+    end
+
+    if payload.unit_guid ~= nil then
+        -- BEFORE the object-manager round-trip: a stale ref is refused on a table lookup rather
+        -- than on an SDK call, the same cheap-checks-first ordering the gates themselves use.
+        local fresh, stale_reason = check_unit_ref_generation(payload, snapshot)
+        if not fresh then return nil, stale_reason end
+
+        local unit = resolve_unit_by_guid(deps, payload.unit_guid)
+        if unit == nil then return nil, "unit_unresolved" end
+        -- SELF-NESS IS THE KERNEL'S CALL, not the caller's. A self-buff addressed by guid still has
+        -- no facing or range to check, and a plugin could only work that out by reading
+        -- `player.object` off the blackboard -- a raw handle read the namespace audit counts, made
+        -- to answer a question the executor is already holding the player to answer.
+        --
+        -- Compared by GUID rather than by table identity: `get_object_from_guid` is not documented
+        -- to hand back the same pointer `get_local_player` did, so `==` would silently report
+        -- "not self" for the player.
+        local player = resolve_player(deps)
+        local player_guid = nil
+        if player ~= nil and type(player.get_guid) == "function" then
+            local ok, guid = pcall(player.get_guid, player)
+            if ok then player_guid = guid end
+        end
+        return {
+            kind = "unit",
+            unit = unit,
+            is_self = player_guid ~= nil and player_guid == payload.unit_guid,
+        }
+    end
+
+    local unit, is_self = resolve_unit(deps, payload.unit)
+    if unit == nil then return nil, "unit_unresolved" end
+    return { kind = "unit", unit = unit, is_self = is_self }
+end
+
 -- ---------------------------------------------------------------------------
 -- Gates
 -- ---------------------------------------------------------------------------
@@ -155,14 +293,17 @@ end
 ---it is the only thing in the SDK that knows the real range table. Re-implementing that from
 ---snapshot positions would be a second source of truth that drifts.
 local function castable_gate(deps)
-    return function(intent)
+    -- The snapshot is the SECOND argument `IntentQueue:commit` hands every gate. It is taken here
+    -- rather than injected because it is per-TICK, not per-app: a captured one would be the stale
+    -- reasoning this gate now refuses.
+    return function(intent, snapshot)
         if intent.type ~= "cast" then return true end
         local payload = intent.payload or {}
         local caster = resolve_player(deps)
         if caster == nil then return false, "no_player" end
 
-        local unit, is_self = resolve_unit(deps, payload.unit)
-        if unit == nil then return false, "unit_unresolved" end
+        local destination, reason = resolve_cast_destination(deps, payload, snapshot)
+        if destination == nil then return false, reason end
 
         local helper = deps.spell_helper
         if not helper or type(helper.is_spell_castable) ~= "function" then
@@ -171,10 +312,27 @@ local function castable_gate(deps)
             return false, "no_castable_check"
         end
 
-        -- A self-cast has no meaningful facing or range, so both checks are skipped -- otherwise
-        -- every self-buff would be rejected for not facing itself.
+        -- A GROUND-TARGETED cast is asked the only question the SDK can answer about it. It has no
+        -- target unit, and `is_spell_castable` takes one -- so the caster stands in for the unit
+        -- and BOTH facing and range are skipped. That reduces the check to "do I know this spell,
+        -- and is it off cooldown".
+        --
+        -- STATED LIMIT: the kernel does NOT verify that the point is in range. Nothing in the SDK
+        -- answers that through this call, and a gate that appeared to check it would be trusted for
+        -- something it never did. The rotation picks the point; the spell queue's own refusal is the
+        -- backstop.
+        local unit, skip_facing, skip_range
+        if destination.kind == "point" then
+            unit, skip_facing, skip_range = caster, true, true
+        else
+            -- A self-cast has no meaningful facing or range, so both checks are skipped --
+            -- otherwise every self-buff would be rejected for not facing itself.
+            unit = destination.unit
+            skip_facing, skip_range = destination.is_self, destination.is_self
+        end
+
         local ok, castable = pcall(
-            helper.is_spell_castable, payload.spell_id, caster, unit, is_self, is_self)
+            helper.is_spell_castable, payload.spell_id, caster, unit, skip_facing, skip_range)
         if not ok then return false, "castable_check_error" end
         -- A LITERAL `true`, not merely truthy. `shared/spell_helper.lua` returns the string
         -- `SpellHelper.UNKNOWN` when the spell-book helper is unresolved, precisely so callers can
@@ -198,13 +356,8 @@ end
 -- the kernel does not know where the character may legally look. Inventing a check it cannot
 -- perform would be worse than stating the limit, because the next reader would trust it.
 
----A world position: three numbers, all present.
-local function is_point(value)
-    return type(value) == "table"
-        and type(value.x) == "number"
-        and type(value.y) == "number"
-        and type(value.z) == "number"
-end
+-- `is_point` is defined once, up with cast-destination resolution: `face` and a ground-targeted
+-- `cast` ask the same question of the same shape, and two copies is how the two answers drift.
 
 local function face_gate()
     return function(intent)
@@ -311,20 +464,67 @@ end
 -- ---------------------------------------------------------------------------
 
 local function cast_executor(deps)
-    return function(intent)
+    -- `snapshot` for the same reason the castable gate takes it: `resolve_cast_destination` runs
+    -- again here, and the guid ref's generation must be re-checked against the tick that is
+    -- actually committing, not against one captured at install time.
+    return function(intent, snapshot)
         local payload = intent.payload or {}
-        local unit = resolve_unit(deps, payload.unit)
-        if unit == nil then return false, "unit_unresolved" end
+        local destination, reason = resolve_cast_destination(deps, payload, snapshot)
+        if destination == nil then return false, reason end
 
+        -- ================================================================================
+        -- FOUR VERBS, ONE PER (DESTINATION x SPEED) COMBINATION -- AND `fast` IS A DELIVERY
+        -- VARIANT, NOT A SECOND INTENT TYPE WEARING ONE NAME
+        -- ================================================================================
+        -- The distinction matters because ADR 08 §3.2 makes an intent's TYPE the thing a channel
+        -- and a lease attach to. `fast` changes NEITHER: no gate reads it. `gcd_gate` branches on
+        -- `payload.off_gcd`, `castable_gate` branches on neither, and the channel is CASTING
+        -- either way. It selects which SDK verb carries an already-authorised packet, which is a
+        -- transport detail -- so it stays a payload flag rather than becoming `cast_fast`.
+        --
+        -- WHAT `_fast` ACTUALLY DOES. docs/SylvannasAPI/dev/libraries/spell-queue.md, on
+        -- `queue_spell_target_fast`: "Same as `queue_spell_target` but SKIPS GCD CHECKS. Use for
+        -- off-GCD abilities." This comment previously said it skipped a "post-queue verification
+        -- round-trip" -- that was the legacy SpellDispatcher's behaviour, carried over during the
+        -- Phase 4c conversion, and it is not what the SDK does. Corrected here because a comment
+        -- describing a mechanism that no longer exists is worse than none: the next reader would
+        -- reason about latency where the real axis is the GCD.
+        --
+        -- THE CONSEQUENCE, AND THE BLIND SPOT. `fast` and `off_gcd` are the same fact told to two
+        -- different authorities -- `off_gcd` tells the KERNEL's gate not to wait on the GCD,
+        -- `fast` tells the QUEUE not to. THE KERNEL DOES NOT MAKE THEM AGREE, and both mismatches
+        -- are reachable:
+        --   * `off_gcd` without `fast` -- the kernel lets it through and the queue's own GCD check
+        --     may still swallow it. Silent, because the queue's refusal is not a named gate here.
+        --   * `fast` without `off_gcd` -- the kernel's gate holds it during the GCD. Strictly
+        --     safer, so it is left alone.
+        -- Not fused, because only the rotation knows which it means and the catalog is the
+        -- corroborating authority for `off_gcd` (see `frost_support.queue_target`). Stated rather
+        -- than fixed, so the gap is visible where the verb is chosen.
+        --
+        -- Serving a `fast` request with the slow verb because the SDK lacks the fast one would
+        -- silently undo the only reason it was requested, so an absent verb is a refusal like any
+        -- other.
         local sq = deps.spell_queue
-        if not sq or type(sq.queue_spell_target) ~= "function" then
+        local verb
+        if destination.kind == "point" then
+            verb = payload.fast and "queue_spell_position_fast" or "queue_spell_position"
+        else
+            verb = payload.fast and "queue_spell_target_fast" or "queue_spell_target"
+        end
+        if not sq or type(sq[verb]) ~= "function" then
             return false, "no_spell_queue"
         end
 
         local priority = Bands.spell_queue_priority(intent.band)
+        local aim = destination.kind == "point" and destination.point or destination.unit
+        -- The SDK's `message` is a debugging breadcrumb. The rotation's action name says WHICH
+        -- decision cast; the owner only says which plugin did. Prefer the former, fall back to the
+        -- latter so an unlabelled cast is still attributable.
+        local message = payload.label or intent.owner
         -- COLON. See the header: a dot call here shifts every argument by one.
         local ok, queued = pcall(function()
-            return sq:queue_spell_target(payload.spell_id, unit, priority, intent.owner)
+            return sq[verb](sq, payload.spell_id, aim, priority, message)
         end)
         if not ok then return false, "spell_queue_error" end
         -- No fallback logic, no retry, no `queue_position` inspection (§6.3). The queue's answer is
