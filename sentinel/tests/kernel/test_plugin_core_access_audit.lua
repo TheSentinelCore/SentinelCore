@@ -343,14 +343,8 @@ local CORE_ACCESS_LEDGER = {
     ["sentinel/rotations/mage_frost/frost_actions.lua:484"] = "D2: guard for move_forward_start",
     ["sentinel/rotations/mage_frost/frost_actions.lua:485"] = "D2: core.input.move_forward_start",
 
-    -- pet_controller: the four the plan enumerated, plus their guards.
-    ["sentinel/rotations/mage_frost/pet_controller.lua:62"] = "D2: guard for pet_attack",
-    ["sentinel/rotations/mage_frost/pet_controller.lua:63"] = "D2: core.input.pet_attack",
-    ["sentinel/rotations/mage_frost/pet_controller.lua:70"] = "D2: guard for pet_cast_target_spell",
-    ["sentinel/rotations/mage_frost/pet_controller.lua:71"] = "D2: core.input.pet_cast_target_spell",
-    ["sentinel/rotations/mage_frost/pet_controller.lua:77"] = "D2: guard for set_pet_passive/follow",
-    ["sentinel/rotations/mage_frost/pet_controller.lua:78"] = "D2: core.input.set_pet_passive",
-    ["sentinel/rotations/mage_frost/pet_controller.lua:79"] = "D2: core.input.set_pet_follow",
+    -- pet_controller's four calls and their guards are GONE (Phase 4b D3): every command now
+    -- leaves as a `pet_command` intent under a PET lease.
 
     -- frost_tbc: diagnostics, not a game-affecting action. Needs a logging facility on the
     -- public API rather than an intent type.
