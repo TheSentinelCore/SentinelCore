@@ -585,7 +585,130 @@ function M.test_turnin_guide_reward_choice_wins()
     _G.core.quests = prev_quests
 end
 
+-- ============================================================================
+-- Dialog shape: a single-quest NPC never opens a GOSSIP frame
+-- ============================================================================
+--
+-- LIVE-CAUGHT (Nasrl, 1-11-Elwynn-Forest op 10): AcceptQuest for quest 783 from NPC 823
+-- (Deputy Willem) logged action_retry x5 and then action_retry_exhausted, and the route
+-- advanced to op 11 with the quest log still empty. The accept was gated behind a shown
+-- GOSSIP frame, but an NPC with a single quest and no gossip options opens the quest DETAIL
+-- frame directly — `is_gossip_frame_shown()` is false for it, forever. Verified against the
+-- live client: with no gossip frame at all, a bare `accept_quest()` accepted quest 783.
+--
+-- The SDK offers no predicate for the detail frame (`is_gossip_frame_shown` is the only
+-- frame test in all 41 `core.quests` entries), so the gossip selection must be best-effort
+-- and the accept/turn-in call must fire regardless. The quest log stays the only verdict.
+
+--- Shared stub rig for the two dialog-shape tests below.
+--- Installs a gossip-less NPC dialog and returns (restore, counters).
+local function with_gossipless_npc(quests_overrides)
+    _G.core = _G.core or {}
+    local prev_time, prev_quests, prev_input = _G.core.time, _G.core.quests, _G.core.input
+    local UnitHelper = RuntimeAction.UnitHelper
+    local prev_nearest = UnitHelper.get_nearest_creature
+
+    local counters = { interacts = 0 }
+    local quests = {
+        -- The whole point: this NPC's dialog is NOT a gossip frame.
+        is_gossip_frame_shown = function() return false end,
+    }
+    for k, v in pairs(quests_overrides) do quests[k] = v end
+
+    _G.core.quests = quests
+    _G.core.input = {
+        interact_with_object = function() counters.interacts = counters.interacts + 1 end,
+    }
+    UnitHelper.get_nearest_creature = function() return { fake_npc = true } end
+
+    local function restore()
+        _G.core.time, _G.core.quests, _G.core.input = prev_time, prev_quests, prev_input
+        UnitHelper.get_nearest_creature = prev_nearest
+    end
+    return restore, counters
+end
+
+function M.test_accept_lands_without_a_gossip_frame()
+    local now = 500
+    local accepted = false
+    local accept_calls, select_calls = 0, 0
+
+    local restore, counters = with_gossipless_npc({
+        is_on_quest = function(_) return accepted end,
+        is_quest_flagged_completed = function(_) return false end,
+        select_gossip_available_quest = function(_) select_calls = select_calls + 1 end,
+        accept_quest = function() accept_calls = accept_calls + 1 end,
+    })
+    _G.core.time = function() return now end
+
+    local ctx = { persist = {} }
+    function ctx:is_at_npc(_e, _r) return true end
+    local payload = { quest_id = 783, npc_entry = 823 }
+
+    -- Attempt 1: the dialog is opened and the accept MUST be issued even though no gossip
+    -- frame is (or ever will be) shown. Unverified within the tick, so it reports retry.
+    local s1 = RuntimeAction.execute_accept_quest(payload, ctx)
+    assert(counters.interacts >= 1, "the NPC dialog must be opened")
+    assert(accept_calls == 1,
+        "accept_quest must fire without a gossip frame, got " .. tostring(accept_calls) .. " calls")
+    assert(s1 == "retry", "an unverified accept reports retry, got " .. tostring(s1))
+
+    -- Pacing still holds: no second real attempt inside the interval.
+    now = now + 0.1
+    local s2 = RuntimeAction.execute_accept_quest(payload, ctx)
+    assert(s2 == "waiting", "inside the pacing window the action must hold, got " .. tostring(s2))
+    assert(accept_calls == 1, "no second attempt inside the pacing window")
+
+    -- The server round-trip lands: the quest log is the only verdict that counts.
+    accepted = true
+    now = now + 0.1
+    local s3 = RuntimeAction.execute_accept_quest(payload, ctx)
+    assert(s3 == "success", "a quest present in the log must succeed, got " .. tostring(s3))
+    assert(accept_calls == 1, "success on settle must not re-attempt")
+
+    -- The gossip selection is best-effort only; it must never be REQUIRED to reach accept.
+    assert(select_calls == 0,
+        "no gossip frame means no gossip selection, got " .. tostring(select_calls) .. " calls")
+
+    restore()
+end
+
+function M.test_turnin_lands_without_a_gossip_frame()
+    local now = 600
+    local rewarded = false
+    local complete_calls, reward_calls = 0, 0
+
+    local restore, counters = with_gossipless_npc({
+        is_on_quest = function(_) return not rewarded end,
+        is_quest_flagged_completed = function(_) return rewarded end,
+        select_gossip_active_quest = function(_) end,
+        complete_quest = function() complete_calls = complete_calls + 1 end,
+        get_quest_reward = function(_) reward_calls = reward_calls + 1 end,
+    })
+    _G.core.time = function() return now end
+
+    local ctx = { persist = {} }
+    function ctx:is_at_npc(_e, _r) return true end
+    local payload = { quest_id = 783, npc_entry = 197 }
+
+    local s1 = RuntimeAction.execute_turnin_quest(payload, ctx)
+    assert(counters.interacts >= 1, "the NPC dialog must be opened")
+    assert(complete_calls == 1,
+        "complete_quest must fire without a gossip frame, got " .. tostring(complete_calls))
+    assert(reward_calls == 1, "the reward must still be claimed")
+    assert(s1 == "retry", "an unverified turn-in reports retry, got " .. tostring(s1))
+
+    rewarded = true
+    now = now + 0.1
+    local s2 = RuntimeAction.execute_turnin_quest(payload, ctx)
+    assert(s2 == "success", "a rewarded quest must succeed, got " .. tostring(s2))
+
+    restore()
+end
+
 local tests = {
+    test_accept_lands_without_a_gossip_frame = M.test_accept_lands_without_a_gossip_frame,
+    test_turnin_lands_without_a_gossip_frame = M.test_turnin_lands_without_a_gossip_frame,
     test_turnin_attempts_are_time_paced = M.test_turnin_attempts_are_time_paced,
     test_turnin_guide_reward_choice_wins = M.test_turnin_guide_reward_choice_wins,
     test_runtime_action_table = M.test_runtime_action_table,

@@ -341,23 +341,42 @@ function RuntimeAction.execute(action, ctx)
     end
 end
 
---- Open the quest/gossip dialog on an NPC, if it is not already open.
+--- Open the quest dialog on an NPC, if it is not already open.
 ---
 --- Nothing previously interacted with the NPC at all: `accept_quest()` was called with no dialog
---- open and no target, so it did nothing while the action still reported success. Returns true once
---- the gossip frame is shown.
-local function ensure_gossip_open(npc_entry)
-    if not (core and core.quests) then return false end
+--- open and no target, so it did nothing while the action still reported success.
+---
+--- Returns TWO values:
+---   `reached` — an NPC was found and its dialog was poked (or is already up).
+---   `gossip`  — a gossip frame is DEFINITELY shown, so the gossip selection API applies.
+---
+--- PROVEN (live, quest 783 "A Threat Within" at Deputy Willem 823): requiring a shown GOSSIP
+--- frame before accepting makes the accept unreachable for a single-quest NPC. Those open the
+--- quest DETAIL frame directly, and `is_gossip_frame_shown()` is false for it — and that is the
+--- only frame predicate in the entire `core.quests` surface, so the detail frame is invisible to
+--- us. The accept burned all five retries in ~8s and the route advanced to the next operation
+--- with an empty quest log. Confirmed against the live client: with no gossip frame at all, a
+--- bare `accept_quest()` accepted the quest.
+---
+--- KNOWN GAP: an NPC with SEVERAL quests and no gossip opens the quest GREETING frame, which
+--- needs `select_available_quest(index)`. Only `get_available_title(index)` identifies those
+--- entries, and the profile carries quest IDs, not titles — so that shape is not handled here
+--- and would need a title lookup through the QueryServer.
+local function ensure_dialog_open(npc_entry)
+    if not (core and core.quests) then return false, false end
     if core.quests.is_gossip_frame_shown and core.quests.is_gossip_frame_shown() then
-        return true
+        return true, true
     end
     local npc = UnitHelper.get_nearest_creature({ npc_entry })
-    if not npc then return false end
+    if not npc then return false, false end
     if core.input and core.input.interact_with_object then
         pcall(core.input.interact_with_object, npc)
     end
-    -- The frame opens asynchronously; the caller retries on a later tick.
-    return core.quests.is_gossip_frame_shown and core.quests.is_gossip_frame_shown() or false
+    -- The frame opens asynchronously. Whatever it turns out to be — a gossip frame on a later
+    -- tick, or a detail frame no API can report — the caller issues its accept/turn-in anyway
+    -- and lets the quest log deliver the verdict.
+    local gossip = core.quests.is_gossip_frame_shown and core.quests.is_gossip_frame_shown() or false
+    return true, gossip
 end
 
 --- Is the quest currently in the player's log?
@@ -430,16 +449,24 @@ function RuntimeAction.execute_accept_quest(payload, ctx)
     if not gossip_attempt_due(ctx, pace_key) then
         return "waiting" -- previous attempt still settling; re-verified above every tick
     end
-    if not ensure_gossip_open(npc_entry) then
-        return "retry" -- dialog not up yet; interact was issued, attempt again next interval
+    local reached, gossip = ensure_dialog_open(npc_entry)
+    if not reached then
+        return "retry" -- NPC not in scan range yet; attempt again next interval
     end
 
-    -- Pick THIS quest out of the NPC's offer list, then accept it.
-    if core.quests.select_gossip_available_quest then
+    -- Pick THIS quest out of the NPC's offer list when there IS one. On a quest DETAIL frame
+    -- there is nothing to select and the accept applies to the quest already on screen.
+    if gossip and core.quests.select_gossip_available_quest then
         pcall(core.quests.select_gossip_available_quest, quest_id)
     end
     if core.quests.accept_quest then
         pcall(core.quests.accept_quest)
+    end
+    -- Escort-type quests raise a second confirmation popup that `accept_quest` does not answer;
+    -- unanswered, the quest never enters the log and this action would retry to exhaustion.
+    -- A no-op when no popup is up. (Not yet exercised against a live escort quest.)
+    if core.quests.confirm_accept_quest then
+        pcall(core.quests.confirm_accept_quest)
     end
 
     -- Verify against the quest log. Reporting success without this is how the runner claimed to
@@ -475,11 +502,14 @@ function RuntimeAction.execute_turnin_quest(payload, ctx)
     if not gossip_attempt_due(ctx, pace_key) then
         return "waiting" -- previous attempt still settling; re-verified above every tick
     end
-    if not ensure_gossip_open(npc_entry) then
+    local reached, gossip = ensure_dialog_open(npc_entry)
+    if not reached then
         return "retry"
     end
 
-    if core.quests.select_gossip_active_quest then
+    -- Same dialog-shape rule as the accept path: the gossip selection only exists when a gossip
+    -- frame is actually up. A single-quest turn-in NPC opens the detail frame directly.
+    if gossip and core.quests.select_gossip_active_quest then
         pcall(core.quests.select_gossip_active_quest, quest_id)
     end
     if core.quests.complete_quest then
