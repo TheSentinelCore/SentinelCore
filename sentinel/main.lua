@@ -39,6 +39,25 @@ local _record_save_btn = core.menu.button("sentinel_recording_save")
 local _record_resolve_btn = core.menu.button("sentinel_recording_resolve")
 local _plan_run_btn = core.menu.button("sentinel_plan_run")
 
+-- In-game IDE shell (ADR 09b U2). Required HERE, at module scope, and not lazily: the shell's
+-- layout persistence is a set of `core.menu.slider_int` ghost elements built when this file is
+-- required, and menu elements are the only resource that survives an injection (ADR 09b §2.3).
+-- Deferring the require to first use would rebuild them mid-session, losing the saved layout.
+-- `Shell.new` itself constructs nothing -- the window is built in the tick callback below.
+local IdeShell = require("ui/shell")
+local _ide_open_btn = core.menu.button("sentinel_open_ide")
+
+-- Forward-declared so the shell can be built before `host_verbs` exists. The shell's empty state
+-- offers an action (ADR 09b §5.5: an empty pane that instructs and then cannot be acted on is
+-- still a dead end), and the only thing that can service it is a host verb.
+local ide_action = nil
+local _ide_shell = IdeShell.new({
+    on_action = function(action_id)
+        if ide_action then return ide_action(action_id) end
+        return nil
+    end,
+})
+
 -- Runner cockpit UI (deferred load until app is ready, to avoid Sylvannas API issues in tests).
 -- Authoring lives OUTSIDE the game (the sentinel-editor HTTP API); the client is a cockpit for
 -- running compiled profiles, not for editing them.
@@ -248,6 +267,32 @@ function host_verbs.toggle_quest_editor()
 end
 
 -- ---------------------------------------------------------------------------
+-- In-game IDE verbs (ADR 09b U2)
+-- ---------------------------------------------------------------------------
+-- The shell is deliberately independent of `app`: it holds no module, runs no rotation, and must
+-- open even when initialisation has failed -- that is exactly when an operator wants to look at
+-- something. So these verbs do not go through `ensure_initialized`.
+
+--- @return boolean the new visibility
+function host_verbs.toggle_ide()
+    return _ide_shell:toggle()
+end
+
+--- The shell itself. This is how U3-U7 reach the switcher: `Sentinel.ide():register_panel{...}`.
+--- Handing the object out rather than proxying each call means a later panel needs no edit to
+--- this file, which is the whole point of the registration contract (ADR 09b §6).
+function host_verbs.ide()
+    return _ide_shell
+end
+
+--- Services the shell's empty-state actions. Assigned rather than declared so it closes over
+--- `host_verbs`, which does not exist where the shell is constructed.
+ide_action = function(action_id)
+    if action_id == "start_recording" then return host_verbs.start_recording() end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
 -- Recording Mode verbs (ADR 09a W12)
 -- ---------------------------------------------------------------------------
 -- These are driven from outside the client through the debug bridge (`game_eval` against
@@ -413,9 +458,24 @@ core.register_on_pre_tick_callback(function()
     end
 end)
 
+local _last_ide_tick_error = nil
 local _last_editor_create_error = nil
 core.register_on_update_callback(function()
     if ensure_initialized() then app:on_update() end
+    -- The IDE shell's whole tick surface: window creation, the Escape/keybind edges, the combat
+    -- read that suppresses motion, and the ghost-slider writes. All of it belongs here because
+    -- Sylvannas forbids constructing windows and menu elements in a render callback, and because
+    -- ADR 09b §2.4 keeps the render path free of everything that is not paint.
+    local ide_ok, ide_err = pcall(function() _ide_shell:on_tick() end)
+    if not ide_ok then
+        local msg = "IDE shell tick failed: " .. tostring(ide_err)
+        if msg ~= _last_ide_tick_error then
+            _last_ide_tick_error = msg
+            log_error(msg)
+        end
+    else
+        _last_ide_tick_error = nil
+    end
     -- Create quest editor frames in tick context: Sylvannas forbids creating
     -- windows/menu elements inside render callbacks.
     if _questing_editor then
@@ -445,9 +505,20 @@ core.register_on_render_callback(function()
     if ensure_initialized() then app:on_render() end
 end)
 
+local _last_ide_render_error = nil
 local _last_editor_render_error = nil
 core.register_on_render_window_callback(function()
     if ensure_initialized() then app:on_render_window() end
+    local ide_ok, ide_err = pcall(function() _ide_shell:_on_render_window() end)
+    if not ide_ok then
+        local msg = "IDE shell render failed: " .. tostring(ide_err)
+        if msg ~= _last_ide_render_error then
+            _last_ide_render_error = msg
+            log_error(msg)
+        end
+    else
+        _last_ide_render_error = nil
+    end
     if _questing_editor then
         local ok, err = pcall(function() _questing_editor:_on_render_window() end)
         if not ok then
@@ -466,6 +537,16 @@ end)
 core.register_on_render_menu_callback(function()
     if not ensure_initialized() then return end
     _menu_tree:render("SentinelCore", function()
+        if _ide_open_btn:render("Open IDE") then
+            host_verbs.toggle_ide()
+        end
+        -- ADR 09b §5.2: "Escape closes, a keybind toggles. Hands stay near movement keys." The
+        -- element is built at module scope inside ui/shell.lua; this only renders it, and only
+        -- when it exists -- it does not in a test harness that stubs a partial `core.menu`.
+        local ide_keybind = IdeShell.elements and IdeShell.elements.toggle_keybind
+        if ide_keybind then
+            ide_keybind:render("Toggle IDE")
+        end
         if _toggle_editor_btn:render("Open Runner Cockpit") then
             host_verbs.toggle_quest_editor()
         end
@@ -496,6 +577,10 @@ core.register_on_render_menu_callback(function()
 end)
 
 local function on_unload()
+    -- The shell drops its window but survives as an object: its ghost sliders are module-scope
+    -- menu elements that outlive the unload, and rebuilding them would mean rebuilding elements
+    -- with ids Sylvannas already holds.
+    pcall(_ide_shell.destroy, _ide_shell)
     if _questing_editor and type(_questing_editor.destroy) == "function" then
         pcall(_questing_editor.destroy, _questing_editor)
     end

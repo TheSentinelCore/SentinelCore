@@ -521,6 +521,13 @@ local test_modules = {
     -- immediate-mode UI can be observed outside the injector.
     "tests/ui/test_theme",
     "tests/ui/test_widgets",
+    -- ADR 09b U2: the shell. `test_shell_state` is the whole of the unit's decision-making;
+    -- `test_shell` drives the real render path and counts `core.menu.*` constructions per phase,
+    -- which is the only offline signal for a Sylvannas rule that otherwise fails in the injector
+    -- alone. `test_shell` re-requires `ui/shell` against an instrumented menu, so it restores
+    -- `package.loaded` and `_G.core` itself rather than relying on ordering.
+    "tests/ui/test_shell_state",
+    "tests/ui/test_shell",
     -- ADR 09b U5: the Runner panel. Registered after the widget suites because it is built
     -- entirely out of them -- a widget regression must fail as a widget bug, not as this panel's.
     "tests/ui/test_runner_panel",
