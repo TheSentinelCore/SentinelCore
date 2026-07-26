@@ -156,4 +156,38 @@ function M.run()
     core = nil
 end
 
+--- MEASURED LIVE (first in-game run): the injector's `get_position()` returns a vec3 CLASS
+--- instance — plain x/y/z numbers under a ~35-method vector metatable (dist_to, lerp, __add...).
+--- This file's own `make_player` mock returns a PLAIN table, which is exactly why the purity
+--- guard's refusal of `player.position` never fired offline while firing on the first real boot
+--- — and why the whole session then ran with `player.position` nil. This test's mock is true to
+--- the live shape; the sensor must store a metatable-free copy of the three numbers.
+---
+--- CANNOT SEE: whether the live vec3 ever serves x/y/z through __index INSTEAD of plain fields
+--- (measured today they are plain rawget-able fields), or future injector versions changing that.
+function M.test_a_metatabled_vec3_position_is_stored_as_plain_numbers()
+    local bb = Blackboard:new()
+    local bus = EventBus:new(function() end)
+    local hub = SensorHub:new(bb, bus)
+
+    local vec_mt = { __index = { dist_to = function() return 0 end, lerp = function() end } }
+    local live_shape_player = make_player({}, {})
+    live_shape_player.get_position = function()
+        return setmetatable({ x = -8914.35, y = -102.67, z = 82.04 }, vec_mt)
+    end
+
+    -- The live failure mode was a THROW out of bb:set, caught per-handler by the error boundary
+    -- — so the assertion that matters most is simply that refresh survives.
+    hub:refresh()
+    hub._player_sensor:refresh(live_shape_player, 0)
+
+    local stored = bb:get("player.position")
+    T.assert_true(stored ~= nil,
+        "player.position must be written -- nil here is the live bug: every consumer read nil all session")
+    T.assert_true(getmetatable(stored) == nil,
+        "the stored position must be a PLAIN table: the blackboard holds values, not vec3 objects")
+    T.assert_equal(stored.x, -8914.35, "x must survive the copy")
+    T.assert_equal(stored.z, 82.04, "z must survive the copy")
+end
+
 return M
