@@ -12,6 +12,7 @@ local RuntimeProfile = require("modules/questing/runtime_profile")
 local RunnerState = require("modules/questing/runner_state")
 local QuestLogSpace = require("modules/questing/quest_log_space")
 local ProfileChain = require("modules/questing/profile_chain")
+local Recorder = require("modules/questing/recorder")
 
 -- JSON decoder for the chain manifest — same core/JSON the runtime uses, degrading to nil
 -- when the sandbox lib is absent (offline tests inject the manifest directly instead).
@@ -36,6 +37,12 @@ local PROFILE_DIR = "sentinel/data/profiles/quests"
 -- Chain manifest (RestedXP `#next` route order, class-guarded) deployed alongside the
 -- compiled profiles. When present, a finished profile hands off to its successor.
 local CHAIN_FILE = "chain.json"
+
+-- Recorded campaigns get their OWN folder rather than sitting beside the compiled profiles. A
+-- recording is authoring input sentinel-resolver still has to lower, and list_profiles() offers
+-- every .json in the profile directory to the runner — a recording dropped in there would be
+-- listed as a runnable route and fail to load as one.
+local RECORDING_DIR = "sentinel/data/recordings"
 
 local function now_s()
     return (core and core.time and core.time()) or 0
@@ -155,6 +162,18 @@ function QuestingModule:new(blackboard, event_bus)
     -- live client, so there is nothing to poll. The flag is consumed by
     -- _run_vendor_maintenance in tick().
     o._maintenance = { state = "idle", vendor_entry = nil, started_at = nil, last_scan_at = nil }
+
+    -- Recording Mode (ADR 09a W12). Built with THIS module's bus, which is the app's shared bus
+    -- whenever the registry constructs us — never a private one. runtime_profile.lua's constructor
+    -- already records what a private bus costs: world_observer.lua publishes the eight `game:*`
+    -- topics onto the app bus and onto nothing else, so a recorder listening elsewhere would pass
+    -- every unit test and capture an empty campaign in game.
+    --
+    -- Constructed, deliberately NOT started: `Recorder:start` is what subscribes, and the observer
+    -- is subscriber-gated, so an idle recorder means zero SDK reads for every character that is not
+    -- deliberately recording.
+    o._recorder = Recorder:new({ event_bus = o._event_bus })
+    o._recording_started_at = nil
     o._event_bus:subscribe("game:ui_error", function(payload)
         local msg = tostring(payload and payload.message or ""):lower()
         if msg:find("inventory is full", 1, true) then
@@ -323,6 +342,12 @@ end
 function QuestingModule:shutdown()
     self._enabled = false
     self._blackboard:set("module.questing.enabled", false)
+    -- Release the observer's subscriber gate. Left subscribed, a torn-down module keeps
+    -- world_observer.lua walking the full quest log (~85 SDK calls) every five seconds on behalf of
+    -- a recorder nothing can reach any more.
+    if self._recorder:is_recording() then
+        self:stop_recording()
+    end
 end
 
 function QuestingModule:is_enabled()
@@ -730,6 +755,128 @@ function QuestingModule:get_view()
     })
     self._view_cache_at = now
     return self._view_cache
+end
+
+-- ======================================================================
+-- Recording Mode control surface (ADR 09a W12)
+--
+-- These are what an operator drives, from the menu or through the debug bridge. They answer with a
+-- table rather than a boolean on purpose: a one-shot `game_eval` of `Sentinel.stop_recording()`
+-- that returns `false` tells the human nothing about whether they forgot to start, whether the
+-- module is up, or whether the write failed.
+-- ======================================================================
+
+local function count_nodes(campaign)
+    local graph = campaign and campaign.graphs and campaign.graphs[1]
+    return (graph and #graph.nodes) or 0
+end
+
+--- A filename a human can find again, and that the loader will accept. `core.write_data_file` takes
+--- the path verbatim, so a zone name with spaces or an apostrophe ("Thousand Needles", "Dun Morogh")
+--- has to be flattened before it becomes one.
+local function recording_slug(name)
+    local slug = tostring(name or "recording"):lower():gsub("[^%w]+", "_")
+    slug = slug:gsub("^_+", ""):gsub("_+$", "")
+    if slug == "" then return "recording" end
+    return slug
+end
+
+--- Name an unnamed recording after where and when it was taken. A recording called "Recording" is
+--- one a human cannot tell apart from the four others they took that evening.
+local function default_recording_name()
+    local zone = nil
+    if core and core.get_map_name then
+        local ok, name = pcall(core.get_map_name)
+        if ok and type(name) == "string" and name ~= "" then zone = name end
+    end
+    return string.format("%s %d", zone or "Recording", math.floor(now_s()))
+end
+
+--- Begin a recording. Subscribing is what wakes the subscriber-gated world observer, so this call is
+--- also the moment the client starts paying for Recording Mode.
+--- @return table `{ ok, name, started_at }` or `{ ok = false, reason }`
+function QuestingModule:start_recording(name)
+    if self._recorder:is_recording() then
+        -- `Recorder:start` stops and DISCARDS the campaign in progress when called twice. That is
+        -- the right behaviour for the recorder (two play sessions must never blend into one route)
+        -- and the wrong one for an operator who mistyped, so the refusal lives here instead.
+        return {
+            ok = false,
+            reason = "a recording is already in progress; stop it first",
+            name = self._recorder:get_campaign() and self._recorder:get_campaign().name or nil,
+        }
+    end
+
+    local chosen = (type(name) == "string" and name ~= "") and name or default_recording_name()
+    self._recorder:start(chosen)
+    self._recording_started_at = now_s()
+    self._event_bus:publish("questing:recording_started", { name = chosen })
+    return { ok = true, name = chosen, started_at = self._recording_started_at }
+end
+
+--- Stop recording and hand back what was captured. The campaign stays readable afterwards so the
+--- operator can inspect it and save it separately.
+--- @return table `{ ok, name, nodes, campaign }` or `{ ok = false, reason }`
+function QuestingModule:stop_recording()
+    if not self._recorder:is_recording() then
+        return { ok = false, reason = "no recording in progress" }
+    end
+    local campaign = self._recorder:stop()
+    local nodes = count_nodes(campaign)
+    self._event_bus:publish("questing:recording_stopped", {
+        name = campaign and campaign.name or nil,
+        nodes = nodes,
+    })
+    return {
+        ok = true,
+        name = campaign and campaign.name or nil,
+        nodes = nodes,
+        campaign = campaign,
+    }
+end
+
+function QuestingModule:is_recording()
+    return self._recorder:is_recording()
+end
+
+--- What the operator (or the menu) needs to see in one read.
+function QuestingModule:recording_status()
+    local campaign = self._recorder:get_campaign()
+    return {
+        recording = self._recorder:is_recording(),
+        name = campaign and campaign.name or nil,
+        nodes = count_nodes(campaign),
+        started_at = self._recording_started_at,
+    }
+end
+
+--- The captured campaign, live. Returns nil until a recording has been started — a module that has
+--- never recorded must not hand back an empty graph that reads like a finished session.
+function QuestingModule:get_recording()
+    return self._recorder:get_campaign()
+end
+
+--- Write the campaign to the scripts_data sandbox through `core.write_data_file` (there is no `io`).
+--- @param path string|nil explicit path; defaults to <RECORDING_DIR>/<slug>.json
+--- @return table `{ ok, path, name, nodes }` or `{ ok = false, reason }`
+function QuestingModule:save_recording(path)
+    local campaign = self._recorder:get_campaign()
+    if not campaign then
+        return { ok = false, reason = "no recording to save" }
+    end
+
+    local target = (type(path) == "string" and path ~= "") and path
+        or (RECORDING_DIR .. "/" .. recording_slug(campaign.name) .. ".json")
+
+    if not self._recorder:save(target) then
+        -- Recorder:save answers a bare boolean and swallows the cause (encode failure, absent file
+        -- API, a create/write the loader refused). Naming the path is the one thing that makes the
+        -- failure actionable from outside the client.
+        return { ok = false, reason = "write failed: " .. target, path = target }
+    end
+
+    self._event_bus:publish("questing:recording_saved", { path = target, name = campaign.name })
+    return { ok = true, path = target, name = campaign.name, nodes = count_nodes(campaign) }
 end
 
 -- ======================================================================

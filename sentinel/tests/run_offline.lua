@@ -349,6 +349,10 @@ local test_modules = {
 
     -- Entry point (main.lua diagnostics sink, C4)
     "tests/test_main_diagnostics",
+    -- ADR 09a W12: the host surface for Recording Mode -- the `_G.Sentinel` verbs an operator drives
+    -- through the debug bridge, and the measurement that no menu element is constructed inside a
+    -- render callback (a Sylvannas rule that fails in the injector and nowhere else).
+    "tests/test_main_recording_verbs",
 
     -- Core
     "tests/core/test_event_bus",
@@ -491,6 +495,10 @@ local test_modules = {
     "tests/modules/questing/test_quest_log_space",
     "tests/modules/questing/test_effect_verification",
     "tests/modules/questing/test_recorder",
+    -- ADR 09a W12: recorder OWNERSHIP. test_recorder proves the recorder is correct and
+    -- test_recording_pipeline proves the producer feeds it; neither could see that nothing in the
+    -- tree ever constructed one, so Recording Mode had no way to start, stop, or reach disk.
+    "tests/modules/questing/test_recording_control",
     -- W8 / ADR 09 §6.2: the executor stops incrementing an index and starts following the
     -- resolver's edge guards. Registered next to the event-contract suite because the two share
     -- the same hard constraint -- the addition must leave every pre-plan profile running as-is.

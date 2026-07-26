@@ -22,9 +22,19 @@ local app = nil
 local initialized = false
 local last_init_error = nil
 
--- Menu elements for main menu
+-- Menu elements for main menu.
+--
+-- CONSTRUCTED HERE, AT MODULE SCOPE, AND NOWHERE ELSE. Sylvannas forbids creating windows and menu
+-- elements inside a render callback; doing so fails in the injector at runtime with no offline
+-- signal at all. The render callback near the bottom of this file only ever calls `:render` on the
+-- objects below. `core.menu.button` also requires a unique string id, so each one gets its own.
 local _menu_tree = core.menu.tree_node()
 local _toggle_editor_btn = core.menu.button("sentinel_open_runner_cockpit")
+-- Recording Mode (ADR 09a W12). Retiring the RestedXP importer left recording as the only source of
+-- route content, so it needs a door a human can open without attaching the debug bridge.
+local _record_start_btn = core.menu.button("sentinel_recording_start")
+local _record_stop_btn = core.menu.button("sentinel_recording_stop")
+local _record_save_btn = core.menu.button("sentinel_recording_save")
 
 -- Runner cockpit UI (deferred load until app is ready, to avoid Sylvannas API issues in tests).
 -- Authoring lives OUTSIDE the game (the sentinel-editor HTTP API); the client is a cockpit for
@@ -234,6 +244,67 @@ function host_verbs.toggle_quest_editor()
     return false
 end
 
+-- ---------------------------------------------------------------------------
+-- Recording Mode verbs (ADR 09a W12)
+-- ---------------------------------------------------------------------------
+-- These are driven from outside the client through the debug bridge (`game_eval` against
+-- `_G.Sentinel`), where an uncaught error returns NOTHING to the operator -- not a message, not a
+-- stack. So an unavailable module is answered, never thrown, and every answer is a table carrying a
+-- reason rather than a bare boolean the caller cannot act on.
+local RECORDING_UNAVAILABLE = "questing module unavailable"
+
+--- Resolve the inner QuestingModule, or nil. Goes through `host_verbs.questing` rather than
+--- re-deriving it so there is one definition of "the questing module" on this surface.
+local function recording_target(verb)
+    local questing = host_verbs.questing()
+    if questing and type(questing[verb]) == "function" then
+        return questing
+    end
+    return nil
+end
+
+--- @param name string|nil defaults to "<zone> <timestamp>"
+--- @return table `{ ok, name, started_at }` or `{ ok = false, reason }`
+function host_verbs.start_recording(name)
+    local questing = recording_target("start_recording")
+    if not questing then return { ok = false, reason = RECORDING_UNAVAILABLE } end
+    local result = questing:start_recording(name)
+    log_info(result.ok
+        and ("recording started: " .. tostring(result.name))
+        or ("recording not started: " .. tostring(result.reason)))
+    return result
+end
+
+--- @return table `{ ok, name, nodes, campaign }` or `{ ok = false, reason }`
+function host_verbs.stop_recording()
+    local questing = recording_target("stop_recording")
+    if not questing then return { ok = false, reason = RECORDING_UNAVAILABLE } end
+    local result = questing:stop_recording()
+    log_info(result.ok
+        and ("recording stopped: " .. tostring(result.name) .. " (" .. tostring(result.nodes) .. " tasks)")
+        or ("recording not stopped: " .. tostring(result.reason)))
+    return result
+end
+
+--- @return table `{ recording, name, nodes, started_at }`
+function host_verbs.recording_status()
+    local questing = recording_target("recording_status")
+    if not questing then return { recording = false, nodes = 0, reason = RECORDING_UNAVAILABLE } end
+    return questing:recording_status()
+end
+
+--- @param path string|nil defaults to sentinel/data/recordings/<slug>.json
+--- @return table `{ ok, path, name, nodes }` or `{ ok = false, reason }`
+function host_verbs.save_recording(path)
+    local questing = recording_target("save_recording")
+    if not questing then return { ok = false, reason = RECORDING_UNAVAILABLE } end
+    local result = questing:save_recording(path)
+    log_info(result.ok
+        and ("recording saved: " .. tostring(result.path))
+        or ("recording not saved: " .. tostring(result.reason)))
+    return result
+end
+
 function host_verbs.reload()
     log_info("Forcing full reload...")
     if app and type(app.shutdown) == "function" then
@@ -341,6 +412,19 @@ core.register_on_render_menu_callback(function()
     _menu_tree:render("SentinelCore", function()
         if _toggle_editor_btn:render("Open Runner Cockpit") then
             host_verbs.toggle_quest_editor()
+        end
+        -- Recording Mode. Nothing is constructed here -- the three buttons are module-scope objects
+        -- (see the block near the top of this file); this body only renders them and forwards the
+        -- click to the host verb. The verbs themselves hold every decision, so the render layer
+        -- stays a projection that offline tests can exercise through the same entry point.
+        if _record_start_btn:render("Start Recording") then
+            host_verbs.start_recording()
+        end
+        if _record_stop_btn:render("Stop Recording") then
+            host_verbs.stop_recording()
+        end
+        if _record_save_btn:render("Save Recording") then
+            host_verbs.save_recording()
         end
     end)
 end)
