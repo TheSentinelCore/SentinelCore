@@ -392,6 +392,12 @@ local test_modules = {
     -- entries carrying ids were wrong, and `ogcd` is one authority of the two-authority bypass
     -- rule -- so a wrong entry here is one word in a rotation away from an illegal packet.
     "tests/kernel/test_spell_catalog_gcd_truth",
+    -- The other half of the same problem. test_spell_catalog_gcd_truth pins the GCD flags; this
+    -- pins the RANK ARRAYS, which no test covered at all -- and four of them disagreed with
+    -- tbcmangos.sqlite, seal_of_righteousness in both catalogs at once. A wrong array cannot
+    -- raise: the resolvers walk it high-first through has_spell, so an unreachable id is skipped
+    -- in silence and a level-70 character casts a lower rank with the suite green.
+    "tests/kernel/test_catalog_rank_chains",
     "tests/kernel/test_rotation_lib",
     -- The three Phase 4b audits. They share tests/kernel/audit_scope so they cannot disagree
     -- about what they cover.

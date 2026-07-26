@@ -2,7 +2,11 @@ local AuraCatalog = {
     -- Paladin
     seal_of_blood = 31892,
     seal_of_command_ranks = { 20375, 20915, 20918, 20919, 20920, 27170 },
-    seal_of_righteousness_ranks = { 20154, 20284, 20285, 20286, 20287, 20288, 20289, 20290, 20291, 27156 },
+    -- Carried the SAME five wrong ids as kernel/catalogs/spell.lua -- three Judgement of
+    -- Righteousness ranks and the hidden proc rank 9 -- so `has_any` never saw the seal a level 50+
+    -- paladin actually had up. tests/kernel/test_catalog_rank_chains.lua pins both files to one
+    -- chain now, because checking either against the other would have agreed.
+    seal_of_righteousness_ranks = { 20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 27155 },
     blessing_of_might_ranks = { 19740, 19834, 19835, 19836, 19837, 19838, 25291, 27140 },
     blessing_of_kings = 20217,
     retribution_aura_ranks = { 7294, 10298, 10299, 10300, 10301, 27150 },

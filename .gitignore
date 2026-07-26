@@ -35,6 +35,14 @@ SentinelQuesting/tools/*
 # ship with it: a table nobody can regenerate is a table nobody can audit, and the module doc
 # points straight at this path.
 !SentinelQuesting/tools/gen_zone_table.py
+# `sentinel/tests/fixtures/spell_chain_tbc243.lua` is generated from tbcmangos.sqlite and checked
+# in as the offline suite's only view of the game database — the database itself is 298 MB and
+# gitignored below, so CI can never re-derive it. Same rule as the two above: a fixture nobody can
+# regenerate is a fixture nobody can audit, and `--check` is the only thing that catches it
+# drifting from the database. Re-admit the directory before the file, per the note above.
+!sentinel/tools/
+sentinel/tools/*
+!sentinel/tools/regen_catalog_chain_fixture.py
 OLD*
 StrathDuoMage*
 _scripts

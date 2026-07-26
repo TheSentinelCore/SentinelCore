@@ -49,10 +49,37 @@ SpellCatalog.__index = SpellCatalog
 -- WHAT THIS TABLE CANNOT SEE: the audit was a one-off script against a 300 MB sqlite file, and it
 -- is not re-runnable from the offline suite -- the Sylvannas sandbox has no database and no `io`.
 -- An entry added after Phase 4e is UNAUDITED, and nothing here will say so.
+--
+-- ============================================================================
+-- THE `ranks` ARRAYS ARE NOW PINNED TOO -- FOUR OF THE 37 WERE WRONG
+-- ============================================================================
+-- The Phase 4e audit above covered the FLAGS, not the arrays, and the arrays were worse. Order and
+-- membership are both load-bearing: `resolve_best_rank` / `resolve_known_rank` walk the array from
+-- the HIGHEST INDEX down through `core.spell_book`, so an id the player cannot know is skipped in
+-- silence and a rank the array omits is unreachable. Nothing raises. Measured against `spell_chain`
+-- joined to `spell_template`:
+--
+--     seal_of_righteousness   held 3 JUDGEMENT of Righteousness ids + the hidden proc rank 9, and
+--                             omitted real ranks 7-9  ->  a level-70 paladin cast RANK 6 (level 42)
+--     fireball                omitted rank 14 (38692, level 70)   ->  cast rank 13
+--     frost_ward              omitted rank 6  (32796, level 70)   ->  cast rank 5
+--     conjure_water           had the 37420/27090 tail INVERTED   ->  conjured rank 8, not 9
+--
+-- `tests/kernel/test_catalog_rank_chains.lua` now compares EVERY array in this file and in
+-- aura.lua against `tests/fixtures/spell_chain_tbc243.lua`, which
+-- `sentinel/tools/regen_catalog_chain_fixture.py` generates from the database. An array added
+-- without a fixture entry FAILS rather than passing unaudited -- that is the hole Phase 4e left.
+-- What the fixture cannot prove is drift against a swapped database; only `--check` sees that.
 local SPELLS = {
     seal_of_blood = { key = "seal_of_blood", id = 31892, gcd = true, description = "Seal of Blood" },
     seal_of_command = { key = "seal_of_command", ranks = { 20375, 20915, 20918, 20919, 20920, 27170 }, gcd = true, description = "Seal of Command" },
-    seal_of_righteousness = { key = "seal_of_righteousness", ranks = { 20154, 20284, 20285, 20286, 20287, 20288, 20289, 20290, 20291, 27156 }, gcd = true, description = "Seal of Righteousness" },
+    -- Ten ranks, and the array here had FIVE of them wrong. 20284/20285/20286 are JUDGEMENT of
+    -- Righteousness 6-8 -- a different spell -- and 27156 is the hidden BaseLevel-0 rank 9 from the
+    -- SECOND same-named chain (first_spell 25742, Attributes 2359296), the seal's damage proc, never
+    -- in a spellbook. Real ranks 7-9 (20292 lvl 50, 20293 lvl 58, 27155 lvl 66) were absent, so a
+    -- level-70 paladin fell past four unreachable ids to 20291 -- Rank 6, level 42. 21084 is rank 2:
+    -- it has no `spell_chain` row of its own and is reachable only as 20287's prev_spell.
+    seal_of_righteousness = { key = "seal_of_righteousness", ranks = { 20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 27155 }, gcd = true, description = "Seal of Righteousness" },
     judgement = { key = "judgement", id = 20271, gcd = false, ogcd = true, description = "Judgement" },  -- cat 0 / time 0: off the GCD in TBC
     judgement_of_blood = { key = "judgement_of_blood", id = 31898, gcd = false, description = "Judgement of Blood proc" },
     judgement_of_command = { key = "judgement_of_command", id = 27171, gcd = false, description = "Judgement of Command proc" },
@@ -76,7 +103,8 @@ local SPELLS = {
     ice_lance = { key = "ice_lance", id = 30455, gcd = true, description = "Ice Lance" },
 
     -- Mage: Fire/Arcane Combat
-    fireball = { key = "fireball", ranks = { 133, 143, 145, 3140, 8400, 8401, 8402, 10148, 10149, 10150, 10151, 25306, 27070 }, gcd = true, description = "Fireball" },
+    -- Rank 14 (38692, level 70) was missing: the array stopped at rank 13, level 66.
+    fireball = { key = "fireball", ranks = { 133, 143, 145, 3140, 8400, 8401, 8402, 10148, 10149, 10150, 10151, 25306, 27070, 38692 }, gcd = true, description = "Fireball" },
     fire_blast = { key = "fire_blast", ranks = { 2136, 2137, 2138, 8412, 8413, 10197, 10199, 27078, 27079 }, gcd = true, description = "Fire Blast" },
     counterspell = { key = "counterspell", id = 2139, gcd = false, ogcd = true, description = "Counterspell" },  -- cat 0 / time 0: off the GCD in TBC
 
@@ -98,7 +126,10 @@ local SPELLS = {
 
     -- Mage: Conjure
     conjure_food = { key = "conjure_food", ranks = { 587, 597, 990, 6129, 10144, 10145, 28612, 33717 }, gcd = true, description = "Conjure Food" },
-    conjure_water = { key = "conjure_water", ranks = { 5504, 5505, 5506, 6127, 10138, 10139, 10140, 27090, 37420 }, gcd = true, description = "Conjure Water" },
+    -- The tail was INVERTED. 37420 is rank 8 (level 65) and 27090 is rank 9 (level 70) -- id order
+    -- is not rank order across the TBC id ranges. The resolvers read the highest INDEX as the
+    -- highest RANK, so the old array made a level-70 mage conjure rank 8 water.
+    conjure_water = { key = "conjure_water", ranks = { 5504, 5505, 5506, 6127, 10138, 10139, 10140, 37420, 27090 }, gcd = true, description = "Conjure Water" },
 
     -- Mage: CC / AoE / Utility
     polymorph = { key = "polymorph", ranks = { 118, 12824, 12825, 12826 }, gcd = true, description = "Polymorph" },
@@ -110,7 +141,8 @@ local SPELLS = {
     summon_water_elemental = { key = "summon_water_elemental", id = 31687, gcd = true, description = "Summon Water Elemental" },
 
     -- Mage: Defensive / Utility
-    frost_ward = { key = "frost_ward", ranks = { 6143, 8461, 8462, 10177, 28609 }, gcd = true, description = "Frost Ward" },
+    -- Rank 6 (32796, level 70) was missing: the array stopped at rank 5, level 60.
+    frost_ward = { key = "frost_ward", ranks = { 6143, 8461, 8462, 10177, 28609, 32796 }, gcd = true, description = "Frost Ward" },
     fire_ward = { key = "fire_ward", ranks = { 543, 8457, 8458, 10223, 10225, 27128 }, gcd = true, description = "Fire Ward" },
     invisibility = { key = "invisibility", id = 66, gcd = true, description = "Invisibility" },
     mage_armor = { key = "mage_armor", ranks = { 6117, 22782, 22783, 27125 }, gcd = true, description = "Mage Armor" },
