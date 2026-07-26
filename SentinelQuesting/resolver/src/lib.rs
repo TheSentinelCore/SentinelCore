@@ -18,7 +18,11 @@
 //! * [`TaskRegistry`] is the platform seam — the core registers no task types, and the IDE's
 //!   Properties panel renders from [`Field`] rather than from hand-written per-task code.
 //! * [`ResolverDb`] is the only way in to game data. No connection is opened here and no request
-//!   is issued, so the crate resolves a campaign with no sqlite file and no server.
+//!   is issued, so the crate resolves a campaign with no sqlite file and no server. Its lookups
+//!   return `Result<Option<_>, DbError>`: `Ok(None)` is "the game has no such thing" and becomes a
+//!   [`Diagnostic`] the author can act on, while `Err` is "the database could not be read" and
+//!   aborts resolution with no plan at all. Collapsing the two is what made an unreadable snapshot
+//!   report itself as a missing spawn.
 //! * The [`sentinel_models::runtime::RuntimeAction`] vocabulary is frozen. A task that needs a new
 //!   action is a runtime change with its own review.
 
@@ -28,7 +32,7 @@ mod registry;
 mod resolve;
 mod tasks;
 
-pub use db::{InMemoryDb, ResolverDb, Spawn};
+pub use db::{DbError, DbResult, InMemoryDb, ResolverDb, Spawn};
 pub use diagnostic::{Diagnostic, Severity};
 pub use registry::{
     Field, FieldKind, LowerFn, RegistryError, TaskRegistry, TaskType, ValidateFn, ValidationRule,

@@ -10,8 +10,8 @@ use sentinel_models::platform::{
 };
 use sentinel_models::runtime::RuntimeAction;
 use sentinel_resolver::{
-    resolve, questing_task_types, Diagnostic, InMemoryDb, Resolver, ResolverDb, Severity, Spawn,
-    TaskRegistry,
+    resolve, questing_task_types, DbError, Diagnostic, InMemoryDb, Resolver, ResolverDb, Severity,
+    Spawn, TaskRegistry,
 };
 use uuid::Uuid;
 
@@ -139,6 +139,10 @@ fn errors(diagnostics: &[Diagnostic]) -> Vec<&Diagnostic> {
         .collect()
 }
 
+/// Every fixture above answers every lookup, so a `DbError` anywhere below is a broken test rather
+/// than a case under test. The backend-failure section at the bottom is where `Err` is the subject.
+const HEALTHY: &str = "the fixture database answers every lookup";
+
 // ---------------------------------------------------------------------------
 // Purity
 // ---------------------------------------------------------------------------
@@ -151,8 +155,8 @@ fn resolving_the_same_campaign_twice_is_byte_identical() {
     let campaign = linear_campaign();
     let db = db();
 
-    let (first, first_diagnostics) = resolve(&campaign, &db);
-    let (second, second_diagnostics) = resolve(&campaign, &db);
+    let (first, first_diagnostics) = resolve(&campaign, &db).expect(HEALTHY);
+    let (second, second_diagnostics) = resolve(&campaign, &db).expect(HEALTHY);
 
     assert_eq!(
         serde_json::to_string(&first).unwrap(),
@@ -195,11 +199,11 @@ fn a_branching_campaign_orders_operations_deterministically() {
     });
 
     let db = db();
-    let first = serde_json::to_string(&resolve(&campaign, &db).0).unwrap();
+    let first = serde_json::to_string(&resolve(&campaign, &db).expect(HEALTHY).0).unwrap();
     for _ in 0..8 {
         assert_eq!(
             first,
-            serde_json::to_string(&resolve(&campaign, &db).0).unwrap()
+            serde_json::to_string(&resolve(&campaign, &db).expect(HEALTHY).0).unwrap()
         );
     }
 }
@@ -211,7 +215,7 @@ fn a_branching_campaign_orders_operations_deterministically() {
 #[test]
 fn a_linear_three_node_campaign_lowers_to_three_sequential_operations() {
     let campaign = linear_campaign();
-    let (plan, diagnostics) = resolve(&campaign, &db());
+    let (plan, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
 
     assert!(errors(&diagnostics).is_empty(), "{diagnostics:#?}");
     assert_eq!(plan.schema_version, 3);
@@ -243,7 +247,7 @@ fn a_linear_three_node_campaign_lowers_to_three_sequential_operations() {
 /// imported Travel landed at `world_z = 0`. A resolved Travel must carry the spawn's real height.
 #[test]
 fn a_lowered_travel_carries_the_spawn_position_including_z() {
-    let (plan, _) = resolve(&linear_campaign(), &db());
+    let (plan, _) = resolve(&linear_campaign(), &db()).expect(HEALTHY);
     let RuntimeAction::Travel(travel) = &plan.operations[0].actions[0].action else {
         panic!("first action must be Travel: {:?}", plan.operations[0]);
     };
@@ -263,7 +267,7 @@ fn a_stale_intent_label_is_refreshed_from_the_database() {
         .intent
         .insert("from", entity(EntityKind::Npc, 823, "Deputy Willem (old)"));
 
-    let (plan, _) = resolve(&campaign, &db());
+    let (plan, _) = resolve(&campaign, &db()).expect(HEALTHY);
     let RuntimeAction::Travel(travel) = &plan.operations[0].actions[0].action else {
         panic!("first action must be Travel");
     };
@@ -294,7 +298,7 @@ fn an_import_override_applies_without_mutating_the_source() {
 
     let library = vec![base];
     let resolver = Resolver::new(TaskRegistry::with_questing(), &library);
-    let (plan, diagnostics) = resolver.resolve(&importer, &db());
+    let (plan, diagnostics) = resolver.resolve(&importer, &db()).expect(HEALTHY);
 
     assert!(errors(&diagnostics).is_empty(), "{diagnostics:#?}");
     assert_eq!(plan.operations.len(), 3);
@@ -308,7 +312,7 @@ fn an_import_override_applies_without_mutating_the_source() {
         library[0], pristine,
         "an override must never rewrite the imported campaign"
     );
-    let (base_plan, _) = resolve(&library[0], &db());
+    let (base_plan, _) = resolve(&library[0], &db()).expect(HEALTHY);
     let RuntimeAction::Kill(base_kill) = &base_plan.operations[1].actions[1].action else {
         panic!("base second operation must lower to Kill");
     };
@@ -331,7 +335,7 @@ fn a_disabled_imported_node_is_spliced_out_not_left_as_a_hole() {
 
     let library = vec![base];
     let resolver = Resolver::new(TaskRegistry::with_questing(), &library);
-    let (plan, diagnostics) = resolver.resolve(&importer, &db());
+    let (plan, diagnostics) = resolver.resolve(&importer, &db()).expect(HEALTHY);
 
     assert!(errors(&diagnostics).is_empty(), "{diagnostics:#?}");
     assert_eq!(plan.operations.len(), 2);
@@ -353,7 +357,7 @@ fn an_import_of_an_unknown_campaign_is_a_diagnostic_not_a_panic() {
         disabled_nodes: vec![],
     });
 
-    let (_, diagnostics) = resolve(&importer, &db());
+    let (_, diagnostics) = resolve(&importer, &db()).expect(HEALTHY);
     assert!(
         diagnostics
             .iter()
@@ -373,7 +377,7 @@ fn an_unresolvable_entity_ref_produces_a_diagnostic_rather_than_a_panic() {
         .intent
         .insert("from", entity(EntityKind::Npc, 99999, "Nobody"));
 
-    let (plan, diagnostics) = resolve(&campaign, &db());
+    let (plan, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
 
     assert!(
         diagnostics
@@ -403,7 +407,7 @@ fn a_quest_with_no_resolvable_giver_yields_an_empty_operation_and_an_error() {
     intent.insert("quest", entity(EntityKind::Quest, 4242, "Unknown Quest"));
     campaign.graphs[0].nodes[0].intent = intent;
 
-    let (plan, diagnostics) = resolve(&campaign, &db());
+    let (plan, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
 
     assert_eq!(plan.operations.len(), 3);
     assert!(plan.operations[0].actions.is_empty());
@@ -420,7 +424,7 @@ fn an_unknown_task_type_is_a_diagnostic_and_still_emits_its_operation() {
     let mut campaign = linear_campaign();
     campaign.graphs[0].nodes[1].node_type = "crafting.SmeltOre".to_string();
 
-    let (plan, diagnostics) = resolve(&campaign, &db());
+    let (plan, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
 
     assert_eq!(plan.operations.len(), 3, "the node must not disappear");
     assert!(plan.operations[1].actions.is_empty());
@@ -437,7 +441,7 @@ fn a_missing_required_field_is_a_diagnostic_from_the_schema_not_from_lowering() 
     let mut campaign = linear_campaign();
     campaign.graphs[0].nodes[1].intent = Intent::new();
 
-    let (_, diagnostics) = resolve(&campaign, &db());
+    let (_, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
     let missing = diagnostics
         .iter()
         .find(|d| d.code == "resolver.field.missing")
@@ -454,7 +458,7 @@ fn a_field_of_the_wrong_kind_is_a_diagnostic() {
         .intent
         .insert("target", "Kobold Vermin");
 
-    let (_, diagnostics) = resolve(&campaign, &db());
+    let (_, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
     assert!(
         diagnostics
             .iter()
@@ -470,7 +474,7 @@ fn an_entity_field_pointing_at_the_wrong_kind_is_a_diagnostic() {
         .intent
         .insert("target", entity(EntityKind::Item, 2589, "Linen Cloth"));
 
-    let (_, diagnostics) = resolve(&campaign, &db());
+    let (_, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
     assert!(
         diagnostics
             .iter()
@@ -484,7 +488,7 @@ fn a_dangling_edge_guard_is_a_diagnostic() {
     let mut campaign = linear_campaign();
     campaign.graphs[0].edges[0].guard = Some(id(7777));
 
-    let (plan, diagnostics) = resolve(&campaign, &db());
+    let (plan, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
     assert!(
         diagnostics
             .iter()
@@ -510,7 +514,7 @@ fn a_cyclic_graph_keeps_every_node_and_warns() {
         guard: None,
     });
 
-    let (plan, diagnostics) = resolve(&campaign, &db());
+    let (plan, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
     assert_eq!(plan.operations.len(), 3);
     assert!(
         diagnostics.iter().any(|d| d.code == "resolver.graph.cycle"),
@@ -522,7 +526,7 @@ fn a_cyclic_graph_keeps_every_node_and_warns() {
 fn a_campaign_with_no_graph_yields_an_empty_plan_and_an_error() {
     let mut campaign = Campaign::new("empty");
     campaign.id = id(2003);
-    let (plan, diagnostics) = resolve(&campaign, &db());
+    let (plan, diagnostics) = resolve(&campaign, &db()).expect(HEALTHY);
     assert!(plan.operations.is_empty());
     assert!(
         errors(&diagnostics)
@@ -653,7 +657,7 @@ fn every_registered_task_type_lowers_to_at_least_one_action() {
         let task = registry.get(name).expect("listed types resolve");
         let intent = well_formed_intent(name);
         let mut diagnostics = Vec::new();
-        let actions = (task.lower)(&intent, &db as &dyn ResolverDb, &mut diagnostics);
+        let actions = (task.lower)(&intent, &db as &dyn ResolverDb, &mut diagnostics).expect(HEALTHY);
         assert!(
             !actions.is_empty(),
             "`{name}` lowered to no action: {diagnostics:#?}"
@@ -671,7 +675,7 @@ fn every_registered_task_type_validates_a_well_formed_intent_cleanly() {
     let db = db();
     for name in registry.type_names().collect::<Vec<_>>() {
         let task = registry.get(name).expect("listed types resolve");
-        let diagnostics = task.check(&well_formed_intent(name), &db as &dyn ResolverDb);
+        let diagnostics = task.check(&well_formed_intent(name), &db as &dyn ResolverDb).expect(HEALTHY);
         assert!(
             diagnostics.is_empty(),
             "`{name}` rejected its own well-formed intent: {diagnostics:#?}"
@@ -729,12 +733,12 @@ fn an_integer_authored_into_a_float_field_is_accepted() {
     let travel = registry.get("questing.Travel").expect("registered");
     let db = db();
     assert!(
-        travel.check(&intent, &db as &dyn ResolverDb).is_empty(),
+        travel.check(&intent, &db as &dyn ResolverDb).expect(HEALTHY).is_empty(),
         "integer coordinates must satisfy a float field"
     );
 
     let mut diagnostics = Vec::new();
-    let actions = (travel.lower)(&intent, &db as &dyn ResolverDb, &mut diagnostics);
+    let actions = (travel.lower)(&intent, &db as &dyn ResolverDb, &mut diagnostics).expect(HEALTHY);
     let RuntimeAction::Travel(action) = &actions[0].action else {
         panic!("Travel must lower to Travel");
     };
@@ -749,7 +753,7 @@ fn a_validation_rule_violation_is_reported_against_its_field() {
     let registry = TaskRegistry::with_questing();
     let kill = registry.get("questing.Kill").expect("registered");
     let db = db();
-    let diagnostics = kill.check(&intent, &db as &dyn ResolverDb);
+    let diagnostics = kill.check(&intent, &db as &dyn ResolverDb).expect(HEALTHY);
     assert!(
         diagnostics
             .iter()
@@ -766,7 +770,7 @@ fn an_unknown_intent_field_warns_rather_than_failing() {
     let registry = TaskRegistry::with_questing();
     let kill = registry.get("questing.Kill").expect("registered");
     let db = db();
-    let diagnostics = kill.check(&intent, &db as &dyn ResolverDb);
+    let diagnostics = kill.check(&intent, &db as &dyn ResolverDb).expect(HEALTHY);
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, "resolver.field.unknown");
     assert_eq!(diagnostics[0].severity, Severity::Warning);
@@ -784,7 +788,8 @@ fn gate_lowers_to_the_existing_condition_action() {
         &well_formed_intent("questing.Gate"),
         &db as &dyn ResolverDb,
         &mut diagnostics,
-    );
+    )
+    .expect(HEALTHY);
     let RuntimeAction::Condition(condition) = &actions[0].action else {
         panic!("Gate must lower to Condition: {actions:?}");
     };
@@ -799,7 +804,7 @@ fn a_gate_with_no_clause_is_an_error_not_a_pass_through() {
     let registry = TaskRegistry::with_questing();
     let gate = registry.get("questing.Gate").expect("registered");
     let db = db();
-    let diagnostics = gate.check(&Intent::new(), &db as &dyn ResolverDb);
+    let diagnostics = gate.check(&Intent::new(), &db as &dyn ResolverDb).expect(HEALTHY);
     assert!(
         diagnostics
             .iter()
@@ -812,7 +817,7 @@ fn a_gate_with_no_clause_is_an_error_not_a_pass_through() {
 /// tagged enums silently fail open there (see `CLAUDE.md` known state), so pin the bytes.
 #[test]
 fn the_plan_serializes_with_the_adjacent_tagging_the_lua_runtime_dispatches_on() {
-    let (plan, _) = resolve(&linear_campaign(), &db());
+    let (plan, _) = resolve(&linear_campaign(), &db()).expect(HEALTHY);
     let wire = serde_json::to_value(&plan).unwrap();
     assert_eq!(wire["operations"][0]["actions"][1]["type"], "AcceptQuest");
     assert_eq!(
@@ -828,4 +833,169 @@ fn the_plan_serializes_with_the_adjacent_tagging_the_lua_runtime_dispatches_on()
         wire["operations"][0]["next"][0]["guard"],
         serde_json::Value::Null
     );
+}
+
+// ---------------------------------------------------------------------------
+// Backend failure vs. legitimate absence
+//
+// The distinction this section exists for: `None` from the database means "the game has no such
+// thing", which is the author's problem and gets a diagnostic; `Err` means "the database could not
+// be read", which is the operator's problem and must never be dressed up as the former. Before
+// W10 both arrived as `None`, so an unreadable snapshot told an author "this NPC has no spawn" and
+// sent them hunting a data problem that did not exist.
+// ---------------------------------------------------------------------------
+
+/// One campaign, two sick databases. The only difference is *why* npc 823 has no spawn, and that
+/// difference has to reach the caller.
+#[test]
+fn a_spawn_read_failure_is_an_error_where_an_absent_spawn_is_only_a_diagnostic() {
+    let campaign = linear_campaign();
+
+    let absent = InMemoryDb::new("tbcmangos@a1b2c3")
+        .with_quest_giver(783, 823)
+        .with_quest_ender(783, 823);
+    let (plan, diagnostics) = resolve(&campaign, &absent).expect("an absent spawn is still a plan");
+    assert_eq!(plan.operations.len(), 3);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "resolver.spawn.unknown"),
+        "the author-facing diagnostic must survive W10 unchanged: {diagnostics:#?}"
+    );
+
+    let broken = db().with_failing_entry(EntityKind::Npc, 823);
+    let error = resolve(&campaign, &broken)
+        .expect_err("a lookup that failed must not be reported as a lookup that found nothing");
+    assert_eq!(error.lookup, "spawn");
+    assert!(
+        error.to_string().contains("spawn"),
+        "the operator has to be able to tell what could not be read: {error}"
+    );
+}
+
+/// The same confusion one layer down: `resolver.quest.no_giver` tells an author to name the NPC
+/// themselves, which is exactly the wrong instruction when the relation table was unreadable.
+#[test]
+fn a_quest_relation_read_failure_is_an_error_where_an_absent_relation_is_only_a_diagnostic() {
+    let mut campaign = linear_campaign();
+    let mut intent = Intent::new();
+    intent.insert("quest", entity(EntityKind::Quest, 783, "Kobold Camp Cleanup"));
+    campaign.graphs[0].nodes[0].intent = intent;
+
+    let absent = InMemoryDb::new("tbcmangos@a1b2c3")
+        .with_spawn(EntityKind::Npc, 823, Spawn::new(0, 1.0, 2.0, 3.0))
+        .with_spawn(EntityKind::Npc, 299, Spawn::new(0, 4.0, 5.0, 6.0))
+        .with_quest_ender(783, 823);
+    let (_, diagnostics) = resolve(&campaign, &absent).expect("an absent relation is still a plan");
+    assert!(
+        errors(&diagnostics)
+            .iter()
+            .any(|d| d.code == "resolver.quest.no_giver"),
+        "{diagnostics:#?}"
+    );
+
+    let broken = db().with_failing_quest(783);
+    let error = resolve(&campaign, &broken).expect_err("an unreadable relation table is not a plan");
+    assert_eq!(error.lookup, "quest_giver");
+}
+
+/// `display_name` falls back to the authored label and then to `npc:823`. Both are plausible
+/// strings, so a swallowed label failure would ship a plan that merely looks a little stale.
+#[test]
+fn a_label_read_failure_is_not_swallowed_into_a_fallback_name() {
+    let broken = InMemoryDb::new("tbcmangos@a1b2c3")
+        .with_spawn(EntityKind::Npc, 823, Spawn::new(0, 1.0, 2.0, 3.0))
+        .with_failing_entry(EntityKind::Npc, 823);
+    let error = resolve(&linear_campaign(), &broken).expect_err("an unreadable name is not a plan");
+    assert_eq!(error.lookup, "spawn", "the spawn is read before the name");
+
+    let broken_label = InMemoryDb::new("tbcmangos@a1b2c3")
+        .with_spawn(EntityKind::Npc, 823, Spawn::new(0, 1.0, 2.0, 3.0))
+        .with_quest_giver(783, 823)
+        .failing_labels("snapshot is locked");
+    let error = resolve(&linear_campaign(), &broken_label).expect_err("a fallback name is not a fix");
+    assert_eq!(error.lookup, "label");
+}
+
+/// The reason `resolve` returns `Err` rather than finishing with a louder diagnostic: a plan built
+/// from a partly-readable database is structurally complete, carries a content hash and a
+/// fingerprint, and is indistinguishable downstream from one resolved against a healthy snapshot.
+/// No plan is the only outcome that cannot be mistaken for a good one.
+#[test]
+fn a_backend_that_fails_only_on_the_last_node_still_yields_no_plan() {
+    let campaign = linear_campaign();
+    let broken = db().with_failing_entry(EntityKind::Npc, 299);
+    let error = resolve(&campaign, &broken).expect_err("a half-resolved plan is worse than none");
+    assert_eq!(error.lookup, "spawn");
+}
+
+/// Failure is part of the purity contract too: which lookup aborts a resolve must not depend on
+/// iteration order, or two runs against the same broken snapshot would blame different fields.
+#[test]
+fn the_same_broken_backend_fails_at_the_same_lookup_every_time() {
+    let campaign = linear_campaign();
+    let broken = db().with_failing_entry(EntityKind::Npc, 823);
+    let first = resolve(&campaign, &broken).expect_err("still broken");
+    for _ in 0..8 {
+        assert_eq!(
+            first,
+            resolve(&campaign, &broken).expect_err("still broken"),
+            "the reported failure must be deterministic"
+        );
+    }
+}
+
+/// Purity, restated against the type change: adding an error channel must not have moved a byte of
+/// a successful plan.
+#[test]
+fn the_error_channel_did_not_change_a_successful_plans_bytes() {
+    let db = db();
+    let first = resolve(&linear_campaign(), &db).expect(HEALTHY);
+    let second = resolve(&linear_campaign(), &db).expect(HEALTHY);
+    assert_eq!(
+        serde_json::to_string(&first.0).unwrap(),
+        serde_json::to_string(&second.0).unwrap()
+    );
+    assert_eq!(
+        first.0.content_hash, second.0.content_hash,
+        "content hash: {}",
+        first.0.content_hash
+    );
+}
+
+/// A campaign-shaped problem is still a diagnostic. `Err` is reserved for "the database could not
+/// answer" — widening it would put every authoring mistake behind a 500.
+#[test]
+fn a_campaign_with_no_graph_is_still_a_diagnostic_not_an_error() {
+    let mut campaign = Campaign::new("empty");
+    campaign.id = id(2004);
+    let (plan, diagnostics) = resolve(&campaign, &db().failing_labels("locked"))
+        .expect("nothing here reaches the database");
+    assert!(plan.operations.is_empty());
+    assert!(
+        errors(&diagnostics)
+            .iter()
+            .any(|d| d.code == "resolver.campaign.no_graph"),
+        "{diagnostics:#?}"
+    );
+}
+
+/// The error type is the crate's own, so a caller can route on it without depending on sqlite,
+/// HTTP, or whatever backend produced it.
+#[test]
+fn the_error_names_the_lookup_and_carries_the_backends_explanation() {
+    let error = DbError::new("spawn", "database is locked");
+    assert_eq!(error.lookup, "spawn");
+    assert_eq!(error.detail, "database is locked");
+    assert!(error.to_string().contains("database is locked"), "{error}");
+}
+
+/// A golden, not a self-comparison. The determinism tests above prove two resolves in one process
+/// agree; this pins the actual bytes, so a future change that quietly reshapes a plan — a reordered
+/// field, a different default, a new action — fails here instead of silently invalidating every
+/// stored `content_hash` in the corpus.
+#[test]
+fn the_linear_campaigns_plan_hashes_to_a_pinned_value() {
+    let (plan, _) = resolve(&linear_campaign(), &db()).expect(HEALTHY);
+    assert_eq!(plan.content_hash, "bd97d5a1f130b0d1");
 }

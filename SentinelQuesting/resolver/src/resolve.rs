@@ -8,6 +8,12 @@
 //! `HashMap`. Node ordering is a deterministic entry-first Kahn traversal with document order as
 //! the tie-break; every collection that touches output is a `Vec` or a `BTreeMap`. That is what
 //! makes bulk re-resolution a diff instead of a rewrite.
+//!
+//! Two failure channels, and they are not interchangeable. A [`Diagnostic`] travels *with* a plan
+//! and describes something the author can fix. A [`crate::DbError`] replaces the plan entirely and
+//! describes a database that could not be read — which is also what keeps purity intact, since a
+//! plan whose contents depended on which lookups happened to succeed would differ between two
+//! resolves of the same intent against the same fingerprint.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,7 +23,7 @@ use sentinel_models::platform::{
 };
 use uuid::Uuid;
 
-use crate::db::ResolverDb;
+use crate::db::{DbResult, ResolverDb};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::registry::TaskRegistry;
 
@@ -57,7 +63,10 @@ static NO_IMPORTS: NoImports = NoImports;
 ///
 /// The convenience entry point of ADR 09a §2 W2. Use [`Resolver`] when imports, a different graph,
 /// or a different task registry are in play.
-pub fn resolve(campaign: &Campaign, db: &dyn ResolverDb) -> (ExecutionPlan, Vec<Diagnostic>) {
+pub fn resolve(
+    campaign: &Campaign,
+    db: &dyn ResolverDb,
+) -> DbResult<(ExecutionPlan, Vec<Diagnostic>)> {
     Resolver::new(TaskRegistry::with_questing(), &NO_IMPORTS).resolve(campaign, db)
 }
 
@@ -78,18 +87,29 @@ impl<'a> Resolver<'a> {
     /// The campaign's first graph after flattening — imported graphs come before the campaign's
     /// own, so a campaign that only layers overrides onto an import still resolves to the imported
     /// route.
-    pub fn resolve(&self, campaign: &Campaign, db: &dyn ResolverDb) -> (ExecutionPlan, Vec<Diagnostic>) {
+    ///
+    /// `Err` means one lookup failed and there is therefore **no plan**, not a plan with a louder
+    /// diagnostic. A plan lowered against a half-readable database is structurally complete and
+    /// carries a content hash and a fingerprint, so nothing downstream — the compiler, the runtime,
+    /// a CI diff — can tell it apart from one resolved against a healthy snapshot. Emitting nothing
+    /// is the only outcome that cannot be mistaken for a good one. Everything an author can act on
+    /// stays a [`Diagnostic`] alongside a plan, exactly as before.
+    pub fn resolve(
+        &self,
+        campaign: &Campaign,
+        db: &dyn ResolverDb,
+    ) -> DbResult<(ExecutionPlan, Vec<Diagnostic>)> {
         let (graphs, mut diagnostics) = self.flatten(campaign);
         let Some(graph) = graphs.first() else {
             diagnostics.push(Diagnostic::error(
                 "resolver.campaign.no_graph",
                 format!("campaign `{}` has no graph to resolve", campaign.name),
             ));
-            return (empty_plan(campaign.id, Uuid::nil(), db), diagnostics);
+            return Ok((empty_plan(campaign.id, Uuid::nil(), db), diagnostics));
         };
-        let (plan, graph_diagnostics) = self.lower_graph(campaign, graph, db);
+        let (plan, graph_diagnostics) = self.lower_graph(campaign, graph, db)?;
         diagnostics.extend(graph_diagnostics);
-        (plan, diagnostics)
+        Ok((plan, diagnostics))
     }
 
     /// One named graph, wherever it came from in the import tree.
@@ -98,18 +118,18 @@ impl<'a> Resolver<'a> {
         campaign: &Campaign,
         graph_id: Uuid,
         db: &dyn ResolverDb,
-    ) -> (ExecutionPlan, Vec<Diagnostic>) {
+    ) -> DbResult<(ExecutionPlan, Vec<Diagnostic>)> {
         let (graphs, mut diagnostics) = self.flatten(campaign);
         let Some(graph) = graphs.iter().find(|graph| graph.id == graph_id) else {
             diagnostics.push(Diagnostic::error(
                 "resolver.campaign.no_graph",
                 format!("campaign `{}` has no graph `{graph_id}`", campaign.name),
             ));
-            return (empty_plan(campaign.id, graph_id, db), diagnostics);
+            return Ok((empty_plan(campaign.id, graph_id, db), diagnostics));
         };
-        let (plan, graph_diagnostics) = self.lower_graph(campaign, graph, db);
+        let (plan, graph_diagnostics) = self.lower_graph(campaign, graph, db)?;
         diagnostics.extend(graph_diagnostics);
-        (plan, diagnostics)
+        Ok((plan, diagnostics))
     }
 
     /// Imported graphs (override layers applied, disabled nodes spliced out) followed by the
@@ -164,7 +184,7 @@ impl<'a> Resolver<'a> {
         campaign: &Campaign,
         graph: &Graph,
         db: &dyn ResolverDb,
-    ) -> (ExecutionPlan, Vec<Diagnostic>) {
+    ) -> DbResult<(ExecutionPlan, Vec<Diagnostic>)> {
         let mut diagnostics = Vec::new();
         let order = topological_order(graph, &mut diagnostics);
 
@@ -178,7 +198,7 @@ impl<'a> Resolver<'a> {
             let node = &graph.nodes[*node_index];
             operations.push(PlanOperation {
                 node_id: node.id,
-                actions: self.lower_node(node, db, &mut diagnostics),
+                actions: self.lower_node(node, db, &mut diagnostics)?,
                 next: transitions(campaign, graph, node, &index_of, &mut diagnostics),
             });
         }
@@ -192,7 +212,7 @@ impl<'a> Resolver<'a> {
             operations,
         };
         plan.content_hash = compute_content_hash(&plan);
-        (plan, diagnostics)
+        Ok((plan, diagnostics))
     }
 
     /// An unknown task type, a failed check, or a lowering that produced nothing all yield an
@@ -203,7 +223,7 @@ impl<'a> Resolver<'a> {
         node: &Node,
         db: &dyn ResolverDb,
         diagnostics: &mut Vec<Diagnostic>,
-    ) -> Vec<sentinel_models::runtime::GuardedAction> {
+    ) -> DbResult<Vec<sentinel_models::runtime::GuardedAction>> {
         let Some(task) = self.registry.get(&node.node_type) else {
             diagnostics.push(
                 Diagnostic::error(
@@ -212,23 +232,26 @@ impl<'a> Resolver<'a> {
                 )
                 .with_node(node.id),
             );
-            return Vec::new();
+            return Ok(Vec::new());
         };
 
-        let checks = task.check(&node.intent, db);
+        let checks = task.check(&node.intent, db)?;
         let blocked = checks.iter().any(|d| d.severity == Severity::Error);
         diagnostics.extend(checks.into_iter().map(|d| d.with_node(node.id)));
         if blocked {
             // Lowering an intent that already failed its schema would produce a second, less
             // useful report of the same problem — and, worse, a plausible-looking action built
             // from whatever fields happened to parse.
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let mut lowering = Vec::new();
-        let actions = (task.lower)(&node.intent, db, &mut lowering);
+        // The diagnostics collected so far are dropped with an `Err`. That is deliberate: an
+        // author-facing list assembled while the backend was failing describes a database that was
+        // never fully read.
+        let actions = (task.lower)(&node.intent, db, &mut lowering)?;
         diagnostics.extend(lowering.into_iter().map(|d| d.with_node(node.id)));
-        actions
+        Ok(actions)
     }
 }
 

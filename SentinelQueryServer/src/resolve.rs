@@ -15,7 +15,7 @@
 //!   38,726 imported Travel positions carrying `world_z = 0`.
 
 use sentinel_models::platform::{EntityKind, ExecutionPlan};
-use sentinel_resolver::{Diagnostic, ResolverDb, Spawn};
+use sentinel_resolver::{DbError, DbResult, Diagnostic, ResolverDb, Spawn};
 use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
@@ -45,54 +45,52 @@ impl SqliteResolverDb {
     }
 }
 
-/// The trait returns `Option`, so a sqlite failure would otherwise be indistinguishable from "no
-/// such entry" — the resolver would report a missing spawn and the operator would never learn the
-/// database was unreadable.
-fn or_log<T>(what: &str, result: Result<Option<T>, String>) -> Option<T> {
-    match result {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::warn!("resolver db lookup failed ({what}): {error}");
-            None
-        }
-    }
-}
-
+/// Every lookup below is `Ok(None)` for "this snapshot has no such row" and `Err` for "this
+/// snapshot could not be read". Nothing swallows the second into the first: the `or_log` helper
+/// that used to sit here logged a `warn` and returned `None`, which meant a locked or
+/// schema-mismatched database reached the author as `resolver.spawn.unknown` — "no spawn point for
+/// `npc:823`" — and the operator learned nothing at all unless someone was reading the log.
 impl ResolverDb for SqliteResolverDb {
     fn fingerprint(&self) -> &str {
         &self.fingerprint
     }
 
-    fn spawn(&self, kind: EntityKind, id: u32) -> Option<Spawn> {
+    fn spawn(&self, kind: EntityKind, id: u32) -> DbResult<Option<Spawn>> {
         let table = match kind {
             EntityKind::Npc => SpawnType::Npc,
             EntityKind::Object => SpawnType::Object,
-            // Quests, items, spells and maps are not placed in the world. `None` is the honest
-            // answer; the resolver turns it into a diagnostic naming the field.
-            _ => return None,
+            // Quests, items, spells and maps are not placed in the world. `Ok(None)` is the honest
+            // answer — nothing failed — and the resolver turns it into a diagnostic naming the
+            // field.
+            _ => return Ok(None),
         };
-        let spawns = or_log("spawn", self.db.spawns(table, id).map(Some))?;
+        let spawns = self
+            .db
+            .spawns(table, id)
+            .map_err(|error| DbError::new("spawn", error))?;
         // `Db::spawns` orders by guid, so the canonical spawn is the lowest-guid placement — the
         // same one `GET /spawns/:type/:entry` lists first.
-        let first = spawns.first()?;
-        Some(Spawn::new(
-            first.map,
-            first.position_x,
-            first.position_y,
-            first.position_z,
-        ))
+        Ok(spawns.first().map(|first| {
+            Spawn::new(first.map, first.position_x, first.position_y, first.position_z)
+        }))
     }
 
-    fn label(&self, kind: EntityKind, id: u32) -> Option<String> {
-        or_log("label", self.db.entity_label(kind, id))
+    fn label(&self, kind: EntityKind, id: u32) -> DbResult<Option<String>> {
+        self.db
+            .entity_label(kind, id)
+            .map_err(|error| DbError::new("label", error))
     }
 
-    fn quest_giver(&self, quest_id: u32) -> Option<u32> {
-        or_log("quest_giver", self.db.quest_giver(quest_id))
+    fn quest_giver(&self, quest_id: u32) -> DbResult<Option<u32>> {
+        self.db
+            .quest_giver(quest_id)
+            .map_err(|error| DbError::new("quest_giver", error))
     }
 
-    fn quest_ender(&self, quest_id: u32) -> Option<u32> {
-        or_log("quest_ender", self.db.quest_ender(quest_id))
+    fn quest_ender(&self, quest_id: u32) -> DbResult<Option<u32>> {
+        self.db
+            .quest_ender(quest_id)
+            .map_err(|error| DbError::new("quest_ender", error))
     }
 }
 
@@ -100,9 +98,97 @@ impl ResolverDb for SqliteResolverDb {
 mod tests {
     use super::*;
     use crate::db::test_db::open;
+    use axum::body::Bytes;
+    use axum::http::StatusCode;
+    use axum::Extension;
+    use rusqlite::Connection;
+    use std::sync::{Arc, Mutex};
 
     fn resolver_db() -> SqliteResolverDb {
         SqliteResolverDb::new(open()).expect("the snapshot must yield a fingerprint")
+    }
+
+    /// A snapshot whose fingerprint tables all exist — so construction succeeds and resolution
+    /// starts — but whose `creature` rows cannot be read back in the shape the queries expect.
+    ///
+    /// This is the shape of the bug W10 fixes, not a contrived one: an out-of-date or partially
+    /// restored snapshot answers `PRAGMA` and `COUNT(*)` happily and fails on the first real read,
+    /// which is exactly when the old `or_log` helper turned the failure into "no spawn".
+    fn unreadable_db() -> Db {
+        let conn = Connection::open_in_memory().expect("an in-memory database always opens");
+        conn.execute_batch(
+            "CREATE TABLE db_version(version TEXT);
+             INSERT INTO db_version(version) VALUES ('test');
+             CREATE TABLE creature(unexpected);
+             CREATE TABLE creature_template(unexpected);
+             CREATE TABLE creature_involvedrelation(unexpected);
+             CREATE TABLE creature_questrelation(unexpected);
+             CREATE TABLE game_tele(unexpected);
+             CREATE TABLE gameobject(unexpected);
+             CREATE TABLE gameobject_template(unexpected);
+             CREATE TABLE item_template(unexpected);
+             CREATE TABLE quest_template(unexpected);
+             CREATE TABLE spell_template(unexpected);",
+        )
+        .expect("the stub schema is valid SQL");
+        Db(Arc::new(Mutex::new(conn)))
+    }
+
+    /// The defect this work unit exists for, at the seam: an unreadable table must not answer the
+    /// same way an entry that is simply never placed in the world does.
+    #[test]
+    fn a_read_that_failed_is_an_error_not_the_none_an_unspawned_entry_gives() {
+        let broken = SqliteResolverDb::new(unreadable_db())
+            .expect("the fingerprint tables are all present");
+        let error = broken
+            .spawn(EntityKind::Npc, 823)
+            .expect_err("a query that could not run is not `no such spawn`");
+        assert_eq!(error.lookup, "spawn");
+
+        assert_eq!(
+            resolver_db().spawn(EntityKind::Npc, 99_999_999),
+            Ok(None),
+            "an entry with no placement is still an ordinary absence"
+        );
+    }
+
+    /// `POST /resolve` over a database it cannot read is a server fault, and has to say so. A 200
+    /// carrying "no spawn point for `npc:823`" would send the author hunting a data problem that
+    /// does not exist while the real one — an unreadable snapshot — goes unreported.
+    #[tokio::test]
+    async fn a_backend_read_failure_is_a_500_rather_than_a_200_reporting_a_missing_spawn() {
+        let campaign = r#"{
+          "id": "018f0000-0000-7000-8000-000000000001",
+          "name": "Elwynn opener",
+          "graphs": [{
+            "id": "018f0000-0000-7000-8000-000000000002",
+            "name": "Northshire",
+            "entry_node": "018f0000-0000-7000-8000-000000000010",
+            "nodes": [
+              { "id": "018f0000-0000-7000-8000-000000000010",
+                "type": "questing.Travel",
+                "intent": { "to": { "ref": "npc:823", "label": "Deputy Willem" } } }
+            ],
+            "edges": []
+          }]
+        }"#;
+
+        let error = crate::handlers::resolve(
+            Extension(unreadable_db()),
+            Bytes::from(campaign.to_string()),
+        )
+        .await
+        .expect_err("an unreadable database is not a resolvable campaign");
+
+        assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+        let message = error.1 .0["error"]
+            .as_str()
+            .expect("the server's error shape is `{\"error\": …}`")
+            .to_string();
+        assert!(
+            message.contains("spawn") && !message.contains("no spawn point"),
+            "the operator must be told the read failed, not that the npc has no spawn: {message}"
+        );
     }
 
     #[test]
@@ -123,6 +209,7 @@ mod tests {
     fn an_npc_spawn_carries_its_real_ground_height() {
         let spawn = resolver_db()
             .spawn(EntityKind::Npc, 823)
+            .expect("the snapshot is readable")
             .expect("Deputy Willem is spawned");
         assert_eq!(spawn.map, 0);
         assert!((spawn.z - 83.4466).abs() < 0.01, "z was {}", spawn.z);
@@ -134,6 +221,7 @@ mod tests {
         // would move the route to another continent, which is why the pick has to be ordered.
         let spawn = resolver_db()
             .spawn(EntityKind::Object, 1617)
+            .expect("the snapshot is readable")
             .expect("Silverleaf is placed");
         assert_eq!(spawn.map, 1);
         assert!((spawn.z - 28.7988).abs() < 0.01, "z was {}", spawn.z);
@@ -149,13 +237,17 @@ mod tests {
             EntityKind::Map,
             EntityKind::Area,
         ] {
-            assert!(db.spawn(kind, 1).is_none(), "{kind} must not report a spawn");
+            assert_eq!(
+                db.spawn(kind, 1),
+                Ok(None),
+                "{kind} must not report a spawn, and not reporting one is not a failure"
+            );
         }
     }
 
     #[test]
     fn an_unspawned_entry_is_none_rather_than_the_world_origin() {
-        assert!(resolver_db().spawn(EntityKind::Npc, 99_999_999).is_none());
+        assert_eq!(resolver_db().spawn(EntityKind::Npc, 99_999_999), Ok(None));
     }
 
     #[test]
@@ -168,21 +260,21 @@ mod tests {
             (EntityKind::Spell, 8690, "Hearthstone"),
             (EntityKind::Area, 1, "RuinsOfAndorhal"),
         ] {
-            assert_eq!(db.label(kind, id).as_deref(), Some(expected));
+            assert_eq!(db.label(kind, id), Ok(Some(expected.to_string())));
         }
     }
 
     #[test]
     fn an_unknown_entry_has_no_label() {
-        assert!(resolver_db().label(EntityKind::Npc, 99_999_999).is_none());
+        assert_eq!(resolver_db().label(EntityKind::Npc, 99_999_999), Ok(None));
     }
 
     #[test]
     fn the_quest_relations_are_read_from_the_two_separate_tables() {
         let db = resolver_db();
-        assert_eq!(db.quest_giver(783), Some(823), "Deputy Willem offers it");
-        assert_eq!(db.quest_ender(783), Some(197), "Marshal McBride takes it");
-        assert!(db.quest_giver(99_999_999).is_none());
-        assert!(db.quest_ender(99_999_999).is_none());
+        assert_eq!(db.quest_giver(783), Ok(Some(823)), "Deputy Willem offers it");
+        assert_eq!(db.quest_ender(783), Ok(Some(197)), "Marshal McBride takes it");
+        assert_eq!(db.quest_giver(99_999_999), Ok(None));
+        assert_eq!(db.quest_ender(99_999_999), Ok(None));
     }
 }

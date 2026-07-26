@@ -320,7 +320,16 @@ pub async fn resolve(
     let resolver_db = SqliteResolverDb::new(db)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
 
-    let (plan, diagnostics) = sentinel_resolver::resolve(&campaign, &resolver_db);
+    // A lookup the database could not perform is this server's fault, not the campaign's, so it is
+    // a 500 rather than a 200 carrying a diagnostic. The resolver returns no plan at all in that
+    // case: a plan lowered against a half-readable snapshot is structurally complete and would be
+    // indistinguishable from a good one downstream.
+    let (plan, diagnostics) = sentinel_resolver::resolve(&campaign, &resolver_db).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
     Ok(AxumJson(ResolveResponse { plan, diagnostics }))
 }
 

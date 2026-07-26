@@ -20,21 +20,29 @@ use sentinel_models::runtime::GuardedAction;
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 
-use crate::db::ResolverDb;
+use crate::db::{DbResult, ResolverDb};
 use crate::diagnostic::{Diagnostic, Severity};
 
 /// Pure: intent + database in, actions out. Diagnostics are pushed rather than returned so a
 /// partial lowering can report what it had to drop and still emit the rest — an unresolvable
 /// spawn costs the `Travel`, not the interaction that followed it.
 ///
+/// The `DbResult` is the other half of that sentence: a reference the database *does not have* is a
+/// diagnostic and a partial lowering; a lookup the database *could not perform* is `Err` and no
+/// lowering at all, because actions built from a half-readable snapshot look exactly like good ones.
+///
 /// A plain `fn` pointer rather than a boxed closure: task types are static data, and a `fn` keeps
 /// [`TaskType`] `Copy`-cheap to clone and impossible to close over mutable state, which is one
 /// fewer way to break purity.
-pub type LowerFn = fn(&Intent, &dyn ResolverDb, &mut Vec<Diagnostic>) -> Vec<GuardedAction>;
+pub type LowerFn = fn(&Intent, &dyn ResolverDb, &mut Vec<Diagnostic>) -> DbResult<Vec<GuardedAction>>;
 
 /// Task-specific validation, run after the schema check below. Returns only what the schema
 /// cannot express (cross-field requirements, database-backed checks).
-pub type ValidateFn = fn(&Intent, &dyn ResolverDb) -> Vec<Diagnostic>;
+///
+/// Fallible even though no task in the questing set reads the database while validating: the
+/// signature hands one a `&dyn ResolverDb`, so the first validator that uses it would otherwise
+/// reintroduce exactly the failure-as-absence bug this type change removes.
+pub type ValidateFn = fn(&Intent, &dyn ResolverDb) -> DbResult<Vec<Diagnostic>>;
 
 /// What widget the IDE renders for a field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -154,10 +162,14 @@ impl std::fmt::Debug for TaskType {
 
 impl TaskType {
     /// Everything wrong with an intent: the schema check first, then the task's own rules.
-    pub fn check(&self, intent: &Intent, db: &dyn ResolverDb) -> Vec<Diagnostic> {
+    ///
+    /// The schema half still runs when the database is unreadable, but its diagnostics are dropped
+    /// with the `Err` — reporting "this field is missing" while the backend is down would send the
+    /// author after the wrong problem.
+    pub fn check(&self, intent: &Intent, db: &dyn ResolverDb) -> DbResult<Vec<Diagnostic>> {
         let mut diagnostics = self.check_schema(intent);
-        diagnostics.extend((self.validate)(intent, db));
-        diagnostics
+        diagnostics.extend((self.validate)(intent, db)?);
+        Ok(diagnostics)
     }
 
     /// The generic half, derived entirely from [`Self::schema`]. Every task gets required-field,
@@ -378,12 +390,16 @@ mod tests {
     use super::*;
     use crate::db::InMemoryDb;
 
-    fn no_actions(_: &Intent, _: &dyn ResolverDb, _: &mut Vec<Diagnostic>) -> Vec<GuardedAction> {
-        Vec::new()
+    fn no_actions(
+        _: &Intent,
+        _: &dyn ResolverDb,
+        _: &mut Vec<Diagnostic>,
+    ) -> DbResult<Vec<GuardedAction>> {
+        Ok(Vec::new())
     }
 
-    fn no_validation(_: &Intent, _: &dyn ResolverDb) -> Vec<Diagnostic> {
-        Vec::new()
+    fn no_validation(_: &Intent, _: &dyn ResolverDb) -> DbResult<Vec<Diagnostic>> {
+        Ok(Vec::new())
     }
 
     fn task() -> TaskType {
@@ -442,7 +458,29 @@ mod tests {
         let db = InMemoryDb::new("test@0");
         let mut intent = Intent::new();
         intent.insert("npc", EntityRef::new(EntityKind::Quest, 1, "x"));
-        let diagnostics = task().check(&intent, &db as &dyn ResolverDb);
+        let diagnostics = task()
+            .check(&intent, &db as &dyn ResolverDb)
+            .expect("the fixture database answers every lookup");
         assert_eq!(diagnostics[0].code, "resolver.field.entity_kind");
+    }
+
+    /// A validator that cannot read the database reports nothing rather than a diagnostic list the
+    /// author would act on.
+    #[test]
+    fn check_propagates_a_backend_failure_instead_of_reporting_a_clean_intent() {
+        fn reads_the_db(_: &Intent, db: &dyn ResolverDb) -> DbResult<Vec<Diagnostic>> {
+            db.quest_giver(1)?;
+            Ok(Vec::new())
+        }
+
+        let mut task = task();
+        task.validate = reads_the_db;
+        let db = InMemoryDb::new("test@0").failing("database is locked");
+        let mut intent = Intent::new();
+        intent.insert("npc", EntityRef::new(EntityKind::Npc, 1, "x"));
+        assert_eq!(
+            task.check(&intent, &db as &dyn ResolverDb).unwrap_err().lookup,
+            "quest_giver"
+        );
     }
 }

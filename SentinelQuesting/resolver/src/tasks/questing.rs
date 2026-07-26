@@ -16,7 +16,7 @@ use sentinel_models::runtime::{
     RuntimeTurnInQuest, RuntimeVendor, RuntimeWaypoint,
 };
 
-use crate::db::ResolverDb;
+use crate::db::{DbResult, ResolverDb};
 use crate::diagnostic::Diagnostic;
 use crate::registry::{Field, FieldKind, TaskType, ValidationRule};
 
@@ -103,14 +103,21 @@ fn entity_ids(intent: &Intent, name: &str) -> Vec<u32> {
 /// The name to show for an entity. The database wins over `EntityRef::label`, which ADR 09a §1.2
 /// defines as a cache that is refreshed on resolve and never authoritative — a campaign checked in
 /// two expansions ago would otherwise ship its stale names into the plan.
-fn display_name(db: &dyn ResolverDb, kind: EntityKind, id: u32, fallback: &str) -> String {
-    if let Some(label) = db.label(kind, id) {
-        return label;
+/// The `?` is load-bearing: both fallbacks below produce a perfectly plausible string, so a
+/// swallowed read failure would ship a plan that merely looks a little stale.
+fn display_name(
+    db: &dyn ResolverDb,
+    kind: EntityKind,
+    id: u32,
+    fallback: &str,
+) -> DbResult<String> {
+    if let Some(label) = db.label(kind, id)? {
+        return Ok(label);
     }
     if !fallback.is_empty() {
-        return fallback.to_string();
+        return Ok(fallback.to_string());
     }
-    format!("{kind}:{id}")
+    Ok(format!("{kind}:{id}"))
 }
 
 /// A `Travel` to an entry's spawn, or `None` plus a diagnostic when the database has no spawn for
@@ -123,8 +130,8 @@ fn travel_to(
     label: &str,
     field: &'static str,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Option<GuardedAction> {
-    let Some(spawn) = db.spawn(kind, id) else {
+) -> DbResult<Option<GuardedAction>> {
+    let Some(spawn) = db.spawn(kind, id)? else {
         diagnostics.push(
             Diagnostic::warning(
                 "resolver.spawn.unknown",
@@ -132,22 +139,22 @@ fn travel_to(
             )
             .with_field(field),
         );
-        return None;
+        return Ok(None);
     };
-    Some(
+    Ok(Some(
         RuntimeAction::Travel(RuntimeTravel {
-            destination: display_name(db, kind, id, label),
+            destination: display_name(db, kind, id, label)?,
             position: spawn.waypoint(),
             tolerance: DEFAULT_TOLERANCE,
             allow_flight: false,
             timeout: None,
         })
         .into(),
-    )
+    ))
 }
 
-fn no_validation(_: &Intent, _: &dyn ResolverDb) -> Vec<Diagnostic> {
-    Vec::new()
+fn no_validation(_: &Intent, _: &dyn ResolverDb) -> DbResult<Vec<Diagnostic>> {
+    Ok(Vec::new())
 }
 
 // ---------------------------------------------------------------------------
@@ -171,16 +178,16 @@ fn lower_accept_quest(
     intent: &Intent,
     db: &dyn ResolverDb,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let Some(quest) = entity_of(intent, "quest") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    let Some(npc_entry) = quest_npc(intent, db, "from", quest.id, diagnostics) else {
-        return Vec::new();
+    let Some(npc_entry) = quest_npc(intent, db, "from", quest.id, diagnostics)? else {
+        return Ok(Vec::new());
     };
 
     let mut actions = Vec::new();
-    if let Some(travel) = travel_to(db, EntityKind::Npc, npc_entry, "", "from", diagnostics) {
+    if let Some(travel) = travel_to(db, EntityKind::Npc, npc_entry, "", "from", diagnostics)? {
         actions.push(travel);
     }
     actions.push(
@@ -192,7 +199,7 @@ fn lower_accept_quest(
         })
         .into(),
     );
-    actions
+    Ok(actions)
 }
 
 /// The authored NPC, or the database relation when the author left it to the resolver. An entry of
@@ -204,14 +211,17 @@ fn quest_npc(
     field: &'static str,
     quest_id: u32,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Option<u32> {
+) -> DbResult<Option<u32>> {
     if let Some(npc) = entity_of(intent, field) {
-        return Some(npc.id);
+        return Ok(Some(npc.id));
     }
+    // `?` before the diagnostic below on purpose: `resolver.quest.no_giver` tells the author to
+    // name the npc themselves, which is the wrong instruction when the relation table was simply
+    // unreadable.
     let from_db = if field == "from" {
-        db.quest_giver(quest_id)
+        db.quest_giver(quest_id)?
     } else {
-        db.quest_ender(quest_id)
+        db.quest_ender(quest_id)?
     };
     if from_db.is_none() {
         let (code, role) = if field == "from" {
@@ -227,7 +237,7 @@ fn quest_npc(
             .with_field(field),
         );
     }
-    from_db
+    Ok(from_db)
 }
 
 // ---------------------------------------------------------------------------
@@ -252,16 +262,16 @@ fn lower_turn_in(
     intent: &Intent,
     db: &dyn ResolverDb,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let Some(quest) = entity_of(intent, "quest") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    let Some(npc_entry) = quest_npc(intent, db, "to", quest.id, diagnostics) else {
-        return Vec::new();
+    let Some(npc_entry) = quest_npc(intent, db, "to", quest.id, diagnostics)? else {
+        return Ok(Vec::new());
     };
 
     let mut actions = Vec::new();
-    if let Some(travel) = travel_to(db, EntityKind::Npc, npc_entry, "", "to", diagnostics) {
+    if let Some(travel) = travel_to(db, EntityKind::Npc, npc_entry, "", "to", diagnostics)? {
         actions.push(travel);
     }
     actions.push(
@@ -273,7 +283,7 @@ fn lower_turn_in(
         })
         .into(),
     );
-    actions
+    Ok(actions)
 }
 
 // ---------------------------------------------------------------------------
@@ -298,9 +308,9 @@ fn lower_kill(
     intent: &Intent,
     db: &dyn ResolverDb,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let Some(target) = entity_of(intent, "target") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     let mut actions = Vec::new();
@@ -311,7 +321,7 @@ fn lower_kill(
         &target.label,
         "target",
         diagnostics,
-    ) {
+    )? {
         actions.push(travel);
     }
     actions.push(
@@ -323,7 +333,7 @@ fn lower_kill(
         })
         .into(),
     );
-    actions
+    Ok(actions)
 }
 
 // ---------------------------------------------------------------------------
@@ -346,9 +356,9 @@ fn lower_collect(
     intent: &Intent,
     db: &dyn ResolverDb,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let Some(object) = entity_of(intent, "object") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     let mut actions = Vec::new();
@@ -359,7 +369,7 @@ fn lower_collect(
         &object.label,
         "object",
         diagnostics,
-    ) {
+    )? {
         actions.push(travel);
     }
     actions.push(
@@ -369,7 +379,7 @@ fn lower_collect(
         })
         .into(),
     );
-    actions
+    Ok(actions)
 }
 
 // ---------------------------------------------------------------------------
@@ -396,13 +406,13 @@ fn lower_vendor(
     intent: &Intent,
     db: &dyn ResolverDb,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let Some(npc) = entity_of(intent, "npc") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     let mut actions = Vec::new();
-    if let Some(travel) = travel_to(db, npc.kind, npc.id, &npc.label, "npc", diagnostics) {
+    if let Some(travel) = travel_to(db, npc.kind, npc.id, &npc.label, "npc", diagnostics)? {
         actions.push(travel);
     }
     actions.push(
@@ -416,7 +426,7 @@ fn lower_vendor(
         })
         .into(),
     );
-    actions
+    Ok(actions)
 }
 
 // ---------------------------------------------------------------------------
@@ -443,13 +453,13 @@ fn lower_trainer(
     intent: &Intent,
     db: &dyn ResolverDb,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let Some(npc) = entity_of(intent, "npc") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     let mut actions = Vec::new();
-    if let Some(travel) = travel_to(db, npc.kind, npc.id, &npc.label, "npc", diagnostics) {
+    if let Some(travel) = travel_to(db, npc.kind, npc.id, &npc.label, "npc", diagnostics)? {
         actions.push(travel);
     }
     actions.push(
@@ -461,7 +471,7 @@ fn lower_trainer(
         })
         .into(),
     );
-    actions
+    Ok(actions)
 }
 
 // ---------------------------------------------------------------------------
@@ -486,14 +496,14 @@ fn lower_flight(
     intent: &Intent,
     db: &dyn ResolverDb,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let (Some(npc), Some(destination)) = (entity_of(intent, "npc"), text_of(intent, "destination"))
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     let mut actions = Vec::new();
-    if let Some(travel) = travel_to(db, npc.kind, npc.id, &npc.label, "npc", diagnostics) {
+    if let Some(travel) = travel_to(db, npc.kind, npc.id, &npc.label, "npc", diagnostics)? {
         actions.push(travel);
     }
     actions.push(
@@ -503,7 +513,7 @@ fn lower_flight(
         })
         .into(),
     );
-    actions
+    Ok(actions)
 }
 
 // ---------------------------------------------------------------------------
@@ -528,12 +538,12 @@ fn lower_hearth(
     intent: &Intent,
     _db: &dyn ResolverDb,
     _diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
-    vec![RuntimeAction::Hearth(RuntimeHearth {
+) -> DbResult<Vec<GuardedAction>> {
+    Ok(vec![RuntimeAction::Hearth(RuntimeHearth {
         innkeeper_entry: entity_of(intent, "innkeeper").map(|npc| npc.id),
         destination: text_of(intent, "destination").map(str::to_string),
     })
-    .into()]
+    .into()])
 }
 
 // ---------------------------------------------------------------------------
@@ -558,14 +568,14 @@ fn gate() -> TaskType {
 
 /// A gate with no clause would lower to nothing and let execution straight through, which is the
 /// opposite of what the author asked for. Fail loud instead.
-fn validate_gate(intent: &Intent, _db: &dyn ResolverDb) -> Vec<Diagnostic> {
+fn validate_gate(intent: &Intent, _db: &dyn ResolverDb) -> DbResult<Vec<Diagnostic>> {
     if gate_clauses(intent).is_empty() {
-        return vec![Diagnostic::error(
+        return Ok(vec![Diagnostic::error(
             "resolver.gate.no_clause",
             "a gate needs at least one of `quest`, `level`, or `item`",
-        )];
+        )]);
     }
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// Clause order is fixed (quest, level, item) rather than following the intent's key order so the
@@ -598,22 +608,22 @@ fn lower_gate(
     intent: &Intent,
     _db: &dyn ResolverDb,
     _diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let mut clauses = gate_clauses(intent);
     let condition = match clauses.len() {
-        0 => return Vec::new(),
+        0 => return Ok(Vec::new()),
         // A one-element `All` would be noise in every diff of a single-clause gate.
         1 => clauses.remove(0),
         _ => RuntimeCondition::All(clauses),
     };
 
-    vec![RuntimeAction::Condition(RuntimeConditionAction {
+    Ok(vec![RuntimeAction::Condition(RuntimeConditionAction {
         condition,
         // Wait-until-true. A gate blocks the route until it opens; `Applicability` would let the
         // route run straight past a closed gate.
         role: ConditionRole::Completion,
     })
-    .into()]
+    .into()])
 }
 
 // ---------------------------------------------------------------------------
@@ -644,7 +654,7 @@ fn lower_travel(
     intent: &Intent,
     db: &dyn ResolverDb,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Vec<GuardedAction> {
+) -> DbResult<Vec<GuardedAction>> {
     let explicit = match (
         int_of(intent, "map"),
         f32_of(intent, "x"),
@@ -662,7 +672,7 @@ fn lower_travel(
         // Authored coordinates win: they are what a recorder observed, and the database's
         // canonical spawn for an entry may be a different one of its many spawns.
         (Some(waypoint), _) => waypoint,
-        (None, Some(entity)) => match db.spawn(entity.kind, entity.id) {
+        (None, Some(entity)) => match db.spawn(entity.kind, entity.id)? {
             Some(spawn) => spawn.waypoint(),
             None => {
                 diagnostics.push(
@@ -672,7 +682,7 @@ fn lower_travel(
                     )
                     .with_field("to"),
                 );
-                return Vec::new();
+                return Ok(Vec::new());
             }
         },
         (None, None) => {
@@ -680,24 +690,24 @@ fn lower_travel(
                 "resolver.travel.no_destination",
                 "a travel needs either `to` or all of `map`, `x`, `y`, `z`",
             ));
-            return Vec::new();
+            return Ok(Vec::new());
         }
     };
 
     let destination = match (text_of(intent, "destination"), target) {
         (Some(text), _) => text.to_string(),
-        (None, Some(entity)) => display_name(db, entity.kind, entity.id, &entity.label),
+        (None, Some(entity)) => display_name(db, entity.kind, entity.id, &entity.label)?,
         (None, None) => String::new(),
     };
 
-    vec![RuntimeAction::Travel(RuntimeTravel {
+    Ok(vec![RuntimeAction::Travel(RuntimeTravel {
         destination,
         position,
         tolerance: f32_of(intent, "tolerance").unwrap_or(DEFAULT_TOLERANCE),
         allow_flight: bool_of(intent, "allow_flight").unwrap_or(false),
         timeout: None,
     })
-    .into()]
+    .into()])
 }
 
 #[cfg(test)]
@@ -727,7 +737,7 @@ mod tests {
         let mut intent = Intent::new();
         intent.insert("level", 10i64);
         let mut diagnostics = Vec::new();
-        let actions = lower_gate(&intent, &db() as &dyn ResolverDb, &mut diagnostics);
+        let actions = lower_gate(&intent, &db() as &dyn ResolverDb, &mut diagnostics).expect("the fixture database answers every lookup");
         let RuntimeAction::Condition(action) = &actions[0].action else {
             panic!("gate lowers to Condition");
         };
@@ -745,7 +755,7 @@ mod tests {
         intent.insert("y", 98.0f64);
         intent.insert("z", 97.0f64);
         let mut diagnostics = Vec::new();
-        let actions = lower_travel(&intent, &db() as &dyn ResolverDb, &mut diagnostics);
+        let actions = lower_travel(&intent, &db() as &dyn ResolverDb, &mut diagnostics).expect("the fixture database answers every lookup");
         let RuntimeAction::Travel(travel) = &actions[0].action else {
             panic!("travel lowers to Travel");
         };
@@ -756,7 +766,7 @@ mod tests {
     #[test]
     fn a_travel_with_neither_target_nor_coordinates_errors_instead_of_going_to_the_origin() {
         let mut diagnostics = Vec::new();
-        let actions = lower_travel(&Intent::new(), &db() as &dyn ResolverDb, &mut diagnostics);
+        let actions = lower_travel(&Intent::new(), &db() as &dyn ResolverDb, &mut diagnostics).expect("the fixture database answers every lookup");
         assert!(actions.is_empty());
         assert_eq!(diagnostics[0].code, "resolver.travel.no_destination");
     }
@@ -766,7 +776,7 @@ mod tests {
         let mut intent = Intent::new();
         intent.insert("destination", "Goldshire");
         let mut diagnostics = Vec::new();
-        let actions = lower_hearth(&intent, &db() as &dyn ResolverDb, &mut diagnostics);
+        let actions = lower_hearth(&intent, &db() as &dyn ResolverDb, &mut diagnostics).expect("the fixture database answers every lookup");
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0].action, RuntimeAction::Hearth(_)));
     }
@@ -777,7 +787,7 @@ mod tests {
         let mut intent = Intent::new();
         intent.insert("quest", EntityRef::new(EntityKind::Quest, 783, "q"));
         let mut diagnostics = Vec::new();
-        let actions = lower_turn_in(&intent, &db as &dyn ResolverDb, &mut diagnostics);
+        let actions = lower_turn_in(&intent, &db as &dyn ResolverDb, &mut diagnostics).expect("the fixture database answers every lookup");
         let RuntimeAction::TurnInQuest(turn_in) = &actions[1].action else {
             panic!("second action is the turn-in");
         };
