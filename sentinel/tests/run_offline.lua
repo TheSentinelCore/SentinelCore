@@ -346,6 +346,11 @@ local test_modules = {
 
     -- Harness (offline-only; exercises _G.JSON mocked above)
     "tests/harness/test_json_mock",
+    -- ADR 09b §7 / U1: the fake window. Registered beside the other instruments because every
+    -- assertion the IDE's render tests make is this file's output -- a fake that records nothing
+    -- turns "the hover treatment was drawn" into a tautology.
+    "tests/ui/test_fake_window",
+
     -- Entry point (main.lua diagnostics sink, C4)
     "tests/test_main_diagnostics",
     -- ADR 09a W12: the host surface for Recording Mode -- the `_G.Sentinel` verbs an operator drives
@@ -510,6 +515,15 @@ local test_modules = {
     -- resolver's edge guards. Registered next to the event-contract suite because the two share
     -- the same hard constraint -- the addition must leave every pre-plan profile running as-is.
     "tests/modules/questing/test_execution_plan",
+
+    -- ADR 09b U1: the in-game IDE's design system and widget library. These suites drive the
+    -- render path through the fake window registered above, which is the only way an
+    -- immediate-mode UI can be observed outside the injector.
+    "tests/ui/test_theme",
+    "tests/ui/test_widgets",
+    -- The guard on ui/* staying loadable with no Sylvannas API present. It blanks `_G.core` for
+    -- the duration, so it is registered AFTER the suites that consume the real mocked surface.
+    "tests/ui/test_offline_loadable",
 
     -- Shared libs
     "tests/shared/test_compat",
