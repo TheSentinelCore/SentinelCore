@@ -188,6 +188,7 @@ mod tests {
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: ActionPayload::Comment(sentinel_models::authoring::CommentAction {
                 text: text.to_string(),
@@ -206,6 +207,7 @@ mod tests {
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: ActionPayload::AcceptQuest(AcceptQuestAction {
                 quest: 1,
@@ -249,6 +251,7 @@ mod tests {
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: ActionPayload::Condition(sentinel_models::authoring::ConditionAction {
                 expression: "LevelAtLeast(14)".to_string(),
@@ -288,6 +291,7 @@ mod tests {
                 enabled: true,
                 condition: None,
                 class_restriction: None,
+                gate: None,
                 note: None,
                 payload: ActionPayload::AcceptQuest(AcceptQuestAction {
                     quest: 1,
@@ -314,6 +318,7 @@ mod tests {
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: ActionPayload::AcceptQuest(AcceptQuestAction {
                 quest,
@@ -346,6 +351,7 @@ mod tests {
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: ActionPayload::GrindArea(GrindAreaAction {
                 polygon: None,
@@ -362,6 +368,7 @@ mod tests {
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: ActionPayload::LootObject(LootObjectAction { object: Uuid::new_v4(), count: None }),
         };

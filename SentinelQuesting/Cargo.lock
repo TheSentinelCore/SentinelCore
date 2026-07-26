@@ -1032,6 +1032,7 @@ dependencies = [
  "sentinel-models",
  "sentinel-queryclient",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "uuid",

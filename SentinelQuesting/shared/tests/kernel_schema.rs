@@ -2,7 +2,8 @@
 //! with the structs as the single source of truth.
 //!
 //! ADR: `sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md`, §7.2 "JSON Schema (excerpt — the
-//! load-bearing shapes)", lines 1351-1468.
+//! load-bearing shapes)" — the single fenced JSON block that opens with
+//! `"title": "Sentinel Runtime Profile"` and closes just before `## 7.3 Worked example`.
 //!
 //! # Why this file exists
 //!
@@ -12,10 +13,12 @@
 //! `RuntimeCondition` that made every non-unit condition fail open. So this file never re-types the
 //! schema by hand: it **generates** the schema from the structs with `schemars` and pins §7.2's
 //! claims against the generated output. The ADR's own lists are hardcoded here as the *expected*
-//! constants, each carrying the ADR line number a failure must send the reader to.
+//! constants, each paired with an `*_ANCHOR`: the verbatim §7.2 text a failure must send the reader
+//! to search for.
 //!
 //! The load-bearing test is the anti-drift guard: add a `Predicate` variant and
-//! [`predicate_tag_set_matches_adr_7_2_line_1448`] fails with the file and line to edit.
+//! [`predicate_tag_set_matches_adr_7_2_predicate_type_enum`] fails with the file to edit and the
+//! exact string to search for inside it.
 //!
 //! # What this file deliberately does not do
 //!
@@ -36,12 +39,21 @@ use sentinel_models::kernel::RuntimeProfile;
 /// Where a drift failure must send the reader.
 const ADR: &str = "sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md";
 
-// ── The ADR's own lists, transcribed verbatim with their line numbers ────────────────────────────
+// ── The ADR's own lists, transcribed verbatim with a greppable anchor each ───────────────────────
 //
 // These are the *expected* side of every comparison below. They are the only hand-copied thing in
 // this file; everything they are compared against is generated from the structs.
+//
+// Each list carries an `*_ANCHOR`: a verbatim slice of §7.2's JSON block that a reader can paste
+// into ripgrep to land on the exact array a failure is about. Line numbers were used here until
+// they rotted four separate times in one day — an edit anywhere above §7.2 retargets every one of
+// them onto a different line that still exists, so nothing fails and no one notices. An anchor
+// either still matches the ADR or visibly does not.
 
-/// §7.2 line 1360-1361: the root `required` array.
+/// Search anchor for §7.2's root `required` array.
+const ROOT_REQUIRED_ANCHOR: &str = r#""required": ["magic","schema_version","schema_hash""#;
+
+/// §7.2's root `required` array (search: [`ROOT_REQUIRED_ANCHOR`]).
 const ROOT_REQUIRED: &[&str] = &[
     "magic",
     "schema_version",
@@ -55,13 +67,24 @@ const ROOT_REQUIRED: &[&str] = &[
     "tasks",
 ];
 
-/// §7.2 line 1369: `integrity`'s `required` array.
+/// Search anchor for §7.2's `integrity.required` array.
+const INTEGRITY_REQUIRED_ANCHOR: &str =
+    r#""required": ["content_hash","world_source","world_build"]"#;
+
+/// §7.2's `integrity.required` array (search: [`INTEGRITY_REQUIRED_ANCHOR`]).
 const INTEGRITY_REQUIRED: &[&str] = &["content_hash", "world_source", "world_build"];
 
-/// §7.2 line 1380: `waypoint_pool.items.required`. `z` is nullable and therefore absent.
+/// Search anchor for §7.2's `waypoint_pool.items.required` array.
+const POINT_REQUIRED_ANCHOR: &str = r#""required": ["map_id","x","y"]"#;
+
+/// §7.2's `waypoint_pool.items.required` (search: [`POINT_REQUIRED_ANCHOR`]). `z` is nullable and
+/// therefore absent.
 const POINT_REQUIRED: &[&str] = &["map_id", "x", "y"];
 
-/// §7.2 line 1393: `$defs.Task.required`.
+/// Search anchor for §7.2's `$defs.Task.required` array.
+const TASK_REQUIRED_ANCHOR: &str = r#""required": ["id","deps","blocking","lifetime""#;
+
+/// §7.2's `$defs.Task.required` (search: [`TASK_REQUIRED_ANCHOR`]).
 const TASK_REQUIRED: &[&str] = &[
     "id",
     "deps",
@@ -73,19 +96,35 @@ const TASK_REQUIRED: &[&str] = &[
     "source",
 ];
 
-/// §7.2 line 1407: `$defs.Task.properties.source.required`.
+/// Search anchor for §7.2's `$defs.Task.properties.source.required` array.
+const SOURCE_REQUIRED_ANCHOR: &str = r#""required": ["file","line_start","line_end"]"#;
+
+/// §7.2's `$defs.Task.properties.source.required` (search: [`SOURCE_REQUIRED_ANCHOR`]).
 const SOURCE_REQUIRED: &[&str] = &["file", "line_start", "line_end"];
 
-/// §7.2 line 1418: `$defs.Lifetime.properties.type.enum`.
+/// Search anchor for §7.2's `$defs.Lifetime.properties.type.enum`.
+const LIFETIME_TAGS_ANCHOR: &str = r#""enum": ["Exclusive","Background"]"#;
+
+/// §7.2's `$defs.Lifetime.properties.type.enum` (search: [`LIFETIME_TAGS_ANCHOR`]).
 const LIFETIME_TAGS: &[&str] = &["Exclusive", "Background"];
 
-/// §7.2 line 1435: `$defs.CompletionSource.properties.type.enum`.
+/// Search anchor for §7.2's `$defs.CompletionSource.properties.type.enum`.
+const COMPLETION_SOURCE_TAGS_ANCHOR: &str = r#""enum": ["OwnPredicate","LinkedTo"]"#;
+
+/// §7.2's `$defs.CompletionSource.properties.type.enum` (search:
+/// [`COMPLETION_SOURCE_TAGS_ANCHOR`]).
 const COMPLETION_SOURCE_TAGS: &[&str] = &["OwnPredicate", "LinkedTo"];
 
-/// §7.2 line 1441: `$defs.UnknownPolicy.properties.type.enum`.
+/// Search anchor for §7.2's `$defs.UnknownPolicy.properties.type.enum`.
+const UNKNOWN_POLICY_TAGS_ANCHOR: &str = r#""enum": ["Block","Defer","TreatFalse","TreatTrue"]"#;
+
+/// §7.2's `$defs.UnknownPolicy.properties.type.enum` (search: [`UNKNOWN_POLICY_TAGS_ANCHOR`]).
 const UNKNOWN_POLICY_TAGS: &[&str] = &["Block", "Defer", "TreatFalse", "TreatTrue"];
 
-/// §7.2 lines 1448-1452: `$defs.Predicate.properties.type.enum`. 24 variants.
+/// Search anchor for §7.2's `$defs.Predicate.properties.type.enum`.
+const PREDICATE_TAGS_ANCHOR: &str = r#""enum": ["And","Or","Not","QuestComplete""#;
+
+/// §7.2's `$defs.Predicate.properties.type.enum` (search: [`PREDICATE_TAGS_ANCHOR`]). 24 variants.
 ///
 /// There is deliberately **no `HasItem`**: §5.1.1 replaced it with `ItemCount { cmp: Ge }`.
 const PREDICATE_TAGS: &[&str] = &[
@@ -115,7 +154,10 @@ const PREDICATE_TAGS: &[&str] = &[
     "LevelAtMost",
 ];
 
-/// §7.2 lines 1461-1462: `$defs.Op.properties.type.enum`. 13 variants.
+/// Search anchor for §7.2's `$defs.Op.properties.type.enum`.
+const OP_TAGS_ANCHOR: &str = r#""enum": ["Travel","Accept","TurnIn","Abandon""#;
+
+/// §7.2's `$defs.Op.properties.type.enum` (search: [`OP_TAGS_ANCHOR`]). 13 variants.
 const OP_TAGS: &[&str] = &[
     "Travel",
     "Accept",
@@ -132,7 +174,10 @@ const OP_TAGS: &[&str] = &[
     "Delegate",
 ];
 
-/// §7.2 lines 1423-1424: the channel vocabulary, SCREAMING_SNAKE.
+/// Search anchor for §7.2's `Lifetime.payload.channels.items.enum`.
+const CHANNELS_ANCHOR: &str = r#""MOVEMENT","FACING","CASTING","TARGETING""#;
+
+/// §7.2's channel vocabulary, SCREAMING_SNAKE (search: [`CHANNELS_ANCHOR`]).
 const CHANNELS: &[&str] = &[
     "MOVEMENT",
     "FACING",
@@ -183,10 +228,14 @@ const TAGGED_WITH_PAYLOAD: &[&str] = &[
 /// `Class` / `Race` / `Faction` are reused from `crate::authoring` and described as `String` rather
 /// than as named definitions, so they are checked separately in
 /// [`scalar_vocabularies_are_bare_string_enums`].
+/// `ProfileMode` is deliberately **absent**: its `Dungeon` variant carries which dungeon (§5.2), so
+/// it is a mixed enum and only its two unit variants are bare strings. Its shape is pinned by
+/// [`profile_mode_is_a_bare_string_except_for_the_dungeon_it_names`] instead. `DungeonId` — the
+/// payload — is scalar vocabulary and is checked here like the rest.
 const SCALAR_VOCABULARY: &[&str] = &[
     "Expansion",
     "Allegiance",
-    "ProfileMode",
+    "DungeonId",
     "Channel",
     "TravelMode",
     "AreaKind",
@@ -341,10 +390,14 @@ fn string_enum_values(node: &Value) -> BTreeSet<String> {
 /// Compares a generated set against the ADR's transcribed list and renders the drift as an
 /// instruction: *which* names, and *where they are written down*.
 ///
+/// `adr_anchor` is a verbatim slice of §7.2's JSON block — the reader greps for it rather than
+/// jumping to a line number. A line number silently retargets on the next ADR edit; a quoted
+/// slice either still matches or fails to match, which is a question the reader can answer.
+///
 /// Returns `None` when the two agree.
 fn drift(
     what: &str,
-    adr_line: u32,
+    adr_anchor: &str,
     generated: &BTreeSet<String>,
     adr: &BTreeSet<String>,
 ) -> Option<String> {
@@ -354,37 +407,40 @@ fn drift(
     let mut lines = Vec::new();
     for added in generated.difference(adr) {
         lines.push(format!(
-            "ADR 07 §7.2 {what} is now out of date — add {added} at {ADR}:{adr_line}"
+            "ADR 07 §7.2 {what} is now out of date — add {added} to {ADR} §7.2 \
+             (search: {adr_anchor})"
         ));
     }
     for removed in adr.difference(generated) {
         lines.push(format!(
-            "ADR 07 §7.2 {what} is now out of date — remove {removed} at {ADR}:{adr_line} \
-             (the Rust model no longer has it)"
+            "ADR 07 §7.2 {what} is now out of date — remove {removed} from {ADR} §7.2 \
+             (search: {adr_anchor}) (the Rust model no longer has it)"
         ));
     }
     lines.push(format!(
-        "generated from the structs: {generated:?}\nwritten in {ADR}:{adr_line}: {adr:?}"
+        "generated from the structs: {generated:?}\n\
+         written in {ADR} §7.2 (search: {adr_anchor}): {adr:?}"
     ));
     Some(lines.join("\n"))
 }
 
 /// Panics with [`drift`]'s message when the generated set and the ADR's list disagree.
-fn assert_tag_set(what: &str, adr_line: u32, generated: BTreeSet<String>, adr: &[&str]) {
-    if let Some(message) = drift(what, adr_line, &generated, &expected_set(adr)) {
+fn assert_tag_set(what: &str, adr_anchor: &str, generated: BTreeSet<String>, adr: &[&str]) {
+    if let Some(message) = drift(what, adr_anchor, &generated, &expected_set(adr)) {
         panic!("{message}");
     }
 }
 
-// ── Root shape (§7.2 lines 1356-1389) ────────────────────────────────────────────────────────────
+// ── Root shape (§7.2, from `"title": "Sentinel Runtime Profile"` to `"$defs": {`) ─────────────────
 
-/// §7.2 line 1360-1361. Exact set, both directions: a field the ADR requires and the struct dropped
-/// is as much a break as a field the struct gained and the ADR never mentions.
+/// §7.2's root `required` array (search: `"required": ["magic","schema_version","schema_hash"`).
+/// Exact set, both directions: a field the ADR requires and the struct dropped is as much a break
+/// as a field the struct gained and the ADR never mentions.
 #[test]
-fn root_required_set_is_exactly_adr_7_2_line_1360() {
+fn root_required_set_is_exactly_adr_7_2_root_required() {
     assert_tag_set(
         "RuntimeProfile root `required`",
-        1360,
+        ROOT_REQUIRED_ANCHOR,
         required_set(schema()),
         ROOT_REQUIRED,
     );
@@ -403,7 +459,8 @@ fn root_refuses_unknown_properties() {
     );
 }
 
-/// §7.2 lines 1363-1365. `magic` is `{ "const": "SNTL" }` and the two digests are
+/// §7.2's three root string fields (search: `"magic":`, `"schema_hash":`, `"content_hash":`).
+/// `magic` is `{ "const": "SNTL" }` and the two digests are
 /// `{ "type": "string", "pattern": "^[0-9a-f]{64}$" }` — i.e. all three are **strings** on the
 /// wire, even though Rust holds them as `[u8; 4]` and `[u8; 32]`.
 ///
@@ -419,19 +476,21 @@ fn magic_and_digests_are_schematised_as_strings() {
     assert_eq!(
         root_properties["magic"].get("type"),
         Some(&Value::String("string".to_owned())),
-        "ADR 07 §7.2:1489 ({ADR}) pins `magic` to the string const \"SNTL\"; the generated schema \
-         must not describe it as an array of integers, which is what a plain [u8; 4] would produce"
+        "ADR 07 §7.2 ({ADR}, search: `\"magic\":`) pins `magic` to the string const \"SNTL\"; the \
+         generated schema must not describe it as an array of integers, which is what a plain \
+         [u8; 4] would produce"
     );
     assert_eq!(
         root_properties["schema_hash"].get("type"),
         Some(&Value::String("string".to_owned())),
-        "ADR 07 §7.2:1491 ({ADR}) pins `schema_hash` to a 64-character lowercase hex string"
+        "ADR 07 §7.2 ({ADR}, search: `\"schema_hash\":`) pins `schema_hash` to a 64-character \
+         lowercase hex string"
     );
     assert_eq!(
         def("ContentIntegrity")["properties"]["content_hash"].get("type"),
         Some(&Value::String("string".to_owned())),
-        "ADR 07 §7.2:1497 ({ADR}) pins `integrity.content_hash` to a 64-character lowercase hex \
-         string"
+        "ADR 07 §7.2 ({ADR}, search: `\"content_hash\":`) pins `integrity.content_hash` to a \
+         64-character lowercase hex string"
     );
 
     // Recorded honestly rather than claimed: the `^[0-9a-f]{64}$` pattern is *not* in the
@@ -451,41 +510,42 @@ fn magic_and_digests_are_schematised_as_strings() {
     }
 }
 
-/// §7.2 lines 1364, 1366. The two remaining root scalars.
+/// §7.2's two remaining root scalars (search: `"schema_version":`, `"tags_used":`).
 #[test]
-fn root_scalar_types_match_adr_7_2_line_1364() {
+fn root_scalar_types_match_adr_7_2_root_properties() {
     let root_properties = &schema()["properties"];
     assert_eq!(
         root_properties["schema_version"].get("type"),
         Some(&Value::String("integer".to_owned())),
-        "ADR 07 §7.2:1490 ({ADR}) pins `schema_version` to an integer"
+        "ADR 07 §7.2 ({ADR}, search: `\"schema_version\":`) pins `schema_version` to an integer"
     );
     assert_eq!(
         root_properties["tags_used"]["items"].get("type"),
         Some(&Value::String("string".to_owned())),
-        "ADR 07 §7.2:1492 ({ADR}) pins `tags_used` to an array of strings — the C4 tag census"
+        "ADR 07 §7.2 ({ADR}, search: `\"tags_used\":`) pins `tags_used` to an array of strings — \
+         the C4 tag census"
     );
 }
 
-/// §7.2 line 1369.
+/// §7.2's `integrity.required` (search: [`INTEGRITY_REQUIRED_ANCHOR`]).
 #[test]
-fn integrity_required_set_matches_adr_7_2_line_1369() {
+fn integrity_required_set_matches_adr_7_2_integrity_required() {
     assert_tag_set(
         "ContentIntegrity `required`",
-        1369,
+        INTEGRITY_REQUIRED_ANCHOR,
         required_set(def("ContentIntegrity")),
         INTEGRITY_REQUIRED,
     );
 }
 
-/// §7.2 lines 1380-1385: a pooled waypoint requires `map_id`, `x` and `y`; `z` is nullable because
-/// the corpus never supplies it (§5.7).
+/// §7.2's `waypoint_pool.items` (search: [`POINT_REQUIRED_ANCHOR`]): a pooled waypoint requires
+/// `map_id`, `x` and `y`; `z` is nullable because the corpus never supplies it (§5.7).
 #[test]
-fn waypoint_pool_point_shape_matches_adr_7_2_line_1380() {
+fn waypoint_pool_point_shape_matches_adr_7_2_waypoint_pool_items() {
     let point = def("Point");
     assert_tag_set(
         "Point `required`",
-        1380,
+        POINT_REQUIRED_ANCHOR,
         required_set(point),
         POINT_REQUIRED,
     );
@@ -496,27 +556,27 @@ fn waypoint_pool_point_shape_matches_adr_7_2_line_1380() {
         .collect::<BTreeSet<_>>();
     assert!(
         z_types.contains("null"),
-        "ADR 07 §7.2:1510 ({ADR}) types `z` as [\"number\",\"null\"]; the generated schema offers \
-         {z_types:?}. Point::z must stay Option<f32> — the compiler leaves it None and lets the \
-         engine ground-snap (§5.7)."
+        "ADR 07 §7.2 ({ADR}, search: `\"z\": {{ \"type\": [\"number\",\"null\"] }}`) types `z` as \
+         [\"number\",\"null\"]; the generated schema offers {z_types:?}. Point::z must stay \
+         Option<f32> — the compiler leaves it None and lets the engine ground-snap (§5.7)."
     );
 }
 
-// ── Task (§7.2 lines 1391-1412) ──────────────────────────────────────────────────────────────────
+// ── Task (§7.2's `$defs.Task`, search: `"Task": {`) ──────────────────────────────────────────────
 
-/// §7.2 line 1393. The ADR's list is a *minimum*: it excerpts the load-bearing fields rather than
-/// enumerating the struct, so this asserts coverage, and names the surplus so a reader can see what
-/// the excerpt omits.
+/// §7.2's `$defs.Task.required` (search: [`TASK_REQUIRED_ANCHOR`]). The ADR's list is a *minimum*:
+/// it excerpts the load-bearing fields rather than enumerating the struct, so this asserts
+/// coverage, and names the surplus so a reader can see what the excerpt omits.
 #[test]
-fn task_required_set_covers_adr_7_2_line_1393() {
+fn task_required_set_covers_adr_7_2_task_required() {
     let generated = required_set(def("Task"));
     let adr = expected_set(TASK_REQUIRED);
     let missing = adr.difference(&generated).collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
-        "ADR 07 §7.2:1519 ({ADR}) requires {missing:?} on every Task, but the generated schema \
-         does not. Either the field became Option/defaulted in shared/src/kernel/task.rs, or the \
-         ADR list needs editing."
+        "ADR 07 §7.2 ({ADR}, search: {TASK_REQUIRED_ANCHOR}) requires {missing:?} on every Task, \
+         but the generated schema does not. Either the field became Option/defaulted in \
+         shared/src/kernel/task.rs, or the ADR list needs editing."
     );
 
     // Not a failure — recorded so the excerpt's incompleteness is visible rather than surprising.
@@ -524,20 +584,22 @@ fn task_required_set_covers_adr_7_2_line_1393() {
     assert_eq!(
         surplus,
         vec!["loot_filter", "serves_quests", "suppress"],
-        "the set of Task fields required by the structs but omitted from ADR 07 §7.2:1519's \
-         excerpt has changed. §7.2 is an excerpt, so surplus is legal — but it must stay a \
-         deliberate, listed set, not drift silently."
+        "the set of Task fields required by the structs but omitted from ADR 07 §7.2's Task \
+         `required` excerpt ({ADR}, search: {TASK_REQUIRED_ANCHOR}) has changed. §7.2 is an \
+         excerpt, so surplus is legal — but it must stay a deliberate, listed set, not drift \
+         silently."
     );
 }
 
-/// §7.2 lines 1400-1402: the three predicate slots are `oneOf [Predicate, null]`.
+/// §7.2's three Task predicate slots are `oneOf [Predicate, null]`
+/// (search: `"oneOf": [{ "$ref": "#/$defs/Predicate" }` — three hits, one per slot).
 ///
 /// schemars emits `anyOf` where §7.2 writes `oneOf`. For a two-branch `[T, null]` union the two are
 /// equivalent — a value cannot be both a Predicate object and `null` — so the contract asserted
 /// here is the one that matters: **a `null` branch exists**, i.e. the field is `Option<Predicate>`
 /// and an absent gate is legal. Task 0 of §7.3.3 has no `applies_when`.
 #[test]
-fn task_predicate_slots_are_nullable_per_adr_7_2_line_1400() {
+fn task_predicate_slots_are_nullable_per_adr_7_2_task_properties() {
     let task_properties = &def("Task")["properties"];
     for slot in ["applies_when", "complete_when", "abort_when"] {
         let node = &task_properties[slot];
@@ -548,9 +610,10 @@ fn task_predicate_slots_are_nullable_per_adr_7_2_line_1400() {
             .any(|branch| type_names(branch).contains("null"));
         assert!(
             has_null,
-            "ADR 07 §7.2:1526 ({ADR}) types Task.{slot} as oneOf [Predicate, null]; the generated \
-             schema has no null branch, so the field stopped being Option<Predicate>. \
-             Node was: {node}"
+            "ADR 07 §7.2 ({ADR}, search: `\"oneOf\": [{{ \"$ref\": \"#/$defs/Predicate\" }}` — \
+             three hits, one per slot; this is the `{slot}` one) types Task.{slot} as \
+             oneOf [Predicate, null]; the generated schema has no null branch, so the field \
+             stopped being Option<Predicate>. Node was: {node}"
         );
 
         let has_predicate = branch_shapes.iter().any(|branch| {
@@ -558,25 +621,26 @@ fn task_predicate_slots_are_nullable_per_adr_7_2_line_1400() {
         });
         assert!(
             has_predicate,
-            "ADR 07 §7.2:1526 ({ADR}) types Task.{slot} as oneOf [Predicate, null], but the \
-             non-null branch no longer references Predicate. C1 (§5.1) allows exactly one \
-             condition language. Node was: {node}"
+            "ADR 07 §7.2 ({ADR}, search: `\"oneOf\": [{{ \"$ref\": \"#/$defs/Predicate\" }}` — \
+             three hits, one per slot; this is the `{slot}` one) types Task.{slot} as \
+             oneOf [Predicate, null], but the non-null branch no longer references Predicate. \
+             C1 (§5.1) allows exactly one condition language. Node was: {node}"
         );
     }
 }
 
-/// §7.2 lines 1405-1411.
+/// §7.2's `$defs.Task.properties.source` (search: [`SOURCE_REQUIRED_ANCHOR`]).
 #[test]
-fn source_span_shape_matches_adr_7_2_line_1407() {
+fn source_span_shape_matches_adr_7_2_task_source_required() {
     assert_tag_set(
         "SourceSpan `required`",
-        1407,
+        SOURCE_REQUIRED_ANCHOR,
         required_set(def("SourceSpan")),
         SOURCE_REQUIRED,
     );
 }
 
-// ── The anti-drift guard (§7.2 lines 1414-1465) ──────────────────────────────────────────────────
+// ── The anti-drift guard (§7.2's `$defs`, search: `"$defs": {`) ──────────────────────────────────
 //
 // Each of the five tests below reads the discriminator values out of the *generated* schema and
 // compares them to the list the ADR literally writes. This is the reason the file exists.
@@ -589,8 +653,9 @@ fn source_span_shape_matches_adr_7_2_line_1407() {
 //   2. `tagged_variant_names("Predicate")` returns 25 names — it walks the branches, it does not
 //      count against a constant.
 //   3. `generated.difference(adr)` yields exactly `{"HasMount"}`.
-//   4. `drift` renders: `ADR 07 §7.2 Predicate `type` enum is now out of date — add HasMount at
-//      sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md:1448`.
+//   4. `drift` renders: `ADR 07 §7.2 Predicate `type` enum is now out of date — add HasMount to
+//      sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md §7.2 (search: "enum": ["And","Or","Not",
+//      "QuestComplete")`.
 //   5. `assert_tag_set` panics with that message and the test fails.
 //
 // Removing a variant takes the mirrored path through `adr.difference(generated)`. Renaming one
@@ -598,52 +663,63 @@ fn source_span_shape_matches_adr_7_2_line_1407() {
 // steps 3-4 directly against a synthetic 25th name, so the mechanism is verified rather than
 // merely argued.
 
-/// §7.2 lines 1448-1452. **The** guard: 24 predicate tags, no more, no fewer, no `HasItem`.
+/// §7.2's Predicate tag list (search: [`PREDICATE_TAGS_ANCHOR`]). **The** guard: 24 predicate tags,
+/// no more, no fewer, no `HasItem`.
 #[test]
-fn predicate_tag_set_matches_adr_7_2_line_1448() {
+fn predicate_tag_set_matches_adr_7_2_predicate_type_enum() {
     let generated = tagged_variant_names("Predicate");
     assert!(
         !generated.contains("HasItem"),
         "§5.1.1 ({ADR}) removed `HasItem` in favour of ItemCount {{ cmp: Ge }} so there is one way \
          to say one thing; it is back in shared/src/kernel/predicate.rs"
     );
-    assert_tag_set("Predicate `type` enum", 1448, generated, PREDICATE_TAGS);
+    assert_tag_set(
+        "Predicate `type` enum",
+        PREDICATE_TAGS_ANCHOR,
+        generated,
+        PREDICATE_TAGS,
+    );
 }
 
-/// §7.2 lines 1461-1462. 13 op tags.
+/// §7.2's Op tag list (search: [`OP_TAGS_ANCHOR`]). 13 op tags.
 #[test]
-fn op_tag_set_matches_adr_7_2_line_1461() {
-    assert_tag_set("Op `type` enum", 1461, tagged_variant_names("Op"), OP_TAGS);
+fn op_tag_set_matches_adr_7_2_op_type_enum() {
+    assert_tag_set(
+        "Op `type` enum",
+        OP_TAGS_ANCHOR,
+        tagged_variant_names("Op"),
+        OP_TAGS,
+    );
 }
 
-/// §7.2 line 1418.
+/// §7.2's Lifetime tag list (search: [`LIFETIME_TAGS_ANCHOR`]).
 #[test]
-fn lifetime_tag_set_matches_adr_7_2_line_1418() {
+fn lifetime_tag_set_matches_adr_7_2_lifetime_type_enum() {
     assert_tag_set(
         "Lifetime `type` enum",
-        1418,
+        LIFETIME_TAGS_ANCHOR,
         tagged_variant_names("Lifetime"),
         LIFETIME_TAGS,
     );
 }
 
-/// §7.2 line 1435.
+/// §7.2's CompletionSource tag list (search: [`COMPLETION_SOURCE_TAGS_ANCHOR`]).
 #[test]
-fn completion_source_tag_set_matches_adr_7_2_line_1435() {
+fn completion_source_tag_set_matches_adr_7_2_completion_source_type_enum() {
     assert_tag_set(
         "CompletionSource `type` enum",
-        1435,
+        COMPLETION_SOURCE_TAGS_ANCHOR,
         tagged_variant_names("CompletionSource"),
         COMPLETION_SOURCE_TAGS,
     );
 }
 
-/// §7.2 line 1441.
+/// §7.2's UnknownPolicy tag list (search: [`UNKNOWN_POLICY_TAGS_ANCHOR`]).
 #[test]
-fn unknown_policy_tag_set_matches_adr_7_2_line_1441() {
+fn unknown_policy_tag_set_matches_adr_7_2_unknown_policy_type_enum() {
     assert_tag_set(
         "UnknownPolicy `type` enum",
-        1441,
+        UNKNOWN_POLICY_TAGS_ANCHOR,
         tagged_variant_names("UnknownPolicy"),
         UNKNOWN_POLICY_TAGS,
     );
@@ -681,7 +757,7 @@ fn drift_guard_reads_variants_out_of_the_derive() {
 }
 
 /// Verifies the guard mechanism itself: given a generated set carrying a 25th name the ADR does not
-/// list, [`drift`] must name the variant, the ADR file and the ADR line.
+/// list, [`drift`] must name the variant, the ADR file and the exact text to search for in it.
 #[test]
 fn drift_guard_bites_on_a_new_variant() {
     let mut generated = tagged_variant_names("Predicate");
@@ -689,7 +765,7 @@ fn drift_guard_bites_on_a_new_variant() {
 
     let message = drift(
         "Predicate `type` enum",
-        1448,
+        PREDICATE_TAGS_ANCHOR,
         &generated,
         &expected_set(PREDICATE_TAGS),
     )
@@ -697,8 +773,9 @@ fn drift_guard_bites_on_a_new_variant() {
 
     assert!(
         message.contains(
-            "ADR 07 §7.2 Predicate `type` enum is now out of date — add HasMount at \
-             sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md:1448"
+            "ADR 07 §7.2 Predicate `type` enum is now out of date — add HasMount to \
+             sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md §7.2 (search: \
+             \"enum\": [\"And\",\"Or\",\"Not\",\"QuestComplete\")"
         ),
         "the drift message must tell the next engineer what to add and where. Got:\n{message}"
     );
@@ -708,14 +785,16 @@ fn drift_guard_bites_on_a_new_variant() {
     shrunk.remove("LevelAtMost");
     let message = drift(
         "Predicate `type` enum",
-        1448,
+        PREDICATE_TAGS_ANCHOR,
         &shrunk,
         &expected_set(PREDICATE_TAGS),
     )
     .expect("a removed variant must be reported as drift");
     assert!(
-        message
-            .contains("remove LevelAtMost at sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md:1448"),
+        message.contains(
+            "remove LevelAtMost from sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md §7.2 \
+             (search: \"enum\": [\"And\",\"Or\",\"Not\",\"QuestComplete\")"
+        ),
         "the drift message must also catch removals. Got:\n{message}"
     );
 
@@ -723,7 +802,7 @@ fn drift_guard_bites_on_a_new_variant() {
     assert!(
         drift(
             "Predicate `type` enum",
-            1448,
+            PREDICATE_TAGS_ANCHOR,
             &tagged_variant_names("Predicate"),
             &expected_set(PREDICATE_TAGS),
         )
@@ -732,13 +811,13 @@ fn drift_guard_bites_on_a_new_variant() {
     );
 }
 
-/// §7.2 lines 1423-1424: the ControlBroker channels, SCREAMING_SNAKE. `"channels": ["MOVEMENT"]` in
-/// §7.3.3 depends on the spelling.
+/// §7.2's ControlBroker channels, SCREAMING_SNAKE (search: [`CHANNELS_ANCHOR`]).
+/// `"channels": ["MOVEMENT"]` in §7.3.3 depends on the spelling.
 #[test]
-fn channel_enum_matches_adr_7_2_line_1423() {
+fn channel_enum_matches_adr_7_2_lifetime_payload_channels() {
     assert_tag_set(
         "Lifetime.payload.channels enum",
-        1423,
+        CHANNELS_ANCHOR,
         string_enum_values(def("Channel")),
         CHANNELS,
     );
@@ -882,10 +961,61 @@ fn scalar_vocabularies_are_bare_string_enums() {
     }
 }
 
+/// `ProfileMode` is the one **mixed** vocabulary: two unit variants that stay bare strings, and a
+/// `Dungeon` variant that names which dungeon (§5.2, C2).
+///
+/// The split matters in both directions. `"mode": "SpeedRoute"` is what §7.3.3 prints and what every
+/// artifact compiled so far carries, so tagging the whole enum would make them unloadable; and a
+/// `Dungeon` that could not say *which* dungeon would admit Maraudon's 105 steps into a Zul'Farrak
+/// profile, which is the reason the payload exists.
+#[test]
+fn profile_mode_is_a_bare_string_except_for_the_dungeon_it_names() {
+    let branches = branches(def("ProfileMode"));
+
+    // schemars gives each documented variant its own branch, so the two unit variants are two
+    // single-valued string branches rather than one two-valued one.
+    let values: Vec<String> = branches
+        .iter()
+        .filter(|branch| branch.get("type") == Some(&Value::String("string".to_owned())))
+        .flat_map(|branch| {
+            branch["enum"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a string branch must enumerate its values: {branch}"))
+                .iter()
+                .map(|value| value.as_str().unwrap_or_default().to_owned())
+        })
+        .collect();
+    assert_eq!(
+        values,
+        vec!["SpeedRoute".to_owned(), "QuestGuide".to_owned()],
+        "§7.3.3 ({ADR}) prints \"mode\": \"SpeedRoute\"; both unit variants must stay unwrapped. \
+         Branches: {branches:?}"
+    );
+
+    let dungeon = branches
+        .iter()
+        .find(|branch| branch.get("properties").is_some())
+        .unwrap_or_else(|| panic!("ProfileMode must have an object branch: {branches:?}"));
+    let instance = &dungeon["properties"]["Dungeon"]["properties"]["instance"];
+    assert!(
+        !instance.is_null(),
+        "the Dungeon branch must carry `instance` — a unit variant cannot tell `.dungeon Mara` \
+         (105) from `.dungeon ZF` (150). Branch: {dungeon}"
+    );
+
+    // And the instance vocabulary is the closed, measured 19-argument set.
+    assert_eq!(
+        string_enum_values(def("DungeonId")).len(),
+        19,
+        "19 distinct `.dungeon` arguments after case folding: BF BFD Crypts DM Gnomer Mara MT \
+         Ramparts RFD RFK SFK SM SP ST Stockades UB Ulda WC ZF"
+    );
+}
+
 // ── A recorded R1 limitation ─────────────────────────────────────────────────────────────────────
 
-/// §7.2 line 1425 constrains the scheduler band: `{ "type": "integer", "minimum": 30,
-/// "maximum": 49 }` — the Goal band of §5.3.
+/// §7.2 constrains the scheduler band (search: `"band": { "type": "integer", "minimum": 30`):
+/// `{ "type": "integer", "minimum": 30, "maximum": 49 }` — the Goal band of §5.3.
 ///
 /// **The generated schema does not carry that bound.** `Lifetime::Background::band` is a `u8`, and
 /// `u8` cannot express 30..=49 in the type system, so `#[derive(JsonSchema)]` emits
@@ -908,13 +1038,17 @@ fn lifetime_band_range_is_not_expressed_by_the_generated_schema() {
                 .and_then(Value::as_str)
                 == Some("Background")
         })
-        .expect("Lifetime must still have a Background variant (ADR 07 §7.2:1544)");
+        .expect(
+            "Lifetime must still have a Background variant (ADR 07 §7.2, search: \
+             `\"enum\": [\"Exclusive\",\"Background\"]`)",
+        );
 
     let band = &background["properties"]["payload"]["properties"]["band"];
     assert_eq!(
         band.get("type"),
         Some(&Value::String("integer".to_owned())),
-        "ADR 07 §7.2:1551 ({ADR}) types Lifetime.payload.band as an integer; got {band}"
+        "ADR 07 §7.2 ({ADR}, search: `\"band\": {{ \"type\": \"integer\"`) types \
+         Lifetime.payload.band as an integer; got {band}"
     );
     assert!(
         required_set(&background["properties"]["payload"]).contains("band"),
@@ -925,13 +1059,15 @@ fn lifetime_band_range_is_not_expressed_by_the_generated_schema() {
         band.get("minimum"),
         Some(&Value::from(0.0)),
         "R1 limitation, recorded on purpose: `band` is a u8, so the generated schema carries the \
-         u8 floor (0), not ADR 07 §7.2:1551's `minimum: 30`. If this now fails because someone \
+         u8 floor (0), not the `minimum: 30` of ADR 07 §7.2 (search: `\"minimum\": 30, \
+         \"maximum\": 49`). If this now fails because someone \
          added a range-enforcing newtype, that is welcome — update this test and the R1 \
          limitation note that cites it."
     );
     assert!(
         band.get("maximum").is_none(),
-        "R1 limitation, recorded on purpose: ADR 07 §7.2:1551 ({ADR}) sets `maximum: 49` and the \
+        "R1 limitation, recorded on purpose: ADR 07 §7.2 ({ADR}, search: `\"maximum\": 49`) sets \
+         `maximum: 49` and the \
          generated schema cannot express it from a u8. A `maximum` appearing here means the bound \
          landed — update this test and the R1 limitation note."
     );

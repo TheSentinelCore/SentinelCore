@@ -428,6 +428,7 @@ mod tests {
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: sentinel_models::authoring::ActionPayload::Comment(
                 sentinel_models::authoring::CommentAction {

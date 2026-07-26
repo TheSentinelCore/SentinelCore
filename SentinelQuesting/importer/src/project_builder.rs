@@ -3,20 +3,134 @@
 //!
 //! Unresolved entities become diagnostics (ADR `03` §18) rather than hard errors.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 use sentinel_models::authoring::{
-    Action, ActionPayload, AcceptQuestAction, CommentAction, ConditionAction, ConditionRole,
-    Faction, FlightAction, HearthAction, ImportMetadata, KillTargetAction, LearnFlightPathAction,
-    NpcRole, NPCReference, Operation, Position, Project, QuestReference, Severity, TrainerAction,
-    TravelAction, TurnInQuestAction, UseItemAction, VendorAction, Diagnostic,
+    Action, ActionPayload, AcceptQuestAction, CommentAction, CompleteWithTarget, ConditionAction,
+    ConditionRole, Faction, FlightAction, Gated, GuideDirective, GuideGate, HearthAction,
+    ImportMetadata, KillTargetAction, LearnFlightPathAction, NpcRole, NPCReference, Operation,
+    Position, Project, QuestReference, Severity, TrainerAction, TravelAction, TurnInQuestAction,
+    UseItemAction, VendorAction, Diagnostic,
 };
+use sentinel_models::zone::zone_map_for;
 use sentinel_queryclient::{
     NpcDetail, ObjectiveKind, QuestDetail, QueryClient, QueryClientError, WorldPos,
 };
 
-use crate::{ParsedGuide, Step};
+use crate::{split_directive_gate, Directive, LabelDef, ParsedGuide, Step};
+
+/// Directives with a typed carrier on [`Operation`]. Everything else is passed through verbatim
+/// in `Operation::directives` so no step-body directive is silently dropped a second time.
+const TYPED_DIRECTIVES: &[&str] =
+    &["label", "requires", "completewith", "optional", "sticky", "loop"];
+
+/// Does this step gate carry the `skip` disable sentinel?
+///
+/// `skip` (139 occurrences, every one of them on a `step` marker) is never negated, never appears
+/// in a `/`-list, and never occurs outside a step tail. It is ABSORBING: `step << Warrior skip` is
+/// a step the author turned off, not a Warrior-only step, and reading `Warrior` as the audience
+/// would resurrect it.
+fn gate_disables(gate: &str) -> bool {
+    gate.split(|c: char| c == '/' || c.is_whitespace())
+        .any(|t| !t.starts_with('!') && t.eq_ignore_ascii_case("skip"))
+}
+
+/// Split a directive's value into `(value, gate)` as a `Gated<String>` entry.
+fn gated_value(d: &Directive) -> (String, Option<GuideGate>) {
+    let (value, gate) = split_directive_gate(d.value.as_deref().unwrap_or_default());
+    (value, gate.map(GuideGate))
+}
+
+fn directives_named<'a>(step: &'a Step, name: &'a str) -> impl Iterator<Item = &'a Directive> {
+    step.directives.iter().filter(move |d| d.name.eq_ignore_ascii_case(name))
+}
+
+/// `#label NAME [<< gate]` entries, in source order.
+fn step_labels(step: &Step) -> Vec<Gated<String>> {
+    directives_named(step, "label")
+        .filter_map(|d| {
+            let (value, gate) = gated_value(d);
+            (!value.is_empty()).then(|| Gated { value, gate, line: d.line })
+        })
+        .collect()
+}
+
+/// `#requires LABEL [<< gate]` entries, in source order, each keeping its OWN gate.
+fn step_requires(step: &Step) -> Vec<Gated<String>> {
+    directives_named(step, "requires")
+        .filter_map(|d| {
+            let (value, gate) = gated_value(d);
+            (!value.is_empty()).then(|| Gated { value, gate, line: d.line })
+        })
+        .collect()
+}
+
+/// `#completewith TARGET [<< gate]` entries. The gate is stripped BEFORE the `next` comparison,
+/// or the 10 corpus lines spelling `#completewith next << <gate>` are misfiled as label refs.
+fn step_complete_with(step: &Step) -> Vec<Gated<CompleteWithTarget>> {
+    directives_named(step, "completewith")
+        .filter_map(|d| {
+            let (name, gate) = gated_value(d);
+            if name.is_empty() {
+                return None;
+            }
+            let value = if name.eq_ignore_ascii_case("next") {
+                CompleteWithTarget::Next
+            } else {
+                CompleteWithTarget::Label(name)
+            };
+            Some(Gated { value, gate, line: d.line })
+        })
+        .collect()
+}
+
+/// `#optional [<< gate]` entries, in source order. A value of `Some("")` (two corpus lines are
+/// written with a trailing space) is bare, not an empty gate.
+///
+/// Returns all of them: [`Operation::optional`] holds one, so the caller keeps the first and
+/// DIAGNOSES the rest. One corpus step stacks two (`The Burning Crusade.lua:91519`/`:91527`), both
+/// bare, so nothing observable is lost today — but `#optional << Horde` plus `#optional << !Horde`
+/// would collapse to the first silently and wrongly.
+fn step_optionals(step: &Step) -> Vec<Gated<()>> {
+    directives_named(step, "optional")
+        .map(|d| {
+            let (_, gate) = gated_value(d);
+            Gated { value: (), gate, line: d.line }
+        })
+        .collect()
+}
+
+/// Every step-body directive without a typed carrier, verbatim (`#xprate`, `#phase`, `#aldor`, …).
+fn step_passthrough_directives(step: &Step) -> Vec<GuideDirective> {
+    step.directives
+        .iter()
+        .filter(|d| !TYPED_DIRECTIVES.iter().any(|t| d.name.eq_ignore_ascii_case(t)))
+        .map(|d| {
+            let (value, gate) = gated_value(d);
+            GuideDirective {
+                name: d.name.clone(),
+                value: (!value.is_empty()).then_some(value),
+                gate,
+                line: d.line,
+            }
+        })
+        .collect()
+}
+
+/// Is this a *requirement placeholder* — an invisible step that exists only to park an extra
+/// `#requires`, because RestedXP has no multi-requires syntax?
+///
+/// Structural predicate: after discarding `--` comment lines, the step body holds no command and
+/// no instruction text — only directives — and it carries at least one `#requires`. The
+/// `--XXREQ Placeholder …` note the guide author sometimes leaves marks only 6 of the 49
+/// occurrences, so it must NOT be the detector; `#optional` is present on only 12, so it must not
+/// be part of the predicate either.
+fn is_placeholder_step(step: &Step) -> bool {
+    step.commands.is_empty()
+        && step.text.iter().all(|t| t.trim_start().starts_with("--"))
+        && step.directives.iter().any(|d| d.name.eq_ignore_ascii_case("requires"))
+}
 
 /// Helper to convert a role string from QueryServer to [`NpcRole`]. Unknown strings are ignored.
 fn role_from_str(s: &str) -> Option<NpcRole> {
@@ -291,68 +405,6 @@ impl<'a> MapperState<'a> {
     }
 }
 
-/// A zone's UI map identity plus the linear bounds needed to turn RestedXP's zone-relative
-/// percentages into world coordinates.
-///
-/// `continent` is what lands in [`Position::map`] — the id the navmesh/server uses (Eastern
-/// Kingdoms 0, Kalimdor 1, Outland 530). The four bounds come from the client's own
-/// `core.game_ui.get_world_pos_from_map_pos`, sampled at the (0,0) and (1,1) corners of each zone
-/// map, so the table is measured rather than remembered.
-///
-/// Axis convention (verified against the live client and the world DB): world **X** interpolates
-/// along the map's **y** axis, world **Y** along the map's **x** axis.
-#[derive(Debug, Clone, Copy)]
-struct ZoneMap {
-    continent: u32,
-    /// world X at map y = 0
-    top: f32,
-    /// world Y at map x = 0
-    left: f32,
-    /// world X at map y = 1
-    bottom: f32,
-    /// world Y at map x = 1
-    right: f32,
-}
-
-impl ZoneMap {
-    /// Convert zone-relative percentages (0..100) to world X/Y.
-    fn to_world(&self, pct_x: f32, pct_y: f32) -> (f32, f32) {
-        let mx = pct_x / 100.0;
-        let my = pct_y / 100.0;
-        (
-            self.top + my * (self.bottom - self.top),
-            self.left + mx * (self.right - self.left),
-        )
-    }
-}
-
-/// Zone table: `(ui_map_id, aliases, bounds)`.
-///
-/// Bounds were sampled from a live client; each entry is verified against a known DB spawn (e.g.
-/// Elwynn `48.923,41.606` resolves to Marshal McBride at `(-8902.6, -162.6)`, within 0.1 yd).
-/// Zones absent from this table cannot be converted and produce a diagnostic rather than a
-/// bogus position — a percentage must never survive compilation (ADR 06 invariant 3).
-const ZONE_TABLE: &[(u32, &[&str], ZoneMap)] = &[
-    (1429, &["Elwynn Forest"],
-     ZoneMap { continent: 0, top: -7939.583, left: 1535.4166, bottom: -10254.166, right: -1935.4166 }),
-    (1426, &["Dun Morogh"],
-     ZoneMap { continent: 0, top: -3877.083, left: 1802.0833, bottom: -7160.4165, right: -3122.9165 }),
-    (1432, &["Loch Modan"],
-     ZoneMap { continent: 0, top: -4487.5, left: -1993.7499, bottom: -6327.083, right: -4752.083 }),
-    (1455, &["Ironforge"],
-     ZoneMap { continent: 0, top: -4569.2412, left: -713.5914, bottom: -5096.8457, right: -1504.2164 }),
-    (1453, &["Stormwind City", "Stormwind", "StormwindClassic"],
-     ZoneMap { continent: 0, top: -8278.8506, left: 1380.9714, bottom: -9175.205, right: 36.7006 }),
-    (1437, &["Wetlands"],
-     ZoneMap { continent: 0, top: -2147.9165, left: -389.5833, bottom: -4904.1665, right: -4525.0 }),
-    (1436, &["Westfall"],
-     ZoneMap { continent: 0, top: -9400.0, left: 3016.6665, bottom: -11733.333, right: -483.3333 }),
-    (1433, &["Redridge Mountains"],
-     ZoneMap { continent: 0, top: -8575.0, left: -1570.8333, bottom: -10022.916, right: -3741.6665 }),
-    (1439, &["Darkshore"],
-     ZoneMap { continent: 1, top: 8333.333, left: 2941.6665, bottom: 3966.6665, right: -3608.3333 }),
-];
-
 /// Does this action have any chance of progressing a quest objective?
 fn is_satisfying_action(action: &Action) -> bool {
     matches!(
@@ -486,6 +538,7 @@ async fn enrich_unsatisfiable_gates(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: None,
                         payload: ActionPayload::Kill(KillTargetAction {
                             // Drop chance means `count` kills will not yield `count` items; see the
@@ -575,6 +628,7 @@ async fn enrich_unsatisfiable_gates(
                     enabled: true,
                     condition: None,
                     class_restriction: None,
+                    gate: None,
                     note: None,
                     payload,
                 },
@@ -597,18 +651,6 @@ const CLASS_TOKENS: &[&str] = &[
 fn is_known_class_token(token: &str) -> bool {
     let name = token.trim().trim_start_matches('!').trim();
     CLASS_TOKENS.iter().any(|c| c.eq_ignore_ascii_case(name))
-}
-
-/// Look up a zone by name or by a bare UI map id (guides use both forms, e.g.
-/// `.goto Elwynn Forest,…` and `.goto 1429,…`).
-fn zone_map_for(zone: &str) -> Option<ZoneMap> {
-    if let Ok(ui_map_id) = zone.trim().parse::<u32>() {
-        return ZONE_TABLE.iter().find(|(id, _, _)| *id == ui_map_id).map(|(_, _, m)| *m);
-    }
-    ZONE_TABLE
-        .iter()
-        .find(|(_, names, _)| names.iter().any(|n| n.eq_ignore_ascii_case(zone.trim())))
-        .map(|(_, _, m)| *m)
 }
 
 /// Build a `.goto` [`Position`] from its comma-split args (`[dest, x, y, z?]`, IF1). Trailing
@@ -864,6 +906,7 @@ fn inert_preserved_action(
         enabled: true,
         condition: None,
         class_restriction: None,
+        gate: None,
         note,
         payload: ActionPayload::Comment(CommentAction { text }),
     }
@@ -896,6 +939,7 @@ async fn build_step_actions(
                                     enabled: true,
                                     condition: None,
                                     class_restriction: None,
+                                    gate: None,
                                     note: cmd.note.clone(),
                                     payload: ActionPayload::AcceptQuest(AcceptQuestAction {
                                         quest: id,
@@ -912,6 +956,7 @@ async fn build_step_actions(
                                     enabled: true,
                                     condition: None,
                                     class_restriction: None,
+                                    gate: None,
                                     note: cmd.note.clone(),
                                     payload: ActionPayload::Comment(CommentAction {
                                         text: format!(".accept {}", id),
@@ -937,6 +982,7 @@ async fn build_step_actions(
                                     enabled: true,
                                     condition: None,
                                     class_restriction: None,
+                                    gate: None,
                                     note: cmd.note.clone(),
                                     payload: ActionPayload::TurnInQuest(TurnInQuestAction {
                                         quest: id,
@@ -952,6 +998,7 @@ async fn build_step_actions(
                                     enabled: true,
                                     condition: None,
                                     class_restriction: None,
+                                    gate: None,
                                     note: cmd.note.clone(),
                                     payload: ActionPayload::Comment(CommentAction {
                                         text: format!(".turnin {}", id),
@@ -962,7 +1009,12 @@ async fn build_step_actions(
                     }
                 }
             }
-            "goto" => {
+            // `.waypoint` shares `.goto`'s grammar and its meaning. ADR 07 §7.1 lists both as
+            // sources of `Op::Travel` (38,087 and 593), and §5.7's decisive witness for baked
+            // routes — the closed patrol circuit at `A-11-23.lua:215-231` — is three `.goto` lines
+            // followed by fourteen `.waypoint` lines. Preserving `.waypoint` as an inert comment
+            // deleted 14 of that circuit's 17 points before any compiler could see them.
+            "goto" | "waypoint" => {
                 let dest = cmd.args.first()
                     .map(|a| if a.parse::<u32>().is_ok() { format!("Map {}", a) } else { a.clone() })
                     .unwrap_or_else(|| "Unknown".to_string());
@@ -970,21 +1022,29 @@ async fn build_step_actions(
                 // The optional radius arg (`.goto zone,x,y,45,0`) is the guide's reach
                 // tolerance in yards; keep the 5yd default when absent or zero, and clamp
                 // so a typo can never make "arrived" meaninglessly wide.
-                let tolerance = cmd.args.get(3)
-                    .and_then(|s| s.parse::<f32>().ok())
+                let authored = cmd.args.get(3).and_then(|s| s.parse::<f32>().ok());
+                let tolerance = authored
                     .filter(|r| *r > 0.0)
                     .map(|r| r.clamp(5.0, 60.0))
                     .unwrap_or(5.0);
+                // …and the *authored* number beside it, because the clamp above is an execution
+                // policy that cannot be undone: `5` may mean "authored 5", "authored 0" or
+                // "authored nothing", and §7.3.3's `radii` needs to tell them apart.
+                let authored_radius = authored
+                    .filter(|r| r.is_finite() && *r >= 0.0 && *r <= f32::from(u16::MAX))
+                    .map(|r| r.round() as u16);
                 actions.push(Action {
                     id: Uuid::new_v4(),
                     enabled: true,
                     condition: None,
                     class_restriction: None,
+                    gate: None,
                     note: cmd.note.clone(),
                     payload: ActionPayload::Travel(TravelAction {
                         destination: dest,
                         position,
                         tolerance,
+                        authored_radius,
                         mount: None,
                         allow_flight: false,
                         timeout: None,
@@ -1003,6 +1063,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Vendor(VendorAction {
                             npc,
@@ -1021,6 +1082,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: None,
                         payload: ActionPayload::Comment(CommentAction {
                             text: ".vendor (unresolved NPC)".to_string(),
@@ -1040,6 +1102,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Train(TrainerAction {
                             npc,
@@ -1054,6 +1117,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: None,
                         payload: ActionPayload::Comment(CommentAction {
                             text: format!(".train {}", cmd.args.join(",")),
@@ -1075,6 +1139,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Flight(FlightAction {
                             npc,
@@ -1087,6 +1152,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Comment(CommentAction {
                             text: format!(".fly {}", dest),
@@ -1101,6 +1167,7 @@ async fn build_step_actions(
                     enabled: true,
                     condition: None,
                     class_restriction: None,
+                    gate: None,
                     note: cmd.note.clone(),
                     payload: ActionPayload::Hearth(HearthAction {
                         innkeeper: None,
@@ -1133,6 +1200,7 @@ async fn build_step_actions(
                     enabled: true,
                     condition: None,
                     class_restriction: None,
+                    gate: None,
                     note: cmd.note.clone(),
                     payload: ActionPayload::Kill(KillTargetAction {
                         creature_entries: entries,
@@ -1154,6 +1222,7 @@ async fn build_step_actions(
                             enabled: true,
                             condition: None,
                             class_restriction: None,
+                            gate: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::Condition(ConditionAction {
                                 expression,
@@ -1177,6 +1246,7 @@ async fn build_step_actions(
                             enabled: true,
                             condition: None,
                             class_restriction: None,
+                            gate: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::Condition(ConditionAction {
                                 expression,
@@ -1201,6 +1271,7 @@ async fn build_step_actions(
                             enabled: true,
                             condition: None,
                             class_restriction: None,
+                            gate: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::Comment(CommentAction {
                                 text: format!(".{} {}", cmd.name, cmd.args.join(",")),
@@ -1218,6 +1289,7 @@ async fn build_step_actions(
                             enabled: true,
                             condition: None,
                             class_restriction: None,
+                            gate: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::UseItem(UseItemAction {
                                 item: item_id,
@@ -1236,6 +1308,7 @@ async fn build_step_actions(
                             enabled: true,
                             condition: None,
                             class_restriction: None,
+                            gate: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::UseItem(UseItemAction {
                                 item: item_id,
@@ -1245,10 +1318,6 @@ async fn build_step_actions(
                     }
                 }
             }
-            "waypoint" => {
-                // .waypoint <x>, <y> - waypoint in current zone (IF7: never-drop inert preserve)
-                actions.push(inert_preserved_action(state, step.index, cmd, false));
-            }
             "trainer" => {
                 // .trainer - alias for train, uses last_target
                 if let Some(npc) = last_target {
@@ -1257,6 +1326,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Train(TrainerAction {
                             npc,
@@ -1281,6 +1351,7 @@ async fn build_step_actions(
                             enabled: true,
                             condition: None,
                             class_restriction: None,
+                            gate: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::Comment(CommentAction {
                                 text: format!(".abandon {}", id),
@@ -1304,6 +1375,7 @@ async fn build_step_actions(
                             enabled: true,
                             condition: None,
                             class_restriction: None,
+                            gate: None,
                             note: cmd.note.clone(),
                             payload: ActionPayload::Comment(CommentAction {
                                 text: format!(".abandon {}", cmd.args.join(",")),
@@ -1328,6 +1400,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::LearnFlightPath(LearnFlightPathAction {
                             npc,
@@ -1339,6 +1412,7 @@ async fn build_step_actions(
                         enabled: true,
                         condition: None,
                         class_restriction: None,
+                        gate: None,
                         note: cmd.note.clone(),
                         payload: ActionPayload::Comment(CommentAction {
                             text: ".fp (unresolved NPC)".to_string(),
@@ -1357,9 +1431,12 @@ async fn build_step_actions(
         }
 
         // IF3: stamp the command's class suffix onto every action this command just produced.
+        // `class_restriction` keeps its existing (class-only) consumers; `gate` carries the same
+        // tail typed as a full gate expression, so race/faction/era tails survive with it.
         if cmd.class_restriction.is_some() {
             for action in &mut actions[actions_before..] {
                 action.class_restriction = cmd.class_restriction.clone();
+                action.gate = cmd.class_restriction.clone().map(GuideGate);
             }
         }
     }
@@ -1396,14 +1473,87 @@ impl ProjectBuilder {
             }
         }
 
+        // Fold each maximal run of requirement placeholders into the step that follows it: the
+        // placeholder emits no task, but its parked `#requires` (and its `#label`, which would
+        // otherwise dangle) move onto the absorbing step. A trailing run with nothing left to
+        // absorb it is emitted as-is rather than dropped, flagged `placeholder = true`.
+        let mut planned: Vec<(&Step, Vec<&Step>)> = Vec::new();
+        let mut parked: Vec<&Step> = Vec::new();
+        for step in &guide.steps {
+            if is_placeholder_step(step) {
+                parked.push(step);
+            } else {
+                planned.push((step, std::mem::take(&mut parked)));
+            }
+        }
+        for step in parked {
+            planned.push((step, Vec::new()));
+        }
+
         // Build operations from steps.
         let mut operations = Vec::new();
-        for step in &guide.steps {
+        for (step, absorbed) in planned {
             let name = operation_name(step);
             let mut op = Operation::new(name);
             op.conditions = step.conditions.clone();
+            op.gate = step.gate.clone().map(GuideGate);
+            // `<< skip` is a disable sentinel, not an audience: 139 corpus steps the author turned
+            // off compiled into live, executing tasks before this.
+            op.enabled = !step.gate.as_deref().is_some_and(gate_disables);
             op.sticky = step.directives.iter().any(|d| d.name.eq_ignore_ascii_case("sticky"));
             op.looping = step.directives.iter().any(|d| d.name.eq_ignore_ascii_case("loop"));
+            op.placeholder = is_placeholder_step(step);
+            // Provenance spans the step marker through the last line that belongs to the step, and
+            // a folded placeholder is *part of* the operation it was absorbed into — its parked
+            // `#requires` is now this operation's edge, so a reader who follows the span back must
+            // land on the lines that produced it. `line_end.max(line)` guards a `Step` that
+            // predates `Step::line_end` and deserialised it as zero.
+            let span_of = |s: &Step| (s.line as u32, s.line_end.max(s.line) as u32);
+            let (mut line_start, mut line_end) = span_of(step);
+            for parked_step in &absorbed {
+                let (parked_start, parked_end) = span_of(parked_step);
+                line_start = line_start.min(parked_start);
+                line_end = line_end.max(parked_end);
+            }
+            op.source_line_start = Some(line_start);
+            op.source_line_end = Some(line_end);
+            // Absorbed placeholders contribute their parked entries first, in source order.
+            // Everything the placeholder carried moves across, not just `#label`/`#requires`: it
+            // emits no operation of its own, so a directive left behind here is destroyed. 22
+            // `#optional` and 2 `#xprate` (`A-11-23.lua:732`, `:737`) were being dropped, and
+            // `#xprate` decides whether the step belongs to the route at all.
+            let mut optionals: Vec<Gated<()>> = Vec::new();
+            for parked_step in &absorbed {
+                op.labels.extend(step_labels(parked_step));
+                op.requires.extend(step_requires(parked_step));
+                op.complete_with.extend(step_complete_with(parked_step));
+                op.directives.extend(step_passthrough_directives(parked_step));
+                optionals.extend(step_optionals(parked_step));
+            }
+            op.labels.extend(step_labels(step));
+            op.requires.extend(step_requires(step));
+            op.complete_with.extend(step_complete_with(step));
+            op.directives.extend(step_passthrough_directives(step));
+            optionals.extend(step_optionals(step));
+            // `Operation::optional` holds one entry; dropping the rest is an acceptable rule,
+            // dropping them in silence is not.
+            let mut optionals = optionals.into_iter();
+            op.optional = optionals.next();
+            if let Some(kept) = &op.optional {
+                for discarded in optionals {
+                    state.diagnostics.push(Diagnostic {
+                        severity: Severity::Info,
+                        code: "DUPLICATE_OPTIONAL_DISCARDED".to_string(),
+                        message: format!(
+                            "a second `#optional` (line {}) on this step is discarded; the first \
+                             (line {}) is the one that applies",
+                            discarded.line, kept.line
+                        ),
+                        entity: Some(format!("step:{}", step.index)),
+                        action: None,
+                    });
+                }
+            }
             // IF5: surface every tolerated directive typo as an info diagnostic.
             for d in &step.directives {
                 if let Some(original) = &d.original {
@@ -1450,6 +1600,117 @@ impl ProjectBuilder {
             operations.push(op);
         }
         project.operations = operations;
+
+        // Task-graph diagnostics. `LabelGraph` was computed by `parse_guide` and attached to
+        // nothing, so a dangling `#completewith`/`#requires` produced no project diagnostic at
+        // all. Standing ruling: unresolved is ERROR severity, the ordering intent is dropped, the
+        // step SURVIVES and the guide still compiles — every globally-unresolvable step in the
+        // corpus carries its own completion predicate as the fallback.
+        // A `#label` name defined more than once is only a problem when NOTHING tells the
+        // definitions apart. The importer cannot rank gated definitions — that needs a resolved
+        // archetype, which is C2's — so it keeps them all (`LabelGraph::definitions` is a multimap)
+        // and reports only the genuinely undecidable groups.
+        //
+        // The EFFECTIVE gate is the pair (`#label` line's own tail, gate on the step carrying it).
+        // Of the corpus's duplicate-name groups, 21 are disambiguated purely by complementary
+        // `step` markers with byte-identical, tail-less `#label` lines (`Prowlers`,
+        // `A-1-11-Human.lua:1273` `step << Paladin` / `:1280` `step << !Paladin`). Reading the
+        // directive's gate alone reports all 21 as duplicates and trains operators to ignore
+        // the code.
+        //
+        // Two definitions are undecidable when their effective gates are EQUAL — not merely when
+        // both are absent. Testing only for absence has a false negative that is exactly as
+        // undecidable as the case it does catch: `DruidTraining11`
+        // (`The Burning Crusade.lua:71199`/`:72214`) and `chillwindEnd` (`:92465`/`:93213`) each
+        // have two definitions gated identically, and no archetype can ever tell them apart.
+        // Grouping by the gate pair subsumes the all-ungated case rather than special-casing it.
+        let mut ambiguous: Vec<(&str, Vec<&LabelDef>)> = Vec::new();
+        for (name, defs) in &guide.labels.definitions {
+            if defs.len() < 2 {
+                continue;
+            }
+            let mut by_gate: BTreeMap<(Option<&str>, Option<&str>), Vec<&LabelDef>> =
+                BTreeMap::new();
+            for def in defs {
+                let step_gate = guide
+                    .steps
+                    .get(def.step)
+                    .and_then(|s| s.gate.as_deref());
+                by_gate
+                    .entry((def.gate.as_deref(), step_gate))
+                    .or_default()
+                    .push(def);
+            }
+            for undecidable in by_gate.into_values() {
+                if undecidable.len() >= 2 {
+                    ambiguous.push((name.as_str(), undecidable));
+                }
+            }
+        }
+        // `HashMap` iteration order is unspecified; report in source order so the diagnostic list
+        // is reproducible.
+        ambiguous.sort_by_key(|(name, defs)| (defs[0].line, *name));
+        for (name, defs) in ambiguous {
+            let lines: Vec<String> = defs.iter().map(|d| d.line.to_string()).collect();
+            // Name the shared gate when there is one. These groups are undecidable because their
+            // effective gates are IDENTICAL, which includes but is not limited to all being absent
+            // — saying "no gate on any of them" would be a lie for `DruidTraining11` (both
+            // `<< Druid`) and `chillwindEnd` (both `<< Alliance`).
+            let step_gate = guide.steps.get(defs[0].step).and_then(|s| s.gate.as_deref());
+            let shared = match (defs[0].gate.as_deref(), step_gate) {
+                (None, None) => "no gate on any of them".to_string(),
+                (label_gate, marker_gate) => {
+                    let mut parts = Vec::new();
+                    if let Some(g) = label_gate {
+                        parts.push(format!("`#label … << {g}`"));
+                    }
+                    if let Some(g) = marker_gate {
+                        parts.push(format!("`step << {g}`"));
+                    }
+                    format!("the same gate on all of them ({})", parts.join(" under "))
+                }
+            };
+            state.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "DUPLICATE_LABEL".to_string(),
+                message: format!(
+                    "`#label {name}` is defined {} times in this guide with {shared} (lines {}); \
+                     a `#completewith`/`#requires` naming it cannot be bound to one of them by \
+                     any rule",
+                    defs.len(),
+                    lines.join(", ")
+                ),
+                entity: Some(format!("step:{}", defs[0].step)),
+                action: None,
+            });
+        }
+
+        for r in &guide.labels.unresolved {
+            state.diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: "UNRESOLVED_COMPLETEWITH".to_string(),
+                message: format!(
+                    "`#completewith {}` (line {}) names no `#label` in this guide; the step keeps \
+                     its own completion predicate",
+                    r.label, r.line
+                ),
+                entity: Some(format!("step:{}", r.from_step)),
+                action: None,
+            });
+        }
+        for r in &guide.labels.unresolved_requires {
+            state.diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: "UNRESOLVED_REQUIRES".to_string(),
+                message: format!(
+                    "`#requires {}` (line {}) names no `#label` in this guide; the edge is \
+                     dropped and the step is retained",
+                    r.label, r.line
+                ),
+                entity: Some(format!("step:{}", r.from_step)),
+                action: None,
+            });
+        }
 
         // Libraries.
         project.npc_library = state.npcs;

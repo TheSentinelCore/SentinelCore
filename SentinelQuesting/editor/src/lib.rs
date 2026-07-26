@@ -683,12 +683,22 @@ mod tests {
             conditions: vec![],
             sticky: false,
             looping: false,
+            labels: vec![],
+            requires: vec![],
+            complete_with: vec![],
+            optional: None,
+            gate: None,
+            directives: vec![],
+            placeholder: false,
+            source_line_start: None,
+            source_line_end: None,
             actions: vec![
                 sentinel_models::authoring::Action {
                     id: uuid::Uuid::new_v4(),
                     enabled: true,
                     condition: None,
                     class_restriction: None,
+                    gate: None,
                     note: None,
                     payload: sentinel_models::authoring::ActionPayload::Comment(
                         sentinel_models::authoring::CommentAction {
@@ -717,7 +727,7 @@ mod tests {
         let mut project = sentinel_models::authoring::new_project("cond-test");
         let mut op = Operation::new("op".to_string());
         op.actions.push(Action {
-            id: uuid::Uuid::new_v4(), enabled: true, condition: None, class_restriction: None, note: None,
+            id: uuid::Uuid::new_v4(), enabled: true, condition: None, class_restriction: None, note: None, gate: None,
             payload: ActionPayload::Condition(ConditionAction {
                 expression: "NotARealPredicate(1)".to_string(),
                 role: sentinel_models::authoring::ConditionRole::Completion,
@@ -765,12 +775,22 @@ mod tests {
             conditions: vec![],
             sticky: false,
             looping: false,
+            labels: vec![],
+            requires: vec![],
+            complete_with: vec![],
+            optional: None,
+            gate: None,
+            directives: vec![],
+            placeholder: false,
+            source_line_start: None,
+            source_line_end: None,
             actions: vec![
                 sentinel_models::authoring::Action {
                     id: uuid::Uuid::new_v4(),
                     enabled: true,
                     condition: None,
                     class_restriction: None,
+                    gate: None,
                     note: None,
                     payload: sentinel_models::authoring::ActionPayload::Comment(
                         sentinel_models::authoring::CommentAction {
@@ -791,6 +811,15 @@ mod tests {
             conditions: vec!["done_northshire".to_string()],
             sticky: false,
             looping: false,
+            labels: vec![],
+            requires: vec![],
+            complete_with: vec![],
+            optional: None,
+            gate: None,
+            directives: vec![],
+            placeholder: false,
+            source_line_start: None,
+            source_line_end: None,
             actions: vec![],
             notes: Some("Need to finish".to_string()),
         };
@@ -868,6 +897,15 @@ mod tests {
             conditions: vec![],
             sticky: false,
             looping: false,
+            labels: vec![],
+            requires: vec![],
+            complete_with: vec![],
+            optional: None,
+            gate: None,
+            directives: vec![],
+            placeholder: false,
+            source_line_start: None,
+            source_line_end: None,
             actions: vec![],
             notes: None,
         });

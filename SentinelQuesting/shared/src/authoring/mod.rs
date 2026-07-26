@@ -7,6 +7,7 @@
 mod action;
 mod area;
 mod enums;
+mod guide;
 mod npc;
 mod object;
 mod operation;
@@ -26,6 +27,7 @@ pub use area::Area;
 pub use enums::{
     Class, CoordinateMode, Faction, NpcRole, Race, Severity, VariableType, VariableValue,
 };
+pub use guide::{CompleteWithTarget, Gated, GuideDirective, GuideGate, SourceLineNo};
 pub use npc::{NPCReference, NpcRoleSet};
 pub use object::GameObjectReference;
 pub use operation::Operation;

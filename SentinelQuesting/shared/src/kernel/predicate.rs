@@ -17,6 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::finite;
 use super::ids::{ItemId, QuestId, SpellId};
 
 /// Comparison operator, added once so the 15 new predicate variants do not each re-invent
@@ -199,7 +200,10 @@ pub enum Predicate {
     AtLocation {
         /// Index into [`RuntimeProfile::waypoint_pool`](crate::kernel::RuntimeProfile::waypoint_pool).
         point: u32,
-        /// Arrival radius in yards.
+        /// Arrival radius in yards. Refused at write time if non-finite — see
+        /// [`finite`](crate::kernel::finite).
+        #[serde(serialize_with = "finite::serialize")]
+        #[schemars(with = "f32")]
         radius: f32,
     },
     /// Player level floor. `#level` (22) and the 1-argument `.maxlevel` complement (§5.2).
@@ -308,7 +312,10 @@ pub enum Predicate {
         id: u32,
         /// Comparison operator.
         cmp: Cmp,
-        /// Right-hand side, in seconds.
+        /// Right-hand side, in seconds. Refused at write time if non-finite — see
+        /// [`finite`](crate::kernel::finite).
+        #[serde(serialize_with = "finite::serialize")]
+        #[schemars(with = "f32")]
         secs: f32,
     },
     /// Zone or sub-area membership — a **set** test, not a distance test. `.zone`, `.subzone`,
@@ -336,7 +343,10 @@ pub enum Predicate {
         stat: ItemStat,
         /// Comparison operator.
         cmp: Cmp,
-        /// Right-hand side.
+        /// Right-hand side. Refused at write time if non-finite — see
+        /// [`finite`](crate::kernel::finite).
+        #[serde(serialize_with = "finite::serialize")]
+        #[schemars(with = "f32")]
         value: f32,
     },
     /// Party-size test. `.group` (190) and, negated, `.solo` (13). Drives both gating and

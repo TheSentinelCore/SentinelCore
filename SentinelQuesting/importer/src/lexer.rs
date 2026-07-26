@@ -2,10 +2,17 @@
 //!
 //! Header-region lines become [`Token::GuideHeader`]; step-region lines become
 //! [`Token::StepStart`], [`Token::StepDirective`], [`Token::Command`], or [`Token::Text`].
+//!
+//! Every `#token`, in **either** region, is resolved against the closed vocabulary in
+//! [`crate::directives`]: known tokens pass through, the six measured typos normalise with a
+//! [`DirectiveDiagnostic`] apiece, and anything else aborts the lex (ADR 07 §5.10). That is why
+//! [`Lexer::tokenize`] returns a [`Result`] and a [`LexedGuide`] rather than a bare `Vec<Token>` —
+//! an infallible entry point next to a fallible one is a back door around the posture.
 
 use crate::{
-    guide_splitter::{is_step_marker, parse_step_conditions},
-    LocatedLine, SourceLineNo, SplitGuide,
+    directives::{resolve_directive, DirectiveDiagnostic},
+    guide_splitter::{is_step_marker, parse_step_conditions, parse_step_gate},
+    ImportError, LocatedLine, SourceLineNo, SplitGuide,
 };
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +26,14 @@ pub enum Token {
     },
     StepStart {
         conditions: Vec<String>,
+        /// The raw, unsplit `<<` tail of the marker (IF3). `conditions` is the lossy `/`-only
+        /// split kept for wire compatibility; this is the full gate expression.
+        ///
+        /// Absent-when-`None` on the wire, matching its carrier [`Step::gate`](crate::Step::gate):
+        /// an optional field that serializes as an explicit `null` in one type and is omitted in
+        /// its sibling is exactly the silent Rust↔consumer drift `CLAUDE.md` warns about.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gate: Option<String>,
         line: SourceLineNo,
     },
     StepDirective {
@@ -26,7 +41,9 @@ pub enum Token {
         value: Option<String>,
         line: SourceLineNo,
         /// The raw directive name as written, when it was a tolerated typo canonicalized to
-        /// `name` (IF5). `None` when the directive was already spelled canonically.
+        /// `name` (IF5). `None` when the directive was already spelled canonically. Omitted from
+        /// the wire when absent, like [`Directive::original`](crate::Directive::original).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         original: Option<String>,
     },
     Command {
@@ -36,6 +53,9 @@ pub enum Token {
         line: SourceLineNo,
         /// Trailing `<< ClassName` / `<< Class1/Class2` / `<< !Class` suffix, when present
         /// (IF3). Extracted from whichever of `note`/args-tail carries the line's tail text.
+        /// Omitted from the wire when absent, like
+        /// [`Command::class_restriction`](crate::Command::class_restriction).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         class_restriction: Option<String>,
     },
     Text {
@@ -44,14 +64,13 @@ pub enum Token {
     },
 }
 
-/// Strip a trailing `--` dev comment from a command's args portion. The `--` marker never
-/// appears in a valid numeric/id arg, so truncating at its first occurrence is unambiguous.
-fn strip_inline_dev_comment(s: &str) -> &str {
-    match s.find("--") {
-        Some(idx) => s[..idx].trim_end(),
-        None => s,
-    }
-}
+/// Strip a trailing `--` dev comment from a command's args portion.
+///
+/// Re-exported from [`sentinel_models::source`], not defined here: the compiler's ADR-07 movement
+/// lowering (`kernel::parse_movement`) obeys the same rule over the same corpus lines, and two
+/// implementations of one lexical rule can disagree. Also applied to `step` marker tails by
+/// [`parse_step_gate`](crate::guide_splitter::parse_step_gate).
+pub(crate) use sentinel_models::source::strip_inline_dev_comment;
 
 /// Extract a trailing `<< ClassName` / `<< Class1/Class2` / `<< !Class` suffix (IF3) from the
 /// tail portion of a command line (either its note, or its args when there is no note). Returns
@@ -71,85 +90,100 @@ fn extract_class_suffix(s: &str) -> (String, Option<String>) {
     }
 }
 
-/// Known single-edit-distance directive typo variants observed in the RestedXP corpus
-/// (`The Burning Crusade.lua`), canonicalized here rather than dropped (IF5).
-const DIRECTIVE_TYPOS: &[(&str, &str)] = &[
-    ("compltewith", "completewith"),
-    ("requries", "requires"),
-    ("lable", "label"),
-];
-
-/// Canonicalize a directive name, returning `(canonical, original_if_typo)`. `original` is
-/// `None` when `name` was already canonical.
-fn canonicalize_directive(name: &str) -> (String, Option<String>) {
-    for (typo, canonical) in DIRECTIVE_TYPOS {
-        if name.eq_ignore_ascii_case(typo) {
-            return (canonical.to_string(), Some(name.to_string()));
-        }
-    }
-    (name.to_string(), None)
+/// The token stream of one guide, plus everything ingest tolerated **loudly** while producing it.
+///
+/// The two travel together because a normalisation that is not carried alongside the token it
+/// changed is a silent repair: `#compltewith` and `#completewith` are indistinguishable once
+/// lexing is over, and only the diagnostic still knows which line was authored wrong.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LexedGuide {
+    /// The classified tokens, in source order.
+    pub tokens: Vec<Token>,
+    /// One entry per normalised occurrence, in source order.
+    pub diagnostics: Vec<DirectiveDiagnostic>,
 }
 
 pub struct Lexer;
 
 impl Lexer {
-    pub fn tokenize(split: &SplitGuide) -> Vec<Token> {
-        let mut tokens = Vec::new();
+    /// Classify `split`, applying the closed directive vocabulary (ADR 07 §5.10).
+    ///
+    /// Fails on the first `#token` that is neither canonical nor a listed alias. There is no
+    /// infallible sibling of this function by design — one would be a way to lex a guide without
+    /// the posture, and the posture is the only thing standing between an unknown token and a
+    /// silently dropped step.
+    pub fn tokenize(split: &SplitGuide) -> Result<LexedGuide, ImportError> {
+        let mut lexed = LexedGuide::default();
         for hl in &split.headers {
-            if let Some(tok) = Self::lex_header(hl) {
-                tokens.push(tok);
+            if let Some(tok) = Self::lex_header(hl, &mut lexed.diagnostics)? {
+                lexed.tokens.push(tok);
             }
         }
         for bl in &split.body_lines {
-            if let Some(tok) = Self::lex_body_line(bl) {
-                tokens.push(tok);
+            if let Some(tok) = Self::lex_body_line(bl, &mut lexed.diagnostics)? {
+                lexed.tokens.push(tok);
             }
         }
-        tokens
+        Ok(lexed)
     }
 
-    fn lex_header(line: &LocatedLine) -> Option<Token> {
+    fn lex_header(
+        line: &LocatedLine,
+        diagnostics: &mut Vec<DirectiveDiagnostic>,
+    ) -> Result<Option<Token>, ImportError> {
         let t = line.text.trim();
         if t.is_empty() {
-            return None;
+            return Ok(None);
         }
         if let Some(rest) = t.strip_prefix('#') {
             let rest = rest.trim_start();
-            let (key, value) = match rest.split_once(char::is_whitespace) {
-                Some((k, v)) => (k.to_string(), v.trim().to_string()),
-                None => (rest.to_string(), String::new()),
+            let (raw_key, value) = match rest.split_once(char::is_whitespace) {
+                Some((k, v)) => (k.to_string(), Some(v.trim().to_string())),
+                None => (rest.to_string(), None),
             };
-            return Some(Token::GuideHeader {
-                key,
-                value,
+            // Same closed vocabulary as the step region. `Token::GuideHeader` has no `original`
+            // field and gains none here — no header-region typo exists in the pack, so adding a
+            // carrier for it would be an unmeasured wire change; the diagnostic holds the authored
+            // spelling either way.
+            let resolved = resolve_directive(&raw_key, value, line.line_no)?;
+            if let Some(diag) = resolved.diagnostic {
+                diagnostics.push(diag);
+            }
+            return Ok(Some(Token::GuideHeader {
+                key: resolved.name,
+                value: resolved.value.unwrap_or_default(),
                 line: line.line_no,
-            });
+            }));
         }
         if let Some(rest) = t.strip_prefix("<<") {
-            return Some(Token::GuideHeader {
+            return Ok(Some(Token::GuideHeader {
                 key: "faction".to_string(),
                 value: rest.trim().to_string(),
                 line: line.line_no,
-            });
+            }));
         }
         // Any other header-region line (rare) is captured verbatim.
-        Some(Token::GuideHeader {
+        Ok(Some(Token::GuideHeader {
             key: "raw".to_string(),
             value: t.to_string(),
             line: line.line_no,
-        })
+        }))
     }
 
-    fn lex_body_line(line: &LocatedLine) -> Option<Token> {
+    fn lex_body_line(
+        line: &LocatedLine,
+        diagnostics: &mut Vec<DirectiveDiagnostic>,
+    ) -> Result<Option<Token>, ImportError> {
         let t = line.text.trim();
         if t.is_empty() {
-            return None;
+            return Ok(None);
         }
         if is_step_marker(t) {
-            return Some(Token::StepStart {
+            return Ok(Some(Token::StepStart {
                 conditions: parse_step_conditions(t),
+                gate: parse_step_gate(t),
                 line: line.line_no,
-            });
+            }));
         }
         if let Some(rest) = t.strip_prefix('#') {
             let rest = rest.trim_start();
@@ -157,22 +191,25 @@ impl Lexer {
                 Some((k, v)) => (k.to_string(), Some(v.trim().to_string())),
                 None => (rest.to_string(), None),
             };
-            let (name, original) = canonicalize_directive(&raw_name);
-            return Some(Token::StepDirective {
-                name,
-                value,
+            let resolved = resolve_directive(&raw_name, value, line.line_no)?;
+            if let Some(diag) = resolved.diagnostic {
+                diagnostics.push(diag);
+            }
+            return Ok(Some(Token::StepDirective {
+                name: resolved.name,
+                value: resolved.value,
                 line: line.line_no,
-                original,
-            });
+                original: resolved.original,
+            }));
         }
         if let Some(rest) = t.strip_prefix('.') {
-            return Some(Self::lex_command(rest, line.line_no));
+            return Ok(Some(Self::lex_command(rest, line.line_no)));
         }
         // Everything else is instructional text (including ">>" continuations and "+" chat lines).
-        Some(Token::Text {
+        Ok(Some(Token::Text {
             content: t.to_string(),
             line: line.line_no,
-        })
+        }))
     }
 
     fn lex_command(rest: &str, line: SourceLineNo) -> Token {

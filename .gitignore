@@ -24,6 +24,17 @@ SentinelFollower
 SentinelQueryServer/data/world.db
 .db
 tools
+# The citation-anchor guard must survive a fresh clone, or the rot it prevents simply
+# recurs. Git cannot re-include a file whose parent DIRECTORY is excluded, so `tools` has
+# to be re-admitted first and its contents excluded again — a bare
+# `!SentinelQuesting/tools/check_citation_anchors.py` here looks right and does nothing.
+!SentinelQuesting/tools/
+SentinelQuesting/tools/*
+!SentinelQuesting/tools/check_citation_anchors.py
+# `shared/src/zone.rs::ZONE_TABLE` is generated and checked in as source. The generator has to
+# ship with it: a table nobody can regenerate is a table nobody can audit, and the module doc
+# points straight at this path.
+!SentinelQuesting/tools/gen_zone_table.py
 OLD*
 StrathDuoMage*
 _scripts

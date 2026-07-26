@@ -50,7 +50,74 @@ pub enum Allegiance {
     Scryer,
 }
 
+/// Which dungeon a [`ProfileMode::Dungeon`] artifact was compiled for (§5.2, §8).
+///
+/// A closed `Copy` enum rather than a `String`, so [`ProfileMode`] keeps its `Copy` / `Eq` / `Hash`
+/// derives and an unrecognised instance cannot reach the artifact.
+///
+/// The variants are the **measured** `.dungeon` argument set: 19 distinct arguments over the seven
+/// vendored guides after case folding, `ST` 182 / `DM` 157 / `ZF` 150 / `Mara` 105+91 / `WC` 85 /
+/// `RFD` 69 / `BFD` 66 / `SM` 55 / `Ulda` 41+25 / `Gnomer` 41 / `RFK` 37 / `Stockades` 36 / `BF` 27 /
+/// `UB` 26 / `SFK` 25 / `MT` 24 / `SP` 16 / `Ramparts` 11+11 / `Crypts` 11. The three doubled counts
+/// are the `MARA` / `ULDA` / `RAMPARTS` case splits the compiler normalises.
+///
+/// The wire spelling is the Rust variant name, as for every other scalar vocabulary in this module;
+/// the authored argument is mapped to it by the compiler, which is also where the case split is
+/// announced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum DungeonId {
+    /// `BF` (27). Staged from Hellfire Peninsula.
+    Bf,
+    /// `BFD` (66).
+    Bfd,
+    /// `Crypts` (11).
+    Crypts,
+    /// `DM` (157).
+    Dm,
+    /// `Gnomer` (41).
+    Gnomer,
+    /// `Mara` (105) / `MARA` (91).
+    Mara,
+    /// `MT` (24). Staged from Terokkar Forest.
+    Mt,
+    /// `Ramparts` (11) / `RAMPARTS` (11).
+    Ramparts,
+    /// `RFD` (69).
+    Rfd,
+    /// `RFK` (37).
+    Rfk,
+    /// `SFK` (25).
+    Sfk,
+    /// `SM` (55).
+    Sm,
+    /// `SP` (16). Staged from Zangarmarsh.
+    Sp,
+    /// `ST` (182).
+    St,
+    /// `Stockades` (36).
+    Stockades,
+    /// `UB` (26). Staged from Zangarmarsh.
+    Ub,
+    /// `Ulda` (41) / `ULDA` (25).
+    Ulda,
+    /// `WC` (85).
+    Wc,
+    /// `ZF` (150).
+    Zf,
+}
+
 /// Which flavour of route the artifact was compiled for (§7.1: "`#questguide`, `.dungeon` variant").
+///
+/// [`Dungeon`](Self::Dungeon) carries **which** dungeon, because `.dungeon Mara` (105) and
+/// `.dungeon ZF` (150) are different archetype variants: a resolver that can only say "this is a
+/// dungeon run" admits every dungeon's steps into every dungeon's profile.
+///
+/// Wire shape: the two unit variants stay bare strings — `"SpeedRoute"`, `"QuestGuide"`, which is
+/// what §7.3.3 prints and what every artifact compiled so far carries — and the payload-carrying
+/// variant takes serde's default external form, `{"Dungeon": {"instance": "Mara"}}`. Adjacent
+/// tagging is *not* used here: it would rewrite the two spellings §7.3.3 pins, and the kernel does
+/// not dispatch on this field at all — the archetype is provenance (§5.2), read by the compiler and
+/// by whoever audits an artifact, never by the runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ProfileMode {
     /// The pure speed route — the absence of `#questguide`. The value in §7.3.3.
@@ -59,7 +126,10 @@ pub enum ProfileMode {
     QuestGuide,
     /// `.dungeon` (1,351) — resolved at compile time into a separate archetype variant rather than a
     /// runtime branch (§5.6, §8).
-    Dungeon,
+    Dungeon {
+        /// Which instance this artifact is the route for.
+        instance: DungeonId,
+    },
 }
 
 /// BLAKE3-and-provenance block that closes the content-integrity gap `schema_hash` leaves open
@@ -137,6 +207,31 @@ pub struct Archetype {
     pub content_phase: Option<u8>,
     /// Speed route, quest guide, or dungeon variant.
     pub mode: ProfileMode,
+    /// `#xprate` (735) — the realm's XP multiplier, in **thousandths**: `1_000` is blizzlike.
+    ///
+    /// Measured value census: `<1.5` 584, `>1.49` 130, `>1.59` 15, `>1.3` 4, `>1.499` 2. Thousandths
+    /// and not `f32` because this struct derives `Eq`, and because `>1.49` and `>1.499` are genuinely
+    /// different thresholds that disagree at 1.495 — float comparison at that width is exactly where
+    /// a wrong answer hides.
+    ///
+    /// Required on the wire, like every other field of this struct: an artifact that does not say
+    /// what XP rate it was resolved against cannot be interpreted, and defaulting it to blizzlike
+    /// would silently reinterpret 714 forked steps rather than refuse (C4, §5.4).
+    pub xp_rate_milli: u32,
+    /// `#hardcoreserver` (4) / `#softcoreserver` (2) — a property of the **realm**, independent of
+    /// the player's own [`hardcore`](Self::hardcore) (59 / 91).
+    ///
+    /// Aliasing the two is the obvious shortcut, since one directive name is a prefix of the other,
+    /// and it admits 4 realm-specific steps to every hardcore character on a normal realm. A
+    /// softcore character on a hardcore realm is a real configuration and the guide branches on both
+    /// facts separately.
+    pub hardcore_server: bool,
+    /// `#season` (2) — seasonal realm number; `None` is a non-seasonal character.
+    ///
+    /// §9 item 6 records this as mapped on weak evidence: both corpus uses are `#season 0` and no
+    /// other value appears, so the axis pins that the token is *known and discriminated on*, not
+    /// what season 0 means.
+    pub season: Option<u8>,
 }
 
 /// Guide-pack identity and chaining (§7.1, §4.2).

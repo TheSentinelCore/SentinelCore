@@ -1,8 +1,8 @@
 //! ADR 07 §7.3.3 worked example — conformance of the fixture against `sentinel_models::kernel`.
 //!
 //! ADR `07_RUNTIME_PROFILE_SCHEMA` §7.3 compiles one real corpus step range (`A-11-23.lua:211-280`)
-//! into one kernel artifact and states at the close of §7.3.3 (lines 2005-2009, the "Step types exercised" note) exactly which
-//! contracts that
+//! into one kernel artifact and states, in the note that closes §7.3.3 (search: `**Step types
+//! exercised:**`), exactly which contracts that
 //! artifact is supposed to demonstrate. This file is the executable form of that claim: the fixture
 //! must load into the model, survive a round trip, and actually contain the things that note says it
 //! contains. (§7.3.4 does not exist — §7.3 stops at §7.3.3. Earlier drafts of this header cited it.)
@@ -45,6 +45,23 @@
 //!
 //! Route-level dedup (§2.6, §5.7, §8) is a **different operation** from pool interning and has not
 //! landed: it changes route lengths, interning never does. This fixture demonstrates interning only.
+//!
+//! A second audit wave (ADR 07 §9 item 27) moved four more things, and this file's asserted values
+//! moved with it — the structure and blind-spot notes did not:
+//!
+//! * The pool now holds **world coordinates** on the continent map (`map_id: 1`, Kalimdor), derived
+//!   via `shared/src/zone.rs::ZoneMap::to_world`. As first printed it stored the authored zone
+//!   percentages wearing ui map id 1439 — §2.6's own "named bug signature" (search: `a percentage
+//!   that survived compilation wearing a ui map id`). Cross-checked against `tbcmangos.sqlite`
+//!   spawns: the two static-object residuals (Buzzbox 827, Beached Sea Creature) are sub-yard.
+//! * The `--XXREQ` placeholder folds into its successor, so the artifact is **seven** tasks. The
+//!   old two-dep task 4 (`deps: [2, 0]`) spent the excerpt's single `#requires BuzzBox1` twice;
+//!   after the fold that label is spent once, by the turn-in task, and the placeholder's own
+//!   `#requires RabidThistle` lands on the grind step it folded into.
+//! * Route modes are `Any`: §7.1's `TravelMode` mapping sends `.goto`/`.waypoint` there, and
+//!   nothing in the excerpt ground-forces a circuit.
+//! * `tags_used` is the nine-tag census in sorted (byte-ascending) order — `And` left the artifact
+//!   with the fold (§5.4 records the ordering decision).
 
 use std::collections::BTreeSet;
 
@@ -65,8 +82,11 @@ const FIXTURE: &str = include_str!("fixtures/adr07_worked_example.json");
 /// (§7.1, §2.6, §6.4, §8) and 29 would mean a waypoint was invented on top of that (D2, §7.3.2).
 const POOL_LEN: usize = 22;
 
-/// §7.3.3 lowers `A-11-23.lua:211-280` into exactly eight tasks.
-const TASK_COUNT: usize = 8;
+/// §7.3.3 lowers `A-11-23.lua:211-280` into exactly seven tasks: the `--XXREQ` placeholder step
+/// (`A-11-23.lua:265-268`) folds into its successor, the grind step, and its `#requires` edge goes
+/// with it (ADR 07 §9 item 27). Eight means the placeholder was printed as a task of its own,
+/// which the fixture's own fold prose rules out.
+const TASK_COUNT: usize = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Loading
@@ -215,10 +235,11 @@ fn worked_example_deserialises_into_the_kernel_profile() {
 
 /// The real contract, and the one the ADR actually pins.
 ///
-/// Compared as parsed `serde_json::Value`s rather than as raw text: the fixture is hand-formatted
-/// and carries decimal literals such as `38.90` and `50.920` that `serde_json` renders `38.9` and
-/// `50.92`. That is JSON number formatting, not a model defect, so byte comparison would report a
-/// false failure.
+/// Compared as parsed `serde_json::Value`s rather than as raw text. The fixture's coordinate
+/// literals are now all in serde/ryu shortest-round-trip form (verified when the pool moved to
+/// world coordinates), but the comparison stays by parsed `Value` so a future hand-edit that
+/// writes `38.90` where serde emits `38.9` reports a model defect only if one exists — JSON
+/// number formatting alone must never fail this test.
 ///
 /// `canonicalise_unit_variants` used to absorb one genuinely *semantic* difference — the
 /// unit-variant `"payload": null` spelling — and is now a no-op on this fixture, because the audit
@@ -301,7 +322,8 @@ fn worked_example_reserialises_to_a_byte_equal_json_value() {
 /// Going through text is load-bearing, not ceremony. `serde_json::to_value` would be the obvious
 /// shortcut and it is wrong here: `Value::Number` has no `f32` arm, so `to_value` widens every
 /// `Point::x` to `f64` and turns `36.051` into `36.05099868774414`. The artifact's coordinates are
-/// `f32` because ADR 07 §7.1 line 1261 declares them `f32`, and the emitted *text* is `36.051` —
+/// `f32` because ADR 07 §7.1 declares them `f32` (search: `pub struct Point { pub map_id: u32,`),
+/// and the emitted *text* is `36.051` —
 /// so the text is what must be compared. This is the number-precision half of "compare values, not
 /// bytes": the comparison is over the JSON the model would actually write to disk.
 fn reserialise_to_value() -> Value {
@@ -464,7 +486,8 @@ fn archetype_is_the_night_elf_hunter_of_section_7_3() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// 3. §7.3.3 lines 2005-2009 ("Step types exercised") — what the example claims to exercise
+// 3. §7.3.3's closing note (search: `**Step types exercised:**`) — what the example claims to
+//    exercise
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /// §5.3 (C3) sticky patrol + §5.7 (C7) baked circuit + §5.6 (C6) aggressive grind policy.
@@ -504,8 +527,9 @@ fn task_0_is_a_sticky_aggressive_grind_circuit() {
     );
     assert_eq!(
         route.mode,
-        TravelMode::Ground,
-        "ADR 07 §7.3.3: task 0's circuit is a ground route"
+        TravelMode::Any,
+        "ADR 07 §7.1's TravelMode mapping: a route authored purely via .goto/.waypoint is Any — \
+         nothing in the excerpt ground-forces this circuit (§9 item 27)"
     );
     assert_eq!(
         route.points.len(),
@@ -685,103 +709,61 @@ fn task_3_completes_on_a_zero_count_exploration_objective() {
     }
 }
 
-/// **Requirement P1.** Multi-dependency is the norm, not an edge case (349 `#requires` edges,
-/// 1,246 distinct `#completewith` labels), and this is the task that proves the model expresses it.
+/// The `--XXREQ` fold (§9 item 27), and §8's fallback grind, in one task. `A-11-23.lua:265-268`
+/// is an empty `#optional` step whose only content is `#requires RabidThistle` — the author's
+/// workaround for RXP's one-`#requires`-per-step limit. The compiler folds the placeholder into
+/// its successor, the grind step, so the placeholder's dependency edge lands here and the
+/// placeholder never becomes a task of its own. The excerpt's single `#requires BuzzBox1` belongs
+/// to the turn-in task and is spent exactly once — the old two-dep `[2, 0]` reading spent it twice,
+/// which the source cannot support.
 #[test]
-fn task_4_carries_multiple_ordered_dependencies_p1() {
+fn task_4_is_the_folded_xxreq_grind_step() {
     let profile = load();
     let task_4 = task(&profile, 4);
 
     assert_eq!(
-        task_4.deps.len(),
-        2,
-        "P1 / ADR 07 §7.1: Task::deps is a Vec, not an Option. Task 4 is the folded --XXREQ \
-         placeholder step and depends on TWO predecessors. If this is 1, the model has collapsed \
-         back to single-dependency and R1 has failed"
-    );
-    assert_eq!(
         task_4.deps,
-        vec![2, 0],
-        "P1 / ADR 07 §7.3.3: the dependency set is [2, 0] — in that order. Order is part of the \
-         value; a set-like reordering to [0, 2] is a different artifact and a different digest"
+        vec![2],
+        "ADR 07 §9 item 27: the placeholder's #requires RabidThistle resolves to task 2 and lands \
+         on the grind step it folded into. A second entry means #requires BuzzBox1 was spent here \
+         as well as on the turn-in — underivable from the excerpt"
     );
-
     assert!(
         !task_4.blocking,
-        "ADR 07 §7.1: the folded placeholder step is non-blocking — it exists to carry the \
-         dependency edges, not to stall the profile"
-    );
-    assert!(
-        task_4.ops.is_empty(),
-        "ADR 07 §7.3.3: the --XXREQ placeholder has no work of its own. Got {:?}",
-        task_4.ops
-    );
-
-    let complete_when = task_4
-        .complete_when
-        .as_ref()
-        .expect("ADR 07 §5.1 (C1): task 4 must carry the folded completion predicate");
-
-    let conjuncts = match complete_when {
-        Predicate::And(conjuncts) => conjuncts,
-        other => panic!(
-            "P1 / ADR 07 §7.3.3: task 4's complete_when must be Predicate::And — one objective \
-             predicate per predecessor. Got {other:?}"
-        ),
-    };
-    assert_eq!(
-        conjuncts.len(),
-        2,
-        "P1: exactly two conjuncts, one per dependency. Got {conjuncts:?}"
+        "ADR 07 §7.3.3: both folded halves are #optional — the grind must not stall the profile \
+         if the player is already ahead"
     );
     assert_eq!(
-        conjuncts[0],
-        Predicate::QuestObjective {
-            id: 2118,
-            index: 1,
-            need: 1,
-        },
-        "P1 / ADR 07 §7.3.3: the first conjunct mirrors dep 2 (quest 2118)"
+        (task_4.source.line_start, task_4.source.line_end),
+        (265, 271),
+        "ADR 07 §9 item 27: the folded task's span absorbs the placeholder, so the seven spans \
+         still tile 211-280 exactly. Got {:?}",
+        (task_4.source.line_start, task_4.source.line_end)
     );
-    assert_eq!(
-        conjuncts[1],
-        Predicate::QuestObjective {
-            id: 983,
-            index: 1,
-            need: 6,
-        },
-        "P1 / ADR 07 §7.3.3: the second conjunct mirrors dep 0 (quest 983, six Crawler Legs)"
-    );
-}
-
-/// §8 fallback grinding: an XP goal with no target whitelist at all.
-#[test]
-fn task_5_is_an_xp_goal_with_open_ended_grinding() {
-    let profile = load();
-    let task_5 = task(&profile, 5);
 
     assert_eq!(
-        task_5.complete_when,
+        task_4.complete_when,
         Some(Predicate::XpAtLeast {
             level: 10,
             xp_offset: 6760,
         }),
         "ADR 07 §5.1.1: .xp (2,133 uses) folds both corpus forms into a level plus a signed offset"
     );
-    assert!(
-        !task_5.blocking,
-        "ADR 07 §7.3.3: the XP catch-up task must not stall the profile if the player is already \
-         ahead"
-    );
     assert_eq!(
-        task_5.unknown_policy,
+        task_4.unknown_policy,
         UnknownPolicy::TreatFalse,
         "ADR 07 §5.1.2: grinding more XP is idempotent, so Unknown may safely be treated as 'not \
          yet satisfied'. The failure this avoids is Unknown → Block on a task that only ever adds \
          progress"
     );
+    assert!(
+        task_4.ops.is_empty(),
+        "ADR 07 §9 item 27: no coordinate is authored anywhere in the folded pair, so there is NO \
+         op at all — a zero-point Op::Travel is the defect, not the lowering. Got {:?}",
+        task_4.ops
+    );
 
-    let policy = combat(task_5);
+    let policy = combat(task_4);
     assert_eq!(
         policy.stance,
         CombatStance::Aggressive,
@@ -797,39 +779,39 @@ fn task_5_is_an_xp_goal_with_open_ended_grinding() {
 
 /// §5.3 (C3): `Lifetime` and `CompletionSource` are independent fields.
 #[test]
-fn task_6_is_completewith_only_and_contends_for_nothing() {
+fn task_5_is_completewith_only_and_contends_for_nothing() {
     let profile = load();
-    let task_6 = task(&profile, 6);
+    let task_5 = task(&profile, 5);
 
-    let linked = match task_6.completion {
+    let linked = match task_5.completion {
         CompletionSource::LinkedTo(target) => target,
         CompletionSource::OwnPredicate => panic!(
-            "ADR 07 §5.3 (C3): task 6 is the #completewith witness — its completion must be \
+            "ADR 07 §5.3 (C3): task 5 is the #completewith witness — its completion must be \
              LinkedTo, not OwnPredicate"
         ),
     };
     assert_eq!(
-        linked, 7,
-        "ADR 07 §7.3.3: task 6's completion is linked to task 7. §5.3 requires a RESOLVED INDEX, \
-         never a dangling label — RXPGuides' guide.labels[…] lookup returns nil and the edge \
-         silently never fires"
+        linked, 6,
+        "ADR 07 §7.3.3: task 5's completion is linked to task 6, the turn-in. §5.3 requires a \
+         RESOLVED INDEX, never a dangling label — RXPGuides' guide.labels[…] lookup returns nil \
+         and the edge silently never fires"
     );
     assert!(
         (linked as usize) < profile.tasks.len(),
         "ADR 07 §5.3: LinkedTo({linked}) must index a task that exists; the profile has {} tasks",
         profile.tasks.len()
     );
-    // On the wire the payload must be the bare integer 7, not `{"target": 7}` and not `"7"` —
-    // §7.3.3 prints `"completion": {"type": "LinkedTo", "payload": 7}` and the Lua kernel reads
+    // On the wire the payload must be the bare integer 6, not `{"target": 6}` and not `"6"` —
+    // §7.3.3 prints `"completion": {"type": "LinkedTo", "payload": 6}` and the Lua kernel reads
     // `completion.payload` directly as a task index.
     assert_eq!(
-        serde_json::to_value(task_6.completion).expect("completion serialises"),
-        serde_json::json!({ "type": "LinkedTo", "payload": 7 }),
+        serde_json::to_value(task_5.completion).expect("completion serialises"),
+        serde_json::json!({ "type": "LinkedTo", "payload": 6 }),
         "ADR 07 §5.4 (C4) / §7.3.3: CompletionSource is adjacently tagged and LinkedTo is a newtype \
          variant, so the payload is the bare integer task index"
     );
 
-    let (channels, _, _) = background(task_6);
+    let (channels, _, _) = background(task_5);
     assert!(
         channels.is_empty(),
         "ADR 07 §5.3 (C3): a #completewith-only task becomes Background with an EMPTY channel set \
@@ -841,35 +823,36 @@ fn task_6_is_completewith_only_and_contends_for_nothing() {
 
 /// §7.3.2 / §8: quest 983's ender is `gameobject_involvedrelation` 17182, not a creature.
 #[test]
-fn task_7_turns_in_at_a_gameobject_with_no_creature_target() {
+fn task_6_turns_in_at_a_gameobject_with_no_creature_target() {
     let profile = load();
-    let task_7 = task(&profile, 7);
+    let task_6 = task(&profile, 6);
 
     assert_eq!(
-        task_7.deps,
+        task_6.deps,
         vec![0],
-        "ADR 07 §7.3.3: the turn-in depends on the grind circuit that fills the objective"
+        "ADR 07 §7.3.3: the turn-in depends on the grind circuit that fills the objective — \
+         #requires BuzzBox1, the label's single occurrence, spent exactly once (§9 item 27)"
     );
     assert_eq!(
-        task_7.interact_target, None,
+        task_6.interact_target, None,
         "ADR 07 §7.3.2 / §8: quest 983's ender is gameobject_involvedrelation entry 17182, NOT a \
          creature. `None` is a correct value here, not an omission — a schema that assumed every \
          turn-in has an NPC target would emit a null target and stall. Got {:?}",
-        task_7.interact_target
+        task_6.interact_target
     );
 
     assert_eq!(
-        task_7.ops.len(),
+        task_6.ops.len(),
         2,
-        "ADR 07 §7.3.3: task 7 is travel, then turn in"
+        "ADR 07 §7.3.3: task 6 is travel, then turn in"
     );
     assert!(
-        matches!(task_7.ops[0], Op::Travel { .. }),
+        matches!(task_6.ops[0], Op::Travel { .. }),
         "ADR 07 §7.1: op 0 must be Travel — you cannot hand in a quest before arriving. Got {:?}",
-        task_7.ops[0]
+        task_6.ops[0]
     );
     assert_eq!(
-        task_7.ops[1],
+        task_6.ops[1],
         Op::TurnIn {
             quest: 983,
             any_of: vec![],
@@ -883,7 +866,7 @@ fn task_7_turns_in_at_a_gameobject_with_no_creature_target() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// 4. Whole-profile invariants — loops, not eight hand-written cases, so they survive R2
+// 4. Whole-profile invariants — loops, not seven hand-written cases, so they survive R2
 //    regenerating the fixture
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -916,7 +899,7 @@ fn every_route_has_one_radius_per_point() {
     }
     assert_eq!(
         checked, 5,
-        "ADR 07 §7.3.3: tasks 0, 1, 2, 3 and 7 each carry exactly one Travel op; tasks 4, 5 and 6 \
+        "ADR 07 §7.3.3: tasks 0, 1, 2, 3 and 6 each carry exactly one Travel op; tasks 4 and 5 \
          carry none"
     );
 }
@@ -980,14 +963,16 @@ fn every_waypoint_index_addresses_a_real_pool_entry() {
 /// re-crosses its own path says so by repeating an *index*, never by carrying a second copy of the
 /// point. Two clauses of ADR 07 assert exactly this pool shape, and neither is hedged:
 ///
-/// * §7.1:1179 — `pub waypoint_pool:  Vec<Point>,       // deduplicated; routes index into this`
-/// * §6.4:1124 — the pool "deduplicates shared points across tasks"
+/// * §7.1 — `pub waypoint_pool:  Vec<Point>,       // deduplicated; routes index into this`
+///   (search that comment verbatim)
+/// * §6.4 — the pool "deduplicates shared points across tasks" (search that phrase)
 ///
 /// §7.3.3 is the artifact those two clauses point at, so until it interns, it is the
 /// counter-example to both rather than the demonstration of them.
 ///
-/// Two further clauses — §2.6:232 ("An importer treating each `.goto` as a distinct route node
-/// doubles the path") and §8:2038 ("an importer that does not doubles every affected route") —
+/// Two further clauses — §2.6 ("An importer treating each `.goto` as a distinct route node
+/// doubles the path", search: `An importer treating each`) and §8 ("an importer that does not
+/// doubles every affected route", search: `doubles every affected route`) —
 /// describe a **different** operation and are *not* what this test pins. Both state a route-*length*
 /// consequence, and interning changes no route's length. That route-level dedup is a later
 /// deliverable (ADR 07 §9 item 26).
@@ -1004,13 +989,17 @@ fn every_waypoint_index_addresses_a_real_pool_entry() {
 /// 2. It says nothing about repeats *within* a route, and those repeats have two unrelated causes.
 ///    Task 0's are real: it is a `Circuit` with `close: true` that genuinely re-crosses its own
 ///    path, so its 17 points must stay 17 through any later dedup. Task 2's are not: indices 14 and
-///    15 repeat because of the §2.6:232 defect — one source step emitting the same coordinate
+///    15 repeat because of the §2.6 defect (search: `An importer treating each` — "...each
+///    `.goto` as a distinct route node doubles the path") — one source step emitting the same
+///    coordinate
 ///    twice, once 4-arg (`A-11-23.lua:247`, `:248`) and once 5-arg (`:249`, `:254`) — which is a
 ///    route-level collapse this invariant neither performs nor forbids, and which will shorten
 ///    task 2 from 8 points to 6.
 /// 3. Equality is `f32` value equality. Two coordinates for the same world position that differ in
-///    the last ULP (`36.051` against `36.051002`) read as distinct entries and pass, so this pins
-///    an importer that copies a point verbatim, not one that re-derives it at a different precision.
+///    the last ULP (`6378.9443` against `6378.9448`) read as distinct entries and pass, so this
+///    pins a compiler that derives every occurrence of a point through the one shared `f32`
+///    transform (`shared/src/zone.rs::ZoneMap::to_world`), not one that re-derives some occurrence
+///    at a different precision.
 #[test]
 fn no_two_waypoint_pool_entries_hold_the_same_coordinate() {
     let profile = load();
@@ -1033,10 +1022,11 @@ fn no_two_waypoint_pool_entries_hold_the_same_coordinate() {
 
     assert!(
         duplicates.is_empty(),
-        "ADR 07 §7.1:1179 declares `waypoint_pool` 'deduplicated; routes index into this' and \
-         §6.4:1124 says the pool 'deduplicates shared points across tasks'. (§2.6:232 and §8:2038 \
-         are about the separate route-level collapse — §8 says an importer that does not \
-         deduplicate 'doubles every affected route' — which this invariant does not pin.) {} of the \
+        "ADR 07 §7.1 declares `waypoint_pool` 'deduplicated; routes index into this' (search that \
+         comment on the `pub waypoint_pool:` field) and §6.4 says the pool 'deduplicates shared \
+         points across tasks' (search that phrase). (§2.6 (search: `An importer treating each`) \
+         and §8's 'doubles every affected route' are about \
+         the separate route-level collapse, which this invariant does not pin.) {} of the \
          {} entries in {FIXTURE_PATH} are repeats of an earlier entry, so §7.3.3 is the \
          counter-example to its own schema. A route that re-crosses a point must repeat the index, \
          not the point:\n  {}",
@@ -1112,9 +1102,10 @@ fn every_task_reference_resolves_to_an_existing_task() {
 /// check entirely.
 ///
 /// §7.3.3 originally failed both ways at once: it listed `Wait`, `Delegate`, `Or` and `Not`, which
-/// no task uses, and **omitted `QuestComplete`**, which task 7's `applies_when` does use. The audit
-/// resolved it in favour of the census — §5.10 now says "exactly", and §7.3.3 lists the ten tags the
-/// artifact really references (§9 item 24). The fixture follows the corrected ADR.
+/// no task uses, and **omitted `QuestComplete`**, which the turn-in task's `applies_when` does use.
+/// The audit resolved it in favour of the census — §5.10 now says "exactly", and §7.3.3 lists the
+/// tags the artifact really references (§9 item 24): nine of them, in sorted order, since the XXREQ
+/// fold removed the artifact's only `And` (§9 item 27). The fixture follows the corrected ADR.
 #[test]
 fn tags_used_is_an_accurate_census_of_ops_and_predicates() {
     let profile = load();

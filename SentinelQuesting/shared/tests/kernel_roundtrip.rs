@@ -34,8 +34,10 @@ use serde_json::{json, Value};
 use sentinel_models::kernel::{
     hex32, magic, Allegiance, AreaKind, Archetype, BankMode, BehaviorId, Channel, Class, Cmp,
     CombatPolicy, CombatStance, CompletionSource, ContentIntegrity, CooldownKind, CorpseIntent,
-    DelegatePayload, Expansion, Faction, FlightMode, GossipPolicy, GroupExpectation, GuideMeta,
-    HearthMode, ItemStat, Lifetime, LootRule, NpcRef, Op, Point, Predicate, ProfileDefaults,
+    DelegatePayload, DungeonId, Expansion, Faction, FlightMode, GossipPolicy, GroupExpectation,
+    GuideMeta,
+    HearthMode, ItemStat, Lifetime, LootRule, NpcRef, Op, Point, Predicate,
+    ProfileDefaults,
     ProfileMode, Race, ResumeCursor, Route, RouteKind, RuntimeProfile, SkillLine, SourceSpan,
     StableMode, Standing, Task, TravelMode, UnitRef, UnknownPolicy, VendorMode, MAGIC,
     SCHEMA_VERSION,
@@ -903,6 +905,13 @@ fn maximal_profile() -> RuntimeProfile {
             can_fly: true,
             content_phase: Some(5),
             mode: ProfileMode::SpeedRoute,
+            // The three axes §4.2 classifies as archetype filters and §5.2's list had omitted:
+            // `#xprate` (735), `#hardcoreserver`/`#softcoreserver` (4/2), `#season` (2). Given
+            // non-default values here on purpose — this is the "every field populated" profile, and
+            // a round trip that dropped one would otherwise still compare equal.
+            xp_rate_milli: 1_490,
+            hardcore_server: true,
+            season: Some(0),
         },
         meta: GuideMeta {
             name: "10-14 Darkshore".to_owned(),
@@ -1032,6 +1041,9 @@ fn emptied_profile() -> RuntimeProfile {
             can_fly: false,
             content_phase: None,
             mode: ProfileMode::SpeedRoute,
+            xp_rate_milli: 1_000,
+            hardcore_server: false,
+            season: None,
         },
         meta: GuideMeta {
             name: "10-14 Darkshore".to_owned(),
@@ -1307,11 +1319,15 @@ fn scalar_vocabulary_round_trips_as_bare_strings() {
         Expansion::Wotlk,
     );
     assert_bare_string!("Allegiance", Allegiance::Aldor, Allegiance::Scryer);
+    // `ProfileMode`'s two unit variants only. `Dungeon` gained a payload — *which* dungeon, since
+    // `.dungeon Mara` (105) and `.dungeon ZF` (150) are different archetype variants — and a variant
+    // that carries a value cannot be a bare string. The two spellings §7.3.3 prints are unchanged,
+    // which is the half that matters for artifacts already compiled; the new form is pinned
+    // separately by `dungeon_profile_mode_carries_which_dungeon`.
     assert_bare_string!(
         "ProfileMode",
         ProfileMode::SpeedRoute,
         ProfileMode::QuestGuide,
-        ProfileMode::Dungeon,
     );
     assert_bare_string!(
         "TravelMode",
@@ -1373,6 +1389,68 @@ fn scalar_vocabulary_round_trips_as_bare_strings() {
 }
 
 #[test]
+fn dungeon_profile_mode_carries_which_dungeon() {
+    // C2, §5.2: `.dungeon` (1,351) resolves at compile time into a *separate archetype variant*.
+    // `.dungeon Mara` (105) and `.dungeon ZF` (150) are different variants, so the mode has to say
+    // which — a unit variant admits every dungeon's steps into every dungeon's profile.
+    //
+    // Wire shape: serde's default external form for the one variant that carries a payload. It is
+    // deliberately NOT adjacent tagging, which would rewrite `"mode": "SpeedRoute"` — the spelling
+    // §7.3.3 prints and every artifact compiled so far carries — into `{"type": "SpeedRoute"}`.
+    assert_eq!(
+        serde_json::to_value(ProfileMode::Dungeon {
+            instance: DungeonId::Mara
+        })
+        .unwrap(),
+        json!({ "Dungeon": { "instance": "Mara" } }),
+        "ADR 07 §5.2: the dungeon variant must carry its instance"
+    );
+    round_trip(
+        &ProfileMode::Dungeon {
+            instance: DungeonId::Mara
+        },
+        "ADR 07 §5.2: ProfileMode::Dungeon { instance: Mara }",
+    );
+
+    // Two instances must not compare equal, which is the whole reason the payload exists.
+    assert_ne!(
+        ProfileMode::Dungeon {
+            instance: DungeonId::Mara
+        },
+        ProfileMode::Dungeon {
+            instance: DungeonId::Zf
+        },
+        "a Zul'Farrak run and a Maraudon run are different archetypes"
+    );
+
+    // The 19 measured arguments, each a bare string on the wire like every other scalar vocabulary.
+    for (instance, wire) in [
+        (DungeonId::Bf, "Bf"),
+        (DungeonId::Bfd, "Bfd"),
+        (DungeonId::Crypts, "Crypts"),
+        (DungeonId::Dm, "Dm"),
+        (DungeonId::Gnomer, "Gnomer"),
+        (DungeonId::Mara, "Mara"),
+        (DungeonId::Mt, "Mt"),
+        (DungeonId::Ramparts, "Ramparts"),
+        (DungeonId::Rfd, "Rfd"),
+        (DungeonId::Rfk, "Rfk"),
+        (DungeonId::Sfk, "Sfk"),
+        (DungeonId::Sm, "Sm"),
+        (DungeonId::Sp, "Sp"),
+        (DungeonId::St, "St"),
+        (DungeonId::Stockades, "Stockades"),
+        (DungeonId::Ub, "Ub"),
+        (DungeonId::Ulda, "Ulda"),
+        (DungeonId::Wc, "Wc"),
+        (DungeonId::Zf, "Zf"),
+    ] {
+        assert_eq!(serde_json::to_value(instance).unwrap(), json!(wire));
+        round_trip(&instance, &format!("ADR 07 §5.2: DungeonId::{wire}"));
+    }
+}
+
+#[test]
 fn channels_are_screaming_snake_case_and_round_trip() {
     // ADR 07 §7.2 pins the enum list; §7.3.3 prints "channels": ["MOVEMENT"].
     let expected = [
@@ -1410,6 +1488,7 @@ fn emptied_profile_round_trips_with_every_option_none() {
     for (pointer, what) in [
         ("/archetype/allegiance", "Archetype::allegiance (§5.2)"),
         ("/archetype/content_phase", "Archetype::content_phase (§5.2)"),
+        ("/archetype/season", "Archetype::season (§5.2, §9 item 6)"),
         ("/meta/subgroup", "GuideMeta::subgroup (§7.1)"),
         ("/waypoint_pool/0/z", "Point::z (§5.7)"),
         ("/tasks/0/applies_when", "Task::applies_when (§7.1)"),
@@ -1873,74 +1952,160 @@ fn an_artifact_that_is_not_understood_is_refused_outright() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-// Known R1 defect — kept failing-but-ignored so the audit phase can rule on it
+// C4 — the finite-float guard
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
-// ── SCOPE ────────────────────────────────────────────────────────────────────────────────────────
-// This is a real MODEL defect and it is deliberately still failing. It is out of scope for the ADR 07
-// audit (which moved only the ADR text and the fixture, never `src/kernel/*.rs`) and belongs to the
-// later deliverable that adds the finite-float guard.
+// ── HISTORY ──────────────────────────────────────────────────────────────────────────────────────
+// This test used to be `#[ignore]`d with a TRAP note attached, because its two halves asserted
+// opposite rules: assertion (1) called `.expect(..)` on serializing a `Point` with
+// `z = Some(f32::INFINITY)` and then asserted the round trip preserved infinity, while assertion (2)
+// asserted serialization must ERROR. JSON cannot spell infinity, so no value could be preserved and
+// the body could not pass either before or after a guard landed.
 //
-// ── TRAP, for whoever implements that guard ───────────────────────────────────────────────────────
-// The body below CAN NEVER PASS, not even after the model is fixed, because its two halves assert
-// opposite rules:
-//
-//   * assertion (1) calls `.expect("serialization currently succeeds")` on a `Point` whose
-//     `z = Some(f32::INFINITY)` and then asserts the round trip preserved infinity. JSON cannot spell
-//     infinity, so there is no value the round trip could preserve. Today the `.expect` succeeds and
-//     the `assert_eq!` fails; once a serialize-time guard lands, the `.expect` itself panics.
-//   * assertion (2) already states the correct rule — serialization must ERROR on a non-finite float.
-//
-// So the guard's implementer must REWRITE assertion (1) to
-//     assert!(serde_json::to_string(&point).is_err())
-// so both halves state the same refuse-don't-degrade rule for `Option<f32>` and bare `f32` alike.
-// Do not "fix" this by relaxing assertion (2); the producer, not the consumer, is who must be told.
-#[test]
-#[ignore = "OUT OF SCOPE for the ADR 07 audit — real model defect, deferred to the finite-float \
-            guard deliverable: a non-finite f32 is written as JSON null, so Point::z reloads as None \
-            and silently loses its value instead of refusing (C4, ADR 07 §5.4). NOTE: this test body \
-            cannot pass even after the guard lands — see the TRAP comment above; assertion (1) must \
-            be rewritten to assert serialization ERRORS."]
-fn non_finite_floats_must_not_degrade_silently() {
-    // JSON cannot spell infinity or NaN, and serde_json's answer is to write `null`. The kernel
-    // model has five float fields — `Point::x/y/z`, `Predicate::AtLocation::radius`,
-    // `Predicate::CooldownCmp::secs`, `Predicate::ItemStatCmp::value` — and none of them guards
-    // against a non-finite value on the way out. Two distinct failures follow.
-    //
-    // 1. `Option<f32>`: `Some(non-finite)` is written as `null` and read back as `None`. That is a
-    //    silent, lossless-looking degradation of exactly the kind C4 (§5.4) forbids — and `Point::z`
-    //    is the field §5.7 says the compiler fills from the navmesh, i.e. from a probe that can
-    //    plausibly answer with a non-finite value.
-    // 2. Bare `f32`: `NaN` is written as `null` and then fails to load ("invalid type: null"). The
-    //    refusal is correct, but it happens at the *consumer*. The producer wrote an unloadable
-    //    artifact and was told nothing.
-    //
-    // The fix is not this file's to make, and the model already has the precedent for it: the
-    // `magic` codec (§6.2.5) errors on serialization when the in-memory value is wrong rather than
-    // emitting an artifact that cannot load. A finite-float check would follow that pattern.
-    let point = Point {
-        map_id: 1439,
-        x: 1.0,
-        y: 2.0,
-        z: Some(f32::INFINITY),
-    };
-    let encoded = serde_json::to_string(&point).expect("serialization currently succeeds");
-    let reloaded: Point = serde_json::from_str(&encoded).expect("and the result currently loads");
-    assert_eq!(
-        reloaded, point,
-        "C4 (ADR 07 §5.4): `Point::z = Some(non-finite)` was written as {encoded} and came back as \
-         `None`. The value was lost and nothing failed."
-    );
+// The rewrite the TRAP note prescribed has been made: every half now states the same
+// refuse-don't-degrade rule, and the `#[ignore]` is gone. The test is RED against the model as it
+// stands — no serialize-time guard exists yet.
 
-    let not_a_number = Point {
-        map_id: 1439,
-        x: f32::NAN,
-        y: 2.0,
-        z: None,
-    };
-    assert!(
-        serde_json::to_string(&not_a_number).is_err(),
-        "C4 (ADR 07 §5.4): serializing a non-finite bare coordinate produced an artifact that \
-         cannot be read back. The producer must be told at write time, as the `magic` codec is."
-    );
+// The guard has to live on the *producer* side, and there are six field slots across five names:
+// `Point::x`, `Point::y`, `Point::z`, `Predicate::AtLocation::radius`,
+// `Predicate::CooldownCmp::secs`, `Predicate::ItemStatCmp::value`. Five are bare `f32` and one
+// (`Point::z`) is `Option<f32>`; the two degrade differently and both are covered below.
+#[test]
+fn non_finite_floats_must_not_degrade_silently() {
+    // JSON cannot spell infinity or NaN, and serde_json's answer is to write `null`. Two distinct
+    // failures follow, and neither is acceptable under C4 (ADR 07 §5.4).
+    //
+    // 1. `Option<f32>`: `Some(non-finite)` is written as `null` and read back as `None`. A silent,
+    //    lossless-looking degradation — and `Point::z` is the field §5.7 says the compiler fills
+    //    from the navmesh, i.e. from a probe that can plausibly answer with a non-finite value.
+    // 2. Bare `f32`: the non-finite is written as `null` and then fails to load ("invalid type:
+    //    null"). The refusal is correct but it happens at the *consumer*; the producer wrote an
+    //    unloadable artifact and was told nothing.
+    //
+    // The model already has the precedent for the fix: the `magic` codec (§6.2.5) errors on
+    // serialization when the in-memory value is wrong, rather than emitting an artifact that cannot
+    // load. A finite-float check follows that pattern. All six field slots are covered here, not
+    // just `Point::z`, because a guard applied to one field leaves the other five degrading.
+    let non_finite = [
+        ("+inf", f32::INFINITY),
+        ("-inf", f32::NEG_INFINITY),
+        ("NaN", f32::NAN),
+    ];
+
+    for (name, bad) in non_finite {
+        // (1) `Option<f32>` — `Point::z`. This is the half the TRAP note was about: there is no
+        // round trip that could preserve the value, so the write is where it must be refused.
+        assert!(
+            serde_json::to_string(&Point {
+                map_id: 1439,
+                x: 1.0,
+                y: 2.0,
+                z: Some(bad),
+            })
+            .is_err(),
+            "C4 (ADR 07 §5.4): `Point::z = Some({name})` serialized. JSON writes it as `null` and \
+             the field reloads as `None`, so the value is lost and nothing fails. The producer must \
+             be told at write time, as the `magic` codec is."
+        );
+
+        // (2) Bare `f32` — the two coordinates, and the three predicate operands.
+        for (what, encoded) in [
+            (
+                "Point::x",
+                serde_json::to_string(&Point {
+                    map_id: 1439,
+                    x: bad,
+                    y: 2.0,
+                    z: None,
+                }),
+            ),
+            (
+                "Point::y",
+                serde_json::to_string(&Point {
+                    map_id: 1439,
+                    x: 1.0,
+                    y: bad,
+                    z: None,
+                }),
+            ),
+            (
+                "Predicate::AtLocation::radius",
+                serde_json::to_string(&Predicate::AtLocation {
+                    point: 0,
+                    radius: bad,
+                }),
+            ),
+            (
+                "Predicate::CooldownCmp::secs",
+                serde_json::to_string(&Predicate::CooldownCmp {
+                    kind: CooldownKind::Item,
+                    id: 6948,
+                    cmp: Cmp::Gt,
+                    secs: bad,
+                }),
+            ),
+            (
+                "Predicate::ItemStatCmp::value",
+                serde_json::to_string(&Predicate::ItemStatCmp {
+                    slot: 16,
+                    stat: ItemStat::DamagePerSecond,
+                    cmp: Cmp::Lt,
+                    value: bad,
+                }),
+            ),
+        ] {
+            assert!(
+                encoded.is_err(),
+                "C4 (ADR 07 §5.4): `{what} = {name}` serialized to {}. That artifact cannot be read \
+                 back — the consumer will refuse it with \"invalid type: null\" — so the producer \
+                 emitted an unloadable file and was told nothing.",
+                encoded.unwrap_or_default()
+            );
+        }
+    }
+}
+
+#[test]
+fn finite_floats_still_serialize() {
+    // The control for the guard above. A check that refuses everything would satisfy every
+    // assertion in `non_finite_floats_must_not_degrade_silently` and break the whole model, so the
+    // legal values — including the zeroes and negatives the corpus really carries — are pinned
+    // here. `-4078.9674` is `The Burning Crusade.lua:2674`'s world Y; `0.25` is a sub-second
+    // cooldown; `25.6` is `.itemStat 16,ITEM_MOD_DAMAGE_PER_SECOND_SHORT,<25.6`.
+    for value in [0.0_f32, -0.0, 1.0, -4078.9674, 0.25, 25.6, f32::MIN, f32::MAX] {
+        round_trip(
+            &Point {
+                map_id: 1439,
+                x: value,
+                y: -value,
+                z: Some(value),
+            },
+            &format!("ADR 07 §5.4: a finite Point coordinate ({value}) must still serialize"),
+        );
+        round_trip(
+            &Predicate::AtLocation {
+                point: 0,
+                radius: value,
+            },
+            &format!("ADR 07 §5.4: a finite AtLocation::radius ({value}) must still serialize"),
+        );
+        round_trip(
+            &Predicate::CooldownCmp {
+                kind: CooldownKind::Item,
+                id: 6948,
+                cmp: Cmp::Gt,
+                secs: value,
+            },
+            &format!("ADR 07 §5.4: a finite CooldownCmp::secs ({value}) must still serialize"),
+        );
+        round_trip(
+            &Predicate::ItemStatCmp {
+                slot: 16,
+                stat: ItemStat::DamagePerSecond,
+                cmp: Cmp::Lt,
+                value,
+            },
+            &format!("ADR 07 §5.4: a finite ItemStatCmp::value ({value}) must still serialize"),
+        );
+    }
 }

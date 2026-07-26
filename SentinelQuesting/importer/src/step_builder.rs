@@ -15,14 +15,17 @@ impl StepBuilder {
 
         for tok in tokens {
             match tok {
-                Token::StepStart { conditions, line } => {
+                Token::StepStart { conditions, gate, line } => {
                     if let Some(s) = current.take() {
                         steps.push(s);
                     }
                     current = Some(Step {
                         index: steps.len(),
                         line: *line,
+                        // A step with no body spans exactly its marker line.
+                        line_end: *line,
                         conditions: conditions.clone(),
+                        gate: gate.clone(),
                         directives: Vec::new(),
                         commands: Vec::new(),
                         text: Vec::new(),
@@ -31,6 +34,7 @@ impl StepBuilder {
                 }
                 Token::StepDirective { name, value, line, original } => {
                     if let Some(s) = current.as_mut() {
+                        s.line_end = s.line_end.max(*line);
                         s.directives.push(Directive {
                             name: name.clone(),
                             value: value.clone(),
@@ -41,6 +45,7 @@ impl StepBuilder {
                 }
                 Token::Command { name, args, note, line, class_restriction } => {
                     if let Some(s) = current.as_mut() {
+                        s.line_end = s.line_end.max(*line);
                         s.commands.push(Command {
                             name: name.clone(),
                             args: args.clone(),
@@ -54,8 +59,9 @@ impl StepBuilder {
                         }
                     }
                 }
-                Token::Text { content, .. } => {
+                Token::Text { content, line } => {
                     if let Some(s) = current.as_mut() {
+                        s.line_end = s.line_end.max(*line);
                         s.text.push(content.clone());
                         // Extract NPC name hints from text lines
                         s.npc_name_hints.extend(extract_npc_name_hints(content));

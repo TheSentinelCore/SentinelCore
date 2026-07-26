@@ -1,7 +1,7 @@
 //! [`GuideSplitter`]: extract the guide body from `RXPGuides.RegisterGuide([[ ... ]])`
 //! and split it into the header section (before the first `step`) and the step section.
 
-use crate::{ImportError, LocatedLine, SourceLineNo};
+use crate::{lexer::strip_inline_dev_comment, ImportError, LocatedLine, SourceLineNo};
 
 /// Result of [`GuideSplitter::split`]: the guide headers and the (step-region) body lines,
 /// each tagged with its original source line number.
@@ -17,7 +17,34 @@ pub(crate) fn is_step_marker(line: &str) -> bool {
     t == "step" || t.starts_with("step ") || t.starts_with("step\t") || t.starts_with("step<")
 }
 
+/// The raw, unsplit `<<` tail of a `step` marker (`step << Dwarf Paladin` -> `"Dwarf Paladin"`).
+///
+/// [`parse_step_conditions`] splits on `/` only, which flattens `Dwarf Paladin`, `!tbc !wotlk`
+/// and `Warrior skip` into single inert tokens and destroys the AND/OR/`!` grammar. This keeps
+/// the tail verbatim so a later pass can still parse it.
+///
+/// The trailing `--` dev comment is stripped with the very same
+/// [`strip_inline_dev_comment`](crate::lexer::strip_inline_dev_comment) already applied to every
+/// command tail: the gate is the author's AUDIENCE, never their prose. Leaving it in conjoined
+/// `-- checking if gnomes can get mount` onto `Gnome !Warlock` on 8 live corpus steps, making the
+/// gate unsatisfiable for every archetype, and left the second `<<` of
+/// `skip --logout skip << Warrior` inside the tail as if `Warrior` were an audience.
+pub(crate) fn parse_step_gate(s: &str) -> Option<String> {
+    let t = s.trim();
+    let after_step = t.strip_prefix("step")?;
+    let after_arrow = after_step.trim_start().strip_prefix("<<")?;
+    let tail = strip_inline_dev_comment(after_arrow.trim()).trim();
+    if tail.is_empty() {
+        None
+    } else {
+        Some(tail.to_string())
+    }
+}
+
 /// Parse `step << A/B/C` into `["A", "B", "C"]` (class/faction restriction list).
+///
+/// Shares [`parse_step_gate`]'s dev-comment stripping: this list is what `is_known_class_token`
+/// reads, so a leaked comment both poisons the tokens and can split on a `/` written inside prose.
 pub(crate) fn parse_step_conditions(s: &str) -> Vec<String> {
     let t = s.trim();
     let after_step = match t.strip_prefix("step") {
@@ -25,7 +52,7 @@ pub(crate) fn parse_step_conditions(s: &str) -> Vec<String> {
         None => return Vec::new(),
     };
     let after_arrow = match after_step.trim_start().strip_prefix("<<") {
-        Some(a) => a.trim(),
+        Some(a) => strip_inline_dev_comment(a.trim()).trim(),
         None => return Vec::new(),
     };
     if after_arrow.is_empty() {
@@ -85,8 +112,14 @@ impl GuideSplitter {
             .find(CLOSE)
             .ok_or(ImportError::UnterminatedGuideBlock)?;
         let body = &source[after_open..after_open + close_rel];
-        // Lines before `after_open` + 1 = the 1-based line where the body's first line lives.
-        let body_start_line = source[..after_open].lines().count() + 1;
+        // `body` begins immediately after `RegisterGuide([[`, i.e. still on the SAME source line
+        // as the marker — `body.lines()` therefore yields that line's remainder as its element 0.
+        // So the 1-based line of element 0 is the marker's own line, which is exactly the number
+        // of lines preceding (and including) it. The historical `+ 1` here shifted every
+        // `SourceLineNo` in the crate one line too far: `#requires cloth1` at
+        // `The Burning Crusade.lua:24728` reported as 24729, `#label Un'Goro End` at :102579 as
+        // :102580. Verified against the corpus with ripgrep line numbers as ground truth.
+        let body_start_line = source[..after_open].lines().count();
         Ok(ExtractedBody {
             body: body.to_string(),
             body_start_line,

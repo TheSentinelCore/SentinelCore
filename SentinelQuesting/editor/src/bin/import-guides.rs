@@ -195,7 +195,8 @@ fn sanitize_filename_stem(stem: &str) -> String {
 
 /// Disambiguate a candidate project filename stem against every name THIS FUNCTION HAS EVER
 /// RETURNED — not just raw stems (CRITICAL 2 fix: header-less blocks all default to
-/// `"Imported Guide"`, `project_builder.rs:852`, so multiple such blocks, whether in one bundle
+/// `"Imported Guide"` — see `importer/src/project_builder.rs::ProjectBuilder::build` — so multiple
+/// such blocks, whether in one bundle
 /// or across different guide files, must not silently overwrite each other's output). Tracking
 /// only stems left a loophole: a later block literally named e.g. `Foo-2` was never checked
 /// against an EARLIER generated `Foo-2` and would silently collide with it (defect fix). Try the
@@ -215,7 +216,8 @@ fn dedupe_filename(used: &mut HashSet<String>, stem: &str) -> String {
 /// Import every `RegisterGuide` block in `guide_path` (IF6: a file may bundle several guides),
 /// writing one Project JSON per block. A per-block parse/build/write failure is recorded and
 /// does NOT abort the remaining blocks in this file, matching `parse_guide_bundle`'s own
-/// per-block isolation contract (`lib.rs:157-165`) instead of contradicting it (CRITICAL 1 fix).
+/// per-block isolation contract (`importer/src/lib.rs::parse_guide_bundle`) instead of
+/// contradicting it (CRITICAL 1 fix).
 /// Returns the projects actually written plus any recorded failure messages.
 async fn import_guide(
     guide_path: &Path,

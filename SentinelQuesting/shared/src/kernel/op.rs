@@ -18,6 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::finite;
 use super::ids::{ItemId, QuestId, SpellId};
 
 /// A world coordinate in the profile's shared waypoint pool (§5.7, §7.1).
@@ -33,11 +34,20 @@ use super::ids::{ItemId, QuestId, SpellId};
 pub struct Point {
     /// Map id. `1439` is Darkshore in §7.3.
     pub map_id: u32,
-    /// World X.
+    /// World X. Refused at write time if non-finite — see [`finite`].
+    #[serde(serialize_with = "finite::serialize")]
+    #[schemars(with = "f32")]
     pub x: f32,
-    /// World Y.
+    /// World Y. Refused at write time if non-finite — see [`finite`].
+    #[serde(serialize_with = "finite::serialize")]
+    #[schemars(with = "f32")]
     pub y: f32,
     /// World Z, when the compiler could resolve it.
+    ///
+    /// The slot the [`finite`] guard exists for: `Some(non-finite)` would serialize to `null` and
+    /// reload as `None`, losing the value with nothing failing.
+    #[serde(serialize_with = "finite::serialize_option")]
+    #[schemars(with = "Option<f32>")]
     pub z: Option<f32>,
 }
 

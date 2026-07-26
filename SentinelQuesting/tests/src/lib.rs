@@ -129,11 +129,21 @@ fn pipeline_validate_detects_broken_npc_ref() {
         conditions: vec![],
         sticky: false,
         looping: false,
+        labels: vec![],
+        requires: vec![],
+        complete_with: vec![],
+        optional: None,
+        gate: None,
+        directives: vec![],
+        placeholder: false,
+        source_line_start: None,
+        source_line_end: None,
         actions: vec![sentinel_models::authoring::Action {
             id: uuid::Uuid::new_v4(),
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: sentinel_models::authoring::ActionPayload::Vendor(
                 sentinel_models::authoring::VendorAction {
@@ -170,11 +180,21 @@ fn pipeline_compile_degrades_unresolved_npc_to_comment() {
         conditions: vec![],
         sticky: false,
         looping: false,
+        labels: vec![],
+        requires: vec![],
+        complete_with: vec![],
+        optional: None,
+        gate: None,
+        directives: vec![],
+        placeholder: false,
+        source_line_start: None,
+        source_line_end: None,
         actions: vec![sentinel_models::authoring::Action {
             id: uuid::Uuid::new_v4(),
             enabled: true,
             condition: None,
             class_restriction: None,
+            gate: None,
             note: None,
             payload: sentinel_models::authoring::ActionPayload::Vendor(
                 sentinel_models::authoring::VendorAction {

@@ -8,7 +8,7 @@
 //! yet `#completewith` implies sticky at runtime (§3.1). Collapsing them into one "background" flag
 //! is what makes the RXPGuides model unable to express the 37 steps that carry both.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::ids::{QuestId, TaskId};
 use super::op::{BehaviorId, LootRule, NpcRef, Op};
@@ -55,6 +55,43 @@ pub enum Channel {
     Camera,
 }
 
+/// ADR 07 §7.2's scheduler band, **inclusive at both ends**: `{ "minimum": 30, "maximum": 49 }`.
+///
+/// The Goal band of §5.3 — above the 20s where opportunistic work lives, below the 90-99 safety net
+/// that `#ignorecorpse` exists to switch off so deliberate death can work at all (§8). Exported
+/// because the compiler that *assigns* bands and the model that *refuses* them must agree on one
+/// range, and two transcriptions of `30..=49` are two chances to write `30..49`.
+pub const GOAL_BAND: std::ops::RangeInclusive<u8> = 30..=49;
+
+/// Refuse a scheduler band outside [`GOAL_BAND`] at the wire boundary.
+///
+/// The range cannot be expressed in the type — `band` is a `u8` — and therefore cannot reach the
+/// generated schema either (`shared/tests/kernel_schema.rs::
+/// lifetime_band_range_is_not_expressed_by_the_generated_schema` records that gap). So the refusal
+/// lives here, on load, and not only in the compiler: a profile is a JSON file that outlives the
+/// compiler that wrote it (§6.5), and a hand-edited artifact, an artifact from an older compiler or
+/// one from a future compiler all walk straight past a compiler-side check. C4 is fail-closed
+/// (§5.4) — the model refuses what it cannot execute, at the boundary.
+///
+/// What is refused is not hypothetical: one arithmetic slip in the per-task offset §5.3 requires
+/// puts a sticky patrol above the safety net, where it holds `MOVEMENT` through a corpse run.
+fn deserialize_band<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let band = u8::deserialize(deserializer)?;
+    if !GOAL_BAND.contains(&band) {
+        return Err(serde::de::Error::custom(format!(
+            "scheduler band {band} is outside ADR 07 §7.2's Goal band of {}..={}; a band above it \
+             outranks the band 90-99 safety net and a band below it is outranked by opportunistic \
+             work",
+            GOAL_BAND.start(),
+            GOAL_BAND.end()
+        )));
+    }
+    Ok(band)
+}
+
 /// How long a task lives and what it holds while alive (C3, §5.3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "payload", deny_unknown_fields)]
@@ -73,8 +110,11 @@ pub enum Lifetime {
         /// Scheduler band, **30..=49** — the Goal band of ADR-000 §4.2, offset by task order so two
         /// sticky tasks cannot deadlock. §7.2 pins `minimum: 30, maximum: 49`.
         ///
-        /// R1 does not enforce the range; §7.2's schema does, and the compiler that assigns the
-        /// band is R2's concern.
+        /// The range is enforced **on load** by [`deserialize_band`], because neither the type nor
+        /// the schema generated from it can carry the bound. The compiler that assigns the band
+        /// enforces the same [`GOAL_BAND`] on the way out; both halves are needed, and neither is
+        /// redundant — see [`deserialize_band`] for why a compiler-side check alone is not enough.
+        #[serde(deserialize_with = "deserialize_band")]
         band: u8,
         /// Voluntary, permanent termination condition. Normally the linked task's completion or the
         /// task's own `complete_when`. Distinct from *suspension*, which is involuntary loss of a

@@ -7,13 +7,23 @@ ADR 07 §7.3.3 and why, so a future reader never has to re-derive it.
 
 | Item | Source |
 |---|---|
-| Profile structure and every field value | `sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md` §7.3.3 (lines 1670–1975 post-audit) |
-| Root required-key list | same ADR §7.2 (lines 1460–1577 post-audit) |
+| Profile structure and every field value | `sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md` §7.3.3 "Compiled output" (search: `### 7.3.3 Compiled output`) |
+| Root required-key list | same ADR §7.2 (search: `"required": ["magic","schema_version","schema_hash"`) |
 | Waypoint coordinates | `sentinel/docs/adr/restedxp guides/A-11-23.lua:215–231, 240, 247–254, 262, 278` |
 | Game IDs (983, 5385, 2231, 2234, 3524, 12242, 2118, 2164, 7586, 984, 17182, map 1439) | ADR §7.3.2, verified there against `tbcmangos.sqlite` |
 
 The archetype is the one §7.3.3 resolves for: Night Elf Hunter, Alliance, TBC, softcore,
 AH-permitted, `mode: SpeedRoute`.
+
+**Deviation D7 — three archetype axes §7.3.3 did not print.** `xp_rate_milli: 1000`,
+`hardcore_server: false` and `season: null` were added to the archetype block when C2 gate
+resolution landed. §4.2's verdict column classifies `#xprate` (735), `#hardcoreserver` /
+`#softcoreserver` (4/2) and `#season` (2) as archetype filters, but §5.2's list named only the first
+seven axes, so `Archetype` had nowhere to answer them and a resolver that cannot answer them leaves
+a gate in the artifact. The values above are the blizzlike, normal-realm, non-seasonal defaults —
+they say what §7.3.3's Night Elf Hunter was always implicitly compiled for. The rate is
+**thousandths, not a float**: `Archetype` derives `Eq`, and `#xprate >1.49` and `>1.499` are
+genuinely different thresholds that disagree at 1.495. ADR §5.2 and §7.3.3 were updated to match.
 
 All 28 source route lines were re-verified line-by-line against the corpus: zone, `x`, `y` and the
 source radius all agree. They visit 22 **distinct** coordinates, which is what the pool holds — see

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{enums::VariableValue, position::Position};
+use super::{enums::VariableValue, guide::GuideGate, position::Position};
 
 /// An editable action. Carries its own enable flag and an optional gate expression
 /// (ADR `02_DATA_MODEL` §23 grammar) evaluated by the runtime before execution.
@@ -27,6 +27,13 @@ pub struct Action {
     /// compiler's class-filter pass (PR2b); the runtime never sees this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class_restriction: Option<String>,
+    /// The same `<< ...` suffix carried as a full gate expression rather than a class list.
+    ///
+    /// `class_restriction` is pinned by the live ADR-05 class-filter path and stays exactly as it
+    /// is; this field sits beside it so race, faction and era tails — the majority of `<<` uses —
+    /// reach later passes intact instead of degrading to an `UNKNOWN_CLASS_RESTRICTION` warning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<GuideGate>,
     /// Flattened so the serialized form is `{ "id", "enabled", "type", "payload", ... }`
     /// (ADR `02_DATA_MODEL` §12: type + payload as siblings).
     #[serde(flatten)]
@@ -77,6 +84,23 @@ pub struct TravelAction {
     pub position: Option<Position>,
     #[serde(default = "default_tolerance")]
     pub tolerance: f32,
+    /// The arrival radius the source line authored, verbatim, in yards — `None` when it authored
+    /// none.
+    ///
+    /// Distinct from [`tolerance`](Self::tolerance) and not a duplicate of it. `tolerance` is what
+    /// the *runtime* should treat as "arrived": the importer drops a `0`, substitutes a 5-yard
+    /// default and clamps into `[5, 60]` so a typo cannot make arrival meaninglessly wide. That
+    /// policy is right for execution and destroys the authored value — `A-11-23.lua:215` authors
+    /// `0` and reads back as `5`.
+    ///
+    /// ADR `07_RUNTIME_PROFILE_SCHEMA` §7.3.3 prints `radii: [0,0,0,60,…]` for that step, so the
+    /// kernel artifact needs the authored number rather than the executable one. Carried here so
+    /// neither reading has to be reconstructed from the other, which is impossible in both
+    /// directions: `5` may mean "authored 5", "authored 0" or "authored nothing".
+    ///
+    /// `u16` because that is [`Route::radii`](sentinel_models::kernel::Route)'s own width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authored_radius: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mount: Option<String>,
     #[serde(default)]

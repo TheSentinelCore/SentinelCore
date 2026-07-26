@@ -17,3 +17,4 @@ sentinel-queryclient = { path = "../queryclient" }
 
 [dev-dependencies]
 tokio = { workspace = true }
+serde_json = { workspace = true }

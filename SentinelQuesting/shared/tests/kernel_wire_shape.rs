@@ -1169,7 +1169,8 @@ fn channel_variants_are_screaming_snake_case_strings() {
 // Anti-drift: the emitted tag vocabulary must equal ADR 07 §7.2's enum lists.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/// The 24 predicate tag strings §7.2 enumerates, verbatim from the ADR (lines 1448-1452).
+/// The 24 predicate tag strings §7.2 enumerates, verbatim from the ADR
+/// (search: `"enum": ["And","Or","Not","QuestComplete"`).
 const ADR_7_2_PREDICATE_TAGS: [&str; 24] = [
     "And",
     "Or",
@@ -1197,7 +1198,8 @@ const ADR_7_2_PREDICATE_TAGS: [&str; 24] = [
     "LevelAtMost",
 ];
 
-/// The 13 op tag strings §7.2 enumerates, verbatim from the ADR (lines 1461-1462).
+/// The 13 op tag strings §7.2 enumerates, verbatim from the ADR
+/// (search: `"enum": ["Travel","Accept","TurnIn","Abandon"`).
 const ADR_7_2_OP_TAGS: [&str; 13] = [
     "Travel",
     "Accept",
@@ -1350,7 +1352,8 @@ fn has_item_predicate_no_longer_exists_on_the_wire() {
 // Load-side refusal — the direction the shipped defect actually hurt.
 //
 // Everything above this line is serialize-side: it proves the model WRITES the adjacent form.
-// That is only half the contract. ADR 07 §7.2:1581 states the other half verbatim:
+// That is only half the contract. ADR 07 §7.2 states the other half verbatim, in the `$comment`
+// on `$defs.Predicate`:
 //
 //     "$comment": "Adjacently tagged per C4. An externally-tagged variant fails closed at load."
 //
@@ -1361,10 +1364,12 @@ fn has_item_predicate_no_longer_exists_on_the_wire() {
 // require them to ERROR rather than to accept, ignore, or partially absorb.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-const LOAD_CLOSED: &str = "ADR 07 §7.2:1581 — \"Adjacently tagged per C4. An externally-tagged \
-                           variant fails closed at load.\" §5.4:729 states the contract as \
-                           refuse-don't-degrade: an artifact the model does not understand must \
-                           be REFUSED, never silently reinterpreted";
+const LOAD_CLOSED: &str = "ADR 07 §7.2's `$defs.Predicate` `$comment` — \"Adjacently tagged per \
+                           C4. An externally-tagged variant fails closed at load.\" §5.4's \
+                           **Contract.** line states it as refuse-don't-degrade: an artifact the \
+                           model does not understand must be REFUSED, never silently \
+                           reinterpreted. Both sentences are greppable verbatim in \
+                           sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md";
 
 /// Assert a wire form is REFUSED by the deserializer.
 macro_rules! assert_load_refuses {
@@ -1394,7 +1399,8 @@ fn externally_and_internally_tagged_predicates_and_ops_fail_closed_at_load() {
         Predicate,
         json!({ "QuestInLog": { "id": 983 } }),
         "this is byte-for-byte the shape `RuntimeCondition` emitted. Accepting it would let a \
-         stale or hand-edited artifact re-enter the fail-open path (§5.4:733)"
+         stale or hand-edited artifact re-enter the fail-open path (§5.4, search: \
+         \"was externally tagged\")"
     );
     assert_load_refuses!(
         Op,

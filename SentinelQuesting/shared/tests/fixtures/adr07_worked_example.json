@@ -3,16 +3,15 @@
   "schema_version": 1,
   "schema_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
   "tags_used": [
+    "InArea",
+    "QuestComplete",
+    "QuestInLog",
+    "QuestObjective",
+    "QuestTurnedIn",
     "Travel",
     "TurnIn",
     "UseItem",
-    "QuestComplete",
-    "QuestObjective",
-    "QuestInLog",
-    "QuestTurnedIn",
-    "InArea",
-    "XpAtLeast",
-    "And"
+    "XpAtLeast"
   ],
   "integrity": {
     "content_hash": "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
@@ -29,14 +28,17 @@
     "self_found": false,
     "can_fly": false,
     "content_phase": null,
-    "mode": "SpeedRoute"
+    "mode": "SpeedRoute",
+    "xp_rate_milli": 1000,
+    "hardcore_server": false,
+    "season": null
   },
   "meta": {
-    "name": "10-14 Darkshore",
+    "name": "12-14 Darkshore",
     "group": "RestedXP TBC Guide (A)",
     "subgroup": "RestedXP Alliance 1-20",
     "source_version": 7,
-    "next": []
+    "next": ["14-20 Bloodmyst"]
   },
   "defaults": {
     "combat": {
@@ -50,28 +52,28 @@
     "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } }
   },
   "waypoint_pool": [
-    { "map_id": 1439, "x": 36.051, "y": 44.757, "z": null },
-    { "map_id": 1439, "x": 36.280, "y": 50.071, "z": null },
-    { "map_id": 1439, "x": 35.275, "y": 53.464, "z": null },
-    { "map_id": 1439, "x": 36.091, "y": 51.501, "z": null },
-    { "map_id": 1439, "x": 37.115, "y": 52.368, "z": null },
-    { "map_id": 1439, "x": 37.130, "y": 53.663, "z": null },
-    { "map_id": 1439, "x": 36.740, "y": 55.221, "z": null },
-    { "map_id": 1439, "x": 35.655, "y": 55.872, "z": null },
-    { "map_id": 1439, "x": 35.088, "y": 55.085, "z": null },
-    { "map_id": 1439, "x": 36.523, "y": 48.554, "z": null },
-    { "map_id": 1439, "x": 35.977, "y": 48.408, "z": null },
-    { "map_id": 1439, "x": 35.902, "y": 47.145, "z": null },
-    { "map_id": 1439, "x": 35.759, "y": 45.455, "z": null },
-    { "map_id": 1439, "x": 36.371, "y": 50.920, "z": null },
-    { "map_id": 1439, "x": 38.226, "y": 52.780, "z": null },
-    { "map_id": 1439, "x": 39.129, "y": 59.176, "z": null },
-    { "map_id": 1439, "x": 38.527, "y": 54.661, "z": null },
-    { "map_id": 1439, "x": 38.037, "y": 56.815, "z": null },
-    { "map_id": 1439, "x": 38.095, "y": 58.395, "z": null },
-    { "map_id": 1439, "x": 38.696, "y": 57.874, "z": null },
-    { "map_id": 1439, "x": 38.90, "y": 53.59, "z": null },
-    { "map_id": 1439, "x": 36.634, "y": 46.250, "z": null }
+    { "map_id": 1, "x": 6378.9443, "y": 580.3262, "z": null },
+    { "map_id": 1, "x": 6146.8994, "y": 565.3264, "z": null },
+    { "map_id": 1, "x": 5998.7383, "y": 631.15405, "z": null },
+    { "map_id": 1, "x": 6084.456, "y": 577.70605, "z": null },
+    { "map_id": 1, "x": 6046.597, "y": 510.6338, "z": null },
+    { "map_id": 1, "x": 5990.049, "y": 509.65137, "z": null },
+    { "map_id": 1, "x": 5922.0156, "y": 535.1963, "z": null },
+    { "map_id": 1, "x": 5893.589, "y": 606.26416, "z": null },
+    { "map_id": 1, "x": 5927.955, "y": 643.40234, "z": null },
+    { "map_id": 1, "x": 6213.1416, "y": 549.41016, "z": null },
+    { "map_id": 1, "x": 6219.517, "y": 585.1731, "z": null },
+    { "map_id": 1, "x": 6274.668, "y": 590.08545, "z": null },
+    { "map_id": 1, "x": 6348.465, "y": 599.45215, "z": null },
+    { "map_id": 1, "x": 6109.826, "y": 559.3662, "z": null },
+    { "map_id": 1, "x": 6028.6064, "y": 437.86328, "z": null },
+    { "map_id": 1, "x": 5749.3145, "y": 378.71704, "z": null },
+    { "map_id": 1, "x": 5946.4697, "y": 418.14795, "z": null },
+    { "map_id": 1, "x": 5852.4116, "y": 450.24316, "z": null },
+    { "map_id": 1, "x": 5783.418, "y": 446.4441, "z": null },
+    { "map_id": 1, "x": 5806.1685, "y": 407.0786, "z": null },
+    { "map_id": 1, "x": 5993.2363, "y": 393.7163, "z": null },
+    { "map_id": 1, "x": 6313.75, "y": 542.13965, "z": null }
   ],
   "tasks": [
     {
@@ -97,7 +99,7 @@
           "payload": {
             "route": {
               "kind": { "type": "Circuit", "payload": { "close": true } },
-              "mode": "Ground",
+              "mode": "Any",
               "points": [0, 1, 2, 3, 4, 5, 6, 7, 8, 2, 3, 1, 9, 10, 11, 12, 0],
               "radii": [0, 0, 0, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60]
             }
@@ -181,7 +183,7 @@
           "payload": {
             "route": {
               "kind": { "type": "Circuit", "payload": { "close": true } },
-              "mode": "Ground",
+              "mode": "Any",
               "points": [14, 15, 14, 16, 17, 18, 19, 15],
               "radii": [0, 0, 50, 50, 50, 50, 50, 50]
             }
@@ -239,33 +241,7 @@
 
     {
       "id": 4,
-      "deps": [2, 0],
-      "blocking": false,
-      "lifetime": { "type": "Exclusive" },
-      "completion": { "type": "OwnPredicate" },
-      "applies_when": null,
-      "complete_when": {
-        "type": "And",
-        "payload": [
-          { "type": "QuestObjective", "payload": { "id": 2118, "index": 1, "need": 1 } },
-          { "type": "QuestObjective", "payload": { "id": 983, "index": 1, "need": 6 } }
-        ]
-      },
-      "abort_when": null,
-      "unknown_policy": { "type": "Block" },
-      "ops": [],
-      "interact_target": null,
-      "combat": null,
-      "loot_filter": [],
-      "serves_quests": [2118, 983],
-      "suppress": [],
-      "jump_to": null,
-      "source": { "file": "A-11-23.lua", "line_start": 265, "line_end": 268 }
-    },
-
-    {
-      "id": 5,
-      "deps": [],
+      "deps": [2],
       "blocking": false,
       "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
@@ -287,11 +263,11 @@
       "serves_quests": [],
       "suppress": [],
       "jump_to": null,
-      "source": { "file": "A-11-23.lua", "line_start": 269, "line_end": 271 }
+      "source": { "file": "A-11-23.lua", "line_start": 265, "line_end": 271 }
     },
 
     {
-      "id": 6,
+      "id": 5,
       "deps": [],
       "blocking": true,
       "lifetime": {
@@ -302,7 +278,7 @@
           "terminate_on": { "type": "InArea", "payload": { "area": 442, "kind": "SubArea" } }
         }
       },
-      "completion": { "type": "LinkedTo", "payload": 7 },
+      "completion": { "type": "LinkedTo", "payload": 6 },
       "applies_when": null,
       "complete_when": { "type": "InArea", "payload": { "area": 442, "kind": "SubArea" } },
       "abort_when": null,
@@ -318,7 +294,7 @@
     },
 
     {
-      "id": 7,
+      "id": 6,
       "deps": [0],
       "blocking": true,
       "lifetime": { "type": "Exclusive" },

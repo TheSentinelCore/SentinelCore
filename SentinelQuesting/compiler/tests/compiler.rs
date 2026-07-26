@@ -19,6 +19,7 @@ fn vendor_action_with_class(npc: Uuid, class_restriction: Option<&str>) -> Actio
         enabled: true,
         condition: None,
         class_restriction: class_restriction.map(|s| s.to_string()),
+        gate: None,
         note: None,
         payload: ActionPayload::Vendor(VendorAction {
             npc,
@@ -36,6 +37,7 @@ fn condition_action_with_role(expression: &str, role: ConditionRole) -> Action {
         enabled: true,
         condition: None,
         class_restriction: None,
+        gate: None,
         note: None,
         payload: ActionPayload::Condition(ConditionAction { expression: expression.to_string(), role }),
     }
@@ -47,6 +49,7 @@ fn loot_action(object: Uuid) -> Action {
         enabled: true,
         condition: None,
         class_restriction: None,
+        gate: None,
         note: None,
         payload: ActionPayload::LootObject(LootObjectAction { object, count: None }),
     }
@@ -75,6 +78,7 @@ fn compiles_project_to_runtime_profile() {
         enabled: true,
         condition: None,
         class_restriction: None,
+        gate: None,
         note: None,
         payload: ActionPayload::Vendor(VendorAction {
             npc: npc_id,
@@ -101,6 +105,7 @@ fn unresolved_npc_reference_degrades_to_comment_and_is_reported() {
         enabled: true,
         condition: None,
         class_restriction: None,
+        gate: None,
         note: None,
         payload: ActionPayload::Vendor(VendorAction {
             npc: Uuid::new_v4(), // Non-existent NPC
@@ -142,6 +147,7 @@ fn missing_npc_reference_option_degrades_to_comment_and_is_reported() {
         enabled: true,
         condition: None,
         class_restriction: None,
+        gate: None,
         note: None,
         payload: ActionPayload::AcceptQuest(sentinel_models::authoring::AcceptQuestAction {
             quest: 1234,

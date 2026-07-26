@@ -37,12 +37,19 @@
 //!    *externally* tagged condition enum, and every non-unit condition consequently fell through to
 //!    a fail-open `true` in Lua, so condition gating silently stopped gating.
 //! 2. **Scalar vocabulary serializes as a bare string**: [`Class`], [`Race`], [`Faction`],
-//!    [`Expansion`], [`Allegiance`], [`ProfileMode`], [`Channel`], [`TravelMode`], [`AreaKind`],
+//!    [`Expansion`], [`Allegiance`], [`DungeonId`], [`Channel`], [`TravelMode`], [`AreaKind`],
 //!    [`UnitRef`], [`SkillLine`], [`Standing`], [`CooldownKind`], [`ItemStat`], [`BehaviorId`],
 //!    [`VendorMode`], [`FlightMode`], [`HearthMode`], [`BankMode`], [`StableMode`],
 //!    [`CorpseIntent`]. §7.3.3 forces this: it contains `"class": "Hunter"`, `"expansion": "Tbc"`,
 //!    `"mode": "Ground"`, `"kind": "SubArea"`, `"channels": ["MOVEMENT"]`. [`Channel`] alone is
 //!    SCREAMING_SNAKE, per §7.2.
+//!
+//! [`ProfileMode`] is the one **mixed** enum and belongs to neither rule cleanly. Its two unit
+//! variants stay bare strings, because §7.3.3 prints `"mode": "SpeedRoute"` and every artifact
+//! compiled so far carries that spelling; its `Dungeon` variant gained a payload — *which* dungeon
+//! — and so takes serde's default external form, `{"Dungeon": {"instance": "Mara"}}`. It is not
+//! adjacently tagged because nothing dispatches on it: the archetype is compile-time provenance
+//! (§5.2), never read by the Lua kernel.
 //!
 //! ## Unit variants: emitted absent, accepted either way
 //!
@@ -64,6 +71,7 @@
 //! deliberately contains no lowering from [`crate::authoring`], no offset-indexed container, no
 //! digest computation, and no loader. Those are separate work.
 
+pub mod finite;
 pub mod ids;
 pub mod op;
 pub mod predicate;
@@ -77,12 +85,12 @@ pub use op::{
 };
 pub use predicate::{AreaKind, Cmp, CooldownKind, ItemStat, Predicate, SkillLine, Standing, UnitRef};
 pub use profile::{
-    Allegiance, Archetype, Class, CombatPolicy, CombatStance, ContentIntegrity, Expansion, Faction,
-    GroupExpectation, GuideMeta, ProfileDefaults, ProfileMode, Race, RuntimeProfile,
-    SCHEMA_VERSION,
+    Allegiance, Archetype, Class, CombatPolicy, CombatStance, ContentIntegrity, DungeonId,
+    Expansion, Faction, GroupExpectation, GuideMeta, ProfileDefaults, ProfileMode, Race,
+    RuntimeProfile, SCHEMA_VERSION,
 };
 pub use task::{
-    Channel, CompletionSource, Lifetime, ResumeCursor, SourceSpan, Task, UnknownPolicy,
+    Channel, CompletionSource, Lifetime, ResumeCursor, SourceSpan, Task, UnknownPolicy, GOAL_BAND,
 };
 
 #[cfg(test)]

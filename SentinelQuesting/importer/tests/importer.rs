@@ -75,8 +75,12 @@ fn parses_basic_guide_structure() {
         vec!["Elwynn Forest".to_string(), "48.2".to_string(), "42.9".to_string()]
     );
 
-    // Label graph: TOME defined and referenced, nothing unresolved.
-    assert_eq!(guide.labels.definitions.get("TOME"), Some(&1));
+    // Label graph: TOME defined and referenced, nothing unresolved. `definitions` is a multimap —
+    // one name may be defined more than once and the importer must not rank them — so this asserts
+    // the single definition and the step it sits on.
+    let tome = guide.labels.definitions.get("TOME").expect("`#label TOME` is defined");
+    assert_eq!(tome.len(), 1, "one definition of TOME in this guide: {tome:?}");
+    assert_eq!(tome[0].step, 1);
     assert_eq!(guide.labels.references.len(), 1);
     assert!(guide.labels.unresolved.is_empty());
 }

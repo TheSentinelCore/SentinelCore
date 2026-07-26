@@ -200,27 +200,101 @@ Token vocabulary: 9 classes, races, `Alliance`/`Horde`, expansions (`tbc` 223, `
 `DK` 81, and `skip` 147. Junk tokens (`if`, `checking`, `mount`, `nothing`) all originate from
 commented-out lines and are not real gates.
 
-**Gating is not step-only.** There are **3,412 command- and directive-level `<<` gates across 172
-distinct expressions** — a single command inside a shared step can be class-gated. This is the decisive
+**Gating is not step-only.** There are **3,052 command-level `<<` gates across 134 distinct
+expressions** — a single command inside a shared step can be class-gated. This is the decisive
 evidence for P2 (§5.9).
+
+*(Measured under the importer's own definition of a command — `lexer.rs::lex_body_line`, a body line
+beginning with `.`. An earlier revision claimed 3,412 across 172; neither figure is reproducible
+under any single slicing of the corpus, and the two nearest matches come from **different** slices,
+so they cannot both be right. Counting display-text lines and in-step `#` directives as well gives
+4,499 across 173. The conclusion is unaffected and in fact strengthened: against 6,069 step-level
+gates, that is roughly one gate below the step for every 1.35 on it.)*
 
 ## 2.6 Spatial representation
 
 `.goto` uses **two mutually exclusive coordinate systems**:
 
-- **Zone-percentage** — `<zone name|zone id>,<x>,<y>` with x,y always in 0..100. 36,322 name-form,
+- **Zone-percentage** — `<zone name|zone id>,<x>,<y>` with x,y always in 0..100. 35,449 name-form,
   1,765 numeric-id form (4.6%).
-- **World coordinates** — `<mapId>/<floor>,<x>,<y>` with raw world coords, never in 0..100.
-  873 instances, e.g. `The Burning Crusade.lua:7210` → `.goto 1419/0,-3196.90015,-11815.10059`.
+- **World coordinates** — `<uiMapId>/<continentMapId>,<x>,<y>` with raw world coords, never in
+  0..100. 873 instances **on `.goto`**, e.g. `The Burning Crusade.lua:7210` →
+  `.goto 1419/0,-3196.90015,-11815.10059 << !tbc !wotlk`. Corpus-wide the raw-world form appears
+  **929** times (`.goto` 873, `.waypoint` 48, `.groundgoto` 8).
+
+**The number after the slash is a continent map id, not a floor.** *(An earlier revision of this
+section spelled the form `<mapId>/<floor>`. It is not a floor, and the mistake matters: it is the
+value that becomes `Point::map_id` in the artifact, so reading it as a floor and taking the ui map
+id instead puts every raw-world waypoint on the wrong map.)* Measured, two independent ways:
+
+- Across all 929 raw-world lines the value after the slash takes exactly **three** values —
+  `0` (207), `1` (268), `530` (454). Those are Eastern Kingdoms, Kalimdor and Outland, the three
+  continents the corpus visits. No floor index is 530, and a real floor axis would not partition a
+  seven-file corpus into precisely the continent set.
+- For every ui map id that appears in *both* forms, the value after the slash equals that zone's
+  measured continent: `1429/0` Elwynn Forest → 0, `1437/0` Wetlands → 0, `1453/0` Stormwind City →
+  0, `1439/1` Darkshore → 1. Four for four against `ZONE_TABLE` (`SentinelQuesting/shared/src/zone.rs`).
+
+**Corollary for the zone-percentage form.** A converted percentage carries the zone's **continent**
+as its `map_id`, never the ui map id it was authored against. `.goto 1439,36.051,44.757` and
+`.goto Darkshore,36.051,44.757` are the same point on continent `1`; `1439` is a lookup key that
+must not survive the lookup. A compiled `Point` whose `map_id` is `1439` is therefore a **named bug
+signature** — a percentage that survived compilation wearing a ui map id — and is exactly the ADR 06
+invariant 3 failure, visible without needing to know the right answer.
+
+**Axis order: the first authored value is world Y and the second is world X.** This holds in *both*
+coordinate systems and is not the obvious reading, so it is recorded rather than assumed. Evidence:
+`A-11-23.lua:764` and `:769` are consecutive steps of one guide that click two objects on the same
+Darkshore beach — a Beached Sea Turtle and a Beached Sea Creature — authored one in each system:
+
+```
+.goto 1439,37.105,62.167       (zone percentage)  then  .accept 4722
+.goto 1439/1,579.500,5240.300  (raw world)        then  .accept 4728
+```
+
+Under the ordering above they lower **385 yd** apart, which is one beach. Under the reversed reading
+they lower **6,911 yd** apart, which is most of the zone. Only one of the two is survivable, and it
+is this one. `ZoneMap` (`SentinelQuesting/shared/src/zone.rs`) documents the matching convention for
+the percentage transform: world X interpolates along the map's *y* axis, world Y along its *x* axis.
+
+The three `.goto` figures partition it exactly: 35,449 + 1,765 + 873 = 38,087. *(An earlier revision
+printed 36,322 name-form beside 873 raw-world as if the two were disjoint. They are not: 36,322 was
+computed as "first field is not a bare integer", which silently includes every raw-world entry,
+because `1419/0` is not a bare integer. 35,449 + 873 = 36,322.)*
+
+**Discriminate on the `/` in field 0, not on the 0..100 range.** Both tests happen to agree on this
+corpus — no zone-form coordinate falls outside 0..100 and no raw-world coordinate falls inside it —
+but reversing the order is exactly how the 36,322 double-count arose.
+
+**`.goto` is not the only coordinate-bearing command.** Five carry coordinates: `.goto` (38,087),
+`.waypoint` (593), `.line` (485), `.groundgoto` (114), `.flygoto` (1) — 39,280 live instances.
+`.line` is variadic from arity 5 to 259 (a 129-point polyline at `The Burning Crusade.lua:14816`)
+and carries 6 malformed lines of its own, including one with an empty x field that shifts an entire
+polyline by one position (`The Burning Crusade.lua:114541`).
 
 Both zone forms appear **in the same file for the same zone**: `A-1-11-Dwarf-Gnome.lua:1955` uses
 `1426` while `:1975` uses `Dun Morogh`. Normalisation is unavoidable.
 
-Arity: 3 args (16,231), 4 (5,436), 5 (16,353), 6 (67 — all malformed, a decimal typed with a comma:
-`Un'Goro Crater,20.6,60,4,70,0` should be `60.4`).
+Arity: 3 args (16,231), 4 (5,436), 5 (16,353), 6 (67 — all malformed).
 
-The 4th positional is an arrival radius; observed values 0 (3,963), −1 (580), then 5–200. The 5th is
-**invariantly 0 across all 16,353 five-arg instances** — its meaning is UNDETERMINED (§9).
+**The 67 six-arg lines are three distinct defects, not one.** An earlier revision described them all
+as "a decimal typed with a comma: `Un'Goro Crater,20.6,60,4,70,0` should be `60.4`". Only **4** have
+that shape. The other 63 are:
+
+| Shape | Count | Example |
+| --- | --- | --- |
+| Stray **trailing** zero — radius and flag intact | 60 | `.goto Silithus,<x>,<y>,70,0,0` |
+| Decimal typed with a comma | 4 | `.goto Un'Goro Crater,20.6,60,4,70,0` |
+| Stray **leading** zero | 3 | `.goto Burning Steppes,<x>,<y>,0,60,0` |
+
+An importer written to the old description — fuse fields 2 and 3 into a decimal — would **corrupt 63
+of the 67** into wrong coordinates and drive the character somewhere else entirely. This is the
+concrete reason malformed arity must be a hard error and never a repair: `20.6,60,4` is equally
+readable as `60.4` or as `60` with a stray field, and the corpus contains both.
+
+The 4th positional is an arrival radius; observed values 0 (3,983), −1 (586), then 5–200, across 41
+distinct values of which the most common is 50 (4,767). The 5th is **invariantly 0 across all 16,353
+five-arg instances** — its meaning is UNDETERMINED (§9).
 
 Decisive disambiguation: `A-11-23.lua:247` and `:249` give the *same coordinates* as
 `.goto 1439,38.226,52.780,0` and `.goto 1439,38.226,52.780,50,0`. The lone trailing `0` in the 4-arg
@@ -619,9 +693,28 @@ ledger reintroducing it.
 **Decision: one artifact per character archetype, gates fully resolved away.**
 
 An `Archetype` is `(class, race, faction, expansion, allegiance, hardcore, self_found, can_fly,
-content_phase, mode)`. The compiler evaluates every `<<` expression, every `#aldor`/`#scryer`,
-`#hardcore`/`#softcore`, `#ah`/`#ssf`, `#flyable`/`#noflyable`, `#phase`, `#tbc`/`#wotlk`/`#classic`
-and `.dungeon` against a concrete archetype and emits only the surviving tasks and ops.
+content_phase, mode, xp_rate_milli, hardcore_server, season)`. The last three were added when C2
+landed: §4.2's verdict column already classified `#xprate`, `#hardcoreserver`/`#softcoreserver` and
+`#season` as archetype filters, and the seven-axis tuple had nowhere to answer them.
+`#hardcoreserver` describes the **realm** and is independent of the player's own `#hardcore` —
+aliasing them, since one name is a prefix of the other, admits 4 realm-specific steps to every
+hardcore character on a normal realm. `xp_rate_milli` is **thousandths, not a float**: `Archetype`
+derives `Eq`, and `>1.49` and `>1.499` are different thresholds that disagree at 1.495.
+The compiler evaluates every `<<` expression, every `#aldor`/`#scryer`,
+`#hardcore`/`#softcore`, `#ah`/`#ssf`, `#flyable`/`#noflyable`, `#phase`, `#tbc`/`#wotlk`/`#classic`,
+`#questguide` (228), `#xprate` (735), `#hardcoreserver`/`#softcoreserver` (4/2), `#season` (2)
+and `.dungeon` against a concrete archetype and emits only the surviving tasks and ops. The last four
+are archetype filters in §4.2's own verdict column and were missing from this list; a resolver that
+does not know them leaves a gate in the artifact, which C2 forbids.
+
+**`<<` is not a class/race/faction language.** The era tokens `tbc`, `wotlk`, `classic`, `era` and
+`sod` appear **inside** `<<` expressions 958 times, not only as `#` directives, so the same vocabulary
+must be accepted in both positions.
+
+**`skip` is not an archetype token.** It appears 139 times in gate position and is a *disable
+sentinel*: `step << skip`, `step << Warrior skip`. Resolving it as vocabulary would silently **enable
+steps the author disabled** — the failure is invisible, because the step simply runs. It is
+recognised before archetype resolution and marks the step dead (140 corpus steps).
 
 **The argument that settles it is not cache economics — it is capability.** Player faction is **not
 readable from the Sylvanas API**. `game_object:get_faction_id()` returns a *unit faction template*
@@ -952,8 +1045,10 @@ K1, K2 and K8 are corrections to under-specification. K3–K5 are additive. K6 a
 
 ## 5.10 P2 and P3
 
-**P2 — class-gating granularity.** The boundary is now empirical, not a judgement call. **3,412
-command-level `<<` gates across 172 distinct expressions** prove that gating happens *below* the step.
+**P2 — class-gating granularity.** The boundary is now empirical, not a judgement call. **3,052
+command-level `<<` gates across 134 distinct expressions** prove that gating happens *below* the step
+(§2.5, where the counting rule is stated — it matters, since defensible readings of "command level"
+differ by 47%).
 So:
 
 - *"Class quest chain to exclude"* = a run of tasks whose **step-level** gate is a single class token,
@@ -1199,6 +1294,9 @@ pub struct Archetype {
     pub can_fly:       bool,                 // #flyable / #noflyable
     pub content_phase: Option<u8>,           // #phase
     pub mode:          ProfileMode,          // #questguide, .dungeon variant
+    pub xp_rate_milli: u32,                  // #xprate, in THOUSANDTHS (1_000 = blizzlike)
+    pub hardcore_server: bool,               // #hardcoreserver / #softcoreserver — the REALM
+    pub season:        Option<u8>,           // #season
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1414,7 +1512,14 @@ pub enum Expansion { Classic, Tbc, Wotlk }              // #classic / #tbc / #wo
 pub enum Allegiance { Aldor, Scryer }                   // #aldor / #scryer
 
 #[derive(Serialize, Deserialize)]
-pub enum ProfileMode { SpeedRoute, QuestGuide, Dungeon } // absence of #questguide / #questguide / .dungeon
+pub enum ProfileMode { SpeedRoute, QuestGuide, Dungeon { instance: DungeonId } }
+// absence of #questguide / #questguide / .dungeon <instance>. The dungeon variant carries WHICH
+// dungeon: `.dungeon Mara` (105) and `.dungeon ZF` (150) are different archetype variants, and a
+// unit variant admits every dungeon's steps into every dungeon's profile. DungeonId is the closed,
+// measured 19-argument set — BF BFD Crypts DM Gnomer Mara MT Ramparts RFD RFK SFK SM SP ST
+// Stockades UB Ulda WC ZF — after folding the MARA/ULDA/RAMPARTS case splits.
+// Wire: the two unit variants stay bare strings ("mode": "SpeedRoute", as §7.3.3 prints); the
+// payload-carrying one takes serde's external form, {"Dungeon": {"instance": "Mara"}}.
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]           // the ONE exception (§7.2)
@@ -1738,7 +1843,8 @@ real artifact carries none of them.
   "archetype": { "class": "Hunter", "race": "NightElf", "faction": "Alliance",
                  "expansion": "Tbc", "allegiance": null, "hardcore": false,
                  "self_found": false, "can_fly": false, "content_phase": null,
-                 "mode": "SpeedRoute" },
+                 "mode": "SpeedRoute", "xp_rate_milli": 1000,
+                 "hardcore_server": false, "season": null },
   "meta": { "name": "10-14 Darkshore", "group": "RestedXP TBC Guide (A)",
             "subgroup": "RestedXP Alliance 1-20", "source_version": 7, "next": [] },
 
@@ -2101,10 +2207,31 @@ because this excerpt contains no vendor/flight/hearth step.
 17. **Player faction is not readable** outside arena/battleground context, and **there is no race
     name table**. Both forced compile-time archetype resolution (§5.2) — which I believe is right
     anyway, but the decision was made under constraint, not freely.
-18. **Objective progress is only a localized string** (`"Wolves slain: 3/10"`, `quests.md:215`).
-    Baking `need` from `quest_template` removes the denominator problem; the numerator still requires
-    parsing two integers out of a localized string, and a failed parse must never fail open.
-19. **No quest events exist**, so all quest state is polled. Combined with the missing readiness
+18. **The objective-progress numerator is integer-readable when RestedXP is loaded; the localized
+    string is the fallback, not the only path.** *(An earlier revision of this item claimed objective
+    progress "is only a localized string". That premise is now partially false: it correctly
+    describes the base quest-log surface — `core.quests.get_quest_log_leader_board` (`quests.md`)
+    returns only a localized description such as `"Wolves slain: 3/10"` — but it predates the addon
+    integration surface.)* `core.addons.rested_xp.get_objectives(quest_id)` (`addons.md`) returns
+    structured per-objective progress — `num_required`, `num_fulfilled`, `finished`, plus `text` and
+    `type` — with the numerator as an integer, no parsing. Precondition: the RestedXP addon must be
+    loaded (`core.addons.rested_xp.is_loaded()`), so **no artifact may hard-depend on it** — it is
+    the preferred sensor, with the string parse as fallback, and a failed parse must still never
+    fail open. Baking `need` from `quest_template` remains the denominator authority either way;
+    when the integration is live, `num_required` doubles as a free runtime cross-check on the baked
+    `need` (a mismatch is world-data drift, §5.4.1). The Zygor namespace is parallel in name only:
+    `core.addons.zygor.get_objectives()` (`addons.md`) takes no quest id and returns an untyped
+    `(number|string)[]` for the current guide step, so it is not a substitute sensor.
+    Same-namespace corroboration for §2.6: `core.addons.rested_xp.get_current_waypoint()`
+    (`addons.md`) returns `map_id` plus `x`/`y` **normalized to 0–1** — ui-map space, the
+    zone-percentage form scaled by 100 — independently supporting §2.6's reading that authored
+    zone-form numbers like `1439` are ui map ids paired with zone-normalized coordinates, lookup
+    keys that must not survive compilation.
+19. **No quest events exist**, so all quest state is polled. Re-verified against the event surface:
+    the registered-events whitelist of `core.register_on_game_event_callback` (`events.md`,
+    "Registered events") carries combat, player, group, chat/UI and auction-house events — no
+    `QUEST_*` family at all — and the item-18 addon integrations are pull-only reads, so they change
+    the preferred numerator sensor, not the polling model. Combined with the missing readiness
     contract, this makes resume-after-loading-screen a real correctness risk rather than a theoretical
     one.
 
