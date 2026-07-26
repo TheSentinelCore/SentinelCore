@@ -346,13 +346,16 @@ local test_modules = {
 
     -- Harness (offline-only; exercises _G.JSON mocked above)
     "tests/harness/test_json_mock",
-
     -- Entry point (main.lua diagnostics sink, C4)
     "tests/test_main_diagnostics",
     -- ADR 09a W12: the host surface for Recording Mode -- the `_G.Sentinel` verbs an operator drives
     -- through the debug bridge, and the measurement that no menu element is constructed inside a
     -- render callback (a Sylvannas rule that fails in the injector and nowhere else).
     "tests/test_main_recording_verbs",
+    -- ADR 09a W13: the host surface that closes the loop -- resolve a saved recording through
+    -- QueryServer and run the plan it returns, from `_G.Sentinel` or from the menu, without the
+    -- author leaving the client to curl the file by hand.
+    "tests/test_main_resolve_verbs",
 
     -- Core
     "tests/core/test_event_bus",
@@ -499,6 +502,10 @@ local test_modules = {
     -- test_recording_pipeline proves the producer feeds it; neither could see that nothing in the
     -- tree ever constructed one, so Recording Mode had no way to start, stop, or reach disk.
     "tests/modules/questing/test_recording_control",
+    -- ADR 09a W13: the record -> resolve -> run link. Recording Mode wrote a campaign and
+    -- POST /resolve lowered one, and nothing joined them; this pins the join, the asynchrony of
+    -- `core.http_post`, and the three failure modes the endpoint keeps apart.
+    "tests/modules/questing/test_resolve_control",
     -- W8 / ADR 09 §6.2: the executor stops incrementing an index and starts following the
     -- resolver's edge guards. Registered next to the event-contract suite because the two share
     -- the same hard constraint -- the addition must leave every pre-plan profile running as-is.

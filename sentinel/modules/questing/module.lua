@@ -13,6 +13,9 @@ local RunnerState = require("modules/questing/runner_state")
 local QuestLogSpace = require("modules/questing/quest_log_space")
 local ProfileChain = require("modules/questing/profile_chain")
 local Recorder = require("modules/questing/recorder")
+-- The ONE HTTP layer to QueryServer. Resolving a recording is a POST where every other call is a
+-- GET, which is a reason to extend that client and not to grow a second one beside it.
+local QueryClient = require("shared/query_client")
 
 -- JSON decoder for the chain manifest — same core/JSON the runtime uses, degrading to nil
 -- when the sandbox lib is absent (offline tests inject the manifest directly instead).
@@ -877,6 +880,308 @@ function QuestingModule:save_recording(path)
 
     self._event_bus:publish("questing:recording_saved", { path = target, name = campaign.name })
     return { ok = true, path = target, name = campaign.name, nodes = count_nodes(campaign) }
+end
+
+-- ======================================================================
+-- Recording -> plan -> run (ADR 09a W13)
+--
+-- The link the pipeline was missing. Recording Mode writes a Campaign and QueryServer's
+-- POST /resolve lowers one into an ExecutionPlan, but nothing in the client joined them: an author
+-- had to alt-tab out, curl the file by hand and drop the answer into the profile directory before
+-- the route they had just walked could be run.
+--
+-- Everything here is ASYNCHRONOUS on purpose. `core.http_post` returns before the server answers and
+-- has no blocking form; blocking a tick on the network stalls the game client, so `resolve_recording`
+-- answers `pending` and the operator (or the bus subscriber) collects the result.
+-- ======================================================================
+
+local RESOLVE_PATH = "/resolve"
+
+-- The same core/JSON the chain manifest reads through — aliased so this path does not read as if it
+-- borrowed the chain loader's decoder. The Sylvannas sandbox has NO global JSON (query_client.lua
+-- carries the same note), so a nil here means encode/decode is absent, not broken.
+local Json = ChainJson
+
+-- Enough of the resolver's complaints to act on without turning a one-line answer into a wall.
+local DIAGNOSTIC_PREVIEW = 3
+
+local function decode_json(text)
+    if not (Json and Json.decode) or type(text) ~= "string" or text == "" then return nil end
+    local ok, value = pcall(Json.decode, text)
+    if ok and type(value) == "table" then return value end
+    return nil
+end
+
+--- Every error body this server produces is `{"error": …}` (handlers.rs reads `/resolve`'s body as
+--- Bytes precisely so a malformed campaign is not the one reply shaped differently). Falling back to
+--- the raw text keeps a proxy's plain-text 502 readable instead of blank.
+local function server_error(body)
+    local decoded = decode_json(body)
+    if decoded and decoded.error ~= nil then return tostring(decoded.error) end
+    if type(body) == "string" and body ~= "" then return body end
+    return "no detail from the server"
+end
+
+--- Where a name typed by an operator actually lives. A bare name is slugged exactly the way
+--- `save_recording` slugs a campaign name, so "Northshire" finds the file that save wrote.
+local function recording_path(name)
+    if type(name) ~= "string" or name == "" then return nil end
+    if name:find("/", 1, true) or name:find("\\", 1, true) then return name end
+    if name:sub(-5) == ".json" then return RECORDING_DIR .. "/" .. name end
+    return RECORDING_DIR .. "/" .. recording_slug(name) .. ".json"
+end
+
+--- Fold the resolver's diagnostics into something one answer can carry. Dropping them would defeat
+--- the round trip: a 200 WITH diagnostics is a plan that lowered and a route with holes (an NPC with
+--- no spawn, a quest the database does not know), and the author is the only one who can fix those.
+local function summarize_diagnostics(diagnostics)
+    local summary = { count = 0, errors = 0, warnings = 0, messages = {} }
+    if type(diagnostics) ~= "table" then return summary end
+    for _, entry in ipairs(diagnostics) do
+        summary.count = summary.count + 1
+        local severity = tostring((entry and entry.severity) or "Info")
+        if severity == "Error" then
+            summary.errors = summary.errors + 1
+        elseif severity == "Warning" then
+            summary.warnings = summary.warnings + 1
+        end
+        if #summary.messages < DIAGNOSTIC_PREVIEW then
+            summary.messages[#summary.messages + 1] = string.format("[%s] %s: %s",
+                severity,
+                tostring((entry and entry.code) or "unknown"),
+                tostring((entry and entry.message) or ""))
+        end
+    end
+    return summary
+end
+
+--- The QueryServer client, built on first use: a character that never resolves must not pay for one,
+--- and a suite that wants a double simply assigns `_query_client` before calling.
+function QuestingModule:_resolver_client()
+    if not self._query_client then
+        self._query_client = QueryClient:new()
+    end
+    return self._query_client
+end
+
+--- Where the plan for a given recording lands. The stem carries over so the operator can tell which
+--- recording a profile came from, and `list_profiles()` — which is how the runner discovers routes —
+--- picks it up with no further wiring.
+function QuestingModule:_plan_path_for(source)
+    local stem = tostring(source):match("([^/\\]+)%.json$") or "recording"
+    return self._profile_dir .. "/" .. stem .. ".json"
+end
+
+--- Persist the plan out of a 200 response. Writes the PLAN, never the envelope: `{plan, diagnostics}`
+--- is not something `RuntimeProfile:load` can run, and it would sit in the profile directory looking
+--- exactly like a route until someone selected it.
+function QuestingModule:_store_plan(body, source, target)
+    local response = decode_json(body)
+    if not response or type(response.plan) ~= "table" then
+        return {
+            ok = false, status = "unusable_response", path = source,
+            reason = "QueryServer answered 200 with a body carrying no plan; "
+                .. "is something else listening on that port?",
+        }
+    end
+
+    local diagnostics = summarize_diagnostics(response.diagnostics)
+
+    if not (Json and Json.encode) then
+        return { ok = false, status = "no_json", path = source,
+                 reason = "no JSON encoder in this sandbox; the plan cannot be persisted",
+                 diagnostics = diagnostics }
+    end
+    local encoded, err = Json.encode(response.plan, true)
+    if type(encoded) ~= "string" or encoded == "" or err then
+        return { ok = false, status = "encode_failed", path = source,
+                 reason = "the resolved plan could not be re-encoded: " .. tostring(err),
+                 diagnostics = diagnostics }
+    end
+
+    if not (core and core.write_data_file) then
+        return { ok = false, status = "no_file_api", path = source, plan_path = target,
+                 reason = "core.write_data_file is unavailable; the plan resolved but cannot land",
+                 diagnostics = diagnostics }
+    end
+    -- The loader requires the file to exist before it can be written (recorder.lua:544 records what
+    -- skipping this cost). `create_data_file` on an existing file is harmless.
+    if core.create_data_file then pcall(core.create_data_file, target) end
+    if pcall(core.write_data_file, target, encoded) ~= true then
+        return { ok = false, status = "write_failed", path = source, plan_path = target,
+                 reason = "resolved, but writing the plan to " .. target .. " failed",
+                 diagnostics = diagnostics }
+    end
+
+    self._last_plan_path = target
+    return {
+        ok = true,
+        -- A resolve with diagnostics must never read exactly like a clean one. The operator's whole
+        -- signal from a one-shot eval is this string.
+        status = diagnostics.count > 0 and "resolved_with_diagnostics" or "resolved",
+        path = source,
+        plan_path = target,
+        profile = target:match("([^/\\]+)%.json$"),
+        operations = #(response.plan.operations or {}),
+        diagnostics = diagnostics,
+    }
+end
+
+--- Turn one HTTP answer into one operator-facing record.
+---
+--- The three failures stay APART on purpose. `sentinel-resolver` went to real trouble to make an
+--- unreadable database (500) distinguishable from an unresolvable reference (200 + diagnostic) and
+--- from a campaign the server could not parse (400); collapsing them into "failed" here sends the
+--- operator to restart a server that is running fine, or to edit a campaign that is correct.
+function QuestingModule:_receive_resolution(http_code, body, source, target, url)
+    local record
+    if http_code == 200 then
+        record = self:_store_plan(body, source, target)
+    elseif http_code == 400 then
+        record = {
+            ok = false, status = "rejected", path = source,
+            reason = "QueryServer could not read the campaign (400) -- the recording is the problem, "
+                .. "not the server: " .. server_error(body),
+        }
+    elseif http_code == 500 then
+        record = {
+            ok = false, status = "backend_error", path = source,
+            reason = "QueryServer failed while resolving (500) -- its game database, not the "
+                .. "recording: " .. server_error(body),
+        }
+    elseif http_code == 0 then
+        record = {
+            ok = false, status = "unreachable", path = source,
+            reason = "no answer from " .. tostring(url) .. " -- start QueryServer "
+                .. "(cd SentinelQueryServer && SENTINEL_DB=../tbcmangos.sqlite cargo run)",
+        }
+    else
+        record = {
+            ok = false, status = "http_error", path = source,
+            reason = "unexpected HTTP " .. tostring(http_code) .. " from " .. tostring(url)
+                .. ": " .. server_error(body),
+        }
+    end
+
+    -- `plan_path` is deliberately NOT backfilled onto a failure: naming a file for a request that
+    -- never got an answer would send the operator looking for something that was never written.
+    record.http_code = http_code
+    self._last_resolve = record
+    self._event_bus:publish("questing:recording_resolved", record)
+    return record
+end
+
+--- Resolve a saved recording through QueryServer and leave the plan where the runner looks.
+---
+--- ASYNCHRONOUS: an `ok = true, status = "pending"` answer means the request left, NOT that a plan
+--- exists. Poll `resolve_status()`, or subscribe to `questing:recording_resolved`.
+---
+--- @param name string|nil a campaign name, a file name, or a path; defaults to this session's recording
+--- @return table `{ ok, status, path, plan_path, diagnostics }` — never raises
+function QuestingModule:resolve_recording(name)
+    if self._resolve_pending then
+        return { ok = false, status = "busy",
+                 reason = "a resolve is already in flight for " .. tostring(self._resolve_pending) }
+    end
+
+    local source = recording_path(name)
+    if not source then
+        -- The operator who just recorded and saved should not have to retype where it landed. The
+        -- campaign stays readable after `stop_recording`, so its name is the same one save slugged.
+        local campaign = self._recorder:get_campaign()
+        source = campaign and campaign.name and recording_path(campaign.name) or nil
+    end
+    if not source then
+        return { ok = false, status = "no_recording",
+                 reason = "name a recording to resolve, or record and save one first" }
+    end
+
+    if not (core and core.read_data_file) then
+        return { ok = false, status = "no_file_api", path = source,
+                 reason = "core.read_data_file is unavailable in this sandbox" }
+    end
+    local read_ok, text = pcall(core.read_data_file, source)
+    if not read_ok or type(text) ~= "string" or text == "" then
+        return { ok = false, status = "missing_recording", path = source,
+                 reason = "no readable recording at " .. source .. " -- save one first" }
+    end
+
+    local client = self:_resolver_client()
+    local target = self:_plan_path_for(source)
+    local url = client:_url(RESOLVE_PATH)
+
+    -- Set BEFORE dispatch: a transport that answers inside the call would otherwise have its record
+    -- overwritten by this placeholder.
+    self._last_resolve = { ok = true, status = "pending", path = source, plan_path = target }
+    self._resolve_pending = source
+
+    local completed = nil
+    local dispatched, why = client:post(RESOLVE_PATH, text, function(http_code, response)
+        self._resolve_pending = nil
+        completed = self:_receive_resolution(http_code, response, source, target, url)
+    end)
+
+    if not dispatched then
+        self._resolve_pending = nil
+        local record = { ok = false, status = "no_http", path = source,
+                         reason = why or "core.http_post is unavailable in this sandbox" }
+        self._last_resolve = record
+        return record
+    end
+
+    -- An offline transport that answered inside the call already has the real result; returning the
+    -- pending placeholder over it would make every test assert against a lie.
+    if completed then return completed end
+
+    return {
+        ok = true, status = "pending", path = source, plan_path = target,
+        reason = "resolve dispatched to " .. url .. "; poll Sentinel.resolve_status()",
+    }
+end
+
+--- The last resolution, for an operator polling a request that had not answered yet.
+function QuestingModule:resolve_status()
+    return self._last_resolve
+        or { status = "idle", reason = "nothing has been resolved this session" }
+end
+
+--- Run a resolved plan.
+---
+--- Loading is NOT reimplemented here: it goes through `start()`, which owns the executor, the session
+--- counters and the `questing:started` event. A second loader beside this one is a second set of all
+--- three to drift apart.
+---
+--- @param name string|nil a profile stem, file name, or path; defaults to the last plan resolved
+--- @return table `{ ok, status, plan_path }` — never raises
+function QuestingModule:run_plan(name)
+    local target = nil
+    if type(name) == "string" and name ~= "" then
+        if name:find("/", 1, true) or name:find("\\", 1, true) then
+            target = name
+        elseif name:sub(-5) == ".json" then
+            target = self._profile_dir .. "/" .. name
+        else
+            target = self._profile_dir .. "/" .. name .. ".json"
+        end
+    else
+        target = self._last_plan_path
+    end
+
+    if not target then
+        return { ok = false, status = "no_plan",
+                 reason = "name a plan to run, or resolve a recording first" }
+    end
+
+    local ok, started = pcall(self.start, self, target)
+    if not ok then
+        return { ok = false, status = "load_failed", plan_path = target,
+                 reason = "starting " .. target .. " raised: " .. tostring(started) }
+    end
+    if not started then
+        return { ok = false, status = "load_failed", plan_path = target,
+                 reason = "the plan at " .. target .. " did not load; see the questing:error event" }
+    end
+    return { ok = true, status = "running", plan_path = target }
 end
 
 -- ======================================================================

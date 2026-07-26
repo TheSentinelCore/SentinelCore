@@ -113,6 +113,65 @@ function QueryClient:_get(path)
     return nil, true
 end
 
+-- Declared even though `/resolve` reads the body as raw bytes: a POST that announces nothing is one
+-- a proxy, or a future strict handler, is entitled to reject — and that rejection would arrive as an
+-- opaque 400 the operator would spend the evening blaming their recording for.
+local JSON_HEADERS = { ["Content-Type"] = "application/json" }
+
+--- One-shot POST, answered through `on_complete(http_code, body)`.
+---
+--- NOT cached the way `_get` is: a POST's answer depends on the body it carried, so a path-keyed
+--- cache would hand the second recording the first one's plan.
+---
+--- `core.http_post` is ASYNCHRONOUS — `(url, [headers,] body, callback)`, returning before the
+--- server has answered (docs/SylvannasAPI/dev/api/core.md). There is no synchronous form, and
+--- waiting for one inside a tick would stall the game client, so this returns as soon as the
+--- request is dispatched and the CALLER owns the wait. `http_code` is 0 on transport failure, which
+--- is the only way to tell "QueryServer is not running" from "QueryServer said no".
+---
+--- The headers form is tried first and the three-argument form is the fallback. This is not
+--- defensive padding: `_get` above records that the live `core.http_get` raises "function expected"
+--- on the signature this tree assumed, and that failure was invisible offline for months.
+--- @return string|nil "dispatched", or nil plus the reason the request never left
+function QueryClient:post(path, body, on_complete)
+    if not (core and core.http_post) then
+        return nil, "core.http_post is unavailable in this sandbox"
+    end
+    if type(body) ~= "string" or body == "" then
+        return nil, "refusing to POST an empty body"
+    end
+    if type(on_complete) ~= "function" then
+        return nil, "a POST with no completion handler discards the server's answer"
+    end
+
+    local url = self:_url(path)
+    local delivered = false
+    local function deliver(http_code, _content_type, response)
+        -- A transport that both invokes the callback and returns the body would otherwise answer
+        -- twice, and the second answer would overwrite a good result with a guessed one.
+        if delivered then return end
+        delivered = true
+        on_complete(tonumber(http_code) or 0, type(response) == "string" and response or nil)
+    end
+
+    local ok, sync_body = pcall(core.http_post, url, JSON_HEADERS, body, deliver)
+    if not ok then
+        local ok3, sync3 = pcall(core.http_post, url, body, deliver)
+        if not ok3 then
+            return nil, "core.http_post rejected the request: " .. tostring(sync3)
+        end
+        sync_body = sync3
+    end
+
+    -- Legacy offline mocks return the body straight from the call instead of invoking the callback.
+    -- Nothing in the live client does this, which is why the status is assumed rather than read.
+    if type(sync_body) == "string" and not delivered then
+        deliver(200, nil, sync_body)
+    end
+
+    return "dispatched"
+end
+
 function QueryClient:search_quests(query)
     return self:_get("/quests/search?q=" .. tostring(query))
 end

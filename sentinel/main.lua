@@ -35,6 +35,9 @@ local _toggle_editor_btn = core.menu.button("sentinel_open_runner_cockpit")
 local _record_start_btn = core.menu.button("sentinel_recording_start")
 local _record_stop_btn = core.menu.button("sentinel_recording_stop")
 local _record_save_btn = core.menu.button("sentinel_recording_save")
+-- ADR 09a W13. The two buttons that make a recorded route runnable without leaving the client.
+local _record_resolve_btn = core.menu.button("sentinel_recording_resolve")
+local _plan_run_btn = core.menu.button("sentinel_plan_run")
 
 -- Runner cockpit UI (deferred load until app is ready, to avoid Sylvannas API issues in tests).
 -- Authoring lives OUTSIDE the game (the sentinel-editor HTTP API); the client is a cockpit for
@@ -305,6 +308,59 @@ function host_verbs.save_recording(path)
     return result
 end
 
+-- ---------------------------------------------------------------------------
+-- Resolve-and-run verbs (ADR 09a W13)
+-- ---------------------------------------------------------------------------
+-- What closes the loop. Without these, a recording saved in game had to be carried out of the client
+-- by hand -- curled against QueryServer and dropped into the profile directory -- before the route
+-- the author had just walked could be run. Same rules as the recording verbs above: an unavailable
+-- module is answered, never thrown.
+
+--- Resolve a saved recording through QueryServer and leave the plan where the runner looks.
+---
+--- ASYNCHRONOUS. `core.http_post` returns before the server answers and there is no blocking form,
+--- so `{ ok = true, status = "pending" }` means the request LEFT, not that the plan exists; poll
+--- `Sentinel.resolve_status()` or subscribe to `questing:recording_resolved`.
+--- @param name string|nil campaign name, file name, or path; defaults to this session's recording
+--- @return table `{ ok, status, path, plan_path, diagnostics }`
+function host_verbs.resolve_recording(name)
+    local questing = recording_target("resolve_recording")
+    if not questing then return { ok = false, status = "unavailable", reason = RECORDING_UNAVAILABLE } end
+    local result = questing:resolve_recording(name)
+    -- The diagnostic count is logged even on success: a 200 carrying diagnostics is a plan that
+    -- lowered AND a route with holes, and an operator who only ever sees "resolved" never learns
+    -- there was anything to fix.
+    local diagnostics = result.diagnostics
+    log_info(result.ok
+        and string.format("resolve %s: %s (%d diagnostic(s))",
+            tostring(result.status), tostring(result.plan_path),
+            (diagnostics and diagnostics.count) or 0)
+        or ("resolve failed [" .. tostring(result.status) .. "]: " .. tostring(result.reason)))
+    if diagnostics and diagnostics.messages then
+        for _, message in ipairs(diagnostics.messages) do log_info("  " .. tostring(message)) end
+    end
+    return result
+end
+
+--- @return table the last resolution, or `{ status = "idle" }`
+function host_verbs.resolve_status()
+    local questing = recording_target("resolve_status")
+    if not questing then return { status = "unavailable", reason = RECORDING_UNAVAILABLE } end
+    return questing:resolve_status()
+end
+
+--- @param name string|nil profile stem, file name, or path; defaults to the last plan resolved
+--- @return table `{ ok, status, plan_path }`
+function host_verbs.run_plan(name)
+    local questing = recording_target("run_plan")
+    if not questing then return { ok = false, status = "unavailable", reason = RECORDING_UNAVAILABLE } end
+    local result = questing:run_plan(name)
+    log_info(result.ok
+        and ("running plan: " .. tostring(result.plan_path))
+        or ("plan not started: " .. tostring(result.reason)))
+    return result
+end
+
 function host_verbs.reload()
     log_info("Forcing full reload...")
     if app and type(app.shutdown) == "function" then
@@ -425,6 +481,16 @@ core.register_on_render_menu_callback(function()
         end
         if _record_save_btn:render("Save Recording") then
             host_verbs.save_recording()
+        end
+        -- Resolve and Run (W13). A click is the ONLY thing that reaches the network here: resolution
+        -- is one explicit operator action, never a per-frame path, and `resolve_recording` answers
+        -- `pending` rather than waiting for the server -- a blocking call in this callback would
+        -- freeze the client for the length of the request.
+        if _record_resolve_btn:render("Resolve Recording") then
+            host_verbs.resolve_recording()
+        end
+        if _plan_run_btn:render("Run Resolved Plan") then
+            host_verbs.run_plan()
         end
     end)
 end)
