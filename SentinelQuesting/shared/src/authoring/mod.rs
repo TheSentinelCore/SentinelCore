@@ -18,16 +18,19 @@ mod variable;
 
 pub use action::{
     AcceptQuestAction, Action, ActionPayload, BankAction, CommentAction, ConditionAction,
-    ConditionRole, EscortAction, FlightAction, GrindAreaAction, HearthAction, InteractNpcAction,
-    KillTargetAction, LearnFlightPathAction, LootObjectAction, MailboxAction, PatrolAction,
-    RepairAction, SetHearthAction, SetVariableAction, TrainerAction, TravelAction,
+    ConditionRole, CreatureRef, EscortAction, FlightAction, GrindAreaAction, HearthAction,
+    InteractNpcAction, KillTargetAction, LearnFlightPathAction, LootObjectAction, MailboxAction,
+    PatrolAction,
+    RepairAction, SetHearthAction, SetVariableAction, TrainerAction, TravelAction, TravelMedium,
     TurnInQuestAction, UseItemAction, VendorAction, WaitAction,
 };
 pub use area::Area;
 pub use enums::{
     Class, CoordinateMode, Faction, NpcRole, Race, Severity, VariableType, VariableValue,
 };
-pub use guide::{CompleteWithTarget, Gated, GuideDirective, GuideGate, SourceLineNo};
+pub use guide::{
+    CompleteWithTarget, Gated, GuideDirective, GuideGate, GuideHeaders, SourceLineNo,
+};
 pub use npc::{NPCReference, NpcRoleSet};
 pub use object::GameObjectReference;
 pub use operation::Operation;

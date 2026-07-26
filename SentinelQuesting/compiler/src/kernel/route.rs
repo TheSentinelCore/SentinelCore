@@ -1,16 +1,39 @@
-//! Coordinates: the two authored systems, the interned waypoint pool, and route lowering
-//! (ADR `07_RUNTIME_PROFILE_SCHEMA` §5.7, §6.4, §7.1).
+//! The interned waypoint pool and route lowering (ADR `07_RUNTIME_PROFILE_SCHEMA` §5.7, §6.4,
+//! §7.1).
+//!
+//! # The coordinate transform is not here
+//!
+//! It is [`sentinel_models::movement::resolve_coordinate`], and this module has no copy of it. It
+//! used to: `parse_movement` lowered a whole guide line — the `/` raw-world discrimination, the
+//! `3..=5` arity refusal, the `>>`/`--` prose strip, the axis order — and **no compile ever called
+//! it**. The pipeline reaches routes through the importer, whose own transform implemented none of
+//! the `/` handling, so 929 corpus lines were dropped while twelve tests over the dead
+//! implementation stayed green. Coordinates now arrive here already resolved, on
+//! [`TravelAction::position`](sentinel_models::authoring::TravelAction::position).
+//!
+//! # There are no unit tests in this file, deliberately
+//!
+//! There were two, and both were about the *mixed-medium refusal*: that it named the offending line,
+//! and that a route which failed left the pool as it found it. A refusal aborts the whole compile, so
+//! no artifact survives it to be inspected — that was the one property a compile could not observe,
+//! and it was the only justification for testing this module directly rather than through one.
+//! [`lower_route`] no longer refuses anything: a run that changes medium **splits**. Everything it
+//! decides is now visible in an artifact, and it is pinned in
+//! `compiler/tests/kernel_route_aggregation.rs`, driven the way a compile drives it. A unit test
+//! here would be a second caller, which is what this whole module's history argues against.
 
+use sentinel_models::authoring::TravelMedium;
 use sentinel_models::kernel::{Point, Route, RouteKind, TravelMode};
-use sentinel_models::source::strip_inline_dev_comment;
-use sentinel_models::zone::zone_map_for;
 
-use super::{LoweringError, SourceLine};
-
-/// One lowered movement line: where, how close, and by what medium.
+/// One lowered movement: where, how close, and by what medium.
 ///
 /// The pool index is deliberately *not* here — interning is [`WaypointPool`]'s job, and a
 /// [`Movement`] can be inspected without one.
+///
+/// This is the currency [`lower_route`] takes, and the task-graph adapter is its only producer: it
+/// lowers a [`TravelAction`](sentinel_models::authoring::TravelAction) the importer already
+/// resolved. One producer, one route builder — which is what stops the pipeline growing a second
+/// route implementation with its own answer about media.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Movement {
     /// World coordinate. `z` is `None`: the compiler has no navmesh probe, and §5.7 says an
@@ -23,107 +46,18 @@ pub struct Movement {
     pub mode: TravelMode,
 }
 
-/// The five coordinate-bearing commands and the medium each demands (§7.1, §5.7).
+/// The artifact's spelling of an authoring [`TravelMedium`] (§7.1).
 ///
-/// `.line` also carries coordinates but is variadic (arity 5..259) and is not a single movement;
-/// lowering it is a separate deliverable.
-fn travel_mode_for(command: &str) -> Option<TravelMode> {
-    match command {
-        ".goto" | ".waypoint" => Some(TravelMode::Any),
-        ".groundgoto" => Some(TravelMode::Ground),
-        ".flygoto" => Some(TravelMode::Air),
-        _ => None,
+/// The one place the two vocabularies meet. The command→medium table itself lives on
+/// [`TravelMedium::for_command`] in the authoring model, shared with the importer so a command
+/// cannot be recognised by one side and dropped by the other — which is exactly what happened to
+/// `.groundgoto`'s 114 lines.
+pub(crate) fn travel_mode(medium: TravelMedium) -> TravelMode {
+    match medium {
+        TravelMedium::Any => TravelMode::Any,
+        TravelMedium::Ground => TravelMode::Ground,
+        TravelMedium::Air => TravelMode::Air,
     }
-}
-
-/// Lower one movement line to a world coordinate.
-///
-/// # The discrimination
-///
-/// Field 0 spells one of two coordinate systems and **the `/` is the only signal**:
-///
-/// | field 0 | system | operation |
-/// | --- | --- | --- |
-/// | `Darkshore` / `1439` | zone-relative percentages, both axes `0..100` | transform via the measured [`zone table`](sentinel_models::zone) |
-/// | `1439/1` | `<uiMapId>/<mapId>`, already the server's frame | none at all |
-///
-/// A range test — "an axis inside 0..100 is a percentage" — is wrong and reclassifies real corpus
-/// lines: `The Burning Crusade.lua:28542` is `.goto 1944/530,4341.30029,97.1`, raw world on Outland
-/// with a second axis of 97.1. Measured, 15 of the corpus's 929 raw-world lines carry an axis inside
-/// 0..100.
-///
-/// # The axis order
-///
-/// The first authored value is world **Y**, the second world **X**, in *both* systems. That is what
-/// [`ZoneMap`](sentinel_models::zone::ZoneMap) documents and what the corpus corroborates:
-/// `A-11-23.lua:764` and `:769` are consecutive steps clicking two objects on the same Darkshore
-/// beach, authored one in each system, and they lower 385 yd apart under this ordering and 6,911 yd
-/// apart under the reverse.
-pub fn parse_movement(src: SourceLine<'_>) -> Result<Movement, LoweringError> {
-    // Two markers introduce prose and neither is data: `>>` opens the display text and `--` opens a
-    // dev comment. Both have to go before the comma split, or the prose is parsed as arguments —
-    // `.goto Wetlands,4.61,57.26,15 >> Travel to the dock` looks like a six-argument line and lands
-    // in the arity refusal, and `.goto 1439,42.017,58.866,0 --NE spawn` reads its arrival radius as
-    // `0 --NE spawn`. 38 corpus movement lines carry a `--`.
-    //
-    // `SourceLine::text` is the line *verbatim*, so this function owns both strips; delegating one
-    // of them upstream would make it total over lexed lines and partial over the input it documents
-    // itself as taking. The `--` rule is `sentinel_models::source`'s, the same one the importer's
-    // lexer applies — a second copy could drift. Order matches the importer: the display text is
-    // split off first, then the dev comment, so a comment inside a `>>` tail never survives.
-    let line = strip_inline_dev_comment(src.text.split(">>").next().unwrap_or("")).trim();
-
-    let (command, args) = line
-        .split_once(char::is_whitespace)
-        .ok_or_else(|| not_a_movement(src))?;
-    let mode = travel_mode_for(command).ok_or_else(|| not_a_movement(src))?;
-
-    // Zone names contain spaces (`Un'Goro Crater`, `Burning Steppes`), so only the *first*
-    // whitespace run separates the command from its arguments.
-    let fields: Vec<&str> = args.trim().split(',').map(str::trim).collect();
-    // Arity is checked before anything is looked up or parsed. The order matters: three of the six
-    // -argument corpus lines name zones absent from the measured table, and an unknown-zone refusal
-    // there would be the right answer for the wrong reason.
-    if !(3..=5).contains(&fields.len()) {
-        return Err(LoweringError::arity(src, fields.len()));
-    }
-
-    let first = number(src, fields[1], "first authored coordinate (world Y)")?;
-    let second = number(src, fields[2], "second authored coordinate (world X)")?;
-
-    let point = match fields[0].split_once('/') {
-        // Raw world: `<uiMapId>/<mapId>`. The number *after* the slash is the continent the navmesh
-        // and server use — `1944/530` is an Outland ui map on continent 530 — and the ui map id is
-        // never a `Point::map_id`.
-        Some((_ui_map, map)) => Point {
-            map_id: integer(src, map, "map id")?,
-            x: second,
-            y: first,
-            z: None,
-        },
-        // Zone-relative percentages. The artifact carries `ZoneMap::continent`, so a `Point` whose
-        // `map_id` is 1439 is a percentage that survived compilation wearing a ui map id.
-        None => {
-            let zone = zone_map_for(fields[0]).ok_or_else(|| LoweringError::UnknownZone {
-                file: src.file.to_owned(),
-                line: src.line,
-                text: src.text.to_owned(),
-                zone: fields[0].to_owned(),
-            })?;
-            let (x, y) = zone.to_world(first, second);
-            Point { map_id: zone.continent, x, y, z: None }
-        }
-    };
-
-    // `.goto zone,x,y` authored no radius; `.goto zone,x,y,40` and `.goto zone,x,y,40,0` authored
-    // 40. The fifth field is an arrival flag, not a coordinate. The artifact carries what was
-    // authored — whether `0` means "zero yards" or "engine default" is the engine's question.
-    let radius = match fields.get(3) {
-        Some(text) => integer::<u16>(src, text, "arrival radius")?,
-        None => 0,
-    };
-
-    Ok(Movement { point, radius, mode })
 }
 
 /// The profile's shared coordinate pool (§6.4, §7.1), holding each distinct `(map_id, x, y, z)`
@@ -170,87 +104,89 @@ impl WaypointPool {
     }
 }
 
-/// Lower a run of movement lines into one [`Route`], interning its points into `pool`.
+/// Lower one run of movements into its [`Route`]s, interning their points into `pool`.
 ///
-/// **Refusal is total.** Every line is parsed before any is interned, so a route that fails leaves
-/// the pool exactly as it found it. Interning a half-parsed line and *then* erroring would leave a
-/// phantom entry that shifts every index authored after it — in a different task, compiled later,
-/// with nothing to connect the two.
+/// **This is the compiler's only route builder.** Everything a route is — its
+/// [`kind`](Route::kind), its [`mode`](Route::mode), its indices, its radii, and where one route
+/// ends and the next begins — is decided here and nowhere else. `task_graph::flush_route` used to
+/// decide two of those itself, with a hardcoded `mode: TravelMode::Any`, while this function's
+/// medium logic sat behind an entry point no compile ever reached.
+///
+/// # Zero routes, one, or several
+///
+/// **Zero** is a run that resolved to no point at all, and it is not an error. The importer emits a
+/// travel action with `position: None` for a coordinate it refused — an unmappable zone, a malformed
+/// arity — so a run can survive gate resolution and still name nowhere to go. An `Op::Travel` over an
+/// empty route is not a smaller instruction, it is an unsatisfiable one: the runner has nothing to
+/// walk to, the task cannot complete, and `Travel` enters the §5.4 tag census for a task that never
+/// travels. §7.3.3's tasks 4 and 5 print `ops: []` for exactly this shape.
+///
+/// **Several** is a run that changes travel medium partway. [`Route`] carries a single
+/// [`mode`](Route::mode), and the three ways to lower `.groundgoto` immediately followed by `.goto`
+/// are: flatten to one medium (drops the `.groundgoto`'s whole reason for existing — it *overrides*
+/// the engine's preferred line where that line threads mountain paths, caves and stairs, §5.7),
+/// refuse (measured: 9 of the corpus's 277 guide blocks then produced no artifact at all, ~1,675
+/// Travel ops lost, to yield `ground=3, air=0` corpus-wide), or **split**. A medium change is a run
+/// boundary exactly as an intervening op already is: `The Burning Crusade.lua:8158-8159` is
+/// `.groundgoto Terokkar Forest,43.46,22.31,20,0` then `.goto Terokkar Forest,43.40,22.10`, which
+/// says "climb the tower on the ground, then travel to there" — two routes, not a contradiction.
+/// All 27 mixed runs in the corpus are in that file and every one of them splits, so there is no
+/// unsplittable case left and no `MixedTravelModes` error to raise.
+///
+/// # The kind
+///
+/// §5.7 draws it from the step and the segment, not from geometry:
+///
+/// * `#loop` ⇒ [`Circuit { close: true }`](RouteKind::Circuit) (1,661 uses, §4.3). `close` states
+///   the *cycling intent* rather than a geometric property: §7.3.3 prints `close: true` for both of
+///   its circuits and only one returns to its first point — `A-11-23.lua:231` closes onto `:215`,
+///   `:254` ends elsewhere. A geometric test would disagree with the specification on the second and
+///   silently reclassify any circuit whose author left the last hop to the engine. A `#loop` step
+///   whose run splits yields one `Circuit` per segment: the cycling intent is the *step's*, and each
+///   medium-homogeneous leg of it is still walked repeatedly.
+/// * a single point ⇒ [`Destination`](RouteKind::Destination) — the 16,231 three-argument `.goto`
+///   lines where the coordinate is just where the NPC stands and the navmesh paths there better than
+///   a 2004-era waypoint chain.
+/// * anything longer ⇒ [`Corridor`](RouteKind::Corridor) — ordered points the engine *may* smooth
+///   between, which is exactly what a `Circuit` may not do.
+///
+/// The kind is decided per **segment**, not per run: the one-line tail of a split run is a
+/// `Destination`, because that is what it is once the medium boundary has been drawn.
 pub fn lower_route(
-    kind: RouteKind,
-    lines: &[SourceLine<'_>],
+    looping: bool,
+    movements: &[Movement],
     pool: &mut WaypointPool,
-) -> Result<Route, LoweringError> {
-    let mut movements = Vec::with_capacity(lines.len());
-    let mut mode: Option<TravelMode> = None;
+) -> Vec<Route> {
+    let mut routes = Vec::new();
+    // Points are interned in authored order, segment by segment, so a pool index still reflects the
+    // order the guide wrote its coordinates in and a split never reorders the pool.
+    let mut segment_start = 0usize;
+    while segment_start < movements.len() {
+        let mode = movements[segment_start].mode;
+        let segment_end = movements[segment_start..]
+            .iter()
+            .position(|movement| movement.mode != mode)
+            .map(|offset| segment_start + offset)
+            .unwrap_or(movements.len());
+        let segment = &movements[segment_start..segment_end];
 
-    for src in lines {
-        let movement = parse_movement(*src)?;
-        match mode {
-            None => mode = Some(movement.mode),
-            Some(committed) if committed != movement.mode => {
-                return Err(LoweringError::MixedTravelModes {
-                    file: src.file.to_owned(),
-                    line: src.line,
-                    text: src.text.to_owned(),
-                    found: movement.mode,
-                    expected: committed,
-                })
-            }
-            Some(_) => {}
+        let mut points = Vec::with_capacity(segment.len());
+        let mut radii = Vec::with_capacity(segment.len());
+        for movement in segment {
+            points.push(pool.intern(movement.point));
+            radii.push(movement.radius);
         }
-        movements.push(movement);
+
+        let kind = if looping {
+            RouteKind::Circuit { close: true }
+        } else if points.len() <= 1 {
+            RouteKind::Destination
+        } else {
+            RouteKind::Corridor
+        };
+
+        routes.push(Route { kind, mode, points, radii });
+        segment_start = segment_end;
     }
-
-    let mut points = Vec::with_capacity(movements.len());
-    let mut radii = Vec::with_capacity(movements.len());
-    for movement in movements {
-        points.push(pool.intern(movement.point));
-        radii.push(movement.radius);
-    }
-
-    Ok(Route {
-        kind,
-        // An empty run commits to nothing, so `Any` is the honest answer rather than a refusal:
-        // whether an empty route is legal at all is the task lowering's question, not this one's.
-        mode: mode.unwrap_or(TravelMode::Any),
-        points,
-        radii,
-    })
-}
-
-fn not_a_movement(src: SourceLine<'_>) -> LoweringError {
-    LoweringError::NotAMovement {
-        file: src.file.to_owned(),
-        line: src.line,
-        text: src.text.to_owned(),
-    }
-}
-
-/// Parse a coordinate. `f32` is the artifact's own width (§7.1), so parsing wider would only hide
-/// the precision the model actually has.
-fn number(src: SourceLine<'_>, text: &str, what: &str) -> Result<f32, LoweringError> {
-    text.parse::<f32>()
-        .ok()
-        .filter(|value| value.is_finite())
-        .ok_or_else(|| malformed_number(src, text, what))
-}
-
-fn integer<T: std::str::FromStr>(
-    src: SourceLine<'_>,
-    text: &str,
-    what: &str,
-) -> Result<T, LoweringError> {
-    text.parse::<T>()
-        .map_err(|_| malformed_number(src, text, what))
-}
-
-fn malformed_number(src: SourceLine<'_>, text: &str, what: &str) -> LoweringError {
-    LoweringError::MalformedNumber {
-        file: src.file.to_owned(),
-        line: src.line,
-        text: src.text.to_owned(),
-        what: what.to_owned(),
-        value: text.to_owned(),
-    }
+    routes
 }

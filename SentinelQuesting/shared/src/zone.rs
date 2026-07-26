@@ -6,8 +6,11 @@
 //! is exactly one such table in this repository — it lives here because two independent lowerings
 //! need it and a second copy could drift from the first:
 //!
-//! * `sentinel-importer` (`project_builder::build_travel_position`) → the ADR-05 `Position`.
-//! * `sentinel-compiler` (`kernel::parse_movement`) → the ADR-07 [`kernel::Point`](crate::kernel::Point).
+//! Its single consumer is [`crate::movement::resolve_coordinate`], which decides *whether* a line
+//! is even written in percentages, and which the importer calls on every movement line
+//! (`project_builder::build_travel_position`). The resulting coordinate reaches both the ADR-05
+//! `Position` and, through the compiler's route lowering, the ADR-07
+//! [`kernel::Point`](crate::kernel::Point).
 //!
 //! A zone absent from the table produces **no position and no guess** — ADR 06 invariant 3: a
 //! percentage must never survive compilation. Emitting the raw percentages once produced 522 travel
@@ -350,7 +353,7 @@ fn normalized_eq(a: &str, b: &str) -> bool {
 /// is refused here anyway, since it parses as neither a number nor a name.
 ///
 /// Returns `None` for anything unlisted, and `None` is the diagnostic — `project_builder` turns it
-/// into `UNMAPPED_GOTO_ZONE` and `kernel::route` into `LoweringError::UnknownZone`.
+/// into `UNMAPPED_GOTO_ZONE`, by way of `movement::CoordinateError::UnknownZone`.
 pub fn zone_map_for(zone: &str) -> Option<ZoneMap> {
     let zone = zone.trim();
     if let Ok(ui_map_id) = zone.parse::<u32>() {

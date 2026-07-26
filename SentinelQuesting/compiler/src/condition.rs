@@ -3,8 +3,14 @@
 //!
 //! Grammar: `expr := or_expr`; `or_expr := and_expr ('||' and_expr)*`; `and_expr := not_expr
 //! ('&&' not_expr)*`; `not_expr := 'NOT' not_expr | primary`; `primary := predicate | '(' expr
-//! ')'`; `predicate := IDENT '(' [NUMBER (',' NUMBER)*] ')'`. Only the §23 subset the importer
-//! currently emits — including `LevelAtLeast(N)` from `.xp N` level gates.
+//! ')'`; `predicate := IDENT '(' [NUMBER (',' NUMBER)*] ')'`; `NUMBER := ['-'] DIGIT+`. Only the
+//! §23 subset the importer currently emits — including `LevelAtLeast(N)` from a bare `.xp N` level
+//! gate and `XpAtLeast(N,±M)` from the offset-bearing `.xp N+M` / `.xp N-M` forms.
+//!
+//! A number may carry a leading `-` because [`Predicate::XpAtLeast`]'s offset is signed and the
+//! corpus authors both directions (`.xp 10+6760` and `.xp 4-420`). There is no binary subtraction in
+//! this grammar, so a `-` before a digit is unambiguously a sign. Arguments are therefore `i64`, and
+//! [`as_u32`] / [`as_u8`] reject a negative for the fields that cannot hold one.
 //! Precedence (tightest→loosest): `NOT` > `&&` > `||` —
 //! §23 gives no explicit table; corroborated by `NOT X || NOT Y || NOT Z` only parsing sensibly
 //! if `NOT` binds one predicate before `||` combines results.
@@ -56,7 +62,10 @@ pub(crate) trait ConditionSink {
     fn not(&self, inner: Self::Output) -> Self::Output;
     /// Map `NAME(arg, …)` to a leaf, or refuse it. An unknown predicate is a diagnostic, not a
     /// guess.
-    fn leaf(&self, name: &str, args: &[u64]) -> Result<Self::Output, Self::Error>;
+    ///
+    /// Arguments are signed because one of them is: `XpAtLeast(4,-420)`. Every other field in both
+    /// target models is unsigned, and [`as_u32`] / [`as_u8`] are what refuse a negative there.
+    fn leaf(&self, name: &str, args: &[i64]) -> Result<Self::Output, Self::Error>;
 }
 
 /// Recursion cap for paren-nesting / `NOT`-chaining — closes a network-reachable stack-overflow
@@ -66,7 +75,7 @@ const MAX_CONDITION_DEPTH: usize = 64;
 const MAX_CONDITION_TOKENS: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
-enum Token { LParen, RParen, Comma, And, Or, Not, Ident(String), Number(u64) }
+enum Token { LParen, RParen, Comma, And, Or, Not, Ident(String), Number(i64) }
 
 fn tokenize(input: &str) -> Result<Vec<Token>, ConditionParseError> {
     let chars: Vec<char> = input.chars().collect();
@@ -80,11 +89,17 @@ fn tokenize(input: &str) -> Result<Vec<Token>, ConditionParseError> {
         else if c == ',' { tokens.push(Token::Comma); i += 1; }
         else if c == '&' && chars.get(i + 1) == Some(&'&') { tokens.push(Token::And); i += 2; }
         else if c == '|' && chars.get(i + 1) == Some(&'|') { tokens.push(Token::Or); i += 2; }
-        else if c.is_ascii_digit() {
+        // A `-` is a sign, never an operator: the grammar has no binary subtraction, so the only
+        // thing a `-` can precede is the digits of a negative literal. A lone `-`, or one before a
+        // non-digit, still falls through to the `unexpected character` arm below.
+        else if c.is_ascii_digit()
+            || (c == '-' && chars.get(i + 1).is_some_and(char::is_ascii_digit))
+        {
             let start = i;
+            if c == '-' { i += 1; }
             while i < chars.len() && chars[i].is_ascii_digit() { i += 1; }
             let text: String = chars[start..i].iter().collect();
-            let n = text.parse::<u64>().map_err(|_| ConditionParseError(format!("invalid number '{text}'")))?;
+            let n = text.parse::<i64>().map_err(|_| ConditionParseError(format!("invalid number '{text}'")))?;
             tokens.push(Token::Number(n));
         } else if c.is_ascii_alphabetic() {
             let start = i;
@@ -179,12 +194,17 @@ impl<S: ConditionSink> Parser<'_, S> {
     }
 }
 
-pub(crate) fn as_u32(n: u64, what: &str) -> Result<u32, ConditionParseError> {
+pub(crate) fn as_u32(n: i64, what: &str) -> Result<u32, ConditionParseError> {
     u32::try_from(n).map_err(|_| ConditionParseError(format!("{what} value {n} exceeds u32 range")))
 }
 
-pub(crate) fn as_u8(n: u64, what: &str) -> Result<u8, ConditionParseError> {
+pub(crate) fn as_u8(n: i64, what: &str) -> Result<u8, ConditionParseError> {
     u8::try_from(n).map_err(|_| ConditionParseError(format!("{what} value {n} exceeds u8 range")))
+}
+
+/// The one signed field in either model: [`Predicate::XpAtLeast`]'s offset.
+pub(crate) fn as_i32(n: i64, what: &str) -> Result<i32, ConditionParseError> {
+    i32::try_from(n).map_err(|_| ConditionParseError(format!("{what} value {n} exceeds i32 range")))
 }
 
 /// The ADR-05 sink: the *only* model-specific code on this path.
@@ -203,7 +223,7 @@ impl ConditionSink for RuntimeConditionSink {
     /// Maps a predicate + args to `RuntimeCondition` per `design.md`'s command → DSL → variant
     /// table. Only predicates the real importer emits are supported; anything else is a diagnostic,
     /// not a guess.
-    fn leaf(&self, name: &str, args: &[u64]) -> Result<RuntimeCondition, ConditionParseError> {
+    fn leaf(&self, name: &str, args: &[i64]) -> Result<RuntimeCondition, ConditionParseError> {
         match (name, args) {
             ("QuestAccepted", [id]) => Ok(RuntimeCondition::QuestAccepted(as_u32(*id, "quest id")?)),
             ("QuestCompleted", [id]) => Ok(RuntimeCondition::QuestCompleted(as_u32(*id, "quest id")?)),
@@ -216,6 +236,24 @@ impl ConditionSink for RuntimeConditionSink {
                 Ok(RuntimeCondition::ItemCountAtLeast(as_u32(*item, "item id")?, as_u32(*n, "count")?))
             }
             ("LevelAtLeast", [level]) => Ok(RuntimeCondition::LevelAtLeast(as_u8(*level, "level")?)),
+            // `XpAtLeast(level, offset)` — the ADR-05 model has no sub-level XP granularity, and
+            // giving it one means adding a `RuntimeCondition` variant plus a handler in
+            // `sentinel/modules/questing/runtime_action.lua`'s condition table. So this arm keeps
+            // the offset out of the ADR-05 artifact **on purpose**, and the choice is between two
+            // lossy outcomes, not between lossy and faithful:
+            //
+            //   * this arm     — the gate fires at the level boundary, which is bit-for-bit what
+            //     `.xp N+M` produced on this path before the offset existed anywhere. No regression.
+            //   * no arm       — `parse_condition` refuses, `Compiler::compile` records
+            //     `UNMAPPED_CONDITION` and fails open to `AlwaysTrue` (`lib.rs`, design Decision 7).
+            //     A completion gate that is always true completes instantly, which is worse than
+            //     completing early.
+            //
+            // The kernel sink is where the offset survives (`kernel::predicate`). This is the ADR-05
+            // path's ceiling, not the lowering's.
+            ("XpAtLeast", [level, _offset]) => {
+                Ok(RuntimeCondition::LevelAtLeast(as_u8(*level, "level")?))
+            }
             (other, _) => err(format!("unknown predicate '{other}' with {} argument(s)", args.len())),
         }
     }

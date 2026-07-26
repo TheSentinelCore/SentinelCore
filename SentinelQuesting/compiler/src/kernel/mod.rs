@@ -9,37 +9,57 @@
 //!
 //! # What this module owns
 //!
-//! * [`parse_movement`] / [`lower_route`] / [`WaypointPool`] — coordinates. Two authored systems
-//!   normalise to one world frame, and the pool interns them.
+//! * [`lower_route`] / [`WaypointPool`] — routes and the interned coordinate pool.
+//!   [`lower_route`] is the **only** route builder: `task_graph::flush_route` turns surviving travel
+//!   actions into [`Movement`]s and hands them straight to it, so a route's kind, its medium, its
+//!   indices and its boundaries are decided in one place. They were not always — `flush_route` used
+//!   to build routes itself and hardcode `TravelMode::Any`, which left this module's medium mapping
+//!   unreachable from any compile while tests went on pinning it.
+//!   **The coordinate transform is not here at all**: it is
+//!   [`sentinel_models::movement::resolve_coordinate`], which the importer calls, and this module
+//!   held a second complete copy of it (`parse_movement`) that no compile ever ran while the live
+//!   one dropped all 929 raw-world corpus lines.
 //! * [`lower_predicate`] — the `02_DATA_MODEL.md` §23 condition DSL → [`Predicate`].
 //! * [`archetype`] — C2 gate resolution. Every `<<` tail, archetype-filter `#directive` and
 //!   `.dungeon` argument is decided here against one concrete
 //!   [`Archetype`](sentinel_models::kernel::Archetype), so no gate survives into the artifact.
 //! * `task_graph` — the step graph. `#label` / `#requires` / `#completewith` / `#sticky` /
 //!   `#optional` become [`Task`](sentinel_models::kernel::Task) edges, lifetimes and flags, and the
-//!   label vocabulary is consumed rather than carried.
+//!   label vocabulary is consumed rather than carried. It also owns the two predicates the guide
+//!   never writes down: the `QuestInLog` gate a completion objective implies, and the
+//!   `QuestTurnedIn` a background farm terminates on when this artifact performs the hand-in.
+//! * `meta` — the guide-block header (`#name` / `#group` / `#subgroup` / `#version` / `#next`) into
+//!   [`GuideMeta`](sentinel_models::kernel::GuideMeta), with each entry's own `<<` tail decided by
+//!   the same [`archetype`] resolver.
+//! * `combat` — C6. `.mob` and `.unitscan` into a [`CombatPolicy`](sentinel_models::kernel::CombatPolicy),
+//!   and the profile-level default every per-task override is measured against — a task whose
+//!   derivation lands on the default carries none.
 //!
-//! # Three rules the tests exist to hold
+//! # Two rules the tests exist to hold
 //!
-//! 1. **A percentage must never survive compilation** (ADR 06 invariant 3). `zone,x,y` is
-//!    zone-relative and `<uiMapId>/<mapId>,x,y` is already world; the discriminator is the `/` in
-//!    field 0 and *nothing else*. A range test ("0..100 means percentage") reclassifies
-//!    `.goto 1944/530,4341.30029,97.1` and transforms coordinates that were already correct.
-//! 2. **A malformed line is refused, never repaired.** The corpus's 67 six-argument `.goto` lines
-//!    are three unrelated defects and every plausible repair corrupts the other two.
-//! 3. **An unmappable expression is a hard error.** The ADR-05 path substitutes
+//! (The two about coordinates moved with the transform, to
+//! [`sentinel_models::movement`] and `compiler/tests/kernel_coordinates.rs`.)
+//!
+//! 1. **A run that changes travel medium is split, never flattened and never refused.** `Route`
+//!    carries one `mode`; a medium change is a run boundary exactly as an intervening op is.
+//! 2. **An unmappable expression is a hard error.** The ADR-05 path substitutes
 //!    `RuntimeCondition::AlwaysTrue` and records a diagnostic; the kernel's 24 [`Predicate`]
 //!    variants contain no always-true by design, and omitting the leaf instead would be fail-open
 //!    by another name.
 
 pub mod archetype;
+mod combat;
+mod meta;
 mod predicate;
 mod route;
 mod task_graph;
 
 pub use predicate::{lower_predicate, QuestMeta};
-pub use route::{lower_route, parse_movement, Movement, WaypointPool};
+pub use route::{lower_route, Movement, WaypointPool};
+pub(crate) use combat::profile_default as default_combat_policy;
+pub(crate) use meta::lower_guide_meta;
 pub(crate) use task_graph::lower_task_graph;
+pub(crate) use task_graph::profile_default_unknown_policy as default_unknown_policy;
 
 use std::collections::BTreeSet;
 
@@ -130,20 +150,6 @@ fn wire_tag(serialized: &serde_json::Value) -> String {
     }
 }
 
-/// One line of guide source, carried so a refusal can quote what it refused.
-///
-/// The diagnostic is the deliverable when a line is malformed: an author who is told only "arity
-/// error" has to find the line themselves among 38,087 `.goto`s.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceLine<'a> {
-    /// Guide file the line came from, e.g. `"A-11-23.lua"`.
-    pub file: &'a str,
-    /// 1-based line number within that file.
-    pub line: u32,
-    /// The line itself, verbatim.
-    pub text: &'a str,
-}
-
 /// Everything that stops a guide line becoming artifact.
 ///
 /// Every variant is a **refusal**, never a repair or a fallback value. That posture is the whole
@@ -151,89 +157,18 @@ pub struct SourceLine<'a> {
 /// substituted predicate gates nothing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LoweringError {
-    /// A movement line carried the wrong number of comma-separated arguments.
+    /// A movement line's own refusals are **not** here.
     ///
-    /// The corpus's 67 six-argument `.goto` lines are three distinct defects — 60 stray trailing
-    /// zero, 4 comma-typed decimal (`20.6,60,4` was meant to be `20.6,60.4`), 3 stray leading zero
-    /// — and each defect's obvious repair produces wrong coordinates for the other two. Fewer than
-    /// three arguments lands here too: a zone-only `.goto` names a destination but carries no
-    /// coordinate, so it is not a waypoint.
-    #[error(
-        "{file}:{line}: `{text}` carries {found} comma-separated arguments; a movement line has \
-         3..5 and a malformed one is refused, not repaired"
-    )]
-    MalformedArity {
-        /// Guide file.
-        file: String,
-        /// Line number.
-        line: u32,
-        /// The line, verbatim, so the author can find it.
-        text: String,
-        /// How many arguments were actually present.
-        found: usize,
-    },
-
-    /// The line is not one of the five coordinate-bearing movement commands.
-    #[error("{file}:{line}: `{text}` is not a movement command")]
-    NotAMovement {
-        /// Guide file.
-        file: String,
-        /// Line number.
-        line: u32,
-        /// The line, verbatim.
-        text: String,
-    },
-
-    /// A coordinate, radius or map id would not parse as a number.
-    #[error("{file}:{line}: `{text}`: {what} `{value}` is not a number")]
-    MalformedNumber {
-        /// Guide file.
-        file: String,
-        /// Line number.
-        line: u32,
-        /// The line, verbatim.
-        text: String,
-        /// Which field, e.g. `"world X"`.
-        what: String,
-        /// The text that failed to parse.
-        value: String,
-    },
-
-    /// The zone is absent from the measured [`zone table`](sentinel_models::zone::ZONE_TABLE), so
-    /// its percentages cannot be converted.
+    /// Arity, an unmappable zone, a malformed coordinate — those are decided by
+    /// [`sentinel_models::movement::resolve_coordinate`] and rendered by the importer as
+    /// `MALFORMED_MOVEMENT_ARITY` / `UNMAPPED_GOTO_ZONE` / `MALFORMED_MOVEMENT_COORDINATE`
+    /// diagnostics against the line, which then reaches the compiler as a travel action with
+    /// `position: None`. They used to be four variants here, raised by a `parse_movement` no compile
+    /// called, while the live path made those same decisions differently and silently.
     ///
-    /// No position is emitted rather than a guessed one — ADR 06 invariant 3.
-    #[error(
-        "{file}:{line}: `{text}`: zone `{zone}` is absent from the measured zone table, so its \
-         percentages cannot be converted to world coordinates"
-    )]
-    UnknownZone {
-        /// Guide file.
-        file: String,
-        /// Line number.
-        line: u32,
-        /// The line, verbatim.
-        text: String,
-        /// The unresolvable zone name or ui map id.
-        zone: String,
-    },
-
-    /// One route mixed travel media. [`Route`](sentinel_models::kernel::Route) carries a single
-    /// `mode`, so picking one silently would drop a `.groundgoto`'s whole reason for existing:
-    /// it overrides the engine's preferred line through mountain paths, caves and stairs (§5.7).
-    #[error("{file}:{line}: `{text}` is {found:?} but the route so far is {expected:?}")]
-    MixedTravelModes {
-        /// Guide file.
-        file: String,
-        /// Line number.
-        line: u32,
-        /// The line, verbatim.
-        text: String,
-        /// The mode this line demands.
-        found: sentinel_models::kernel::TravelMode,
-        /// The mode the route already committed to.
-        expected: sentinel_models::kernel::TravelMode,
-    },
+    /// `MixedTravelModes` is gone for a different reason: a run that changes medium is **split**,
+    /// not refused (see [`lower_route`]). Refusing cost 9 of the corpus's 277 guide blocks their
+    /// whole artifact.
 
     /// The metadata provider could not answer what an objective requires.
     ///
@@ -284,16 +219,4 @@ pub enum LoweringError {
         /// The token that was not recognised, after normalisation.
         token: String,
     },
-}
-
-impl LoweringError {
-    /// [`LoweringError::MalformedArity`] for `src`.
-    fn arity(src: SourceLine<'_>, found: usize) -> Self {
-        LoweringError::MalformedArity {
-            file: src.file.to_owned(),
-            line: src.line,
-            text: src.text.to_owned(),
-            found,
-        }
-    }
 }

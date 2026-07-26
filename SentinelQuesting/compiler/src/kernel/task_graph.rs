@@ -41,15 +41,17 @@
 //! look up at runtime — which is precisely the RXPGuides defect §3.1 describes, where
 //! `guide.labels[…]` returns nil and the edge silently never fires.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sentinel_models::authoring::{
-    Action, ActionPayload, CompleteWithTarget, ConditionRole, Diagnostic, GuideGate, Operation,
-    Project, Severity,
+    Action, ActionPayload, CompleteWithTarget, ConditionRole, Diagnostic, GuideGate,
+    KillTargetAction, Operation, Project, Severity,
 };
 use sentinel_models::kernel as k;
 
-use super::{archetype, lower_predicate, QuestMeta, WaypointPool};
+use super::combat::lower_combat;
+use super::route::travel_mode;
+use super::{archetype, lower_predicate, lower_route, Movement, QuestMeta, WaypointPool};
 use crate::CompilerError;
 
 /// The band the first channel-holding background task claims, from ADR 07 §7.3.3: its two `#sticky`
@@ -62,6 +64,23 @@ const FIRST_HOLDING_BAND: u8 = 34;
 /// per-task offset that §5.3 requires of the holders. They all sit at the bottom of the Goal band,
 /// below every patrol.
 const RIDE_ALONG_BAND: u8 = 30;
+
+/// [`UnknownPolicy::Defer`](k::UnknownPolicy::Defer)'s budget for a task that decides its own
+/// completion, in ticks (§5.1.2, §7.3.3 tasks 0-3).
+///
+/// **Unstated and defaulted, not derived.** §9 item 25 already records this number as one that
+/// "appear[s] only inside §7.3.3's listing" and is stated in no section of the ADR. RestedXP has no
+/// notion of an escalation budget, so no corpus measurement can produce it; it is the worked
+/// example's value, carried rather than invented. See [`unknown_policy`].
+const OWN_PREDICATE_BUDGET_TICKS: u16 = 60;
+
+/// The same budget for a `#completewith` ride-along (§7.3.3 task 5), in ticks.
+///
+/// Unstated in exactly the same way as [`OWN_PREDICATE_BUDGET_TICKS`], and one line further down the
+/// same listing. What the fixture witnesses is the *relation* — the profile's one task whose
+/// completion authority is another task carries a **smaller** budget than every task that decides
+/// for itself — and these two constants are that relation's endpoints.
+const RIDE_ALONG_BUDGET_TICKS: u16 = 30;
 
 /// One authored operation that survived C2 resolution, before task ids are assigned.
 ///
@@ -78,6 +97,12 @@ pub(crate) struct SurvivingStep {
     complete_with: Vec<CompleteWithTarget>,
     /// `#sticky` ⇒ a concurrent task.
     sticky: bool,
+    /// `#loop` — a closed grind circuit, which is what makes a `.mob` whitelist `Aggressive` and
+    /// what lets §5.6 read the leash off the route radius.
+    looping: bool,
+    /// The `.mob` / `.unitscan` payloads whose gates the archetype satisfied, in authored order.
+    /// Not ops — §7.3.3 puts them in `Task::combat`, never in `ops` (C6).
+    kills: Vec<KillTargetAction>,
     /// `#optional` ⇒ `false`.
     blocking: bool,
     /// The step's own completion authority, baked from its `ConditionRole::Completion` actions.
@@ -132,7 +157,6 @@ fn resolve_operations(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Vec<SurvivingStep>, CompilerError> {
     let mut survivors = Vec::new();
-
     for op in &project.operations {
         // The importer's flag, honoured rather than re-derived (`Operation::enabled`, 140 corpus
         // steps disabled by `skip`).
@@ -163,6 +187,7 @@ fn resolve_operations(
         let mut completion_terms = Vec::new();
         let mut applicability_terms = Vec::new();
         let mut loot_filter: Vec<k::LootRule> = Vec::new();
+        let mut kills: Vec<KillTargetAction> = Vec::new();
         let mut surviving_actions = 0usize;
         // The movement run currently open. Flushed into one `Op::Travel` by the first op-bearing
         // action that follows it, and again at the end of the step — see `flush_route`.
@@ -191,6 +216,16 @@ fn resolve_operations(
                 continue;
             }
 
+            // A combat command is not an op either: §7.3.3 tasks 0 and 2 put `.mob` / `.unitscan`
+            // in `combat.targets` / `combat.watch_units`, never in `ops`. Taken before
+            // `breaks_movement_run` is consulted, so its `Kill => false` arm no longer decides this
+            // case — the arm stays, because it is where the movement-run boundary is *documented*
+            // and because a payload kind must remain exhaustively classified there.
+            if let ActionPayload::Kill(kill) = &action.payload {
+                kills.push(kill.clone());
+                continue;
+            }
+
             if matches!(action.payload, ActionPayload::Travel(_)) {
                 run.push(action);
                 continue;
@@ -199,12 +234,12 @@ fn resolve_operations(
                 continue;
             }
 
-            flush_route(&mut run, op.looping, &mut ops, pool, diagnostics);
+            flush_route(&mut run, op.looping, &mut ops, pool, diagnostics)?;
             if let Some(lowered) = lower_op(action, diagnostics) {
                 ops.push(lowered);
             }
         }
-        flush_route(&mut run, op.looping, &mut ops, pool, diagnostics);
+        flush_route(&mut run, op.looping, &mut ops, pool, diagnostics)?;
 
         // Elision. A task with nothing left to execute is not a task: emitting an empty one gives
         // the runner a step that can never complete and a cursor that never advances. Counted over
@@ -243,6 +278,8 @@ fn resolve_operations(
             requires,
             complete_with,
             sticky: op.sticky,
+            looping: op.looping,
+            kills,
             blocking,
             complete_when: fold_and(completion_terms),
             applies_when: fold_and(applicability_terms),
@@ -342,6 +379,347 @@ fn collect_loot_rules(
         }
         k::Predicate::Not(child) => collect_loot_rules(child, meta, out),
         _ => {}
+    }
+}
+
+/// The `applies_when` a completion objective implies, for a step that authored none (item G).
+///
+/// # Why an objective implies a log gate
+///
+/// A `.complete <quest>,<index>` line makes the task's completion a
+/// [`QuestObjective`](k::Predicate::QuestObjective), and an objective counter exists **only while
+/// the quest is in the log**: before the quest is accepted there is nothing to read, and after it is
+/// turned in the objective is gone. A task whose completion is an objective of quest *q* therefore
+/// applies exactly while *q* is in the log, and a task left ungated is one the runner will start —
+/// and re-start — against a quest the character does not have.
+///
+/// §7.3.3's four objective tasks are the witnesses and they come in both spellings: tasks 0 and 1
+/// carry `.isOnQuest` explicitly (`A-11-23.lua:237`, `:239`), tasks 2 and 3 carry none (`:243-260`,
+/// `:261-264`), and the fixture gives all four the same `QuestInLog` gate. Two authored, two
+/// derived, one value.
+///
+/// # Never *added* to an authored gate
+///
+/// The caller only reaches this when `applies_when` is `None`. An author who wrote
+/// `.isOnQuest 984` on a step completing an objective of 983 said something the derivation cannot
+/// know, and ANDing the derived term in would silently narrow the step by a condition nobody wrote.
+/// Where the two agree — the common case — an `And` of a predicate with itself would also be a
+/// second spelling of one thing, which §5.1.1 forbids.
+///
+/// # One conjunct per distinct quest
+///
+/// A completion naming two quests has no corpus witness after the XXREQ fold, so the multi-quest
+/// arm is the same rule applied to each objective rather than a measured shape, and it is built
+/// with the same [`fold_and`] the step's own `.complete` terms go through — one spelling of a
+/// conjunction in this module, not two.
+fn quest_log_gate(complete_when: Option<&k::Predicate>) -> Option<k::Predicate> {
+    let mut quests: Vec<k::QuestId> = Vec::new();
+    collect_objective_quests(complete_when?, &mut quests);
+    fold_and(
+        quests
+            .into_iter()
+            .map(|id| k::Predicate::QuestInLog { id })
+            .collect(),
+    )
+}
+
+/// Every quest named by a [`QuestObjective`](k::Predicate::QuestObjective) leaf of `predicate`, in
+/// first-seen order.
+///
+/// Objectives only — not [`QuestComplete`](k::Predicate::QuestComplete),
+/// [`QuestTurnedIn`](k::Predicate::QuestTurnedIn) or the rest. Those name a quest the task depends
+/// on rather than one it is *advancing*, and neither implies the quest is in the log: a turned-in
+/// quest is precisely one that is not.
+fn collect_objective_quests(predicate: &k::Predicate, out: &mut Vec<k::QuestId>) {
+    match predicate {
+        k::Predicate::QuestObjective { id, .. } => {
+            if !out.contains(id) {
+                out.push(*id);
+            }
+        }
+        k::Predicate::And(children) | k::Predicate::Or(children) => {
+            for child in children {
+                collect_objective_quests(child, out);
+            }
+        }
+        k::Predicate::Not(child) => collect_objective_quests(child, out),
+        _ => {}
+    }
+}
+
+/// The `terminate_on` a background objective farm gets when this artifact also hands the quest in
+/// (item H).
+///
+/// # The rule, and why §5.3's prose is not enough
+///
+/// §5.3 says only "normally the linked task's completion or its own `complete_when`", and that
+/// underdetermines all three of §7.3.3's background tasks — task 0 terminates on
+/// `QuestTurnedIn(983)`, which is neither. The rule that fits all three is about scope: a `#sticky`
+/// patrol farming an objective has to outlive the objective, because the quest is not finished
+/// until it is handed in and the hand-in is a **different task** (task 0's is task 6,
+/// `A-11-23.lua:280`). Ending the patrol the moment the sixth Crawler Leg drops releases `MOVEMENT`
+/// in the middle of a farm the profile has not finished using.
+///
+/// The condition is an `iff` in both directions. Task 2's quest 2118 has no turn-in anywhere in the
+/// excerpt, so terminating it on a hand-in this artifact will never perform would hang the patrol
+/// forever — it ends on its own objective instead, which is what the fixture says. That is why the
+/// census is over **surviving ops** rather than over the authoring project: an archetype that loses
+/// the turn-in step is an archetype whose runner never performs it.
+///
+/// # Exactly one quest, or nothing
+///
+/// Fires only when the completion names a single quest. A completion naming two, of which one is
+/// handed in, has no corpus witness and no honest answer — `QuestTurnedIn` of one of them
+/// terminates the patrol while the other objective is still running, and a conjunction or
+/// disjunction of the two would be a predicate no author wrote. The fallback chain is left to
+/// handle it.
+fn hand_in_termination(
+    complete_when: Option<&k::Predicate>,
+    turned_in: &HashSet<k::QuestId>,
+) -> Option<k::Predicate> {
+    let mut quests: Vec<k::QuestId> = Vec::new();
+    collect_objective_quests(complete_when?, &mut quests);
+    match quests.as_slice() {
+        [quest] if turned_in.contains(quest) => Some(k::Predicate::QuestTurnedIn { id: *quest }),
+        _ => None,
+    }
+}
+
+/// The profile-level [`UnknownPolicy`](k::UnknownPolicy) §5.1.2 declares, for
+/// [`ProfileDefaults`](k::ProfileDefaults).
+///
+/// Taken from the same constant the per-task rule falls back to, because two transcriptions of one
+/// default drift: an artifact whose `defaults` block disagrees with the value every ordinary task
+/// carries states §5.1.2 twice and differently inside one file.
+pub(crate) fn profile_default_unknown_policy() -> k::UnknownPolicy {
+    k::UnknownPolicy::Defer {
+        budget_ticks: OWN_PREDICATE_BUDGET_TICKS,
+    }
+}
+
+/// What a task does when one of its predicates reads `Unknown` (item D, §5.1.2).
+///
+/// # The rule, over task content and never over task order
+///
+/// §7.3.3's fixture is the entire evidence base: seven tasks carrying four distinct values. Read as
+/// a rule about **what the task does** and **what its completion measures**, they force this order:
+///
+/// 1. **An irreversible op ⇒ [`Block`](k::UnknownPolicy::Block).** §5.1.2's policy table states this
+///    default verbatim — "`complete_when` on any task with a `DELEGATE` or irreversible op
+///    (turn-in, abandon, destroy, deathskip)". Task 6 hands quest 983 in; a hand-in fired because
+///    the quest log read `Unknown` spends the reward, the log slot and the follow-up chain, and
+///    none of the three can be handed back.
+/// 2. **A monotone player statistic ⇒ [`TreatFalse`](k::UnknownPolicy::TreatFalse).** §5.1.2 admits
+///    `Treat(False)` only where "the work is idempotent". Task 4's completion is total experience,
+///    which never decreases in TBC: an `Unknown` read costs one more grind tick and leaves the
+///    threshold closer than it was, never further.
+/// 3. **Otherwise [`Defer`](k::UnknownPolicy::Defer)**, §5.1.2's stated default for `complete_when`
+///    and the value this artifact's own `defaults` block declares.
+///
+/// # Why an objective counter is not monotone
+///
+/// Tasks 0-3 are the four witnesses that a [`QuestObjective`](k::Predicate::QuestObjective) must
+/// **not** take arm 2, and the reason is the same one [`quest_log_gate`] is built on: the counter
+/// exists only while the quest is in the log. After the hand-in the objective is gone and the read
+/// is `Unknown`, so `TreatFalse` would send the runner back to farm six more Crawler Legs for a
+/// quest it has already finished — `Unknown → false → "not complete" → redo the step`, the failure
+/// §5.1.2 closes by naming. "The number only rises" is therefore not the test; "the reading cannot
+/// silently disappear" is, and only a player statistic satisfies it.
+///
+/// The predicate is inspected as a **leaf**, not walked. A conjunction one of whose terms is an
+/// objective is not monotone, a [`Not`](k::Predicate::Not) of a threshold is anti-monotone, and no
+/// corpus task pairs an XP gate with a second completion term — so a recursive reading would be
+/// machinery with no witness and two ways to be wrong.
+///
+/// # Why `Op::UseItem` is not irreversible
+///
+/// §7.3.3 task 2 consumes `Tharnariun's Hope` (`.use 7586`), which the guide itself warns is
+/// unrecoverable — "You can waste the trap and make the quest impossible to complete!"
+/// (`A-11-23.lua:257`) — and the fixture still gives it `Defer`. The set is §5.1.2's four named op
+/// kinds plus `Delegate`, not a judgement about what an op might cost; widening it by consequence
+/// would take 1,678 `.use` tasks off the default for a reason the ADR never states.
+///
+/// # The budget, which is not derived
+///
+/// See [`OWN_PREDICATE_BUDGET_TICKS`] and [`RIDE_ALONG_BUDGET_TICKS`]. Both magnitudes are unstated
+/// (§9 item 25); what the fixture shows is that its one ride-along carries the smaller of them. The
+/// two candidate causes are inseparable on that single witness — task 5 is the only
+/// [`LinkedTo`](k::CompletionSource::LinkedTo) *and* the only channel-less `Background` — and
+/// `LinkedTo` is the more primitive, since it is what [`lower_lifetime`] reads to make the rider
+/// channel-less in the first place.
+fn unknown_policy(
+    ops: &[k::Op],
+    complete_when: Option<&k::Predicate>,
+    completion: k::CompletionSource,
+) -> k::UnknownPolicy {
+    if ops.iter().any(is_irreversible) {
+        return k::UnknownPolicy::Block;
+    }
+    if complete_when.is_some_and(is_monotone_player_progress) {
+        return k::UnknownPolicy::TreatFalse;
+    }
+    match completion {
+        k::CompletionSource::LinkedTo(_) => k::UnknownPolicy::Defer {
+            budget_ticks: RIDE_ALONG_BUDGET_TICKS,
+        },
+        k::CompletionSource::OwnPredicate => profile_default_unknown_policy(),
+    }
+}
+
+/// Whether performing `op` cannot be undone — §5.1.2's "`DELEGATE` or irreversible op (turn-in,
+/// abandon, destroy, deathskip)".
+///
+/// Exhaustive rather than `_ => false`, so a new [`Op`](k::Op) variant is a compile error here and
+/// somebody has to decide which side of the line it is on. Three of the four `true` arms are
+/// unreachable today — [`lower_op`] emits only `Accept`, `TurnIn`, `Travel` and `UseItem` — and they
+/// are named anyway, because the day `.abandon` (142) or `.destroy` (72) lands is the day a silent
+/// `_ => false` would put an irreversible op on the `Defer` default.
+///
+/// "deathskip" is not an [`Op`](k::Op) of its own: §5.5 hands it to a kernel behaviour, so it
+/// arrives as [`Op::Delegate`](k::Op::Delegate) and is covered by that arm.
+fn is_irreversible(op: &k::Op) -> bool {
+    match op {
+        k::Op::TurnIn { .. }
+        | k::Op::Abandon { .. }
+        | k::Op::DestroyItem { .. }
+        | k::Op::Delegate { .. } => true,
+        // Reversible, or with no lasting effect at all. `Accept` is undone by `.abandon`; `Equip`
+        // by equipping something else; `UntrackQuest` has no in-game effect (§4.2); `UseItem` is
+        // where the line is drawn and why — see this function's caller.
+        k::Op::Travel { .. }
+        | k::Op::Accept { .. }
+        | k::Op::UntrackQuest { .. }
+        | k::Op::Interact { .. }
+        | k::Op::UseItem { .. }
+        | k::Op::Cast { .. }
+        | k::Op::Equip { .. }
+        | k::Op::EnterVehicle
+        | k::Op::Wait { .. } => false,
+    }
+}
+
+/// Whether `predicate` reads a player statistic that cannot decrease.
+///
+/// Experience and character level are the same statistic at two precisions, and TBC has neither
+/// de-levelling nor XP loss, so both only ever rise. Everything else in the vocabulary can fall:
+/// an item is consumed, an area is left, money is spent, an objective disappears with its quest.
+fn is_monotone_player_progress(predicate: &k::Predicate) -> bool {
+    matches!(
+        predicate,
+        k::Predicate::XpAtLeast { .. } | k::Predicate::LevelAtLeast { .. }
+    )
+}
+
+/// The completion `index` inherits through [`CompletionSource::LinkedTo`](k::CompletionSource),
+/// read to the end of the chain rather than one hop (item C).
+///
+/// # Why the whole chain
+///
+/// `LinkedTo(t)` means *t*'s completion completes this task. If *t* authors no completion of its own
+/// and is itself linked, then *t*'s completion is whatever *it* defers to, and so is this task's —
+/// §5.3's "the linked task's completion" is transitive because the relation it names is. Stopping at
+/// one hop left **43** corpus tasks on the never-satisfiable empty disjunction while a real
+/// completion sat two links away, which is a limitation of the walk rather than a fact about the
+/// guide.
+///
+/// # The visited set is not defensive
+///
+/// [`resolve_completion`] refuses a *self*-link and nothing else, so two steps whose `#completewith`
+/// labels name each other are constructible and a walk without a guard would not return. A cycle
+/// contains no completion by construction — every task in it defers to another — so falling out with
+/// `None` is also the right answer, not merely a safe one.
+fn linked_completion(
+    index: usize,
+    completions: &[k::CompletionSource],
+    complete_whens: &[Option<k::Predicate>],
+) -> Option<k::Predicate> {
+    let mut visited: HashSet<usize> = HashSet::from([index]);
+    let mut cursor = index;
+    loop {
+        let k::CompletionSource::LinkedTo(target) = completions.get(cursor).copied()? else {
+            return None;
+        };
+        cursor = target as usize;
+        if !visited.insert(cursor) {
+            return None;
+        }
+        if let Some(completion) = complete_whens.get(cursor)? {
+            return Some(completion.clone());
+        }
+    }
+}
+
+/// The `applies_when` / `complete_when` pair a hand-in implies, for a step that authored neither
+/// (item E).
+///
+/// # Why `.turnin` is two predicates
+///
+/// `A-11-23.lua:280` is `.turnin 983` and the fixture's task 6 carries `QuestComplete { 983 }` and
+/// `QuestTurnedIn { 983 }`. Neither is authored; both follow from what a hand-in *is*. You can only
+/// hand in a quest whose objectives are done, and the hand-in is over exactly when the quest is
+/// turned in. Leaving them `null` is not the neutral choice: a task whose `completion` is
+/// `OwnPredicate` and whose `complete_when` is `None` has **no completion authority at all**, and
+/// 4,988 corpus tasks carrying an `Op::TurnIn` were in that state.
+///
+/// `QuestComplete` rather than `QuestInLog` is the fixture's answer and the stricter one — a quest
+/// in the log whose objectives are unfinished cannot be handed in, so the log alone would walk the
+/// runner to an NPC with nothing to say. (§8 notes `QuestInLog` is the reliable gate for a
+/// `.daily`; no repeatable turn-in is lowered yet, `Op::TurnIn::repeatable` being always `false`.)
+///
+/// # Exactly one quest, no alternatives, or nothing
+///
+/// The same discipline [`hand_in_termination`] follows, for the same reason: a shape with no corpus
+/// witness gets no invented answer.
+///
+/// * **540 corpus tasks hand in more than one quest.** `complete_when` had an unambiguous answer —
+///   an `And` of both `QuestTurnedIn`s — but `applies_when` had none: an `And` of both
+///   `QuestComplete`s stalls a whole hub because one of its quests was never picked up, and an `Or`
+///   starts the task on a hand-in that is not yet possible *and* puts a disjunction into
+///   `tags_used` that no author wrote. Emitting only the answerable half would split a pair that is
+///   one derivation, so neither is emitted.
+/// * **`any_of` is `.turninmultiple`** (1 use, the Aldor/Scryer choice point, §8) — "hand in
+///   whichever of these was taken", so `QuestTurnedIn` of the named quest is not the completion.
+///   Unreachable today, since the authoring model does not carry `any_of`.
+///
+/// `#optional` is deliberately **not** a reason to withhold the pair, and 458 corpus turn-ins sit
+/// under one. `#optional` lowers to `blocking: false`, which is the field that already says "if this
+/// never finishes, the profile moves on" — withholding here would leave those tasks with no
+/// completion authority and buy nothing that field does not already carry.
+fn hand_in_predicates(
+    ops: &[k::Op],
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<(k::Predicate, k::Predicate)> {
+    let hand_ins: Vec<(k::QuestId, bool)> = ops
+        .iter()
+        .filter_map(|op| match op {
+            k::Op::TurnIn { quest, any_of, .. } => Some((*quest, any_of.is_empty())),
+            _ => None,
+        })
+        .collect();
+
+    match hand_ins.as_slice() {
+        [] => None,
+        [(quest, true)] => Some((
+            k::Predicate::QuestComplete { id: *quest },
+            k::Predicate::QuestTurnedIn { id: *quest },
+        )),
+        _ => {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "HAND_IN_PREDICATES_NOT_DERIVED".to_string(),
+                message: format!(
+                    "this step hands in {} quest(s) and ADR 07 §7.3.3 witnesses the derived \
+                     `QuestComplete` / `QuestTurnedIn` pair only for a single unambiguous hand-in. \
+                     Neither half is emitted — half a pair is a task that knows when it is finished \
+                     but not when it may start, or the reverse — so the task keeps whatever \
+                     predicates it authored",
+                    hand_ins.len()
+                ),
+                entity: None,
+                action: None,
+            });
+            None
+        }
     }
 }
 
@@ -486,6 +864,15 @@ fn breaks_movement_run(payload: &ActionPayload) -> bool {
 /// A no-op when the run is empty, which is what makes it safe to call at every boundary and again at
 /// the end of the step.
 ///
+/// # An adapter, not a second route builder
+///
+/// Everything a route *is* — its kind, its medium, its indices — is [`lower_route`]'s to decide, and
+/// this function decides none of it. It used to decide two: it chose the kind itself and hardcoded
+/// `mode: TravelMode::Any`, while `lower_route` held the medium mapping and the mixed-medium refusal
+/// behind an entry point only tests reached. The job left here is the one `lower_route` cannot do —
+/// turning surviving [`Action`]s into [`Movement`]s — because that is where the authoring model is,
+/// and it is also where the diagnostic for an unresolved coordinate belongs.
+///
 /// # One op, not one per line
 ///
 /// §5.7's decisive witness is `A-11-23.lua:215-231`: the run's last `.waypoint` is byte-identical to
@@ -501,13 +888,12 @@ fn flush_route(
     ops: &mut Vec<k::Op>,
     pool: &mut WaypointPool,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+) -> Result<(), CompilerError> {
     if run.is_empty() {
-        return;
+        return Ok(());
     }
 
-    let mut points: Vec<u32> = Vec::with_capacity(run.len());
-    let mut radii: Vec<u16> = Vec::with_capacity(run.len());
+    let mut movements: Vec<Movement> = Vec::with_capacity(run.len());
     for action in run.drain(..) {
         let ActionPayload::Travel(travel) = &action.payload else {
             unreachable!("only `ActionPayload::Travel` actions are pushed onto the run")
@@ -528,60 +914,40 @@ fn flush_route(
             });
             continue;
         };
-        points.push(pool.intern(k::Point {
-            map_id: position.map,
-            x: position.world_x,
-            y: position.world_y,
-            // `None`, never `Some(position.world_z)`. §5.7: `z` is `Option` because the corpus
-            // never supplies it — the compiler fills it from the navmesh where it can and leaves
-            // `None` otherwise, letting the engine ground-snap. The importer's `world_z` is a
-            // structural `0.0` placeholder for exactly that (`build_travel_position`: "Z is always
-            // 0 here; the runtime resolves ground height on arrival"), and carrying it through as
-            // `Some(0.0)` turns a placeholder into an assertion that the waypoint is at sea level.
-            z: None,
-        }));
-        // The radius the *guide* authored, not the importer's executable `tolerance`, which drops a
-        // `0` and clamps into `[5, 60]`. §7.3.3 prints `radii: [0,0,0,60 × 14]` for the circuit at
-        // `A-11-23.lua:215-231`, matching the source exactly.
-        radii.push(travel.authored_radius.unwrap_or(DEFAULT_ARRIVAL_RADIUS_YARDS));
+        movements.push(Movement {
+            point: k::Point {
+                map_id: position.map,
+                x: position.world_x,
+                y: position.world_y,
+                // `None`, never `Some(position.world_z)`. §5.7: `z` is `Option` because the corpus
+                // never supplies it — the compiler fills it from the navmesh where it can and
+                // leaves `None` otherwise, letting the engine ground-snap. The importer's `world_z`
+                // is a structural `0.0` placeholder for exactly that (`build_travel_position`: "Z
+                // is always 0 here; the runtime resolves ground height on arrival"), and carrying
+                // it through as `Some(0.0)` turns a placeholder into an assertion that the waypoint
+                // is at sea level.
+                z: None,
+            },
+            // The radius the *guide* authored, not the importer's executable `tolerance`, which
+            // drops a `0` and clamps into `[5, 60]`. §7.3.3 prints `radii: [0,0,0,60 × 14]` for the
+            // circuit at `A-11-23.lua:215-231`, matching the source exactly.
+            radius: travel.authored_radius.unwrap_or(DEFAULT_ARRIVAL_RADIUS_YARDS),
+            // The medium the source command demanded, carried by the importer since `.groundgoto`
+            // and `.flygoto` started reaching the movement arm at all. `TravelAction::allow_flight`
+            // is deliberately not consulted: it is an execution preference the editor may set on any
+            // travel action, and reading it as this fact would mark all 38,087 ordinary `.goto`
+            // routes ground-forced.
+            mode: travel_mode(travel.medium),
+        });
     }
 
-    let kind = if looping {
-        // §4.3 maps `#loop` (1,661) to `RouteKind::Circuit`; §5.7 says the compiler emits `Circuit`
-        // for `#loop` tasks. `close` states the **cycling intent** and not a geometric property:
-        // §7.3.3 prints `close: true` for both of its circuits, and only one of the two returns to
-        // its first point — `A-11-23.lua:231` closes onto `:215`, while `:254` ends at a different
-        // coordinate from `:247`. A geometric test would disagree with the specification on the
-        // second, and would also silently reclassify any circuit whose author left the last hop to
-        // the engine.
-        k::RouteKind::Circuit { close: true }
-    } else if points.len() <= 1 {
-        // §5.7: `Destination` for an isolated `.goto` — 16,231 three-argument lines where the
-        // coordinate is just where the NPC stands and the navmesh paths there better than a
-        // 2004-era waypoint chain. A run that resolved to no point at all lands here too: it is not
-        // a corridor, and `Circuit` would claim an intent the step never expressed.
-        k::RouteKind::Destination
-    } else {
-        // §5.7: `Corridor` for a run of `.goto`/`.waypoint` in a non-loop task — ordered points the
-        // engine *may* smooth between, which is exactly what a `Circuit` may not do.
-        k::RouteKind::Corridor
-    };
-
-    ops.push(k::Op::Travel {
-        route: k::Route {
-            kind,
-            // `Any` — the engine picks — and never `Ground`. §7.1 maps the media one way only:
-            // `.goto`/`.waypoint` to `Any`, `.groundgoto` to `Ground`, `.flygoto` to `Air`.
-            // `TravelAction::allow_flight` is not the same fact as `.groundgoto` (114 uses), which
-            // exists to *override* the engine's preferred line through mountain paths, caves and
-            // stairs (§5.7); reading it as one would mark all 38,087 ordinary `.goto` routes
-            // ground-forced. `ProjectBuilder` lowers neither `.groundgoto` nor `.flygoto` to a
-            // travel action yet, so no route reaching here can legitimately be anything else.
-            mode: k::TravelMode::Any,
-            points,
-            radii,
-        },
-    });
+    // Zero routes when nothing resolved, one for a medium-homogeneous run, and one per segment when
+    // the author changed medium mid-walk — see `lower_route`, which owns that boundary along with
+    // every other property of a route.
+    for route in lower_route(looping, &movements, pool) {
+        ops.push(k::Op::Travel { route });
+    }
+    Ok(())
 }
 
 /// Lower one surviving non-movement action into a kernel [`Op`](k::Op).
@@ -738,19 +1104,73 @@ fn assemble_tasks(
         .map(|index| resolve_completion(index, &survivors, &label_to_task, diagnostics))
         .collect();
 
+    // Which quests **this artifact** hands in, over the surviving ops. Taken here rather than from
+    // the authoring project because the census has to mean "a turn-in the runner will actually
+    // perform": a step gated out for this archetype is not one, and terminating a patrol on a
+    // hand-in that never happens holds `MOVEMENT` forever. See `hand_in_termination`.
+    let turned_in: HashSet<k::QuestId> = survivors
+        .iter()
+        .flat_map(|step| step.ops.iter())
+        .filter_map(|op| match op {
+            // `quest` only, never `any_of`: the alternatives of a `.turninmultiple` are the ones
+            // this run may take *instead*, so none of them is a hand-in the artifact promises.
+            k::Op::TurnIn { quest, .. } => Some(*quest),
+            _ => None,
+        })
+        .collect();
+
+    // Item E. Computed first, because every derivation below reads a task's *effective* completion
+    // rather than its authored one, and for 4,988 corpus tasks the only completion there is comes
+    // from the hand-in they perform.
+    let hand_ins: Vec<Option<(k::Predicate, k::Predicate)>> = survivors
+        .iter()
+        .map(|step| hand_in_predicates(&step.ops, diagnostics))
+        .collect();
+
+    // The completion a task actually ends up with: what its `.complete` lines said, or — only when
+    // they said nothing — what its hand-in implies. Never both: an author who wrote `.complete` has
+    // named the work, and replacing it with `QuestTurnedIn` would finish the step at the NPC rather
+    // than at the objective.
+    let complete_whens: Vec<Option<k::Predicate>> = survivors
+        .iter()
+        .zip(&hand_ins)
+        .map(|(step, hand_in)| {
+            step.complete_when
+                .clone()
+                .or_else(|| hand_in.as_ref().map(|(_, complete)| complete.clone()))
+        })
+        .collect();
+
     // §5.3: "`terminate_on` is a `Predicate` — normally the linked task's completion or its own
     // `complete_when`." Derived here, while every step is still in hand, because the linked task's
-    // predicate lives on a *different* survivor.
+    // predicate lives on a *different* survivor. Read only for a `Lifetime::Background`.
     let terminate_ons: Vec<Option<k::Predicate>> = (0..survivors.len())
         .map(|index| {
-            survivors[index].complete_when.clone().or_else(|| {
-                let k::CompletionSource::LinkedTo(target) = completions[index] else {
-                    return None;
-                };
-                survivors
-                    .get(target as usize)
-                    .and_then(|linked| linked.complete_when.clone())
-            })
+            hand_in_termination(complete_whens[index].as_ref(), &turned_in)
+                .or_else(|| complete_whens[index].clone())
+                .or_else(|| linked_completion(index, &completions, &complete_whens))
+        })
+        .collect();
+
+    // §7.1's `applies_when`, for the steps that did not author one. Computed alongside the other
+    // two derived vectors and before any task is built, so all three read the same survivor list.
+    //
+    // The hand-in's gate fires only where the hand-in also supplied the completion. A step that
+    // works an objective *and* hands the quest in has named its own work, and its gate is the
+    // `QuestInLog` that objective implies — not the `QuestComplete` a hand-in would ask for, which
+    // is a different and stricter claim about the same quest.
+    let applies_whens: Vec<Option<k::Predicate>> = survivors
+        .iter()
+        .zip(&hand_ins)
+        .enumerate()
+        .map(|(index, (step, hand_in))| {
+            step.applies_when
+                .clone()
+                .or_else(|| match (&step.complete_when, hand_in) {
+                    (None, Some((applies, _))) => Some(applies.clone()),
+                    _ => None,
+                })
+                .or_else(|| quest_log_gate(complete_whens[index].as_ref()))
         })
         .collect();
 
@@ -810,6 +1230,20 @@ fn assemble_tasks(
                 }
             }
 
+            let applies_when = applies_whens[index].clone();
+            let complete_when = complete_whens[index].clone();
+            // C6, and read off the lowered task rather than the authored step: the leash comes from
+            // the radii the surviving routes carry, so a step whose movement was gated out for this
+            // archetype does not leash to a circuit it no longer walks. The *effective* completion
+            // is what it reads, so `stance_for` sees the same predicate the task ends up carrying —
+            // a hand-in's derived `QuestTurnedIn` matches neither of its two arms, so no lowered
+            // policy changes, but two readings of one field would be one reading too many.
+            let combat = lower_combat(
+                &step.kills,
+                step.looping,
+                complete_when.as_ref(),
+                &step.ops,
+            );
             let completion = completions[index];
             let lifetime = lower_lifetime(
                 id,
@@ -827,8 +1261,8 @@ fn assemble_tasks(
             // task 0 serves quest 983 through `terminate_on: QuestTurnedIn(983)` as much as
             // through anything else.
             let mut predicates: Vec<&k::Predicate> = Vec::new();
-            predicates.extend(step.applies_when.as_ref());
-            predicates.extend(step.complete_when.as_ref());
+            predicates.extend(applies_when.as_ref());
+            predicates.extend(complete_when.as_ref());
             if let k::Lifetime::Background { terminate_on, .. } = &lifetime {
                 predicates.push(terminate_on);
             }
@@ -840,13 +1274,15 @@ fn assemble_tasks(
                 blocking: step.blocking,
                 lifetime,
                 completion,
-                applies_when: step.applies_when,
-                complete_when: step.complete_when,
+                applies_when,
+                // Item D: chosen from what this task does and what its completion measures, never
+                // from where it sits in the list. See `unknown_policy`.
+                unknown_policy: unknown_policy(&step.ops, complete_when.as_ref(), completion),
+                complete_when,
                 abort_when: None,
-                unknown_policy: k::UnknownPolicy::Defer { budget_ticks: 60 },
-                ops: step.ops,
                 interact_target: None,
-                combat: None,
+                combat,
+                ops: step.ops,
                 loot_filter: step.loot_filter,
                 serves_quests,
                 suppress: Vec::new(),

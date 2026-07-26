@@ -11,18 +11,28 @@
 //!
 //! # What the fixture pins, and why each one is load-bearing
 //!
-//! * **8 tasks.** §7.3.1's excerpt is eight `step` markers.
+//! * **7 tasks.** §7.3.1's excerpt is eight `step` markers and one of them is the author's
+//!   `--XXREQ` placeholder — an empty `#optional` step whose only content is a `#requires`, written
+//!   that way because RXP allows one `#requires` per step. The compiler folds it into its successor
+//!   and the dependency lands there, so eight authored steps are seven tasks. §7.3.3 still prints
+//!   eight; the fixture is the corrected specification and the ADR listing is what has to move.
 //! * **A 22-entry INTERNED waypoint pool.** One entry per distinct `(map_id, x, y, z)` over the
 //!   excerpt's 28 route lines (§7.1, §6.4). 28 would mean the pool was never deduplicated.
 //! * **Task 0 — a sticky aggressive `Circuit` with `close: true`, 17 route points, band 34.**
 //! * **Task 3 — `need: 0`.** Quest 984 has no `Req*` columns; it is an exploration objective, and
 //!   that zero is a real answer rather than a lookup failure (§7.3.2, and
 //!   `kernel::LoweringError::UnknownObjective`'s own doc comment).
-//! * **Task 4 — `deps == [2, 0]`,** the multi-dependency task.
-//! * **Task 6 — `CompletionSource::LinkedTo(7)` with EMPTY channels.** A ride-along contends for
+//! * **Task 4 — the fold, `deps == [2]`.** The placeholder's `#requires RabidThistle` survives on
+//!   the grind step it folded into.
+//! * **Task 5 — `CompletionSource::LinkedTo(6)` with EMPTY channels.** A ride-along contends for
 //!   nothing.
-//! * **Task 7 — a GAMEOBJECT turn-in, so `interact_target` is `None`,** and that is correct rather
-//!   than missing: quest 983's ender is `gameobject_involvedrelation` 17182 (§7.3.2).
+//! * **Task 6 — a GAMEOBJECT turn-in, so `interact_target` is `None`,** and that is correct rather
+//!   than missing: quest 983's ender is `gameobject_involvedrelation` 17182 (§7.3.2). Its
+//!   `applies_when` / `complete_when` pair is authored nowhere and derived from the hand-in itself
+//!   (`compiler/src/kernel/task_graph.rs::hand_in_predicates`).
+//! * **Four distinct `unknown_policy` values on seven tasks.** This is the only artifact in the
+//!   repository that shows more than one, and it is therefore the whole evidence base for §5.1.2's
+//!   per-task rule (`compiler/src/kernel/task_graph.rs::unknown_policy`).
 //!
 //! # The four fields deliberately NOT compared
 //!
@@ -34,16 +44,23 @@
 //! `tags_used` is **not** among them. §5.4 (C4) makes it a census of the op and predicate tags the
 //! artifact actually uses, so this file *computes* it from the compiled artifact with the same
 //! walk `kernel_fixture.rs::tags_used_is_an_accurate_census_of_ops_and_predicates` uses, and
-//! reports the emitted list, the computed census and the fixture's declaration side by side. A
-//! transcribed list is exactly what that arrangement catches.
+//! **fails on a disagreement**, independently of the field-by-field diff. The two checks are
+//! deliberately not nested: a census mismatch fails a run in which every other field agrees, and a
+//! field difference is still reported when the census agrees. A transcribed list is exactly what
+//! that arrangement catches, and reporting it only inside the diff's failure path would have let
+//! one ride along on a green run.
 //!
 //! # WHAT THIS TEST CANNOT SEE
 //!
 //! * **Whether the fixture is right.** It pins agreement with a document, not with the game. If
 //!   §7.3.3 and the fixture are both wrong in the same direction, this test goes green on a wrong
 //!   artifact. The one guard against that is §7.3.2, which is a database check this file does not
-//!   re-run — `MemoryQueryClient::new()` resolves nothing and [`Verified`] hard-codes the four
-//!   objective counts §7.3.2 verified.
+//!   re-run.
+//! * **A world database of eight rows.** [`Verified`] answers four objective questions and
+//!   [`verified_world`] four lookup questions, both hard-coded from §7.3.2's checks against
+//!   `tbcmangos.sqlite`, and both refuse to answer anything else. Neither re-runs that check. If a
+//!   row in either is wrong, this test agrees with the fixture about a resolution that would not
+//!   survive contact with the real database.
 //! * **The rest of the corpus.** One 70-line excerpt out of 277 guide blocks and 23,894 steps. A
 //!   lowering can satisfy every assertion here and be wrong on shapes that occur nowhere in
 //!   Darkshore — `.groundgoto`, `<<`-gated ops, cross-file label collisions, `#completewith` naming
@@ -70,6 +87,7 @@ use sentinel_models::kernel::{
     Archetype, Class, Expansion, Faction, ProfileMode, QuestId, Race,
     RuntimeProfile as KernelProfile,
 };
+use sentinel_query_types::{NpcDetail, QuestDetail};
 use sentinel_queryclient::MemoryQueryClient;
 use serde_json::Value;
 
@@ -171,6 +189,56 @@ impl QuestMeta for Verified {
     }
 }
 
+/// The world-database rows the excerpt's own commands look up, and nothing else.
+///
+/// [`Verified`] above hard-codes what `quest_template` says about the four `.complete` objectives;
+/// this is the same discipline for the other provider on the same pipeline. Four of the excerpt's
+/// commands resolve through `QueryClient` rather than through `QuestMeta` — two `.mob`
+/// (`A-11-23.lua:235-236`), one `.unitscan` (`:259`) and one `.turnin` (`:280`) — and a client that
+/// answers nothing makes all four degrade: a `.mob` to an empty whitelist and a `.turnin` to an
+/// inert `Comment`. The test then cannot observe the combat policy or the turn-in the fixture
+/// specifies, and both would look like lowering gaps.
+///
+/// Every row below is verified against `tbcmangos.sqlite`:
+///
+/// * `creature_template` 2231 `Pygmy Tide Crawler`, 2234 `Young Reef Crawler`, 2164
+///   `Rabid Thistle Bear` — the three names the excerpt's combat commands spell.
+/// * quest 983 `Buzzbox 827` with **`finisher_entry: None`**, which is the load-bearing one: 983 has
+///   no `creature_involvedrelation` row at all and is ended by `gameobject_involvedrelation` 17182
+///   (§7.3.2). That is exactly why the fixture's turn-in task carries `interact_target: null`, and a
+///   fabricated finisher NPC here would hide it.
+///
+/// Nothing else is added. The excerpt neither accepts nor turns in 984, 2118 or 3524, so a client
+/// that knew them would be answering questions the guide never asks.
+fn verified_world() -> MemoryQueryClient {
+    let creature = |entry: u32, name: &str| NpcDetail {
+        entry,
+        name: name.to_string(),
+        faction: "Beast".to_string(),
+        positions: Vec::new(),
+        roles: Vec::new(),
+    };
+    MemoryQueryClient::new()
+        .with_npc(creature(2231, "Pygmy Tide Crawler"))
+        .with_npc(creature(2234, "Young Reef Crawler"))
+        .with_npc(creature(2164, "Rabid Thistle Bear"))
+        .with_quest(QuestDetail {
+            id: 983,
+            title: "Buzzbox 827".to_string(),
+            level: 12,
+            min_level: 10,
+            required_quests: Vec::new(),
+            next_quests: Vec::new(),
+            giver_entry: None,
+            finisher_entry: None,
+            objectives: Vec::new(),
+            // Empty on purpose: a structured objective makes the importer *synthesise* the action
+            // that satisfies it, which would put ops in the artifact the excerpt never authored.
+            // What 983 objective 1 requires is `Verified`'s answer, not this one's.
+            structured_objectives: Vec::new(),
+        })
+}
+
 /// §7.3.3's archetype: "a Night Elf Hunter, Alliance, TBC, softcore, AH-permitted".
 ///
 /// Spelled out in full rather than defaulted — every field is a compile-time gate axis, and a
@@ -208,7 +276,7 @@ async fn lower_the_excerpt() -> (KernelProfile, CompileReport) {
     let project: Project = match sentinel_importer::ProjectBuilder::build(
         &parsed,
         "A-11-23.lua",
-        &MemoryQueryClient::new(),
+        &verified_world(),
     )
     .await
     {
@@ -432,7 +500,13 @@ async fn the_excerpt_lowered_end_to_end_equals_the_hand_authored_fixture() {
     // every positional entry after the divergence compares unrelated things.
     differences.sort_by_key(|difference| !difference.path.ends_with(".len()"));
 
-    if differences.is_empty() {
+    // §5.4 (C4) is an assertion here, not a footnote. `tags_used` must equal the census taken from
+    // the artifact itself, and that has to hold on a run where nothing else disagrees — otherwise
+    // the one arrangement that catches a transcribed list only ever runs when it is already too
+    // late to matter.
+    let census_disagrees = declared != census;
+
+    if differences.is_empty() && !census_disagrees {
         return;
     }
 
@@ -450,9 +524,14 @@ async fn the_excerpt_lowered_end_to_end_equals_the_hand_authored_fixture() {
         report.push_str(&format!("      {}\n", path.join(".")));
     }
     report.push_str(&format!(
-        "\n  §5.4 tag census, computed from the compiled artifact rather than read off it:\n\
+        "\n  §5.4 tag census, computed from the compiled artifact rather than read off it — {}:\n\
          \x20     emitted in `tags_used` : {declared:?}\n\
-         \x20     actually used         : {census:?}\n"
+         \x20     actually used         : {census:?}\n",
+        if census_disagrees {
+            "DISAGREES, which fails this test on its own"
+        } else {
+            "agrees"
+        }
     ));
     report.push_str(&format!(
         "\n  {} differences, fixture -> compiled (count mismatches first):\n",

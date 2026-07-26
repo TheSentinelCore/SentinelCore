@@ -279,6 +279,65 @@ step
 }
 
 #[tokio::test]
+async fn unitscan_reaches_a_carrier_and_carries_the_database_name() {
+    // `.unitscan` (735 uses) had no carrier at all: it fell through to the inert-Comment path, so
+    // ADR 07 §5.6's `CombatPolicy::watch_units` was underivable and §7.3.3 task 2 — whose ONLY
+    // combat command is a `.unitscan` — could not get a policy at all.
+    //
+    // The name is asserted as the world database's spelling rather than the authored one, because
+    // §5.4.1's first-touch probe compares an observed unit against it: `.unitscan rabid thistle
+    // bear` resolves case-insensitively, and carrying the authored casing forward would fail the
+    // probe against the very creature it names.
+    //
+    // WHAT THIS TEST CANNOT SEE: what the compiler does with `watch`. That it becomes
+    // `watch_units` and not `targets` alone is `compiler/tests/kernel_combat_policy.rs`, and that
+    // it stays inert on the ADR-05 path is `compiler/tests/compiler.rs`.
+    const GUIDE: &str = r#"RXPGuides.RegisterGuide([[
+#version 1
+#name Unitscan Test
+step
+    .mob Rabid Thistle Bear
+    .unitscan rabid thistle bear
+]])"#;
+
+    let guide = parse_guide(GUIDE).expect("parses");
+    let client = MemoryQueryClient::new().with_npc(sentinel_queryclient::NpcDetail {
+        entry: 2164,
+        name: "Rabid Thistle Bear".to_string(),
+        faction: "Beast".to_string(),
+        positions: vec![],
+        roles: vec![],
+    });
+    let project = sentinel_importer::ProjectBuilder::build(&guide, "unitscan.lua", &client)
+        .await
+        .expect("builds");
+
+    let kills: Vec<&sentinel_models::authoring::KillTargetAction> = project
+        .operations
+        .iter()
+        .flat_map(|o| &o.actions)
+        .filter_map(|a| match &a.payload {
+            sentinel_models::authoring::ActionPayload::Kill(k) => Some(k),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(kills.len(), 2, "got: {kills:?}");
+    assert!(!kills[0].watch, "`.mob` is a whitelist entry, got: {:?}", kills[0]);
+    assert!(kills[1].watch, "`.unitscan` is a watch, got: {:?}", kills[1]);
+    for kill in &kills {
+        assert_eq!(
+            kill.creatures,
+            vec![sentinel_models::authoring::CreatureRef {
+                entry: 2164,
+                name: "Rabid Thistle Bear".to_string(),
+            }],
+            "got: {kill:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn goto_converts_zone_percentages_to_world_coordinates() {
     // RestedXP writes `.goto <zone>,<x%>,<y%>` — zone-relative percentages, not world coords. The
     // importer stored them raw in world_x/world_y alongside a CONTINENT id, so all 522 Travel

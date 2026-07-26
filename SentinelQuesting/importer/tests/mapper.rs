@@ -1074,7 +1074,11 @@ step
 
     assert_eq!(expr(0), "LevelAtLeast(14)", ".xp 14");
     assert_eq!(role(0), ConditionRole::Completion, ".xp 14 is a wait-until-true gate");
-    assert_eq!(expr(1), "LevelAtLeast(14)", ".xp 14+520 treats the +XP tail as level 14");
+    // `.xp 14+520` is "520 XP into level 14", and the tail is the whole point of the line: the
+    // author writes the threshold he wants, and stopping at the level boundary stops 520 XP short of
+    // it. This used to assert `LevelAtLeast(14)` — the dropped-offset bug — and `xp_gate_dsl`'s docs
+    // carry the measured grammar and the corpus witnesses.
+    assert_eq!(expr(1), "XpAtLeast(14,520)", ".xp 14+520 keeps the sub-level XP offset");
     assert_eq!(role(1), ConditionRole::Completion, ".xp 14+520");
 
     // No inert-preserve diagnostic: these are typed now.
@@ -1087,9 +1091,18 @@ step
 
 #[tokio::test]
 async fn xp_skip_variants_stay_inert_with_a_diagnostic() {
-    // `<N,1` / `>N,1` are RestedXP skip-step variants (1416x / 603x in the corpus) whose
-    // semantics are out of scope for the level-gate work — they must remain never-dropped
-    // inert Comments carrying a diagnostic, exactly as before.
+    // The comparison forms are RestedXP *skip-step* variants — "skip this step if the player is
+    // already past this", the trailing `1` being the skip flag rather than a count. Read as
+    // thresholds they would invert 2,025 steps into wait-forever gates, so they stay never-dropped
+    // inert Comments carrying a diagnostic.
+    //
+    // All four inert shapes the corpus contains, by measured frequency: `<N,1` (1,416), `>N,1`
+    // (603), the offset-bearing `<N+M,1` / `>N+M,1` (4), and the two percentage spellings (`9.65,1`,
+    // `19.95,1`), whose own note reads "Skips step if you are above 19.95%".
+    //
+    // `.xp 30-1500` used to sit in this list. It is **not** a skip variant — no comparison, no flag —
+    // and it now lowers to `XpAtLeast(30,-1500)`; see `xp_gate_dsl`'s docs and
+    // `kernel_authored_predicates.rs::an_xp_gate_authored_as_a_deficit_lowers_to_a_negative_offset`.
     let client = MemoryQueryClient::new();
     let guide = r#"
 RXPGuides.RegisterGuide([[
@@ -1100,12 +1113,14 @@ step
 step
     .xp >42,1
 step
-    .xp 30-1500
+    .xp <10+7405,1
+step
+    .xp 9.65,1
 ]])"#;
     let parsed = parse_guide(guide).expect("parse ok");
     let project = ProjectBuilder::build(&parsed, "test.lua", &client).await.expect("build ok");
 
-    for op_idx in 0..3 {
+    for op_idx in 0..4 {
         let action = &project.operations[op_idx].actions[0];
         assert!(
             matches!(action.payload, ActionPayload::Comment(_)),

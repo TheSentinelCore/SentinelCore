@@ -5,9 +5,9 @@
 //! `MAX_CONDITION_DEPTH` and `MAX_CONDITION_TOKENS`, which close a network-reachable
 //! stack-overflow DoS on the editor's `/compile` endpoint, in one place for both target models.
 
-use sentinel_models::kernel::{Cmp, Predicate, QuestId};
+use sentinel_models::kernel::{AreaKind, Cmp, Predicate, QuestId};
 
-use crate::condition::{as_u32, as_u8, parse_with, ConditionParseError, ConditionSink};
+use crate::condition::{as_i32, as_u32, as_u8, parse_with, ConditionParseError, ConditionSink};
 
 use super::LoweringError;
 
@@ -117,7 +117,7 @@ impl ConditionSink for KernelSink<'_> {
         }
     }
 
-    fn leaf(&self, name: &str, args: &[u64]) -> Result<Predicate, LeafError> {
+    fn leaf(&self, name: &str, args: &[i64]) -> Result<Predicate, LeafError> {
         Ok(match (name, args) {
             // The three quest states are distinct and all three are needed: a resumed run cannot
             // tell "handed in" from "never taken" without QuestTurnedIn, nor "objectives met" from
@@ -130,6 +130,37 @@ impl ConditionSink for KernelSink<'_> {
             ("LevelAtLeast", [level]) => {
                 Predicate::LevelAtLeast { level: as_u8(*level, "level")? }
             }
+            // `.xp <level>±<offset>` — one statement, `total_xp >= start_of_level(level) + offset`,
+            // and the sign is the author's. `A-11-23.lua:271` writes `+6760` of level 10's 7,600 and
+            // `A-1-11-Draenei.lua:141` writes `-420` of level 4's 1,400; §5.1.1 types the field
+            // `i32` for exactly that pair. The importer used to split on `+` and keep only the
+            // level, which is why this arm exists at all — a `LevelAtLeast` here silently discards
+            // 89% of a level's grind.
+            //
+            // The offset-free `.xp N` is this predicate with `xp_offset: 0`, and it deliberately
+            // still arrives as `LevelAtLeast(N)`: see `project_builder::xp_gate_dsl`.
+            ("XpAtLeast", [level, offset]) => Predicate::XpAtLeast {
+                level: as_u8(*level, "level")?,
+                xp_offset: as_i32(*offset, "xp offset")?,
+            },
+            // `.subzone <area>` — a set test on an **AreaTable id**, never a UiMapID.
+            //
+            // The two numeric spaces overlap (`AreaTable` 1443 is `The Slag Pit` in Searing Gorge;
+            // `ZONE_TABLE` 1443 is the Desolace UiMapID on another continent), so resolving this
+            // payload through `sentinel_models::zone::zone_map_for` yields a plausible answer in the
+            // wrong place instead of an error. Nothing on this path may consult that table —
+            // `kernel_authored_predicates.rs::a_subzone_id_that_is_also_a_ui_map_id_is_not_translated`
+            // pins it.
+            //
+            // `AreaKind` records **which command was authored**, not `AreaTable`'s parent column:
+            // 135 of the 991 `.subzone` uses name an area whose parent is 0 (instance entrances such
+            // as `.subzone 209`, Shadowfang Keep), so a parent-derived kind would disagree with the
+            // author on every one of them. There is no `InZone` arm because no corpus `.zone` line
+            // supplies an AreaTable id to put in one — see the test module below.
+            ("InSubArea", [area]) => Predicate::InArea {
+                area: as_u32(*area, "area id")?,
+                kind: AreaKind::SubArea,
+            },
             ("ItemCount", [item, n]) => Predicate::ItemCount {
                 id: as_u32(*item, "item id")?,
                 cmp: Cmp::Ge,
@@ -218,5 +249,70 @@ mod tests {
             "`ItemCount(item,1)` is the sanctioned replacement and must still lower"
         );
         assert!(parse_condition("ItemCount(5385,1)").is_ok());
+    }
+
+    /// The two sinks must both accept `XpAtLeast`, and for opposite reasons.
+    ///
+    /// The kernel sink accepts it because that is where the offset lands. The ADR-05 sink accepts it
+    /// because refusing it would make `Compiler::compile` record `UNMAPPED_CONDITION` and fail open
+    /// to `AlwaysTrue` on 56 corpus lines — an always-true *completion* gate, i.e. a grind step that
+    /// finishes before it starts. It maps to `LevelAtLeast`, which is exactly what those lines
+    /// already produced on that path, and `condition.rs`'s arm says so at length.
+    #[test]
+    fn xp_at_least_is_accepted_by_both_sinks_and_only_one_keeps_the_offset() {
+        assert_eq!(
+            lower_predicate("XpAtLeast(10,6760)", &NoMeta).unwrap(),
+            sentinel_models::kernel::Predicate::XpAtLeast { level: 10, xp_offset: 6760 }
+        );
+        assert_eq!(
+            lower_predicate("XpAtLeast(4,-420)", &NoMeta).unwrap(),
+            sentinel_models::kernel::Predicate::XpAtLeast { level: 4, xp_offset: -420 },
+            "the sign must survive tokenisation; `-` is a literal sign in this grammar"
+        );
+        assert!(
+            parse_condition("XpAtLeast(10,6760)").is_ok(),
+            "the ADR-05 sink must map it rather than fail open on a completion gate"
+        );
+    }
+
+    /// A negative may only appear where a signed field takes it.
+    ///
+    /// Widening the parser's arguments to `i64` is what let `-420` through, and the risk of that
+    /// change is that every other leaf silently gained a meaning for negatives. `as_u32` / `as_u8`
+    /// are what stop it, and this is the test that they are actually in the path.
+    #[test]
+    fn a_negative_argument_is_refused_everywhere_it_cannot_be_held() {
+        for expression in ["QuestAccepted(-1)", "LevelAtLeast(-3)", "ItemCount(-5385,1)"] {
+            assert!(
+                lower_predicate(expression, &NoMeta).is_err(),
+                "`{expression}` must not lower: none of those fields is signed"
+            );
+            assert!(parse_condition(expression).is_err(), "`{expression}`, ADR-05 sink");
+        }
+    }
+
+    /// There is no `InZone` arm, and its absence is a measurement rather than an oversight.
+    ///
+    /// `AreaKind::Zone` is a real vocabulary member and `.zone` is the command that means it — but
+    /// over the whole corpus, 1,037 of 1,063 `.zone` uses name the zone in words
+    /// (`.zone Redridge Mountains`), and 25 of the remaining 26 carry a UiMapID that `AreaTable.dbc`
+    /// does not contain (`.zone 1415` is `Azeroth`/`Eastern Kingdoms`). The 26th is `.zone 721,2`,
+    /// the two-argument form whose second field the corpus never explains. So there is no `.zone`
+    /// line anywhere that hands the compiler a bare AreaTable id, and an `InZone` arm would exist
+    /// only to be fed the wrong id space — the failure mode `InSubArea`'s own doc comment describes.
+    ///
+    /// This mirrors `has_item_is_refused_by_both_sinks`: a sink arm for an input nothing produces is
+    /// how the two sinks drift apart.
+    #[test]
+    fn in_zone_is_refused_by_both_sinks() {
+        assert!(
+            matches!(
+                lower_predicate("InZone(1415)", &NoMeta),
+                Err(LoweringError::UnmappablePredicate { .. })
+            ),
+            "nothing emits `InZone`; adding an arm needs a `.zone` line that supplies an AreaTable \
+             id, and the corpus has none"
+        );
+        assert!(parse_condition("InZone(1415)").is_err());
     }
 }

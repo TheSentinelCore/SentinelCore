@@ -66,10 +66,11 @@ pub enum Token {
 
 /// Strip a trailing `--` dev comment from a command's args portion.
 ///
-/// Re-exported from [`sentinel_models::source`], not defined here: the compiler's ADR-07 movement
-/// lowering (`kernel::parse_movement`) obeys the same rule over the same corpus lines, and two
-/// implementations of one lexical rule can disagree. Also applied to `step` marker tails by
-/// [`parse_step_gate`](crate::guide_splitter::parse_step_gate).
+/// Re-exported from [`sentinel_models::source`], not defined here: two implementations of one
+/// lexical rule can disagree. This is the only ingest that applies it to movement lines — the
+/// coordinate transform ([`sentinel_models::movement::resolve_coordinate`]) takes fields, not a
+/// line, precisely so a third copy of the prose rules cannot appear beside it. Also applied to
+/// `step` marker tails by [`parse_step_gate`](crate::guide_splitter::parse_step_gate).
 pub(crate) use sentinel_models::source::strip_inline_dev_comment;
 
 /// Extract a trailing `<< ClassName` / `<< Class1/Class2` / `<< !Class` suffix (IF3) from the

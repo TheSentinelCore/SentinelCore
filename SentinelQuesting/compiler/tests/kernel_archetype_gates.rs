@@ -1345,6 +1345,8 @@ fn travel(destination: &str) -> Action {
             position: None,
             tolerance: 5.0,
             authored_radius: None,
+            medium: Default::default(),
+            source_line: None,
             mount: None,
             allow_flight: false,
             timeout: None,

@@ -228,13 +228,21 @@ impl Compiler {
     /// [`kernel::lower_task_graph`], which owns the ordering constraints between them. Label names
     /// are a symbol table and are consumed there: nothing carries one into the artifact.
     ///
+    /// # And C6, and the header
+    ///
+    /// `.mob` / `.unitscan` become a per-task [`CombatPolicy`](sentinel_models::kernel::CombatPolicy)
+    /// wherever the derived policy differs from `defaults.combat` (`kernel::combat`), and
+    /// `#name` / `#group` / `#subgroup` / `#version` / `#next` become
+    /// [`GuideMeta`](sentinel_models::kernel::GuideMeta) with each entry's gate resolved against the
+    /// same archetype (`kernel::meta`).
+    ///
     /// # What it still does not do
     ///
-    /// The two digests, `tags_used`, per-task combat policy, `abort_when`, `interact_target`,
-    /// `serves_quests`, `suppress` and `jump_to`; routes are lowered only from a `Travel` action's
-    /// own resolved `Position`, with no circuit collapse. The report still carries a
-    /// `KERNEL_PROFILE_INCOMPLETE` warning naming each gap, so no caller can mistake this for a
-    /// shippable artifact.
+    /// The two digests, `abort_when`, `interact_target`, `suppress` and `jump_to`; routes are
+    /// lowered only from a `Travel` action's own resolved `Position`, with no circuit collapse, and
+    /// `UnknownPolicy` is `Defer { 60 }` on every task rather than chosen per §5.1.2. The report
+    /// still carries a `KERNEL_PROFILE_INCOMPLETE` warning naming each gap, so no caller can mistake
+    /// this for a shippable artifact.
     ///
     /// [`kernel::lower_task_graph`]: kernel::lower_task_graph
     pub fn compile_kernel(
@@ -249,11 +257,13 @@ impl Compiler {
             code: "KERNEL_PROFILE_INCOMPLETE".to_string(),
             message:
                 "kernel lowering is partial: archetype gates are resolved and the task graph carries \
-                 ops, dependency edges, lifetimes, completion links and the `.complete` / `.isOnQuest` \
-                 predicates, but no task carries a combat policy, an abort predicate or an interact \
-                 target, the waypoint pool holds only positions the importer had already resolved with \
-                 no circuit collapse, `tags_used` is empty, and `schema_hash` / `content_hash` are \
-                 zero placeholders rather than computed digests. Do not execute this artifact."
+                 ops, dependency edges, lifetimes, completion links, the `.complete` / `.isOnQuest` \
+                 predicates, the derived quest-log gate, hand-in pair and hand-in termination, the \
+                 per-task §5.1.2 unknown-policy, the guide header and the C6 combat policy — but no \
+                 task carries an abort predicate or an interact target, the waypoint pool holds only \
+                 positions the importer had already resolved with no circuit collapse, and \
+                 `schema_hash` / `content_hash` are zero placeholders rather than computed digests. \
+                 Do not execute this artifact."
                     .to_string(),
             entity: Some(project.metadata.name.clone()),
             action: None,
@@ -262,6 +272,7 @@ impl Compiler {
         let mut pool = kernel::WaypointPool::default();
         let tasks =
             kernel::lower_task_graph(project, archetype, &mut pool, meta, &mut diagnostics)?;
+        let guide_meta = kernel::lower_guide_meta(project, archetype, &mut diagnostics)?;
 
         let profile = k::RuntimeProfile {
             magic: k::MAGIC,
@@ -276,30 +287,20 @@ impl Compiler {
                 world_build: String::new(),
             },
             archetype: archetype.clone(),
-            meta: k::GuideMeta {
-                name: project.metadata.name.clone(),
-                // `#group` / `#subgroup` / `#next` are guide-pack directives that live in the
-                // RestedXP source; the ADR-02 project does not carry them, so they are left empty
-                // rather than invented from an unrelated project field.
-                group: String::new(),
-                subgroup: None,
-                source_version: 0,
-                next: Vec::new(),
-            },
+            meta: guide_meta,
             defaults: k::ProfileDefaults {
                 // §5.6: `Defensive` is the profile-level default — 16,438 of 23,894 corpus tasks
-                // carry no combat token at all.
-                combat: k::CombatPolicy {
-                    stance: k::CombatStance::Defensive,
-                    targets: Vec::new(),
-                    watch_units: Vec::new(),
-                    leash_yards: 0,
-                    allow_adds: false,
-                    expect_group: k::GroupExpectation::Solo,
-                },
+                // carry no combat token at all. Taken from the same function the per-task lowering
+                // measures its override against (`kernel::combat`), because "the task wants exactly
+                // the default" is decided by comparing the two and two transcriptions of one policy
+                // would make every task carry a redundant copy of it.
+                combat: kernel::default_combat_policy(),
                 // §5.1.2: `Defer` is the compiler's default for `complete_when`; 60 ticks is the
-                // budget §7.3.3 uses.
-                unknown_policy: k::UnknownPolicy::Defer { budget_ticks: 60 },
+                // budget §7.3.3 uses. Taken from the same constant the per-task rule falls back to
+                // (`kernel::task_graph::unknown_policy`), because an artifact whose `defaults`
+                // block disagrees with the value its ordinary tasks carry states §5.1.2 twice and
+                // differently inside one file.
+                unknown_policy: kernel::default_unknown_policy(),
             },
             waypoint_pool: pool.into_points(),
             tasks,
@@ -422,6 +423,17 @@ fn resolve_action(
             RuntimeAction::Hearth(RuntimeHearth {
                 innkeeper_entry: h.innkeeper.and_then(|u| npc_uuid_to_entry.get(&u).copied()),
                 destination: h.destination.clone(),
+            })
+        }
+        // A `.unitscan` watch is INERT on this path, and deliberately so. `.unitscan` reached no
+        // authoring carrier at all until the ADR-07 combat policy needed it (§5.6 fills
+        // `CombatPolicy::watch_units` from it); before that the importer preserved it as a bare
+        // `Comment`, and the live runtime has never killed anything because of one. Lowering it to
+        // a `RuntimeAction::Kill` now would give 735 corpus lines new execution behaviour as a side
+        // effect of an additive kernel field, so it stays what it was.
+        ActionPayload::Kill(k) if k.watch => {
+            RuntimeAction::Comment(RuntimeComment {
+                text: format!(".unitscan {}", k.creature_entries.iter().map(u32::to_string).collect::<Vec<_>>().join(",")),
             })
         }
         ActionPayload::Kill(k) => {

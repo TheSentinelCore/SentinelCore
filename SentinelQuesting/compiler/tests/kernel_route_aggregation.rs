@@ -38,14 +38,30 @@
 //! the two halves of all 568 turn-in-separated steps until the day `TurnIn` lands, then silently
 //! split them again.
 //!
+//! **A medium change is a run boundary too.** `.groundgoto` then `.goto` inside one step is not a
+//! contradiction — it is "climb this on the ground, then travel to there", two routes. It used to be
+//! `LoweringError::MixedTravelModes`, a refusal that aborted the whole compile: measured, that made
+//! **9 of the 277 guide blocks produce no artifact at all**, costing ~1,675 Travel ops, to yield
+//! `ground=3, air=0` corpus-wide. Splitting instead loses nothing and keeps every medium the author
+//! wrote.
+//!
+//! # One route builder, and it is this one
+//!
+//! There used to be two. `kernel::route::lower_route` held the medium logic and was called only from
+//! tests; `task_graph::flush_route` re-implemented route building for the pipeline and hardcoded
+//! `mode: TravelMode::Any`. The medium mapping was therefore unreachable from any compile, and
+//! roughly five tests pinned a function no artifact was ever built by. `flush_route` is now an
+//! adapter — surviving travel actions in, [`Movement`]s out — and `lower_route` is the only thing
+//! that decides a route's kind, its medium, its indices and where one route ends and the next
+//! begins. Everything below drives it the way a compile does, through `Compiler::compile_kernel`.
+//!
 //! # WHAT THESE TESTS CANNOT SEE
 //!
 //! * **Whether a coordinate is right.** Every fixture below is compared by pool index and route
 //!   length. `shared/tests/zone_table.rs` owns the transform's accuracy against real spawns.
-//! * **`.groundgoto` / `.flygoto`.** `ProjectBuilder` does not lower them to a travel action at all,
-//!   so no route this compiler builds can be `Ground` or `Air` yet, and the 27 corpus steps that
-//!   mix travel media inside one step are unreachable from here. Refusal of a mixed-medium route
-//!   lives in `kernel::lower_route` and is pinned by `kernel_lowering.rs`.
+//! * **The coordinate transform.** Which of the two authored coordinate systems a line is written
+//!   in, and what a malformed line does, is `sentinel_models::movement::resolve_coordinate` and is
+//!   pinned end-to-end in `compiler/tests/kernel_coordinates.rs`.
 //! * **The runtime.** Whether the engine actually walks a `Circuit` repeatedly, or honours a
 //!   0-yard arrival radius, is ADR 08 behaviour. Nothing here executes.
 //! * **Route-level collapse (§2.6).** A single step emitting the same coordinate twice — once
@@ -53,13 +69,13 @@
 //!   deliverable and `a_route_that_recrosses_a_point_repeats_the_index` below deliberately pins the
 //!   un-collapsed length.
 
+use sentinel_compiler::kernel::QuestMeta;
 use sentinel_compiler::{CompileReport, Compiler};
 use sentinel_models::authoring::{Class, Faction, Project, Race};
 use sentinel_models::kernel::{
     Archetype, Expansion, Op, ProfileMode, QuestId, Route, RouteKind, RuntimeProfile as KernelProfile,
     TravelMode,
 };
-use sentinel_compiler::kernel::QuestMeta;
 use sentinel_queryclient::{MemoryQueryClient, QuestDetail};
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -253,6 +269,78 @@ step
     .complete 3524,1
 ]])";
 
+/// A run of `.groundgoto` — the medium-forcing command, at the shape
+/// `The Burning Crusade.lua:8158` writes it, re-authored over Darkshore percentages so the zone
+/// resolves against the measured table and the fixture is about the medium.
+const GROUND_RUN: &str = "\
+RXPGuides.RegisterGuide([[
+#name 10-14 Darkshore
+step
+    .groundgoto 1439,36.051,44.757,20,0
+    .groundgoto 1439,36.280,50.071,20,0
+    .complete 983,1
+]])";
+
+/// The corpus's mixed-medium shape: `The Burning Crusade.lua:8158-8159` is a `.groundgoto` up the
+/// tower at Naphthal'ar immediately followed by a `.goto`. Measured, 27 movement runs in the corpus
+/// mix media this way and all 27 are in that file.
+const MIXED_MEDIA: &str = "\
+RXPGuides.RegisterGuide([[
+#name 10-14 Darkshore
+step
+    .groundgoto 1439,36.051,44.757,20,0
+    .goto 1439,36.280,50.071
+    .complete 983,1
+]])";
+
+/// A run that changes medium **twice**, so the split cannot be mistaken for "the first line decides
+/// and the rest is one remainder".
+const MIXED_MEDIA_TWICE: &str = "\
+RXPGuides.RegisterGuide([[
+#name 10-14 Darkshore
+step
+    .groundgoto 1439,36.051,44.757,20,0
+    .groundgoto 1439,36.280,50.071,20,0
+    .goto 1439,35.275,53.464
+    .goto 1439,36.091,51.501
+    .groundgoto 1439,37.115,52.368,20,0
+    .complete 983,1
+]])";
+
+/// Two steps sending the player to the byte-identical coordinate — the `A-11-23.lua:115` /
+/// `A-11-23.lua:122` shape, where the pool must deduplicate *across* tasks (§6.4).
+const SHARED_POINT: &str = "\
+RXPGuides.RegisterGuide([[
+#name 10-14 Darkshore
+step
+    .goto 1437,4.370,56.762
+    .complete 983,1
+step
+    .goto 1437,4.370,56.762
+    .complete 3524,1
+]])";
+
+/// A movement line whose coordinate the importer cannot resolve.
+///
+/// `The Burning Crusade.lua:94241` and `:94815` — `.goto 81,53.21,32.48`. Field 0 carries no `/`, so
+/// it names a zone, and `81` is not a UiMapID: the corpus's numeric zone spellings are the two
+/// contiguous blocks based at 1411 (vanilla) and 1941 (TBC), and `shared/tests/zone_table.rs`
+/// asserts `zone_map_for("81")` is `None` by name. The action therefore arrives carrying
+/// `position: None` plus an `UNMAPPED_GOTO_ZONE` diagnostic. Measured, these two lines are the
+/// **only** two unresolvable coordinates left in the whole corpus — this fixture used to be
+/// `.goto 1439/1,579.500,5240.300`, which was unresolvable for a defect rather than a reason (929
+/// raw-world lines were dropped by a zone lookup that had never heard of them) and now lowers.
+///
+/// The step still holds a surviving action, so it is a task; what it does not hold is anywhere to
+/// go.
+const UNRESOLVABLE_COORDINATE: &str = "\
+RXPGuides.RegisterGuide([[
+#name 10-14 Darkshore
+step
+    .goto 81,53.21,32.48
+    .complete 983,1
+]])";
+
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // The run
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -392,6 +480,120 @@ async fn a_route_built_from_goto_and_waypoint_commits_to_no_travel_medium() {
     );
 }
 
+#[tokio::test]
+async fn a_groundgoto_run_lowers_to_a_ground_forced_route() {
+    let (profile, _report) = lower(GROUND_RUN).await;
+
+    assert_eq!(
+        only_route(&profile, 0).mode,
+        TravelMode::Ground,
+        "§4.2 rules `.groundgoto` (114) KEEP and §7.1 maps it to `Op::Travel {{ mode: Ground }}`. \
+         It exists to *override* the engine's preferred line where that line threads mountain \
+         paths, caves and stairs (§5.7), so a route that forgets the medium has kept the \
+         coordinates and thrown away the instruction they were written to carry. got: {:?}",
+        only_route(&profile, 0).mode
+    );
+}
+
+#[tokio::test]
+async fn a_medium_change_inside_a_step_splits_the_run_rather_than_refusing_it() {
+    // `The Burning Crusade.lua:8158-8159` — `.groundgoto Terokkar Forest,43.46,22.31,20,0` then
+    // `.goto Terokkar Forest,43.40,22.10`, the walk up the tower at Naphthal'ar. That is not a
+    // contradiction to be refused: it is *two routes*, "climb this on the ground, then travel to
+    // there", and a medium change is a run boundary exactly as an intervening op already is.
+    //
+    // This used to be `LoweringError::MixedTravelModes`, a whole-compile refusal. Measured, it made
+    // 9 of the corpus's 277 guide blocks produce **no artifact at all**, costing ~1,675 Travel ops
+    // to yield `ground=3, air=0` corpus-wide — strictly worse than emitting nothing on those 9
+    // blocks would have been, because the other ~500 coordinates in each of them died too.
+    let (profile, _report) = lower(MIXED_MEDIA).await;
+
+    let routes = routes(&profile, 0);
+    assert_eq!(
+        routes.len(),
+        2,
+        "the run must split at the medium change, not collapse to one route and not abort the \
+         compile. got: {routes:?}"
+    );
+    assert_eq!(
+        (routes[0].mode, routes[1].mode),
+        (TravelMode::Ground, TravelMode::Any),
+        "each half keeps the medium its own lines demanded, in authored order — `.groundgoto` \
+         first, the `.goto` that could not join it second. Flattening to one medium drops a \
+         `.groundgoto`'s whole reason for existing: it overrides the engine's preferred line where \
+         that line threads mountain paths, caves and stairs (§5.7). got: {routes:?}"
+    );
+    assert_eq!(
+        (routes[0].points.len(), routes[1].points.len()),
+        (1, 1),
+        "no coordinate is lost to the split: two authored lines, two one-point routes. got: \
+         {routes:?}"
+    );
+    assert_eq!(
+        (routes[0].radii.as_slice(), routes[1].radii.as_slice()),
+        ([20].as_slice(), [5].as_slice()),
+        "and each half keeps the radius its own line authored — 20 on the `.groundgoto`, the \
+         importer's 5-yard default on the radius-less `.goto`. got: {routes:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_run_that_changes_medium_twice_splits_at_every_change() {
+    let (profile, _report) = lower(MIXED_MEDIA_TWICE).await;
+
+    let routes = routes(&profile, 0);
+    let shape: Vec<(TravelMode, usize, RouteKind)> = routes
+        .iter()
+        .map(|route| (route.mode, route.points.len(), route.kind))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (TravelMode::Ground, 2, RouteKind::Corridor),
+            (TravelMode::Any, 2, RouteKind::Corridor),
+            (TravelMode::Ground, 1, RouteKind::Destination),
+        ],
+        "the boundary is *every* medium change, not just the first — and each segment's kind is \
+         decided from the segment, so a one-line tail is a `Destination` and not a one-point \
+         `Corridor`. got: {routes:?}"
+    );
+
+    let total: usize = routes.iter().map(|route| route.points.len()).sum();
+    assert_eq!(
+        total, 5,
+        "five authored movement lines, five route points: splitting reorganises a run, it never \
+         drops from one. got: {routes:?}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// A run with nowhere to go emits no op
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn a_movement_run_that_resolves_to_no_point_emits_no_travel_op() {
+    let (profile, _report) = lower(UNRESOLVABLE_COORDINATE).await;
+
+    assert_eq!(
+        op_tags(&profile, 0),
+        Vec::<String>::new(),
+        "every movement line in this step arrived without a resolved position, so the route has no \
+         points. An `Op::Travel` carrying an empty route names nowhere to go: the runner cannot \
+         satisfy it, and it can never complete. §7.3.3's own tasks 4 and 5 print `ops: []` for \
+         exactly this — a task that travels nowhere emits no travel. Measured, a whole-corpus \
+         compile now emits 14,366 `Op::Travel`s and not one of them carries an empty route. got: \
+         {:?}",
+        op_tags(&profile, 0)
+    );
+
+    assert!(
+        !profile.tags_used.iter().any(|tag| tag == "Travel"),
+        "an empty travel op also puts `Travel` into the §5.4 (C4) tag census, so a fail-closed \
+         loader is made to implement a tag for work the artifact does not contain. got: {:?}",
+        profile.tags_used
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // The pool
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -417,6 +619,62 @@ async fn a_route_that_recrosses_a_point_repeats_the_index_and_keeps_its_length()
         13,
         "17 route lines over 13 distinct coordinates: four of the circuit's points are visited \
          twice. A pool of 17 would mean it was never interned. got: {:?}",
+        profile.waypoint_pool
+    );
+}
+
+#[tokio::test]
+async fn no_two_waypoint_pool_entries_hold_the_same_coordinate() {
+    let (profile, _report) = lower(CIRCUIT).await;
+
+    // `Point` is only `PartialEq` (it carries `f32`), so a hash/sort key would have to be invented
+    // here; the pairwise scan compares the same values the invariant is stated over. This mirrors
+    // `shared/tests/kernel_fixture.rs::no_two_waypoint_pool_entries_hold_the_same_coordinate`,
+    // which pins the same invariant on the committed §7.3.3 fixture.
+    let duplicates: Vec<String> = profile
+        .waypoint_pool
+        .iter()
+        .enumerate()
+        .filter_map(|(later, point)| {
+            let first = profile.waypoint_pool[..later]
+                .iter()
+                .position(|earlier| earlier == point)?;
+            Some(format!(
+                "slots {first} and {later} both hold (map {}, {}, {}, z {:?})",
+                point.map_id, point.x, point.y, point.z
+            ))
+        })
+        .collect();
+
+    assert!(
+        duplicates.is_empty(),
+        "the pool holds each distinct (map_id, x, y, z) exactly once (§6.4, §7.1). {} of the {} \
+         entries lowered from A-11-23.lua:211-237 repeat an earlier entry:\n  {}",
+        duplicates.len(),
+        profile.waypoint_pool.len(),
+        duplicates.join("\n  ")
+    );
+}
+
+#[tokio::test]
+async fn a_point_shared_between_two_steps_is_pooled_once() {
+    // Interning spans tasks, not just routes (§6.4: the pool "deduplicates shared points across
+    // tasks"). `A-11-23.lua:115` and `A-11-23.lua:122` are two different steps that both send the
+    // player to the byte-identical Wetlands coordinate.
+    let (profile, _report) = lower(SHARED_POINT).await;
+
+    let first = only_route(&profile, 0);
+    let second = only_route(&profile, 1);
+    assert_eq!(
+        first.points, second.points,
+        "the same coordinate authored in two steps must resolve to the same pool index. \
+         got: {:?} and {:?}",
+        first.points, second.points
+    );
+    assert_eq!(
+        profile.waypoint_pool.len(),
+        1,
+        "two routes over one coordinate is one pool entry. got: {:?}",
         profile.waypoint_pool
     );
 }

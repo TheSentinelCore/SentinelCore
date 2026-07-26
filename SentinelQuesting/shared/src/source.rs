@@ -5,20 +5,19 @@
 //! * `>> …` — the display text shown to the player.
 //! * `-- …` — a dev comment (`.complete 983,1 --Crawler Leg (6)`).
 //!
-//! Both markers are stripped before a line's arguments are parsed, and *both* ingests have to do
-//! it: `sentinel-importer` lexing a guide into the ADR-02 project, and `sentinel-compiler` lowering
-//! a `kernel::SourceLine` into the ADR-07 kernel artifact. This module holds the `--` rule so there
-//! is one implementation rather than two that can drift — the same reason [`crate::zone`] holds the
-//! one measured zone table.
+//! Both markers are stripped before a line's arguments are parsed. `sentinel-importer`'s lexer is
+//! the only ingest that reads a guide *line*, and this module holds the `--` rule so a second
+//! implementation cannot appear beside it — the same reason [`crate::zone`] holds the one measured
+//! zone table and [`crate::movement`] the one coordinate transform. (The compiler had exactly such
+//! a second copy, in a `parse_movement` no compile ever called.)
 
 /// Strip a trailing `--` dev comment from a command's args portion. The `--` marker never appears
 /// in a valid numeric/id arg, so truncating at its first occurrence is unambiguous.
 ///
 /// Applied by the importer to every command's args and to `step` marker tails
-/// (`lexer::lex_body_line`, `guide_splitter::parse_step_gate`), and by the compiler to every
-/// movement line (`kernel::parse_movement`). 38 corpus movement lines carry one, and a lowering
-/// that skips this refuses all 38 as malformed numbers — `.goto 1439,42.017,58.866,0 --NE spawn`
-/// reads its arrival radius as `0 --NE spawn`.
+/// (`lexer::lex_body_line`, `guide_splitter::parse_step_gate`). 38 corpus movement lines carry one,
+/// and a lowering that skips this refuses all 38 as malformed numbers —
+/// `.goto 1439,42.017,58.866,0 --NE spawn` reads its arrival radius as `0 --NE spawn`.
 pub fn strip_inline_dev_comment(s: &str) -> &str {
     match s.find("--") {
         Some(idx) => s[..idx].trim_end(),

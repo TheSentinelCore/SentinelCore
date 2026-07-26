@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     area::Area,
     enums::{Class, CoordinateMode, Faction, Race, Severity},
+    guide::GuideHeaders,
     npc::NPCReference,
     object::GameObjectReference,
     operation::Operation,
@@ -19,6 +20,15 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Project {
     pub metadata: ProjectMetadata,
+    /// The guide-block header this project was imported from (`#name`, `#group`, `#subgroup`,
+    /// `#version`, `#next`).
+    ///
+    /// Separate from [`ProjectMetadata`] on purpose: `metadata.name` is an editable project title
+    /// a user may rename at will, while [`GuideHeaders::name`] is the guide *identity* that
+    /// `#next` and `#include` resolve against. Empty for a project that was authored rather than
+    /// imported.
+    #[serde(default)]
+    pub guide_headers: GuideHeaders,
     #[serde(default)]
     pub settings: ProjectSettings,
     #[serde(default)]
@@ -161,6 +171,8 @@ pub struct AreaIndex {
 pub struct ProjectDirIndex {
     pub metadata: ProjectMetadata,
     #[serde(default)]
+    pub guide_headers: GuideHeaders,
+    #[serde(default)]
     pub settings: ProjectSettings,
     #[serde(default)]
     pub variables: Vec<Variable>,
@@ -184,6 +196,7 @@ impl From<&Project> for ProjectDirIndex {
     fn from(project: &Project) -> Self {
         Self {
             metadata: project.metadata.clone(),
+            guide_headers: project.guide_headers.clone(),
             settings: project.settings.clone(),
             variables: project.variables.clone(),
             npc_library: project.npc_library.clone(),
@@ -216,6 +229,7 @@ impl ProjectDirIndex {
     pub fn into_project(self, operations: Vec<Operation>, areas: Vec<Area>) -> Project {
         Project {
             metadata: self.metadata,
+            guide_headers: self.guide_headers,
             settings: self.settings,
             variables: self.variables,
             npc_library: self.npc_library,
@@ -249,6 +263,7 @@ pub fn new_project(name: impl Into<String>) -> Project {
             created_at: now.clone(),
             updated_at: now,
         },
+        guide_headers: GuideHeaders::default(),
         settings: ProjectSettings::default(),
         variables: Vec::new(),
         npc_library: Vec::new(),

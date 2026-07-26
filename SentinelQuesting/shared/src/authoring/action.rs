@@ -77,6 +77,55 @@ fn default_tolerance() -> f32 {
     5.0
 }
 
+/// The travel medium the authored movement command demanded.
+///
+/// RestedXP spells movement four ways and two of them are instructions about *how* to travel, not
+/// only about where. ADR `07_RUNTIME_PROFILE_SCHEMA` §4.2 rules all four KEEP and §7.1 maps them one
+/// way and one way only: `.goto` (38,087) and `.waypoint` (593) to [`Any`](Self::Any),
+/// `.groundgoto` (114) to [`Ground`](Self::Ground), `.flygoto` (1) to [`Air`](Self::Air).
+///
+/// Distinct from [`TravelAction::allow_flight`], which is an execution preference the editor may set
+/// on any travel action. Reading that flag as this fact would mark every ordinary `.goto` route
+/// ground-forced; reading this fact as that flag would lose the override `.groundgoto` exists to
+/// express — §5.7: it threads mountain paths, caves and stairs where a direct or flying line fails.
+///
+/// This is the *authoring* vocabulary. `sentinel_models::kernel::TravelMode` is the artifact's, and
+/// the compiler maps between them in one place; the two are deliberately not the same type, because
+/// the kernel model is a second, additive lowering that the editor's model must not be pinned to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TravelMedium {
+    /// The author named no medium — the engine picks. `.goto`, `.waypoint`.
+    #[default]
+    Any,
+    /// Ground travel is forced. `.groundgoto`.
+    Ground,
+    /// Air travel is forced. `.flygoto`.
+    Air,
+}
+
+impl TravelMedium {
+    /// The medium a movement command demands, or `None` when the command is not one.
+    ///
+    /// The single table. Both the importer (deciding which commands become a [`TravelAction`]) and
+    /// the compiler's own source-line lowering read it here, so the mapping cannot drift into two
+    /// disagreeing copies — which is precisely how `.groundgoto` came to be recognised by the
+    /// compiler and dropped by the importer.
+    ///
+    /// A leading `.` is optional: the importer's lexer has already stripped it, the compiler's
+    /// source-line parser has not.
+    ///
+    /// `.line` also carries coordinates but is variadic (arity 5..259) and is not a single movement,
+    /// so it is deliberately absent.
+    pub fn for_command(command: &str) -> Option<Self> {
+        match command.strip_prefix('.').unwrap_or(command) {
+            "goto" | "waypoint" => Some(Self::Any),
+            "groundgoto" => Some(Self::Ground),
+            "flygoto" => Some(Self::Air),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TravelAction {
     pub destination: String,
@@ -101,6 +150,23 @@ pub struct TravelAction {
     /// `u16` because that is [`Route::radii`](sentinel_models::kernel::Route)'s own width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authored_radius: Option<u16>,
+    /// The medium the source command demanded. See [`TravelMedium`].
+    ///
+    /// Defaulted rather than required so a `Project` written before the field existed still loads;
+    /// [`TravelMedium::Any`] is the right reading for such a file, because the only commands the
+    /// importer lowered back then were `.goto` and `.waypoint`.
+    #[serde(default)]
+    pub medium: TravelMedium,
+    /// 1-based line in the source guide this movement was authored on, when it came from one.
+    ///
+    /// Carried so a refusal can point at the line rather than at the step. The route builder's one
+    /// refusal — a run that demanded two media — has to name the movement that broke it, and a
+    /// step-wide span does not: `The Burning Crusade.lua:8158-8159` is a two-line step whose two
+    /// lines disagree. `None` is an editor-authored action, or a `Project` written before the field
+    /// existed; it stays `None` rather than becoming `1`, because a line number that exists is
+    /// worse than an admitted gap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_line: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mount: Option<String>,
     #[serde(default)]
@@ -131,10 +197,51 @@ pub struct TurnInQuestAction {
     pub optional: bool,
 }
 
+/// One creature a combat command named, as the world database resolved it.
+///
+/// Entry **and** name, because they are never separable: a `.mob` names a creature by name and one
+/// `search_npcs` row supplies both at once. ADR 07 §5.4.1 needs the pair — `NpcRef::expect_name` is
+/// what makes the kernel's first-touch probe possible, and an entry carried without its name is an
+/// id nothing can verify.
+///
+/// The name is the **world database's** spelling, not the author's. `.mob pygmy tide crawler`
+/// resolves case-insensitively; carrying the authored casing forward would fail the probe on the
+/// first unit it ever saw.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatureRef {
+    /// MaNGOS `creature_template.entry`.
+    pub entry: u32,
+    /// The name that entry carries in the world database.
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KillTargetAction {
+    /// Entry ids only — the ADR-05 runtime's projection of [`creatures`](Self::creatures), which is
+    /// what `runtime::KillAction` has carried since before names were resolved at all.
+    ///
+    /// Written from `creatures` at every site that fills both, so the two cannot disagree about
+    /// which creatures a step names.
     #[serde(default)]
     pub creature_entries: Vec<u32>,
+    /// The same creatures with the name each entry carries (ADR 07 §5.4.1, §5.8).
+    ///
+    /// Additive and `serde(default)`: a project written before names were carried loads with an
+    /// empty list, and an empty list means "no name was resolved", never "no creature".
+    #[serde(default)]
+    pub creatures: Vec<CreatureRef>,
+    /// `.unitscan` (735) rather than `.mob` (7,456).
+    ///
+    /// One payload for both because they name the same thing — a creature this step's combat cares
+    /// about — and differ only in what the kernel does with it: ADR 07 §5.6 puts a `.unitscan`
+    /// creature in `CombatPolicy::watch_units` *as well as* in the kill whitelist, because a roamer
+    /// worth noticing is a unit the task fights (§7.3.3 task 2 has no `.mob` at all and still gets
+    /// `2164` in `targets`).
+    ///
+    /// The ADR-05 path treats a watch as **inert**, exactly as it treated `.unitscan` when the
+    /// command produced a bare `Comment`: the live runtime gains no kill behaviour from this field.
+    #[serde(default)]
+    pub watch: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quantity: Option<u32>,
     #[serde(default)]

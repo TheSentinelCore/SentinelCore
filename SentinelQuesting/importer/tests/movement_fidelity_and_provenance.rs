@@ -18,6 +18,15 @@
 //!    `238-242`, … — the `step` marker through the line before the next marker. Only directive
 //!    entries carried a line number before, so a step whose directives sit at `:212-:214` reported
 //!    itself as three lines long.
+//! 4. **`.groundgoto` and `.flygoto` are movement commands, and the medium they demand is data.**
+//!    §4.2 rules both KEEP and §7.1 maps them to `Op::Travel { mode: Ground }` and
+//!    `{ mode: Air }`. Neither reached `ProjectBuilder`'s movement arm at all — both fell into the
+//!    never-drop inert `Comment` fallback — so 114 `.groundgoto` lines and the corpus's single
+//!    `.flygoto` were deleted from every route before any compiler could see them, and no route the
+//!    compiler built could ever be anything but `Any`. `.groundgoto` exists precisely to *override*
+//!    the engine's preferred line where it threads mountain paths, caves and stairs (§5.7), so
+//!    dropping it does not merely lose a waypoint: it loses the instruction that the waypoint was
+//!    written to give.
 //!
 //! # WHAT THESE TESTS CANNOT SEE
 //!
@@ -31,7 +40,7 @@
 //!   `RegisterGuide` block.
 
 use sentinel_importer::{parse_guide, ProjectBuilder};
-use sentinel_models::authoring::{ActionPayload, Operation, Project, TravelAction};
+use sentinel_models::authoring::{ActionPayload, Operation, Project, TravelAction, TravelMedium};
 use sentinel_queryclient::MemoryQueryClient;
 
 /// A guide whose line numbers are stated in the source below, so an assertion can cite them.
@@ -56,6 +65,22 @@ step
     .complete 3524,1 --Sea Creature Bones (1)
 ]])";
 
+/// The two media-forcing movement commands, at the shape `The Burning Crusade.lua` writes them.
+///
+/// `:8158` is `.groundgoto Terokkar Forest,43.46,22.31,20,0` — the walk up the tower at
+/// Naphthal'ar, where a direct line fails. The corpus's single `.flygoto` is
+/// `The Burning Crusade.lua:35504`, `.flygoto Nagrand,27.55,11.22,45 >> Fly up to the back entrance
+/// of the cave`. Both are re-authored here over Darkshore percentages so the zone resolves against
+/// the measured table and the test is about the *medium*, not about a zone.
+const MEDIA_GUIDE: &str = "\
+RXPGuides.RegisterGuide([[
+#name 10-14 Darkshore
+step
+    .groundgoto 1439,36.051,44.757,20,0
+step
+    .flygoto 1439,36.280,50.071
+]])";
+
 /// `GUIDE`'s first `step` marker.
 const FIRST_STEP_LINE: u32 = 4;
 /// `GUIDE`'s last line belonging to the first step — its `.complete`.
@@ -65,8 +90,8 @@ const SECOND_STEP_LINE: u32 = 12;
 /// `GUIDE`'s last line belonging to the second step — its `.complete`.
 const SECOND_STEP_LAST_LINE: u32 = 14;
 
-async fn imported() -> Project {
-    let parsed = match parse_guide(GUIDE) {
+async fn build(source: &str) -> Project {
+    let parsed = match parse_guide(source) {
         Ok(parsed) => parsed,
         Err(error) => panic!("the fixture guide must parse, got: {error:?}"),
     };
@@ -74,6 +99,10 @@ async fn imported() -> Project {
         Ok(project) => project,
         Err(error) => panic!("the fixture guide must build into a Project, got: {error:?}"),
     }
+}
+
+async fn imported() -> Project {
+    build(GUIDE).await
 }
 
 /// Every `Travel` payload on `op`, in authored order.
@@ -146,6 +175,44 @@ async fn a_movement_line_keeps_the_arrival_radius_it_authored_and_none_when_it_a
         "a 3-argument `.goto` authors no radius at all (`A-11-23.lua:240`). `None` is that fact; \
          `Some(0)` would be the different fact that the guide asked for zero yards. got: \
          {unauthored:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_media_forcing_movement_line_becomes_a_travel_action_carrying_the_medium_it_forced() {
+    let project = build(MEDIA_GUIDE).await;
+
+    let media: Vec<(TravelMedium, bool)> = project
+        .operations
+        .iter()
+        .flat_map(|op| travels(op).into_iter().map(|t| (t.medium, t.position.is_some())))
+        .collect();
+
+    assert_eq!(
+        media,
+        vec![(TravelMedium::Ground, true), (TravelMedium::Air, true)],
+        "ADR 07 §4.2 rules `.groundgoto` (114) and `.flygoto` (1) KEEP, and §7.1 maps them to \
+         `Op::Travel {{ mode: Ground }}` and `{{ mode: Air }}`. Neither reached the movement arm — \
+         both fell into the never-drop inert `Comment` fallback — so the lines were deleted from \
+         every route and the medium they force was unrecoverable downstream. got: {media:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_goto_or_waypoint_line_forces_no_medium() {
+    let project = imported().await;
+    let Some(circuit) = project.operations.first() else {
+        panic!("the fixture guide authors two steps, got: {:?}", project.operations)
+    };
+
+    let media: Vec<TravelMedium> = travels(circuit).iter().map(|travel| travel.medium).collect();
+    assert_eq!(
+        media,
+        vec![TravelMedium::Any; 3],
+        "`.goto` (38,087) and `.waypoint` (593) name no medium, and §7.1 maps both to `Any` — the \
+         engine picks. Reading `TravelAction::allow_flight` as the same fact would mark all 38,087 \
+         ordinary `.goto` routes ground-forced; that flag is an execution preference, not the \
+         instruction `.groundgoto` writes. got: {media:?}"
     );
 }
 

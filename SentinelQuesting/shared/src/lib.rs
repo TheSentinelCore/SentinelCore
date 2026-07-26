@@ -22,18 +22,22 @@
 //!   ([`crate::runtime::RuntimeProfile`] versus [`crate::kernel::RuntimeProfile`]) rather than
 //!   importing both names into one scope.
 //!
-//! Two further modules carry reference data and shared source rules rather than a model. Both exist
-//! because the importer's ADR-05 lowering and the compiler's ADR-07 lowering need the same fact, and
-//! a second copy of it could drift from the first:
+//! Three further modules carry reference data and shared source rules rather than a model. All
+//! exist because the importer's ADR-05 lowering and the compiler's ADR-07 lowering need the same
+//! fact, and a second copy of it could drift from the first:
 //!
 //! * [`zone`] — the measured zone→world coordinate transform, so there is one measured table, not
 //!   two.
+//! * [`movement`] — the decision *built on* that table: which of the two authored coordinate systems
+//!   a movement line is written in, and what a malformed one does. This is the module that used to
+//!   be two, and the copy every compile ran was the incomplete one.
 //! * [`source`] — the lexical rules of RestedXP guide source (the `--` dev-comment marker), so both
 //!   ingests strip prose the same way.
 
 pub mod authoring;
 pub mod error;
 pub mod kernel;
+pub mod movement;
 pub mod runtime;
 pub mod source;
 pub mod zone;

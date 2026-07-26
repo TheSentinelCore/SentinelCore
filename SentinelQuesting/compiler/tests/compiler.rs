@@ -382,3 +382,56 @@ fn level_at_least_condition_lowers_and_serializes_adjacently_tagged() {
         })
     );
 }
+
+/// A `.unitscan` watch must stay **inert** on the ADR-05 path.
+///
+/// `.unitscan` (735 corpus uses) reached no authoring carrier at all until ADR 07 §5.6 needed it
+/// for `CombatPolicy::watch_units`; the importer preserved it as a bare `Comment` and the live
+/// runtime has never killed anything because of one. It now arrives as a `KillTargetAction` with
+/// `watch: true`, and lowering *that* to a `RuntimeAction::Kill` would give 735 lines new execution
+/// behaviour as a side effect of an additive kernel field. The distinction is one bool, it is
+/// invisible in a diff of the kernel artifact, and nothing else in this crate would catch it.
+///
+/// WHAT THIS TEST CANNOT SEE: whether the Lua runtime treats a `Comment` as a no-op. It pins the
+/// artifact, not the interpreter.
+#[test]
+fn a_unitscan_watch_stays_inert_on_the_adr05_path() {
+    use sentinel_models::authoring::KillTargetAction;
+
+    let kill = |watch: bool| Action {
+        id: Uuid::new_v4(),
+        enabled: true,
+        condition: None,
+        class_restriction: None,
+        gate: None,
+        note: None,
+        payload: ActionPayload::Kill(KillTargetAction {
+            creature_entries: vec![2164],
+            creatures: Vec::new(),
+            watch,
+            quantity: None,
+            loot: true,
+            ignore_elites: false,
+        }),
+    };
+
+    let mut project = new_project("test");
+    let mut op = Operation::new("test-op".to_string());
+    op.actions.push(kill(false));
+    op.actions.push(kill(true));
+    project.operations.push(op);
+
+    let (profile, _report) = Compiler::compile(&project).expect("compile ok");
+    let actions = &profile.operations[0].actions;
+
+    assert!(
+        matches!(&actions[0].action, RuntimeAction::Kill(k) if k.creature_entries == vec![2164]),
+        "`.mob` is still a kill; got: {:?}",
+        actions[0].action
+    );
+    assert!(
+        matches!(&actions[1].action, RuntimeAction::Comment(_)),
+        "`.unitscan` must not become executable work on the ADR-05 path; got: {:?}",
+        actions[1].action
+    );
+}

@@ -23,9 +23,11 @@
 //! so editing one without the other fails. A new typo is a one-line patch, a version bump and a
 //! moved assertion — never a silent widening of what ingest tolerates.
 //!
-//! Not owned here: malformed `.goto` arity, which is already a refusal in
-//! `compiler/src/kernel/route.rs::parse_movement` (`LoweringError::MalformedArity`). Two
-//! implementations of one refusal can disagree.
+//! Not owned here: malformed `.goto` arity, which is decided by
+//! `shared/src/movement.rs::resolve_coordinate` (`CoordinateError::Arity`) and rendered by
+//! `project_builder.rs::build_travel_position` as a `MALFORMED_MOVEMENT_ARITY` diagnostic. Two
+//! implementations of one refusal can disagree — and did: the compiler held a complete second copy
+//! of that check behind an entry point no compile ever called.
 //!
 //! [`ImportError::UnknownDirective`]: crate::ImportError::UnknownDirective
 

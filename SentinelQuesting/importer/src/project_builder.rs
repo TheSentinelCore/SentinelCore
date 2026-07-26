@@ -8,14 +8,14 @@ use uuid::Uuid;
 
 use sentinel_models::authoring::{
     Action, ActionPayload, AcceptQuestAction, CommentAction, CompleteWithTarget, ConditionAction,
-    ConditionRole, Faction, FlightAction, Gated, GuideDirective, GuideGate, HearthAction,
-    ImportMetadata, KillTargetAction, LearnFlightPathAction, NpcRole, NPCReference, Operation,
-    Position, Project, QuestReference, Severity, TrainerAction, TravelAction, TurnInQuestAction,
-    UseItemAction, VendorAction, Diagnostic,
+    ConditionRole, CreatureRef, Faction, FlightAction, Gated, GuideDirective, GuideGate, GuideHeaders,
+    HearthAction, ImportMetadata, KillTargetAction, LearnFlightPathAction, NpcRole, NPCReference,
+    Operation, Position, Project, QuestReference, Severity, TrainerAction, TravelAction,
+    TravelMedium, TurnInQuestAction, UseItemAction, VendorAction, Diagnostic,
 };
-use sentinel_models::zone::zone_map_for;
+use sentinel_models::movement::{resolve_coordinate, CoordinateError};
 use sentinel_queryclient::{
-    NpcDetail, ObjectiveKind, QuestDetail, QueryClient, QueryClientError, WorldPos,
+    NpcDetail, NpcSummary, ObjectiveKind, QuestDetail, QueryClient, QueryClientError, WorldPos,
 };
 
 use crate::{split_directive_gate, Directive, LabelDef, ParsedGuide, Step};
@@ -99,6 +99,71 @@ fn step_optionals(step: &Step) -> Vec<Gated<()>> {
             Gated { value: (), gate, line: d.line }
         })
         .collect()
+}
+
+/// Every `#KEY` header of the guide block, in source order, each keeping its OWN gate.
+///
+/// Reuses [`split_directive_gate`] rather than re-splitting here: 31 header lines across the pack
+/// carry a `<<` tail (`#name 6-11 Dun Morogh << !Hunter`, `A-1-11-Dwarf-Gnome.lua:569`), and a
+/// second implementation of the split rule is a second implementation that can disagree with the
+/// step-body one. Leaving the tail attached is not hypothetical — the last `import-guides` run
+/// over the pack emitted `.questing/projects/11-12-Loch-Modan-<<-!Warlock-2.json`.
+///
+/// The bare `<< Alliance` faction line is not a `#directive`; the lexer keys it `faction` and it
+/// is read separately, so it can never be mistaken for one of these.
+fn guide_header_entries(guide: &ParsedGuide, key: &str) -> Vec<Gated<String>> {
+    guide
+        .headers
+        .iter()
+        .filter(|h| h.key.eq_ignore_ascii_case(key))
+        .filter_map(|h| {
+            let (value, gate) = split_directive_gate(&h.value);
+            (!value.is_empty()).then(|| Gated { value, gate: gate.map(GuideGate), line: h.line })
+        })
+        .collect()
+}
+
+/// `#next A;B << gate` — one entry per successor, each carrying the whole line's gate.
+///
+/// The `;` and the `<<` are independent: `A-1-11-Human.lua:2` writes two successors under one
+/// gate as a `;` list, and `A-1-11-Dwarf-Gnome.lua:569` writes the identical shape as two
+/// separately-gated `#next` lines. Flattening makes the two spellings agree, which is what
+/// `kernel::GuideMeta::next` (a flat list) needs.
+fn guide_header_next(guide: &ParsedGuide) -> Vec<Gated<String>> {
+    guide_header_entries(guide, "next")
+        .into_iter()
+        .flat_map(|entry| {
+            entry
+                .value
+                .split(';')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| Gated {
+                    value: s.to_string(),
+                    gate: entry.gate.clone(),
+                    line: entry.line,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The five headers with a downstream consumer. `#displayname` is NOT among them: ADR
+/// `07_RUNTIME_PROFILE_SCHEMA.md` §4.2 rules it DROP, and `A-11-23.lua:10-12` carries three of
+/// them — gated, and disagreeing on the level range — so it could not stand in for `#name` even
+/// if §4.2 permitted it.
+fn guide_headers(guide: &ParsedGuide) -> GuideHeaders {
+    GuideHeaders {
+        name: guide_header_entries(guide, "name"),
+        group: guide_header_entries(guide, "group"),
+        subgroup: guide_header_entries(guide, "subgroup"),
+        // Narrowed to a number here; the raw string survives in `ImportMetadata::guide_version`,
+        // so an unparseable future value is preserved rather than destroyed by the narrowing.
+        source_version: guide_header_entries(guide, "version")
+            .first()
+            .and_then(|v| v.value.parse::<u32>().ok()),
+        next: guide_header_next(guide),
+    }
 }
 
 /// Every step-body directive without a typed carrier, verbatim (`#xprate`, `#phase`, `#aldor`, …).
@@ -267,10 +332,17 @@ impl<'a> MapperState<'a> {
     /// name matches are preferred; a search that only returns partial matches keeps them, because
     /// RestedXP frequently names a family ("Young Wolf") that maps to several spawn entries.
     /// Unresolvable names emit a diagnostic and contribute nothing — never a silent empty list.
-    async fn resolve_creature_entries_by_name(
+    /// The world database's own `(entry, name)` rows, not just the ids.
+    ///
+    /// ADR 07 §5.4.1 makes the name load-bearing: `kernel::NpcRef::expect_name` is what the
+    /// first-touch probe compares an observed unit against, and it must be the **database's**
+    /// spelling — the authored one is only what the lookup was keyed on, and `.mob pygmy tide
+    /// crawler` resolves case-insensitively. The two are produced by one `search_npcs` row and are
+    /// carried together from here on.
+    async fn resolve_creatures_by_name(
         &mut self,
         name: &str,
-    ) -> Result<Vec<u32>, QueryClientError> {
+    ) -> Result<Vec<CreatureRef>, QueryClientError> {
         let results = match self.client.search_npcs(name).await {
             Ok(r) => r,
             Err(e) => {
@@ -285,13 +357,17 @@ impl<'a> MapperState<'a> {
             }
         };
 
-        let exact: Vec<u32> = results
+        let matched = |summary: &NpcSummary| CreatureRef {
+            entry: summary.entry,
+            name: summary.name.clone(),
+        };
+        let exact: Vec<CreatureRef> = results
             .iter()
             .filter(|s| s.name.eq_ignore_ascii_case(name))
-            .map(|s| s.entry)
+            .map(matched)
             .collect();
         let entries = if exact.is_empty() {
-            results.iter().map(|s| s.entry).collect::<Vec<u32>>()
+            results.iter().map(matched).collect::<Vec<CreatureRef>>()
         } else {
             exact
         };
@@ -544,6 +620,12 @@ async fn enrich_unsatisfiable_gates(
                             // Drop chance means `count` kills will not yield `count` items; see the
                             // overshoot rationale below.
                             creature_entries: sources,
+                            // A synthesised kill comes from `quest_template` objective rows, which
+                            // carry entry ids and no names. No name, no `CreatureRef` — an empty
+                            // `expect_name` would be a first-touch probe that fails against every
+                            // unit it sees (ADR 07 §5.4.1).
+                            creatures: Vec::new(),
+                            watch: false,
                             quantity: Some(count.saturating_mul(5).max(1)),
                             loot: true,
                             ignore_elites: false,
@@ -578,6 +660,9 @@ async fn enrich_unsatisfiable_gates(
         let payload = match obj.kind {
             ObjectiveKind::KillCreature => Some(ActionPayload::Kill(KillTargetAction {
                 creature_entries: vec![obj.target_entry],
+                // See the synthesised-kill note above: the objective row has no name to carry.
+                creatures: Vec::new(),
+                watch: false,
                 quantity: Some(obj.required),
                 loot: true,
                 ignore_elites: false,
@@ -590,6 +675,9 @@ async fn enrich_unsatisfiable_gates(
                 // this heuristic by re-deriving executable work every tick.
                 Some(ActionPayload::Kill(KillTargetAction {
                     creature_entries: obj.sources.clone(),
+                    // See the synthesised-kill note above: the loot-source rows have no names.
+                    creatures: Vec::new(),
+                    watch: false,
                     quantity: Some(obj.required.saturating_mul(5).max(1)),
                     loot: true,
                     ignore_elites: false,
@@ -653,43 +741,77 @@ fn is_known_class_token(token: &str) -> bool {
     CLASS_TOKENS.iter().any(|c| c.eq_ignore_ascii_case(name))
 }
 
-/// Build a `.goto` [`Position`] from its comma-split args (`[dest, x, y, z?]`, IF1). Trailing
-/// `--` dev comments are already stripped at lex time (`lexer.rs::strip_inline_dev_comment`).
-/// Returns `None` when no numeric x/y pair is present (zone-only goto) — the destination
-/// name alone is preserved with no error, per the "zone name only" scenario.
+/// Build a `.goto` [`Position`] from its comma-split args (`[dest, y, x, radius?, flag?]`, IF1).
+/// Trailing `>>` display tails and `--` dev comments are already stripped at lex time
+/// (`lexer.rs::lex_command`, `sentinel_models::source::strip_inline_dev_comment`).
 ///
-/// Pushes an `UNMAPPED_GOTO_ZONE` diagnostic (rather than silently defaulting to map 0) when the
-/// zone name is not a bare map id and is absent from [`zone_to_map_id`]'s static table.
+/// # The transform is not implemented here
+///
+/// [`sentinel_models::movement::resolve_coordinate`] owns it, and it is the **only** copy. This
+/// function used to own a second, incomplete one: it handed field 0 straight to
+/// [`zone_map_for`](sentinel_models::zone::zone_map_for), which knows nothing of the corpus's raw-world
+/// `<uiMapId>/<mapId>` spelling, so all 929 `.goto 1439/1,…` lines matched no zone and were dropped
+/// with an `UNMAPPED_GOTO_ZONE` diagnostic that named `1439/1` as an unknown zone. The complete
+/// implementation lived in the compiler behind an entry point no compile ever called.
+///
+/// What is left here is the part that genuinely belongs to ingest: turning a refusal into a
+/// diagnostic. Every refusal yields **no position** rather than a repaired one — a bogus coordinate
+/// is indistinguishable from a correct one at every later stage, and 522 Travel actions once aimed
+/// at raw percentages for exactly that reason (ADR 06 invariant 3).
+///
+/// The refusal is scoped to the *line*. A malformed movement line does not fail its step, its guide
+/// or the import: measured, 5 of the corpus's 277 guide blocks carry one of the 67 six-argument
+/// lines, and refusing a block would delete every other coordinate in it to punish one typo.
 fn build_travel_position(state: &mut MapperState, step: &Step, args: &[String]) -> Option<Position> {
-    let pct_x = args.get(1)?.parse::<f32>().ok()?;
-    let pct_y = args.get(2)?.parse::<f32>().ok()?;
-    // RestedXP `.goto zone,x,y[,radius][,flags]` NEVER carries a height — the optional
-    // third numeric is a reach RADIUS (`.goto 1429,47.601,36.720,45,0` = 45yd radius for
-    // the Echo Ridge sweep). Baking it as Z buried those waypoints ~35yd inside the
-    // terrain, the navmesh found no polygon, and travel wedged in awaiting_path forever
-    // (live-caught). Z is always 0 here; the runtime resolves ground height on arrival.
-    let z = 0.0;
-    let zone = args.first()?;
-
-    // A zone we cannot convert yields NO position rather than a bogus one: emitting the raw
-    // percentages produced 522 Travel actions aimed at meaningless coordinates, which is why the
-    // bot travelled nowhere. ADR 06 invariant 3 — a percentage must never survive compilation.
-    let Some(zone_map) = zone_map_for(zone) else {
+    let mut refuse = |code: &str, message: String| {
         state.diagnostics.push(Diagnostic {
             severity: Severity::Warning,
-            code: "UNMAPPED_GOTO_ZONE".to_string(),
-            message: format!(
-                "Zone '{zone}' is not in the zone table; cannot convert {pct_x},{pct_y} to world \
-                 coordinates, so no travel position was emitted"
-            ),
+            code: code.to_string(),
+            message,
             entity: Some(format!("step:{}", step.index)),
             action: None,
         });
-        return None;
+        None::<Position>
     };
 
-    let (world_x, world_y) = zone_map.to_world(pct_x, pct_y);
-    Some(Position::new(zone_map.continent, world_x, world_y, z))
+    // The line as authored, for the diagnostic. The lexer keeps no verbatim copy, and a refusal
+    // that cannot be grepped back to its source line is a refusal nobody can act on.
+    let authored = || format!(".goto {}", args.join(","));
+
+    match resolve_coordinate(args) {
+        // RestedXP `.goto zone,y,x[,radius][,flags]` NEVER carries a height — the optional third
+        // numeric is a reach RADIUS (`.goto 1429,47.601,36.720,45,0` = 45yd radius for the Echo
+        // Ridge sweep). Baking it as Z buried those waypoints ~35yd inside the terrain, the navmesh
+        // found no polygon, and travel wedged in awaiting_path forever (live-caught). Z is always 0
+        // here; the runtime resolves ground height on arrival.
+        Ok(resolved) => Some(Position::new(resolved.map_id, resolved.x, resolved.y, 0.0)),
+        Err(CoordinateError::UnknownZone { zone }) => refuse(
+            "UNMAPPED_GOTO_ZONE",
+            format!(
+                "Zone '{zone}' is not in the zone table; cannot convert {} to world coordinates, \
+                 so no travel position was emitted",
+                args.get(1..3).map(|pair| pair.join(",")).unwrap_or_default()
+            ),
+        ),
+        Err(CoordinateError::Arity { found }) => refuse(
+            "MALFORMED_MOVEMENT_ARITY",
+            format!(
+                "movement line carries {found} comma-separated fields, not the 3..=5 the grammar \
+                 admits, so no travel position was emitted. The corpus's 67 six-field lines are \
+                 three distinct defects — a stray trailing `0`, a comma-typed decimal, a stray \
+                 leading `0` — and every repair for one corrupts the other two: `{}`",
+                authored()
+            ),
+        ),
+        Err(CoordinateError::MalformedNumber { what, value }) => refuse(
+            "MALFORMED_MOVEMENT_COORDINATE",
+            format!(
+                "movement line's {what} is '{value}', which is not a finite number, so no travel \
+                 position was emitted: `{}`",
+                authored()
+            ),
+        ),
+    }
 }
 
 /// Encode a `.collect`/`.itemcount` count argument as a §23 DSL fragment. The grammar only
@@ -760,32 +882,114 @@ fn gating_condition_dsl(cmd_name: &str, args: &[String]) -> Option<String> {
     }
 }
 
-/// Lower a `.xp` argument list to a §23 `LevelAtLeast(N)` expression, or `None` for the
-/// out-of-scope variants. Corpus shapes (whole `restedxp guides` tree): `<N,1` (1416) and
-/// `>N,1` (603) are RestedXP *skip-step* variants with different semantics — left inert.
-/// `N` (50) and `N+M` (30, level N plus M experience points) are wait-until-level gates;
-/// the sub-level `+M` XP refinement is deliberately dropped (out of scope) and `N+M` gates
-/// on level N alone. Anything else (`N-M` countdown forms etc.) stays inert.
-fn xp_level_dsl(args: &[String]) -> Option<String> {
-    // The lexer comma-splits args; a comparison/skip form (`<50,1`) or any extra arg
-    // means "not a plain level gate".
+/// Lower a `.xp` argument list to a §23 expression, or `None` for the variants that stay inert.
+///
+/// # The grammar, measured
+///
+/// Every `.xp` line in the `restedxp guides` tree (2,133 of them) has one of these shapes:
+///
+/// | shape | uses | disposition |
+/// |---|---|---|
+/// | `<N,1` | 1,416 | inert — skip-step |
+/// | `>N,1` | 603 | inert — skip-step |
+/// | `N` | 52 | `LevelAtLeast(N)` |
+/// | `N+M` | 30 | `XpAtLeast(N,M)` |
+/// | `N-M` | 26 | `XpAtLeast(N,-M)` |
+/// | `<N+M,1` / `>N+M,1` | 4 | inert — skip-step |
+/// | `9.65,1` / `19.95,1` | 2 | inert — percentage, and both carry the skip flag |
+///
+/// # Why the offset is a sign, not two forms
+///
+/// The author documents both directions in his own display text. `.xp 10+6760 >> Grind to
+/// 6760+/7600xp` (`A-11-23.lua:271`): 7,600 is level 10's requirement, so `+6760` is 6,760 XP *into*
+/// level 10. `.xp 4-420 >>Grind until you are 420xp away from level 4 (980/1400)`
+/// (`A-1-11-Draenei.lua:141`): 1,400 − 420 = 980, the bar the note prints, so `-420` is 420 XP
+/// *short of* level 4. One predicate, `total_xp >= start_of_level(N) + offset`, with a signed
+/// offset — which is why ADR 07 §5.1.1 types `Predicate::XpAtLeast::xp_offset` as `i32`.
+///
+/// **The `+M` tail used to be discarded here.** `A-11-23.lua:271` lowered to `LevelAtLeast(10)`, a
+/// grind task satisfied 6,760 XP — 89% of a level — before the author's threshold.
+///
+/// # Why bare `N` is still `LevelAtLeast`
+///
+/// `XpAtLeast(N,0)` states the same fact, so this is a scope decision and not a fidelity one:
+/// `LevelAtLeast` is independently justified by `#level` (§5.2), the ADR-05 model holds it exactly
+/// while it can only approximate a non-zero offset, and no corpus line writes `.xp N+0`, so the two
+/// spellings never collide on one input. Pinned by
+/// `compiler/tests/kernel_authored_predicates.rs::a_bare_xp_level_stays_a_level_floor`.
+///
+/// # Why the comparison forms stay inert
+///
+/// `<N,1` and `>N,1` are RestedXP *skip-step* variants — "skip this step if the player is already
+/// past this" — and the trailing `1` is the skip flag, not a count. Read as thresholds they would
+/// invert 1,416 steps into wait-forever gates. They keep the IF7 never-drop inert path, diagnostic
+/// included, until their skip semantics are lowered deliberately.
+fn xp_gate_dsl(args: &[String]) -> Option<String> {
+    // The lexer comma-splits args; a comparison/skip form (`<50,1`) carries a second arg, and every
+    // corpus shape with more than one arg is a skip variant.
     if args.len() != 1 {
         return None;
     }
     let raw = args[0].trim();
-    // `N` or `N+M` — take the level part; reject `N-M`, `<N`, `>N`, `N.N`, `N>>` etc.
-    let level_part = raw.split('+').next()?;
-    let level = level_part.parse::<u8>().ok()?;
-    if let Some(xp_part) = raw.strip_prefix(level_part) {
-        if !xp_part.is_empty() {
-            // Must be exactly `+<digits>` to count as the N+M form.
-            let digits = xp_part.strip_prefix('+')?;
-            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
-            }
-        }
+
+    // Split on the FIRST sign only. Levels are unsigned, so the leading character can never be one,
+    // and no corpus line carries two.
+    let split = raw.char_indices().skip(1).find(|(_, c)| *c == '+' || *c == '-');
+
+    let Some((at, sign)) = split else {
+        // Bare `N`. Rejects `<N`, `>N` and `9.65` because neither parses as a `u8`.
+        return raw.parse::<u8>().ok().map(|level| format!("LevelAtLeast({level})"));
+    };
+
+    let level = raw[..at].parse::<u8>().ok()?;
+    let digits = &raw[at + 1..];
+    // Must be exactly `<digits>`: `.xp 10+` and `.xp 10+7a` are neither of the two known forms.
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
     }
-    Some(format!("LevelAtLeast({level})"))
+    // Corpus maximum is 760,700 (`.xp 69+760700`), far inside `i32`; anything that is not is not a
+    // shape this function has seen and is refused rather than truncated.
+    let offset = digits.parse::<i32>().ok()?;
+    let offset = if sign == '-' { -offset } else { offset };
+    Some(format!("XpAtLeast({level},{offset})"))
+}
+
+/// Lower a `.subzone` argument list to a §23 `InSubArea(<area>)` expression, or `None`.
+///
+/// # The argument is an AreaTable id
+///
+/// `.subzone 442 >> Travel to Auberdine` (`A-11-23.lua:275`): `AreaTable.dbc` record 442 is
+/// `Auberdine`, parent area 148 (`Darkshore`), map 1. All 237 distinct ids the corpus writes on
+/// `.subzone` resolve in `AreaTable.dbc`; none is absent.
+///
+/// It is **not** a UiMapID and must never reach [`zone_map_for`], whose keys are the recovered
+/// Classic UiMapIDs of `WorldMapArea.dbc`. The spaces overlap on 5 ids the corpus actually uses:
+/// `.subzone 1443` is `The Slag Pit` (Searing Gorge, map 0) while `ZONE_TABLE`'s 1443 is the
+/// Desolace UiMapID on map 1. Confusing them produces a well-formed area on the wrong continent
+/// rather than an error, so there is no diagnostic that would catch it — only the test that the
+/// number arrives unchanged
+/// (`compiler/tests/kernel_authored_predicates.rs::a_subzone_id_that_is_also_a_ui_map_id_is_not_translated`).
+///
+/// # Only the one-argument form
+///
+/// 915 of the 991 uses are `.subzone <id>`. The other 76 append `,2`, always on an instance-portal
+/// step (`.subzone 1581,2 >> Enter The Deadmines Dungeon`), and nothing in the corpus says what the
+/// `2` selects. Lowering them as though the flag were absent would silently widen 76 gates, so the
+/// two-argument form stays inert.
+///
+/// # `.zone` has no counterpart here
+///
+/// Its `AreaKind` is `Zone`, but no corpus line gives it an id this could carry: 1,037 of 1,063
+/// `.zone` uses name the zone in words, and 25 of the remaining 26 are UiMapIDs absent from
+/// `AreaTable.dbc`. Lowering those would inject a UiMapID into `Predicate::InArea::area` — the exact
+/// confusion the paragraph above exists to prevent. `.zone` needs a name→AreaTable resolution that
+/// does not exist yet.
+fn subzone_area_dsl(args: &[String]) -> Option<String> {
+    if args.len() != 1 {
+        return None;
+    }
+    let area = args[0].trim().parse::<u32>().ok()?;
+    Some(format!("InSubArea({area})"))
 }
 
 /// The role a gating command's condition plays in step progression (PR5a). `complete`/
@@ -1014,7 +1218,15 @@ async fn build_step_actions(
             // routes — the closed patrol circuit at `A-11-23.lua:215-231` — is three `.goto` lines
             // followed by fourteen `.waypoint` lines. Preserving `.waypoint` as an inert comment
             // deleted 14 of that circuit's 17 points before any compiler could see them.
-            "goto" | "waypoint" => {
+            //
+            // `.groundgoto` (114) and `.flygoto` (1) share that grammar too, and §4.2 rules both
+            // KEEP. Their arms were missing entirely, so both fell into the never-drop inert
+            // `Comment` fallback and every one of those coordinates was deleted from its route. The
+            // medium each forces is carried on the action (`TravelMedium`) rather than folded into
+            // `allow_flight`: §5.7 says `.groundgoto` exists to *override* the engine's preferred
+            // line where it threads mountain paths, caves and stairs, and `allow_flight` is an
+            // execution preference the editor may set on any travel action.
+            "goto" | "waypoint" | "groundgoto" | "flygoto" => {
                 let dest = cmd.args.first()
                     .map(|a| if a.parse::<u32>().is_ok() { format!("Map {}", a) } else { a.clone() })
                     .unwrap_or_else(|| "Unknown".to_string());
@@ -1045,6 +1257,13 @@ async fn build_step_actions(
                         position,
                         tolerance,
                         authored_radius,
+                        // The single command→medium table (`TravelMedium::for_command`), shared
+                        // with the compiler's own source-line lowering so the two cannot drift.
+                        // The `unwrap_or_default` is unreachable — this arm matches exactly the
+                        // four commands the table answers for — and `Any` is the safe reading if a
+                        // fifth is ever added to one list and not the other.
+                        medium: TravelMedium::for_command(&cmd.name).unwrap_or_default(),
+                        source_line: Some(cmd.line as u32),
                         mount: None,
                         allow_flight: false,
                         timeout: None,
@@ -1175,11 +1394,20 @@ async fn build_step_actions(
                     }),
                 });
             }
-            "mob" => {
-                // .mob <entry> or .mob <name> - kill target. Names dominate the corpus, so they
-                // must resolve to entries here; keeping only numerics made every named .mob an
-                // unsatisfiable Kill (measured 53 of 53 empty in the Elwynn profile).
+            // `.mob` (7,456) is the kill whitelist and `.unitscan` (735) is the roamer/rare watch.
+            // One arm because they name the same thing in the same grammar — a creature this step's
+            // combat cares about — and differ only in the `watch` flag, which ADR 07 §5.6 reads to
+            // fill `CombatPolicy::watch_units`. `.unitscan` reached no carrier at all before this
+            // and died as an inert `Comment`, so §7.3.3 task 2's whole combat policy was
+            // underivable.
+            "mob" | "unitscan" => {
+                // Names dominate the corpus, so they must resolve to entries here; keeping only
+                // numerics made every named .mob an unsatisfiable Kill (measured 53 of 53 empty in
+                // the Elwynn profile). A numeric argument carries no name, and the empty one it
+                // would get is a first-touch probe that fails against every unit it ever sees — so
+                // it contributes an entry and no `CreatureRef`.
                 let mut entries: Vec<u32> = Vec::new();
+                let mut creatures: Vec<CreatureRef> = Vec::new();
                 for arg in &cmd.args {
                     let raw = arg.trim();
                     if raw.is_empty() {
@@ -1190,8 +1418,10 @@ async fn build_step_actions(
                     } else {
                         // `.target +Name` style prefixes also appear on mob names.
                         let name = raw.trim_start_matches('+').trim();
-                        let resolved = state.resolve_creature_entries_by_name(name).await?;
-                        entries.extend(resolved);
+                        for resolved in state.resolve_creatures_by_name(name).await? {
+                            entries.push(resolved.entry);
+                            creatures.push(resolved);
+                        }
                     }
                 }
                 entries.dedup();
@@ -1204,18 +1434,25 @@ async fn build_step_actions(
                     note: cmd.note.clone(),
                     payload: ActionPayload::Kill(KillTargetAction {
                         creature_entries: entries,
+                        creatures,
+                        watch: cmd.name == "unitscan",
                         quantity: None,
                         loot: true,
                         ignore_elites: false,
                     }),
                 });
             }
-            "xp" => {
-                // `.xp N` / `.xp N+M`: wait-until-level Completion gate (LevelAtLeast) so the
-                // runtime holds — and grinds — instead of running ahead under-leveled. The
-                // skip-step variants (`<N,1` / `>N,1`) keep the IF7 never-drop inert path,
-                // diagnostic included, until their skip semantics are lowered deliberately.
-                match xp_level_dsl(&cmd.args) {
+            // Two commands that state, in the author's own words, when a step is finished:
+            // `.xp` an experience threshold, `.subzone` an arrival. Both are wait-until-true
+            // Completion gates, so the runtime holds — and grinds, or walks — instead of running
+            // ahead. Neither has a `role` choice to make: the applicability half of each is a
+            // *different command* (`.xp <N,1`, `.subzoneskip`), and both of those stay inert.
+            "xp" | "subzone" => {
+                let lowered = match cmd.name.as_str() {
+                    "xp" => xp_gate_dsl(&cmd.args),
+                    _ => subzone_area_dsl(&cmd.args),
+                };
+                match lowered {
                     Some(expression) => {
                         actions.push(Action {
                             id: Uuid::new_v4(),
@@ -1230,6 +1467,9 @@ async fn build_step_actions(
                             }),
                         });
                     }
+                    // Every refused shape keeps the IF7 never-drop inert path, diagnostic included:
+                    // the skip-step `.xp` variants, the percentage spellings, and the two-argument
+                    // `.subzone`. See each `*_dsl`'s docs for what the corpus says about them.
                     None => {
                         actions.push(inert_preserved_action(state, step.index, cmd, true));
                     }
@@ -1457,12 +1697,19 @@ impl ProjectBuilder {
     ) -> Result<Project, QueryClientError> {
         let mut state = MapperState::new(client);
 
-        let guide_name = guide.headers.iter()
-            .find(|h| h.key == "name")
-            .map(|h| h.value.clone())
+        // The guide-block header, carried whole. `metadata.name` is derived from it rather than
+        // read separately, so the project title cannot drift from the guide identity — and so it
+        // inherits the gate split: the three gated `#name` lines in the pack were previously
+        // naming projects (and files) `11-12 Loch Modan << !Warlock`.
+        let headers = guide_headers(guide);
+        let guide_name = headers
+            .name
+            .first()
+            .map(|n| n.value.clone())
             .unwrap_or_else(|| "Imported Guide".to_string());
 
         let mut project = sentinel_models::authoring::new_project(guide_name.clone());
+        project.guide_headers = headers;
 
         // Faction header: `<< Alliance` or `<< Horde`.
         if let Some(fh) = guide.headers.iter().find(|h| h.key == "faction") {

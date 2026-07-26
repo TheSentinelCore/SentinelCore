@@ -442,7 +442,7 @@ behaviour plugin per §3.2 of that document), `DROP`.
 |---|---|---|---|---|
 | `.goto` | 38,087 | KEEP | `Op::Travel { waypoints }` | Primary movement. Zone/world coords normalised to `(map_id, x, y, z?)` by the compiler. |
 | `.target` | 13,352 | MERGE | `Task.interact_target` / `Op::Interact.target` | Not a verb — it names the NPC that `.accept`/`.turnin`/`.train` act on. `+`-prefix (1,292) binds to the preceding quest line, becoming per-op rather than per-task. |
-| `.turnin` | 7,712 | KEEP | `Op::TurnIn { quest, reward_choice, optional }` | 2nd arg is reward index (proven: `A-1-11-Human.lua:155/156` turn in quest 33 with reward 2 vs 1, split by armour class). Negative id ⇒ `optional: true` (38 instances). |
+| `.turnin` | 7,712 | KEEP | `Op::TurnIn { quest, reward_choice, optional }` **plus the derived predicate pair** | 2nd arg is reward index (proven: `A-1-11-Human.lua:155/156` turn in quest 33 with reward 2 vs 1, split by armour class). Negative id ⇒ `optional: true` (38 instances). A step whose only completion authority is its own hand-in also gets `applies_when: QuestComplete{q}` / `complete_when: QuestTurnedIn{q}` — §7.3.3's turn-in task carries both and authors neither, and without them the task has no completion authority at all. Emitted only for a **single** hand-in with no `any_of`; 540 corpus steps hand in more than one quest and get a `HAND_IN_PREDICATES_NOT_DERIVED` diagnostic instead of an invented disjunction (`compiler/src/kernel/task_graph.rs::hand_in_predicates`). |
 | `.accept` | 7,490 | KEEP | `Op::Accept { quest }` | Core verb. |
 | `.mob` | 7,456 | TRANSFORM | `Task.combat.targets: Vec<CreatureEntry>` | Not an action — a target whitelist feeding the combat policy (C6). Names resolve to entries via MaNGOS `creature_template`. |
 | `.complete` | 7,218 | TRANSFORM | `Predicate::QuestObjective { id, index, need }` | The step's completion authority. `need` is baked from `quest_template.ReqItemCount*`/`ReqCreatureOrGOCount*`, removing the need to parse a localized progress string for the denominator. |
@@ -686,6 +686,29 @@ The failure mode ADR-000 §7.1 exists to kill is `Unknown → false → "not com
 Making `Treat(False)` opt-in per task, and never the default for `complete_when`, is what prevents the
 ledger reintroducing it.
 
+**The rule the compiler applies**, in this order, over what a task *does* and what its completion
+*measures* — never over where the task sits in the list
+(`compiler/src/kernel/task_graph.rs::unknown_policy`):
+
+1. **An irreversible op ⇒ `Block`.** The table's own first row. `Op::TurnIn`, `Op::Abandon`,
+   `Op::DestroyItem` and `Op::Delegate`; "deathskip" is §5.5's kernel behaviour and therefore
+   arrives as a `Delegate`. `Op::UseItem` is deliberately **not** in the set — §7.3.3 task 2
+   consumes a quest item the guide itself calls unrecoverable and the worked example still gives it
+   `Defer`, so the set is the four named kinds rather than a judgement about consequences.
+2. **A monotone player statistic ⇒ `Treat(False)`.** `XpAtLeast` and `LevelAtLeast`, which are one
+   statistic at two precisions and cannot decrease in TBC. This is the table's "safe only when the
+   work is idempotent" made concrete: an `Unknown` read costs one more grind tick and leaves the
+   threshold closer, never further. A `QuestObjective` counter rises too and is **excluded**,
+   because it *disappears* with its quest — treating a gone objective as false is exactly the
+   failure the paragraph above names.
+3. **Otherwise `Defer`**, the table's stated default, with the magnitudes §9 item 25 records as
+   unstated.
+
+Row 3's own "Compiler default" column reads "`applies_when` on pure-travel tasks", which describes a
+slot rather than a task and has no §7.3.3 witness — the worked example's only `Treat(False)` task
+carries a *`complete_when`* of `XpAtLeast` and no `applies_when` at all. Rule 2 is what the artifact
+shows; the column is left as written because narrowing it is a separate decision.
+
 ## 5.2 C2 — Static gating resolves at compile time
 
 **Contract.** Static gates must not reach `Sentinel.objectives`.
@@ -791,6 +814,21 @@ turn-in holds `INTERACTION`, and they coexist.
   its own `complete_when`. *Suspension* is involuntary: losing a lease to a higher band. *Termination*
   is voluntary and permanent: `terminate_on` becomes `True`, or the profile cursor passes
   `terminate_at_task`.
+  "Normally" underdetermines §7.3.3's own three background tasks, so the compiler applies this chain
+  (`compiler/src/kernel/task_graph.rs::assemble_tasks`): the hand-in of the quest the task's
+  objective belongs to, **iff this artifact performs that hand-in** (task 0's does, downstream);
+  otherwise the task's own `complete_when`; otherwise the completion at the end of its
+  `CompletionSource::LinkedTo` chain, which is followed transitively because the relation is — if the
+  linked task defers in turn, its authority is whatever *it* defers to, and a walk that stopped at
+  one hop left 43 corpus tasks with no termination while a real completion sat two links away.
+  A cycle of links contains no completion by construction and falls out of the walk.
+  **When the chain finds nothing, the artifact says so rather than guessing.** 800 corpus tasks —
+  `#sticky` patrols carrying no `.complete`, and `#completewith` riders whose whole content is
+  movement and whose chain ends without a completion — get `Or([])`, the empty disjunction, which is
+  never satisfiable, plus a `BACKGROUND_WITHOUT_TERMINATION` diagnostic. That is the honest reading
+  of "the guide states no termination condition", and the second route above — the cursor passing the
+  task — still ends it. The empty *conjunction* is the spelling that must never appear here: `And([])`
+  is vacuously `True` and would terminate a patrol on the tick it started.
 - **Orphaned `#completewith` target.** If the target task is skipped or never reached, the linking task
   would hang forever — this is the exact defect RXPGuides ships (`guide.labels[…]` returns nil and the
   edge silently never fires, §3.1). **The compiler resolves every link to a concrete `TaskId` and
@@ -2285,12 +2323,22 @@ question that the same audit exposed but cannot settle from this document.
     `applies_when` uses. `tags_used` is a **census**, not a subset of the registry; the definition in
     §5.10 has been tightened to say so and §7.3.3 now lists exactly the 10 tags the artifact
     references.
-25. **Two `defaults` magnitudes have no stated source — open.** `leash_yards: 40` and
-    `budget_ticks: 60` appear only inside §7.3.3's listing (item 22). §5.6 states the default
-    *stance*, and §5.1.2 states that `Defer` is the default *policy*, but neither fixes a magnitude,
-    and no other section does either. A leash distance and an escalation budget are behavioural
-    constants that belong in §5.6 and §5.1.2 with a justification, not in a worked example. Until
-    they are chosen deliberately, treat the printed values as illustrative.
+25. **Three magnitudes have no stated source — open.** `leash_yards: 40` and `budget_ticks: 60`
+    appear only inside §7.3.3's listing (item 22), and so does a third: the ride-along task's
+    `budget_ticks: 30`. §5.6 states the default *stance*, and §5.1.2 states that `Defer` is the
+    default *policy*, but neither fixes a magnitude, and no other section does either. A leash
+    distance and an escalation budget are behavioural constants that belong in §5.6 and §5.1.2 with a
+    justification, not in a worked example. Until they are chosen deliberately, treat the printed
+    values as illustrative.
+    RestedXP has no notion of an escalation budget, so **no** corpus measurement can produce 30 or
+    60 and calling either derived would be a fabrication. What §7.3.3 does witness is a *relation*:
+    its one task whose completion authority is another task (`CompletionSource::LinkedTo`) carries
+    the **smaller** budget, and every task that decides for itself carries the larger. The compiler
+    encodes that relation with these two numbers as its endpoints
+    (`compiler/src/kernel/task_graph.rs::unknown_policy`), and the two candidate causes are
+    inseparable on the single witness — that task is also the only channel-less `Background` — so
+    `LinkedTo` was chosen as the more primitive of the two, being what `lower_lifetime` reads to make
+    the rider channel-less in the first place.
 26. **§7.3.3's `waypoint_pool` was not interned — resolved.** The listing printed a **28**-slot
     pool, one slot per source route line, in which **six coordinates were stored twice**: old slots
     9≡2, 10≡3, 11≡1, 16≡0 (task 0's circuit) and 20≡18, 25≡19 (task 2's). Two sections of this

@@ -993,6 +993,7 @@ version = "0.1.0"
 dependencies = [
  "sentinel-importer",
  "sentinel-models",
+ "sentinel-query-types",
  "sentinel-queryclient",
  "serde_json",
  "thiserror 1.0.69",

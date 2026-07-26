@@ -16,7 +16,7 @@
 //!   command-side typos, and the nearest command pair (`.link` / `.line`) is two real, distinct
 //!   commands. A command misspelling sails through every assertion in this file.
 //! * **They do not re-derive malformed `.goto` arity.** That refusal already lives in
-//!   `compiler/src/kernel/route.rs::parse_movement` (`LoweringError::MalformedArity`) and is
+//!   `shared/src/movement.rs::resolve_coordinate` (`CoordinateError::Arity`) and is
 //!   deliberately not duplicated.
 //! * **The census tests read raw corpus lines, not parsed guides.** They prove the closed
 //!   vocabulary covers every `#` token in the seven vendored guides; they do NOT prove each of

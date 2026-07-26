@@ -59,6 +59,54 @@ pub enum CompleteWithTarget {
     Label(String),
 }
 
+/// The guide-block header: the directives above the first `step` that give the block its
+/// identity and its place in the pack.
+///
+/// Only the five with a downstream consumer are typed here — they are exactly the KEEP rows of
+/// ADR `07_RUNTIME_PROFILE_SCHEMA.md` §4.2's disposition table, and exactly the fields of
+/// `kernel::GuideMeta`. `#displayname` is deliberately absent: §4.2 rules it DROP ("pure UI
+/// chrome"), and it cannot stand in for `name` because a block may carry three of them, gated and
+/// disagreeing (`A-11-23.lua:10-12`), while `name` is the single identity `#next` and `#include`
+/// resolve against.
+///
+/// **Every carrier is a `Vec`, and it is not defensive.** Measured over all 277 blocks of the
+/// pack: `#name` appears twice in one block (`A-1-11-Human.lua:2678`, gated `!Warlock`/`Warlock`),
+/// `#subgroup` twice in four (`The Burning Crusade.lua:1165`, gated `!classic`/`classic`), `#next`
+/// twice in seven. Those pairs are archetype ALTERNATIVES: collapsing them to one field here
+/// would make the choice between them before anything that knows the archetype has run — the same
+/// failure `Gated` exists to prevent for `#requires`. `#group` is the one key that is always
+/// singular and never gated (277/277); it stays a `Vec` so that a future gated `#group` is a
+/// selection problem rather than a silent drop.
+///
+/// `source_version` is the exception: `#version` is absent from 12 blocks, present at most once
+/// in the rest, never gated, and every value in the pack parses as an integer. Narrowing it here
+/// destroys nothing, because the raw string it was parsed from is still kept verbatim in
+/// [`ImportMetadata::guide_version`](super::ImportMetadata).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GuideHeaders {
+    /// `#name` — the identity `#next` and `#include` resolve against, unique within `group`.
+    #[serde(default)]
+    pub name: Vec<Gated<String>>,
+    /// `#group` — catalogue bucket, and the namespace in which `name` is unique.
+    #[serde(default)]
+    pub group: Vec<Gated<String>>,
+    /// `#subgroup` — level band or themed section.
+    #[serde(default)]
+    pub subgroup: Vec<Gated<String>>,
+    /// `#version` — the upstream guide-pack revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<u32>,
+    /// `#next` — guide chaining. One entry per successor.
+    ///
+    /// A source line may name several with `;` (`#next 12-14 Loch Modan;12-14 Darkshore <<
+    /// Warlock`, `A-1-11-Human.lua:2`), and each element becomes its own entry carrying that
+    /// line's gate. `A-1-11-Dwarf-Gnome.lua:569` writes the very same two-successor shape as two
+    /// separate gated `#next` lines instead, so the two authoring forms must — and do — flatten
+    /// to the same thing.
+    #[serde(default)]
+    pub next: Vec<Gated<String>>,
+}
+
 /// Any step-body `#directive` without a typed carrier, preserved verbatim so nothing is silently
 /// dropped a second time (`#xprate`, `#phase`, `#aldor`/`#scryer`, `#hardcore`, `#ssf`, …).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

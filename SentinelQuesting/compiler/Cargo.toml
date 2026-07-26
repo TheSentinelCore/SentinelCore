@@ -13,6 +13,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 sentinel-importer = { path = "../importer" }
+sentinel-query-types = { path = "../query-types" }
 sentinel-queryclient = { path = "../queryclient" }
 tokio = { workspace = true }
 

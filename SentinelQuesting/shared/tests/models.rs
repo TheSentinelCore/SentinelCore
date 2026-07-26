@@ -3,7 +3,7 @@
 
 use sentinel_models::authoring::{
     new_project, AcceptQuestAction, Action, ActionPayload, CoordinateMode, Operation, Position,
-    TravelAction, Variable, VariableType, VariableValue,
+    TravelAction, TravelMedium, Variable, VariableType, VariableValue,
 };
 use sentinel_models::runtime::{
     GuardedAction, RuntimeAcceptQuest, RuntimeAction, RuntimeCondition, RuntimeNpc, RuntimeOperation,
@@ -29,6 +29,8 @@ fn project_json_roundtrip_is_stable() {
             position: Some(Position::new(0, 1.0, 2.0, 3.0)),
             tolerance: 5.0,
             authored_radius: None,
+            medium: TravelMedium::Any,
+            source_line: None,
             mount: None,
             allow_flight: false,
             timeout: Some(300),
@@ -442,5 +444,104 @@ mod task_graph {
         let back: sentinel_models::authoring::Project =
             serde_json::from_str(&json).expect("deserialize project");
         assert_eq!(p, back, "the task graph must round-trip unchanged");
+    }
+}
+
+// ===========================================================================
+// Guide-block headers — the identity above the first `step` (RED).
+// ===========================================================================
+
+/// Model-level coverage for `authoring::GuideHeaders`, the carrier `Project` must grow so the
+/// importer can stop discarding `#group`, `#subgroup` and `#next`, and so `#name`/`#version`
+/// survive as more than a project title and a raw version string.
+///
+/// This module does not compile until `GuideHeaders` and `Project::guide_headers` exist. That
+/// compile failure is the intended RED for Rust.
+///
+/// ## WHAT THESE TESTS CANNOT SEE
+///
+/// * **No importer, no corpus, no guide text.** Everything here is hand-constructed except the
+///   backward-compatibility fixture. A perfectly shaped `GuideHeaders` proves nothing about
+///   whether the importer populates it — that is `importer/tests/guide_headers.rs`'s job, and
+///   the two files pass and fail independently.
+/// * **No compiler, no `kernel::GuideMeta`.** Nothing here proves these five carriers assemble
+///   into a profile's `meta`, or that the gate is ever evaluated to choose among two `#name`
+///   candidates. A correct carrier feeding a wrong lowering is invisible from here.
+/// * **Backward compatibility is tested one direction only** — old JSON (no `guide_headers`) into
+///   the new type. Nothing here proves an old *reader* survives new JSON, and nothing proves the
+///   `.questing/projects/` import artifacts on disk are re-importable.
+/// * **`Vec` cardinality is untested against the pack.** The corpus permits two `#name`, two
+///   `#subgroup` and two `#next` per block; that these types are `Vec` is asserted, that the
+///   importer ever fills more than one entry is not.
+mod guide_headers {
+    use sentinel_models::authoring::{new_project, Gated, GuideGate, GuideHeaders, Project};
+
+    /// A checked-in project JSON that predates `guide_headers` must still deserialize.
+    ///
+    /// `tests/fixtures/sample_project.json` is the real, tracked artifact the cross-crate E2E
+    /// suite loads. It carries none of the new keys. Every field added to `Project` from here on
+    /// is additive and `#[serde(default)]` or old projects stop opening — silently for a user,
+    /// because the failure is a parse error on a file they did not change.
+    #[test]
+    fn a_project_json_written_before_guide_headers_existed_still_deserializes() {
+        let json = include_str!("../../tests/fixtures/sample_project.json");
+        let project: Project =
+            serde_json::from_str(json).expect("a pre-existing project file must still open");
+
+        assert_eq!(project.metadata.name, "Integration Test Profile");
+        assert_eq!(project.operations.len(), 2, "got: {:?}", project.operations.len());
+        assert_eq!(
+            project.guide_headers,
+            GuideHeaders::default(),
+            "an absent `guide_headers` key defaults to empty, not to a panic; got: {:?}",
+            project.guide_headers
+        );
+    }
+
+    /// `A-11-23.lua:5-15` — the five headers of the block ADR 07's worked example is drawn from.
+    #[test]
+    fn guide_headers_roundtrip_with_their_gates_and_source_lines() {
+        let mut p = new_project("12-14 Darkshore");
+        p.guide_headers = GuideHeaders {
+            name: vec![Gated { value: "12-14 Darkshore".to_string(), gate: None, line: 9 }],
+            group: vec![Gated {
+                value: "RestedXP TBC Guide (A)".to_string(),
+                gate: None,
+                line: 6,
+            }],
+            subgroup: vec![Gated {
+                value: "RestedXP Alliance 1-20".to_string(),
+                gate: None,
+                line: 13,
+            }],
+            source_version: Some(7),
+            // A-1-11-Human.lua:2 — a `;` list under one gate, flattened to one entry apiece.
+            next: vec![
+                Gated {
+                    value: "12-14 Loch Modan".to_string(),
+                    gate: Some(GuideGate("Warlock".to_string())),
+                    line: 2,
+                },
+                Gated {
+                    value: "12-14 Darkshore".to_string(),
+                    gate: Some(GuideGate("Warlock".to_string())),
+                    line: 2,
+                },
+            ],
+        };
+
+        let json = serde_json::to_string_pretty(&p).expect("serialize project");
+        let back: Project = serde_json::from_str(&json).expect("deserialize project");
+        assert_eq!(p, back, "the guide headers must round-trip unchanged");
+    }
+
+    /// A block with no `#version` (12 of 277) is not version zero, and a block with no `#next`
+    /// (128 of 277) chains to nothing rather than to an empty-named guide.
+    #[test]
+    fn an_empty_header_set_is_absent_not_zero() {
+        let h = GuideHeaders::default();
+        assert_eq!(h.source_version, None, "got: {:?}", h.source_version);
+        assert!(h.name.is_empty() && h.group.is_empty(), "got: {h:?}");
+        assert!(h.subgroup.is_empty() && h.next.is_empty(), "got: {h:?}");
     }
 }

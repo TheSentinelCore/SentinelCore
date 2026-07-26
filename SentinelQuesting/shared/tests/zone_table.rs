@@ -3,7 +3,7 @@
 //! RestedXP authors movement as zone-relative percentages. `sentinel_models::zone::zone_map_for`
 //! is the only thing in the workspace that can turn one into a world coordinate, and a zone it
 //! does not know produces no position at all — `importer/src/project_builder.rs` raises
-//! `UNMAPPED_GOTO_ZONE` and `compiler/src/kernel/route.rs` raises `LoweringError::UnknownZone`.
+//! `UNMAPPED_GOTO_ZONE`, by way of `shared/src/movement.rs`'s `CoordinateError::UnknownZone`.
 //! So the table's coverage is a hard ceiling on how much of the guide corpus can compile, and
 //! every row in it is a place the character physically walks to.
 //!
@@ -861,7 +861,7 @@ fn landmarks_resolve_identically_through_their_ui_map_id() {
 /// An unknown zone yields no position, and this must survive the expansion.
 ///
 /// `None` is the diagnostic: `project_builder.rs` turns it into `UNMAPPED_GOTO_ZONE` and
-/// `route.rs` into `LoweringError::UnknownZone`. Guessing instead once produced 522 travel
+/// `movement.rs` into `CoordinateError::UnknownZone`. Guessing instead once produced 522 travel
 /// actions aimed at meaningless coordinates — ADR 06 invariant 3, a percentage must never
 /// survive compilation.
 #[test]
