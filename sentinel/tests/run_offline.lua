@@ -356,6 +356,8 @@ local test_modules = {
     "tests/core/test_bt",
     "tests/core/test_geometry",
     "tests/core/test_error_boundary",
+    -- ADR 09a §1.5: the versioned event contract, as a pure module.
+    "tests/core/test_event_schema",
 
     -- Kernel (ADR 08 Phase 1: scheduler, frozen snapshot, intent queue, tick clock)
     "tests/kernel/test_truth",
@@ -470,6 +472,9 @@ local test_modules = {
     "tests/modules/questing/test_runtime_action",
     "tests/modules/questing/test_runtime_profile",
     "tests/modules/questing/test_runner_state",
+    -- ADR 09a §1.5: the event contract as _log_event emits it, and the proof that the three
+    -- pre-v1 consumers of the same entry (cockpit, save file, questing:log) still read it.
+    "tests/modules/questing/test_event_contract",
     "tests/modules/questing/test_module_control",
     "tests/modules/questing/test_runtime_persistence",
     "tests/modules/questing/test_profile_chain",
@@ -480,6 +485,7 @@ local test_modules = {
     "tests/modules/questing/test_kill_pursuit",
     "tests/modules/questing/test_quest_log_space",
     "tests/modules/questing/test_effect_verification",
+    "tests/modules/questing/test_recorder",
 
     -- Shared libs
     "tests/shared/test_compat",
