@@ -1075,6 +1075,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sentinel-resolver"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "sentinel-models",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "sentinel-runtime"
 version = "0.1.0"
 dependencies = [

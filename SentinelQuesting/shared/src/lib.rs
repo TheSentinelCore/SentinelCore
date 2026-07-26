@@ -38,6 +38,7 @@ pub mod authoring;
 pub mod error;
 pub mod kernel;
 pub mod movement;
+pub mod platform;
 pub mod runtime;
 pub mod source;
 pub mod zone;
