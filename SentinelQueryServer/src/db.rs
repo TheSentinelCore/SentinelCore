@@ -2,6 +2,8 @@ use rusqlite::Connection;
 use sentinel_query_types::*;
 use std::sync::{Arc, Mutex};
 
+use crate::search::{escape_like, SearchHit, SearchKind, SpawnPoint, SpawnType, MAX_SEARCH_LIMIT};
+
 #[derive(Clone)]
 pub struct Db(pub Arc<Mutex<Connection>>);
 
@@ -601,7 +603,388 @@ let exists = self.query_map::<bool, _>(
         let distance = (dx*dx + dy*dy + dz*dz).sqrt();
         let speed = 7.0; // yards per second (approximate running speed in WoW)
         let seconds = (distance / speed).ceil() as u64;
-        
+
         Ok(TravelEstimateResponse { seconds })
+    }
+
+    /// Federated fuzzy search across npc / quest / item / object / area, ranked exact > prefix >
+    /// substring. Backs the IDE's Smart Search, where one term is expected to surface every kind
+    /// of entity at once.
+    ///
+    /// Each per-kind query carries its own `LIMIT`, so the cost is bounded before the merge —
+    /// a caller cannot reach an unbounded LIKE sweep of 109k creatures from the query string.
+    pub fn federated_search(&self, term: &str, limit: usize) -> Result<Vec<SearchHit>, String> {
+        let limit = limit.clamp(1, MAX_SEARCH_LIMIT);
+        let term = term.trim();
+        if term.is_empty() {
+            return Ok(Vec::new());
+        }
+        let escaped = escape_like(term);
+        let prefix = format!("{escaped}%");
+        let anywhere = format!("%{escaped}%");
+        let per_kind = limit as i64;
+
+        let mut hits = Vec::new();
+
+        // The rank arithmetic is identical for every kind: 3 exact, 2 prefix, 1 substring. It is
+        // computed in SQL so the per-kind LIMIT keeps the best candidates rather than an arbitrary
+        // table-order slice.
+        hits.extend(self.query_map::<SearchHit, _>(
+            "SELECT t.Entry, t.Name, t.SubName, t.MinLevel, t.MaxLevel, t.rank, \
+                    (SELECT c.map FROM creature c WHERE c.id = t.Entry LIMIT 1) \
+             FROM ( \
+               SELECT Entry, Name, SubName, MinLevel, MaxLevel, \
+                      CASE WHEN lower(Name) = lower(?1) THEN 3 \
+                           WHEN Name LIKE ?2 ESCAPE '\\' THEN 2 \
+                           ELSE 1 END AS rank \
+               FROM creature_template \
+               WHERE Name LIKE ?3 ESCAPE '\\' \
+               ORDER BY rank DESC, length(Name) ASC, Entry ASC LIMIT ?4 \
+             ) t",
+            rusqlite::params![term, prefix, anywhere, per_kind],
+            |row| {
+                let sub: Option<String> = row.get(2)?;
+                let min: i64 = row.get(3)?;
+                let max: i64 = row.get(4)?;
+                let map: Option<i64> = row.get(6)?;
+                Ok(SearchHit {
+                    kind: SearchKind::Npc,
+                    id: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    context: npc_context(sub.as_deref(), min, max, map),
+                    score: row.get::<_, i64>(5)? as u8,
+                })
+            },
+        )?);
+
+        hits.extend(self.query_map::<SearchHit, _>(
+            "SELECT entry, Title, QuestLevel, MinLevel, \
+                    CASE WHEN lower(Title) = lower(?1) THEN 3 \
+                         WHEN Title LIKE ?2 ESCAPE '\\' THEN 2 \
+                         ELSE 1 END AS rank \
+             FROM quest_template \
+             WHERE Title LIKE ?3 ESCAPE '\\' \
+             ORDER BY rank DESC, length(Title) ASC, entry ASC LIMIT ?4",
+            rusqlite::params![term, prefix, anywhere, per_kind],
+            |row| {
+                Ok(SearchHit {
+                    kind: SearchKind::Quest,
+                    id: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    context: format!(
+                        "Quest level {} - min level {}",
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?
+                    ),
+                    score: row.get::<_, i64>(4)? as u8,
+                })
+            },
+        )?);
+
+        hits.extend(self.query_map::<SearchHit, _>(
+            "SELECT entry, name, ItemLevel, Quality, \
+                    CASE WHEN lower(name) = lower(?1) THEN 3 \
+                         WHEN name LIKE ?2 ESCAPE '\\' THEN 2 \
+                         ELSE 1 END AS rank \
+             FROM item_template \
+             WHERE name LIKE ?3 ESCAPE '\\' \
+             ORDER BY rank DESC, length(name) ASC, entry ASC LIMIT ?4",
+            rusqlite::params![term, prefix, anywhere, per_kind],
+            |row| {
+                Ok(SearchHit {
+                    kind: SearchKind::Item,
+                    id: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    context: format!(
+                        "Item level {} - quality {}",
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?
+                    ),
+                    score: row.get::<_, i64>(4)? as u8,
+                })
+            },
+        )?);
+
+        hits.extend(self.query_map::<SearchHit, _>(
+            "SELECT t.entry, t.name, t.type, t.rank, \
+                    (SELECT g.map FROM gameobject g WHERE g.id = t.entry LIMIT 1) \
+             FROM ( \
+               SELECT entry, name, type, \
+                      CASE WHEN lower(name) = lower(?1) THEN 3 \
+                           WHEN name LIKE ?2 ESCAPE '\\' THEN 2 \
+                           ELSE 1 END AS rank \
+               FROM gameobject_template \
+               WHERE name LIKE ?3 ESCAPE '\\' \
+               ORDER BY rank DESC, length(name) ASC, entry ASC LIMIT ?4 \
+             ) t",
+            rusqlite::params![term, prefix, anywhere, per_kind],
+            |row| {
+                let map: Option<i64> = row.get(4)?;
+                Ok(SearchHit {
+                    kind: SearchKind::Object,
+                    id: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    context: match map {
+                        Some(map) => format!("Object type {} - map {}", row.get::<_, i64>(2)?, map),
+                        None => format!("Object type {} - not spawned", row.get::<_, i64>(2)?),
+                    },
+                    score: row.get::<_, i64>(3)? as u8,
+                })
+            },
+        )?);
+
+        // `game_tele` is the area source rather than `points_of_interest`: POI rows carry only x/y
+        // with no map and no z, so an "area" hit from them could not be navigated to — the same
+        // missing-ground-height failure this phase exists to fix.
+        hits.extend(self.query_map::<SearchHit, _>(
+            "SELECT id, name, map, \
+                    CASE WHEN lower(name) = lower(?1) THEN 3 \
+                         WHEN name LIKE ?2 ESCAPE '\\' THEN 2 \
+                         ELSE 1 END AS rank \
+             FROM game_tele \
+             WHERE name LIKE ?3 ESCAPE '\\' \
+             ORDER BY rank DESC, length(name) ASC, id ASC LIMIT ?4",
+            rusqlite::params![term, prefix, anywhere, per_kind],
+            |row| {
+                Ok(SearchHit {
+                    kind: SearchKind::Area,
+                    id: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    context: format!("Map {}", row.get::<_, i64>(2)?),
+                    score: row.get::<_, i64>(3)? as u8,
+                })
+            },
+        )?);
+
+        Ok(interleave_by_kind(hits, limit))
+    }
+
+    /// Spawn points for one entry. An entry that exists but is never placed in the world returns
+    /// an empty vector — absence of a spawn is data, not an error.
+    pub fn spawns(&self, kind: SpawnType, entry: u32) -> Result<Vec<SpawnPoint>, String> {
+        let (table, _) = kind.tables();
+        // The table name comes from the SpawnType enum, never from caller text.
+        let sql = format!(
+            "SELECT guid, map, position_x, position_y, position_z, orientation \
+             FROM {table} WHERE id = ?1 ORDER BY guid ASC"
+        );
+        self.query_map::<SpawnPoint, _>(&sql, [entry], |row| {
+            Ok(SpawnPoint {
+                guid: row.get::<_, i64>(0)? as u32,
+                map: row.get::<_, i64>(1)? as u32,
+                position_x: row.get::<_, f64>(2)? as f32,
+                position_y: row.get::<_, f64>(3)? as f32,
+                position_z: row.get::<_, f64>(4)? as f32,
+                orientation: row.get::<_, f64>(5)? as f32,
+            })
+        })
+    }
+}
+
+/// `creature_zone` is empty in this snapshot, so there is no zone name to show; the level band
+/// plus the spawn map is the best disambiguator available.
+fn npc_context(subname: Option<&str>, min_level: i64, max_level: i64, map: Option<i64>) -> String {
+    let level = if min_level == max_level {
+        format!("Level {min_level}")
+    } else {
+        format!("Level {min_level}-{max_level}")
+    };
+    let mut parts = Vec::new();
+    if let Some(sub) = subname.map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(format!("<{sub}>"));
+    }
+    parts.push(level);
+    match map {
+        Some(map) => parts.push(format!("map {map}")),
+        None => parts.push("not spawned".to_string()),
+    }
+    parts.join(" - ")
+}
+
+/// Merge the per-kind hits into one page: every score tier is exhausted before the next, but
+/// within a tier the kinds take turns.
+///
+/// Straight ordering by match quality starves the smaller tables — "wolf" matches 109 items and
+/// only 9 quests, so a purely quality-ordered page is all items and the author never sees the
+/// quest they were looking for. Turn-taking keeps exact above prefix above substring while still
+/// showing every kind on the first page, which is what Smart Search is for.
+fn interleave_by_kind(hits: Vec<SearchHit>, limit: usize) -> Vec<SearchHit> {
+    // Shorter names first within a kind: "Fang" beats "Fanged Screecher" for the term "Fang".
+    // The id breaks the remaining ties so the page is stable across runs.
+    let mut buckets: Vec<Vec<SearchHit>> = vec![Vec::new(); SCORE_TIERS * KINDS];
+    for hit in hits {
+        let tier = SCORE_TIERS - usize::from(hit.score.clamp(1, SCORE_TIERS as u8));
+        buckets[tier * KINDS + kind_order(hit.kind) as usize].push(hit);
+    }
+    for bucket in buckets.iter_mut() {
+        bucket.sort_by(|a, b| {
+            a.name
+                .chars()
+                .count()
+                .cmp(&b.name.chars().count())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+    }
+
+    let mut page = Vec::with_capacity(limit);
+    for tier in 0..SCORE_TIERS {
+        let mut cursors = [0usize; KINDS];
+        loop {
+            let mut emitted = false;
+            for kind in 0..KINDS {
+                if page.len() == limit {
+                    return page;
+                }
+                let bucket = &buckets[tier * KINDS + kind];
+                if let Some(hit) = bucket.get(cursors[kind]) {
+                    page.push(hit.clone());
+                    cursors[kind] += 1;
+                    emitted = true;
+                }
+            }
+            if !emitted {
+                break;
+            }
+        }
+    }
+    page
+}
+
+/// Exact, prefix, substring.
+const SCORE_TIERS: usize = 3;
+const KINDS: usize = 5;
+
+fn kind_order(kind: SearchKind) -> u8 {
+    match kind {
+        SearchKind::Npc => 0,
+        SearchKind::Quest => 1,
+        SearchKind::Item => 2,
+        SearchKind::Object => 3,
+        SearchKind::Area => 4,
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_db {
+    use super::Db;
+
+    /// The tests query the real `tbcmangos.sqlite`; the ground-height regression they guard cannot
+    /// be reproduced against a synthetic fixture, because the whole point is that mangos carries
+    /// heights the guide text never did.
+    pub fn open() -> Db {
+        let path = std::env::var("SENTINEL_DB").unwrap_or_else(|_| "../tbcmangos.sqlite".to_string());
+        assert!(
+            std::path::Path::new(&path).exists(),
+            "tbcmangos.sqlite not found at {path}; set SENTINEL_DB to point at it"
+        );
+        Db::new(&path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_db::open;
+    use crate::search::{SearchKind, SpawnType, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT};
+    use std::collections::HashSet;
+
+    // "Fang" is the one term in this snapshot that hits every federated table: an NPC named
+    // exactly `Fang` (14892) plus quests, items, objects and two flight-point areas containing it.
+    const FEDERATED_TERM: &str = "Fang";
+
+    #[test]
+    fn federated_search_spans_several_kinds() {
+        let db = open();
+        let hits = db.federated_search(FEDERATED_TERM, 60).unwrap();
+        let kinds: HashSet<SearchKind> = hits.iter().map(|h| h.kind).collect();
+        assert!(
+            kinds.len() >= 3,
+            "expected at least 3 kinds for {FEDERATED_TERM}, got {kinds:?}"
+        );
+        assert!(hits.iter().all(|h| !h.name.is_empty()));
+        assert!(hits.iter().all(|h| !h.context.is_empty()));
+    }
+
+    #[test]
+    fn federated_search_ranks_exact_match_first() {
+        let db = open();
+        let hits = db.federated_search(FEDERATED_TERM, 60).unwrap();
+        let first = hits.first().expect("expected hits");
+        assert_eq!(first.kind, SearchKind::Npc);
+        assert_eq!(first.id, 14892);
+        assert_eq!(first.name, "Fang");
+    }
+
+    #[test]
+    fn federated_search_does_not_let_one_kind_starve_the_page() {
+        // The motivating case from the plan: the author types "wolf" and expects NPCs, quests and
+        // items together. Items alone match 109 rows, so a page ordered purely by match quality
+        // fills with items and the quests never surface.
+        let db = open();
+        let hits = db.federated_search("wolf", DEFAULT_SEARCH_LIMIT).unwrap();
+        let kinds: HashSet<SearchKind> = hits.iter().map(|h| h.kind).collect();
+        for expected in [SearchKind::Npc, SearchKind::Quest, SearchKind::Item] {
+            assert!(
+                kinds.contains(&expected),
+                "no {expected:?} on the first page for 'wolf': {kinds:?}"
+            );
+        }
+        // Objects are absent on purpose: all six "wolf" gameobjects are substring matches
+        // ("Frostwolf Banner"), and match quality still outranks turn-taking.
+        assert!(hits.iter().take(3).all(|h| h.score >= 2));
+    }
+
+    #[test]
+    fn federated_search_honours_the_limit() {
+        let db = open();
+        let hits = db.federated_search(FEDERATED_TERM, 5).unwrap();
+        assert_eq!(hits.len(), 5);
+    }
+
+    #[test]
+    fn federated_search_treats_wildcards_as_literals() {
+        // An unescaped `%` would turn the LIKE into a full scan of 109k creatures plus every other
+        // searched table — the query-string-reachable sweep this endpoint must not expose. The
+        // snapshot does hold names with a literal `%` (the "10% Test Speed Boots" item family),
+        // so the property is "only literal matches", not "no matches".
+        let db = open();
+        let hits = db.federated_search("%", MAX_SEARCH_LIMIT).unwrap();
+        assert!(
+            hits.iter().all(|h| h.name.contains('%')),
+            "bare '%' matched names without one: {:?}",
+            hits.iter().map(|h| &h.name).collect::<Vec<_>>()
+        );
+        assert!(hits.len() < MAX_SEARCH_LIMIT, "a bare '%' should not fill the page");
+
+        let underscore = db.federated_search("_", MAX_SEARCH_LIMIT).unwrap();
+        assert!(underscore.iter().all(|h| h.name.contains('_')));
+    }
+
+    #[test]
+    fn npc_spawns_carry_real_ground_height() {
+        // Deputy Willem. The regression this endpoint exists to kill wrote world_z = 0 for all
+        // 38,726 imported Travel positions; `creature.position_z` is the real height.
+        let db = open();
+        let spawns = db.spawns(SpawnType::Npc, 823).unwrap();
+        let first = spawns.first().expect("Deputy Willem has a spawn");
+        assert_eq!(first.map, 0);
+        assert!((first.position_x - -8933.54).abs() < 1.0, "x = {}", first.position_x);
+        assert!((first.position_y - -136.52).abs() < 1.0, "y = {}", first.position_y);
+        assert_ne!(first.position_z, 0.0);
+        assert!((first.position_z - 83.45).abs() < 1.0, "z = {}", first.position_z);
+    }
+
+    #[test]
+    fn object_spawns_carry_real_ground_height() {
+        let db = open();
+        let spawns = db.spawns(SpawnType::Object, 1731).unwrap();
+        assert!(spawns.len() > 1, "Copper Vein has many spawns");
+        assert!(spawns.iter().any(|s| s.position_z != 0.0));
+    }
+
+    #[test]
+    fn spawns_of_an_unknown_entry_are_empty_not_an_error() {
+        let db = open();
+        assert!(db.spawns(SpawnType::Npc, 99_999_999).unwrap().is_empty());
+        assert!(db.spawns(SpawnType::Object, 99_999_999).unwrap().is_empty());
     }
 }

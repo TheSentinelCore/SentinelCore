@@ -8,6 +8,7 @@ use sentinel_query_types::*;
 use std::collections::HashMap;
 
 use crate::db::Db;
+use crate::search::{parse_limit, SearchHit, SpawnPoint, SpawnType};
 
 pub async fn search_quests(
     Extension(db): Extension<Db>,
@@ -242,5 +243,139 @@ pub async fn travel_estimate(
             let err = json!({ "error": e });
             Err((StatusCode::INTERNAL_SERVER_ERROR, Json(err)))
         }
+    }
+}
+
+/// `GET /search?q=<text>&limit=<n>` — one federated, ranked, typed result list across
+/// npc / quest / item / object / area. The IDE's Smart Search calls this once per keystroke,
+/// so an empty or missing term is refused rather than answered with a full table sweep.
+pub async fn search(
+    Extension(db): Extension<Db>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<AxumJson<Vec<SearchHit>>, (StatusCode, Json<serde_json::Value>)> {
+    let term = params.get("q").map(|s| s.trim()).unwrap_or_default();
+    if term.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Missing 'q' parameter" })),
+        ));
+    }
+
+    let limit = parse_limit(params.get("limit").map(String::as_str))
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
+
+    match db.federated_search(term, limit) {
+        Ok(hits) => Ok(AxumJson(hits)),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })))),
+    }
+}
+
+/// `GET /spawns/:type/:entry` — every spawn point of an entry, `:type` being `npc` or `object`.
+///
+/// This is where `world_z` comes from. Guide text never carried ground height, which left every
+/// imported Travel position at `world_z = 0` — underground, and unusable for navmesh queries.
+pub async fn get_spawns(
+    Extension(db): Extension<Db>,
+    Path((kind, entry)): Path<(String, u32)>,
+) -> Result<AxumJson<Vec<SpawnPoint>>, (StatusCode, Json<serde_json::Value>)> {
+    let kind: SpawnType = kind
+        .parse()
+        .map_err(|e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
+
+    match db.spawns(kind, entry) {
+        Ok(spawns) if spawns.is_empty() => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("No spawns found for {}: {}", kind_label(kind), entry) })),
+        )),
+        Ok(spawns) => Ok(AxumJson(spawns)),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })))),
+    }
+}
+
+fn kind_label(kind: SpawnType) -> &'static str {
+    match kind {
+        SpawnType::Npc => "npc",
+        SpawnType::Object => "object",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_db::open;
+    use crate::search::MAX_SEARCH_LIMIT;
+
+    fn params(pairs: &[(&str, &str)]) -> Query<HashMap<String, String>> {
+        Query(
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
+    }
+
+    #[tokio::test]
+    async fn search_rejects_a_missing_term() {
+        let err = search(Extension(open()), params(&[]))
+            .await
+            .expect_err("no term must not sweep every table");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1 .0.get("error").is_some());
+    }
+
+    #[tokio::test]
+    async fn search_rejects_a_blank_term() {
+        let err = search(Extension(open()), params(&[("q", "   ")]))
+            .await
+            .expect_err("blank term must not sweep every table");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn search_rejects_an_unparseable_limit() {
+        let err = search(Extension(open()), params(&[("q", "Fang"), ("limit", "abc")]))
+            .await
+            .expect_err("a bad limit is a client error");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1 .0.get("error").is_some());
+    }
+
+    #[tokio::test]
+    async fn search_caps_an_oversized_limit() {
+        let hits = search(
+            Extension(open()),
+            params(&[("q", "a"), ("limit", "100000")]),
+        )
+        .await
+        .expect("oversized limits clamp rather than fail");
+        assert!(hits.0.len() <= MAX_SEARCH_LIMIT, "returned {}", hits.0.len());
+    }
+
+    #[tokio::test]
+    async fn spawns_returns_ground_height_for_deputy_willem() {
+        let spawns = get_spawns(Extension(open()), Path(("npc".to_string(), 823)))
+            .await
+            .expect("Deputy Willem is spawned");
+        let first = &spawns.0[0];
+        assert_eq!(first.map, 0);
+        assert_ne!(first.position_z, 0.0);
+    }
+
+    #[tokio::test]
+    async fn spawns_rejects_an_unknown_type() {
+        let err = get_spawns(Extension(open()), Path(("dragon".to_string(), 823)))
+            .await
+            .expect_err("only npc and object are spawn tables");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1 .0.get("error").is_some());
+    }
+
+    #[tokio::test]
+    async fn spawns_of_an_unknown_entry_are_a_not_found() {
+        let err = get_spawns(Extension(open()), Path(("npc".to_string(), 99_999_999)))
+            .await
+            .expect_err("an unspawned entry is a 404, not a panic");
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+        assert!(err.1 .0.get("error").is_some());
     }
 }
