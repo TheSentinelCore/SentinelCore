@@ -273,7 +273,6 @@ local function host_stub()
         combat = function() calls[#calls + 1] = "combat" return "combat-module" end,
         questing = function() calls[#calls + 1] = "questing" return "questing-module" end,
         reload = function() calls[#calls + 1] = "reload" return true end,
-        toggle_quest_editor = function() return false end,
     }
 end
 

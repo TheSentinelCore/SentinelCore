@@ -14,8 +14,8 @@
 --  1. CONSTRUCT A MENU ELEMENT OR A WINDOW DURING RENDER. Sylvannas forbids it; the failure is at
 --     runtime in the injector, with the offline suite green. The ghost sliders below are built at
 --     module scope and the window in `ensure_frames_created`, which `main.lua` drives from the
---     tick callback exactly as it already drives the runner cockpit's. `test_shell.lua` counts
---     constructions per phase and requires zero during render.
+--     tick callback. `test_shell.lua` counts constructions per phase and requires zero during
+--     render.
 --  2. TOUCH THE NETWORK OR THE DISK. This runs every frame (ADR 09b §2.4).
 --  3. NAME A PANEL. Panels arrive through `register_panel`; a shell that required one would have
 --     to be edited by every unit that follows it, and simultaneous edits to one file is the
@@ -467,21 +467,39 @@ function Shell:_draw_switcher(window, vm, bounds)
     if activated then self._state:activate(activated) end
 end
 
+-- `animate_widget` keys an animation by an INTEGER id (`api/ui-custom.md`, "Animate Widget";
+-- `guides/custom-ui.md` §Advanceds-1: "parameter 1: the id of the animation (integer)"). A string
+-- raises `bad argument #1 to 'animate_widget' (number expected, got string)` INSIDE the render
+-- callback, and `main.lua` pcalls the whole shell render — so the frame died between the tab strip
+-- and the body, leaving the operator looking at fresh chrome over a body from an earlier frame.
+--
+-- Declared as a constant rather than derived per frame: the SDK carries an animation's progress
+-- under its id, so an id that changed between frames would start a brand-new animation on each
+-- one, and the marker would restart at `from` forever instead of arriving at the tab. A second
+-- animated widget gets its own entry here; ids are unique per widget, not per frame.
+local ANIMATION_ID = {
+    tab_marker = 1,
+}
+
 function Shell:_draw_active_marker(window, strip, tab)
     local transition = self._state:marker_transition(tab.x)
+    local y = strip.y + strip.h - Theme.metrics.selection_marker
     local x = transition.to
     if transition.animate then
         -- ADR 09b §5.7, "motion only to explain": the bar travelling to the tab you just clicked
         -- is what makes the switch legible. `marker_transition` has already refused the animation
         -- in combat, so there is no decision left here.
-        local anim = window:animate_widget("sentinel_ide_tab_marker",
-            transition.from, transition.to, Theme.interaction.resting.fill,
+        --
+        -- The endpoints are vec2 even though the marker only travels along x: the binding takes
+        -- positions, and a bare coordinate raises `bad argument #2` the same way the id did.
+        local anim = window:animate_widget(ANIMATION_ID.tab_marker,
+            v2(transition.from, y), v2(transition.to, y), Theme.interaction.resting.fill,
             Theme.interaction.active.fill, 1, 1, false)
-        if anim and anim.current_position then x = anim.current_position end
+        if anim and anim.current_position then x = anim.current_position.x or x end
     end
 
     window:render_rect_filled(
-        v2(x, strip.y + strip.h - Theme.metrics.selection_marker),
+        v2(x, y),
         v2(x + tab.w, strip.y + strip.h),
         Theme.color.accent(), Theme.radius.none)
 end

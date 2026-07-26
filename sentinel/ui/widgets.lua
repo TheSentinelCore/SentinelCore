@@ -33,7 +33,7 @@ local function require_or(module_name, fallback)
     return fallback
 end
 
--- Guarded exactly as `theme.lua` and `runner_ui.lua` guard theirs, so the widget layer stays
+-- Guarded exactly as `theme.lua` guards its own, so the widget layer stays
 -- loadable and renderable with no injector present (`tests/ui/test_offline_loadable.lua`).
 local Vec2 = require_or("common/geometry/vector_2", {
     new = function(x, y) return { x = x or 0, y = y or 0 } end,

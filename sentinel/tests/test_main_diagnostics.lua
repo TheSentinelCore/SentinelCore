@@ -282,7 +282,7 @@ function M.test_successful_init_publishes_the_surface_with_host_verbs()
             end)
 
             T.assert_not_nil(published_host, "a successful init must publish the surface")
-            for _, verb in ipairs({ "combat", "questing", "reload", "toggle_quest_editor" }) do
+            for _, verb in ipairs({ "combat", "questing", "reload", "toggle_ide", "ide" }) do
                 T.assert_true(type(published_host[verb]) == "function",
                     "host verb '" .. verb .. "' must reach the surface")
             end

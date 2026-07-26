@@ -134,56 +134,6 @@ local function create_profile(profile_data, json_path)
 end
 
 -- ============================================================================
--- T15 — Task 1.2: Editor Extraction — toggle_editor does NOT load editor_ui
--- ============================================================================
-
-function M.test_toggle_editor_does_not_load_editor_ui()
-    -- We test that the event bus publishes "questing:toggle_editor" and
-    -- that no require("modules/questing/editor_ui") is triggered.
-
-    local EventBus = require("core/event_bus")
-    local Blackboard = require("core/blackboard")
-    local QuestingModule = require("modules/questing/module")
-
-    local published_events = {}
-    local eb = EventBus:new()
-    local original_publish = eb.publish
-    eb.publish = function(self, event, data)
-        table.insert(published_events, { event = event, data = data })
-        return original_publish(self, event, data)
-    end
-
-    local bb = Blackboard:new()
-    local module = QuestingModule:new(bb, eb)
-
-    -- Track whether require("modules/questing/editor_ui") is called
-    local editor_ui_required = false
-    local original_require = _G.require
-    _G.require = function(name)
-        if name == "modules/questing/editor_ui" then
-            editor_ui_required = true
-        end
-        return original_require(name)
-    end
-
-    -- Call toggle_editor
-    module:toggle_editor()
-
-    -- Restore require
-    _G.require = original_require
-
-    -- Assert editor_ui was NOT required
-    T.assert_false(editor_ui_required,
-        "toggle_editor() should NOT require editor_ui")
-
-    -- Assert event was published
-    T.assert_equal(#published_events, 1,
-        "toggle_editor() should publish one event")
-    T.assert_equal(published_events[1].event, "questing:toggle_editor",
-        "Event should be questing:toggle_editor")
-end
-
--- ============================================================================
 -- T17 — Task 2.2: Variable initialization from profile defaults
 -- ============================================================================
 
@@ -697,9 +647,6 @@ end
 -- ============================================================================
 
 local tests = {
-    -- T15 — Editor extraction
-    test_toggle_editor_does_not_load_editor_ui = M.test_toggle_editor_does_not_load_editor_ui,
-
     -- T17 — Variable initialization
     test_variable_init_from_profile_defaults = M.test_variable_init_from_profile_defaults,
     test_variable_init_missing_defaults_use_zero = M.test_variable_init_missing_defaults_use_zero,

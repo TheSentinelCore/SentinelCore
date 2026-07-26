@@ -101,7 +101,7 @@ concrete entry IDs and coordinates — never add reference resolution to the Lua
 Boot chain:
 
 ```
-sentinel/main.lua        registers Sylvannas callbacks, exposes _G.Sentinel, owns the runner cockpit
+sentinel/main.lua        registers Sylvannas callbacks, exposes _G.Sentinel, owns the IDE shell
   └ runtime/app.lua      SentinelApp:new/initialize — wires EventBus, Blackboard, ErrorBoundary,
                          ModuleRegistry, SensorHub, CallbackBridge, NavAdapter, IziBridge
       └ runtime/module_registry.lua
@@ -123,13 +123,27 @@ Shared infrastructure:
 - **Geometry** (`core/geometry.lua`) — use `Geometry.distance()` (nil-safe, returns infinity)
   rather than inlining `distance_3d`.
 
-**In-game UI is a runner cockpit, not an editor.** Authoring lives outside the game (the
-`sentinel-editor` HTTP API); the client only runs compiled profiles. The cockpit is split so it is
-testable: `modules/questing/runner_state.lua` is a **pure view-model** (health, liveness, progress
-+ ETA, blocked reason, quest-log desync, guardrails, events) covered by offline tests, and
-`modules/questing/runner_ui.lua` is a thin Sylvannas projection of it. Put no decision logic in the
-render layer — it cannot be tested outside the game. Control verbs (`start/pause/resume/stop/
-skip_current_step/set_guardrails/list_profiles/get_view`) live on `module.lua`.
+**In-game UI is the IDE** (`sentinel/ui/`, ADR 09b) — one window with a panel switcher, and the
+only UI surface. The legacy runner cockpit and its menu buttons were deleted once the IDE covered
+them; `sentinel/main.lua` carries a single "Open IDE" entry, and everything else is reached through
+`_G.Sentinel` verbs or a panel.
+
+Every panel splits the same way, and this is enforced rather than encouraged: a `*_state.lua` pure
+view-model holds all decision logic and is covered by offline tests, while the render function is a
+projection with no branching in it (`ui/panels/runner.lua` has no `if` at all — it dispatches draw
+items through a handler table). **Render code cannot be tested outside the game**, so anything with
+a branch belongs on the state side. `modules/questing/runner_state.lua` is the questing view-model
+and is NOT part of the deleted cockpit.
+
+Two Sylvannas rules fail at runtime while passing every offline test, so both are pinned by tests:
+windows and menu elements are created in the **tick** callback or at module scope, never inside a
+render callback; and `tests/harness/fake_window.lua` type-checks window arguments against
+`api/ui-custom.md`, because a permissive fake let a string animation id pass 1,568 green tests and
+then crash the shell every frame in the injector.
+
+Control verbs (`start/pause/resume/stop/skip_current_step/set_guardrails/list_profiles/get_view`)
+live on `module.lua`. Panels never call them from a render frame — `render` returns a command and
+the shell dispatches it on the tick.
 
 Questing execution path: `modules/questing/init.lua` (registry wrapper) → `module.lua` (lifecycle)
 → `runtime_profile.lua` → `runtime_action.lua` (one handler per action type). `runtime_profile.lua`

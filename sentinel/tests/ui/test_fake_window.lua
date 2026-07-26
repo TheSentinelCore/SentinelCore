@@ -237,6 +237,76 @@ function M.test_text_measurement_is_deterministic()
     T.assert_equal(fake:get_text_size("abcdabcd").x, size.x * 2, "width must scale with length")
 end
 
+-- ============================================================================
+-- Argument typing — the fake stands in for a TYPED C API
+-- ============================================================================
+-- Every `window:*` method is a C binding. A wrong argument type does not degrade, it raises
+-- `bad argument #N to '<fn>' (<expected> expected, got <actual>)` from inside
+-- `register_on_render_window_callback`, which aborts the frame wherever it happened to be — chrome
+-- painted, body not. A fake that accepted anything would certify exactly that code, and it did:
+-- `shell.lua` shipped a string animation id and a pair of bare numbers where vec2 are required,
+-- the suite stayed green, and the live client logged the throw on every frame the tab marker moved.
+
+function M.test_animate_widget_rejects_a_string_animation_id()
+    -- The proven failure, reproduced offline. `guides/custom-ui.md` §Advanceds-1: "parameter 1: the
+    -- id of the animation (integer)".
+    local fake = FakeWindow.new()
+    local ok, err = pcall(function()
+        fake:animate_widget("sentinel_ide_tab_marker", v2(0, 0), v2(80, 0), 120, 255, 1, 1, false)
+    end)
+    T.assert_false(ok, "a string animation id must raise here exactly as it does in the injector")
+    T.assert_true(tostring(err):find("animate_widget", 1, true) ~= nil,
+        "and name the call, or the failure is unattributable")
+end
+
+function M.test_animate_widget_rejects_a_fractional_animation_id()
+    -- A number is not enough: the binding takes an integer, so an id derived by arithmetic that
+    -- happens to land on a fraction fails in the injector and nowhere else.
+    local fake = FakeWindow.new()
+    local ok = pcall(function()
+        fake:animate_widget(1.5, v2(0, 0), v2(80, 0), 120, 255, 1, 1, false)
+    end)
+    T.assert_false(ok, "a fractional animation id must be refused")
+end
+
+function M.test_animate_widget_rejects_a_scalar_where_a_vec2_is_required()
+    -- The second half of the same bug. A marker that only travels along x is still animated
+    -- between two POSITIONS, and passing the bare coordinate raises `bad argument #2`.
+    local fake = FakeWindow.new()
+    T.assert_false(pcall(function()
+        fake:animate_widget(1, 0, v2(80, 0), 120, 255, 1, 1, false)
+    end), "a scalar start position must be refused")
+    T.assert_false(pcall(function()
+        fake:animate_widget(1, v2(0, 0), 80, 120, 255, 1, 1, false)
+    end), "a scalar end position must be refused")
+end
+
+function M.test_animate_widget_accepts_the_documented_signature_and_settles_on_the_end_position()
+    local fake = FakeWindow.new()
+    local anim = fake:animate_widget(1, v2(0, 4), v2(80, 4), 120, 255, 1, 1, false)
+    T.assert_equal(anim.current_position.x, 80, "the settled frame is the end position")
+    T.assert_equal(anim.alpha, 255, "carrying the max alpha it was given")
+    T.assert_equal(#fake:calls_of("animate_widget"), 1, "and the call is still recorded")
+end
+
+function M.test_push_font_rejects_a_font_name()
+    -- `api/ui-custom.md` documents `push_font(font_id)` as an integer enum member. A theme that
+    -- regressed to a string would paint nothing in the injector and everything offline.
+    local fake = FakeWindow.new()
+    T.assert_false(pcall(function() fake:push_font("FONT_BIG") end),
+        "a font name must be refused; the binding takes the enum's integer")
+end
+
+function M.test_positional_draw_calls_reject_a_scalar_position()
+    local fake = FakeWindow.new()
+    T.assert_false(pcall(function() fake:render_rect_filled(0, v2(10, 10), {}, 0) end),
+        "render_rect_filled takes two vec2, not two coordinates")
+    T.assert_false(pcall(function() fake:render_text(1, 0, {}, "x") end),
+        "render_text takes a vec2 offset")
+    T.assert_false(pcall(function() fake:is_mouse_hovering_rect(v2(0, 0), 10) end),
+        "the pointer predicates take two vec2")
+end
+
 function M.test_unknown_window_methods_are_absent_rather_than_silently_true()
     -- If the fake answered every call, a panel calling a method Sylvannas does not have would pass
     -- offline and error in the injector — the exact class of bug offline tests exist to catch.

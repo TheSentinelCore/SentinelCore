@@ -11,6 +11,9 @@
 --      test does not read the source: it counts `core.menu.*` constructions and asserts that
 --      invoking the registered render-menu callback performs ZERO of them.
 --
+-- The menu itself is now ONE entry -- "Open IDE" -- and that count is pinned here too. The
+-- Recording buttons that used to live beside it were deleted; the verbs behind them were not.
+--
 -- main.lua is a Sylvannas entry point with top-level `core.menu.*` / `core.register_on_*` calls, so
 -- this file patches just enough of the shared `_G.core` mock to let `require("main")` load, then
 -- restores it -- the same technique as tests/test_main_diagnostics.lua, no shared harness edited.
@@ -75,9 +78,8 @@ local function with_main(opts, fn)
     _G.core.log = function() end
     _G.core.log_error = function() end
 
-    -- The stub deliberately omits `get_event_bus`, which makes ensure_editor_wired and
-    -- ensure_diagnostics_wired return early. Neither is under test here, and the editor path would
-    -- drag in runner_ui.lua's injector-only window surface.
+    -- The stub deliberately omits `get_event_bus`, which makes ensure_diagnostics_wired return
+    -- early. It is not under test here (tests/test_main_diagnostics.lua owns it).
     local questing_wrapper = nil
     if opts.questing ~= false then
         questing_wrapper = { _questing = opts.questing }
@@ -136,9 +138,26 @@ function M.test_the_recording_verbs_reach_the_published_surface()
                 .. "operator has from outside the client")
         end
         -- The pre-existing surface must survive the addition.
-        for _, verb in ipairs({ "combat", "questing", "reload", "toggle_quest_editor" }) do
+        for _, verb in ipairs({ "combat", "questing", "reload", "toggle_ide", "ide" }) do
             T.assert_true(type(env.published[verb]) == "function",
                 "host verb '" .. verb .. "' must still be published")
+        end
+    end)
+end
+
+--- Stripping the menu down to the IDE deleted the BUTTONS, never the verbs. These are the
+--- programmatic surface the IDE's editor panel will call and, today, the only way to drive
+--- recording from the debug bridge -- a verb removed alongside its button would put Recording Mode
+--- straight back in the dead end it was in before W12.
+function M.test_stripping_the_menu_left_every_verb_reachable()
+    with_main({ questing = new_questing() }, function(env)
+        for _, verb in ipairs({
+            "start_recording", "stop_recording", "recording_status", "save_recording",
+            "resolve_recording", "resolve_status", "run_plan", "toggle_ide", "ide",
+        }) do
+            T.assert_true(type(env.published[verb]) == "function",
+                "host verb '" .. verb .. "' must survive the menu strip; the buttons went, the "
+                .. "programmatic surface did not")
         end
     end)
 end
@@ -214,64 +233,45 @@ function M.test_no_menu_element_is_constructed_inside_the_render_callback()
     end)
 end
 
-function M.test_the_menu_offers_recording_controls_a_human_can_reach_without_a_debugger()
+local function menu_button_ids(env)
+    local ids = {}
+    for _, entry in ipairs(env.created) do
+        if entry.kind == "button" then ids[#ids + 1] = entry.id end
+    end
+    return ids
+end
+
+--- The IDE is the only UI surface now, so the menu carries exactly one door and nothing else.
+--- Counted rather than reviewed: a stray button left behind is a control that looks supported,
+--- competes with the IDE for the same job, and drifts out of step with it.
+function M.test_the_menu_offers_exactly_one_entry()
     with_main({ questing = new_questing() }, function(env)
-        local ids = {}
-        for _, entry in ipairs(env.created) do
-            if entry.id then ids[entry.id] = true end
-        end
-        local found = 0
-        for id in pairs(ids) do
-            if id:find("record", 1, true) then found = found + 1 end
-        end
-        T.assert_true(found >= 3,
-            "start, stop and save must each have their own menu button (unique ids are a "
-            .. "core.menu.button requirement); found " .. tostring(found))
+        local ids = menu_button_ids(env)
+        T.assert_equal(#ids, 1,
+            "the menu must carry one entry; found: " .. table.concat(ids, ", "))
+        T.assert_true(ids[1]:find("ide", 1, true) ~= nil,
+            "and it must be the IDE's, not a leftover")
     end)
 end
 
---- The buttons have to be WIRED, not merely present. A rendered button whose click path calls
---- nothing looks identical offline to one that works.
-function M.test_the_menu_start_button_actually_starts_a_recording()
-    local questing = new_questing()
-    local start_id = nil
-    with_main({ questing = questing }, function(env)
-        for _, entry in ipairs(env.created) do
-            if entry.id and entry.id:find("record", 1, true) and entry.id:find("start", 1, true) then
-                start_id = entry.id
-            end
-        end
-        T.assert_not_nil(start_id, "there must be a start-recording button")
-    end)
-
-    local pressed = new_questing()
-    with_main({ questing = pressed, clicks = { [start_id] = true } }, function(env)
-        env.phase = "render"
-        env.render_menu()
-        T.assert_true(pressed:recording_status().recording,
-            "pressing the menu button must begin a recording -- a human must not need the debug "
-            .. "bridge to use Recording Mode")
-    end)
-end
-
-function M.test_the_menu_stop_button_actually_stops_a_recording()
-    local stop_id = nil
+--- Present is not wired, and here that distinction is the whole safety net: the IDE keybind ships
+--- deliberately UNBOUND so it cannot steal a movement key, so this button is the only way into the
+--- IDE. A menu entry whose click path called nothing would orphan the entire UI -- exactly how
+--- Recording Mode became dead code before W12 wired it.
+function M.test_the_menu_entry_actually_opens_the_ide()
+    local ide_id = nil
     with_main({ questing = new_questing() }, function(env)
-        for _, entry in ipairs(env.created) do
-            if entry.id and entry.id:find("record", 1, true) and entry.id:find("stop", 1, true) then
-                stop_id = entry.id
-            end
-        end
-        T.assert_not_nil(stop_id, "there must be a stop-recording button")
+        ide_id = menu_button_ids(env)[1]
     end)
+    T.assert_not_nil(ide_id, "there must be a button to press")
 
-    local questing = new_questing()
-    questing:start_recording("Northshire")
-    with_main({ questing = questing, clicks = { [stop_id] = true } }, function(env)
+    with_main({ questing = new_questing(), clicks = { [ide_id] = true } }, function(env)
+        T.assert_false(env.published.ide():is_visible(), "the IDE starts closed")
         env.phase = "render"
         env.render_menu()
-        T.assert_false(questing:recording_status().recording,
-            "pressing stop must end the session and release the observer's subscriber gate")
+        T.assert_true(env.published.ide():is_visible(),
+            "pressing the only menu entry must open the IDE; the keybind is unbound, so nothing "
+            .. "else can")
     end)
 end
 

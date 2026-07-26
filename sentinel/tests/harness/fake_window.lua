@@ -30,6 +30,53 @@
 local FakeWindow = {}
 FakeWindow.__index = FakeWindow
 
+-- ============================================================================
+-- Argument typing — because the thing being faked is a TYPED C API
+-- ============================================================================
+-- Every `window:*` method is a C binding. Handing one the wrong type does not degrade; it raises
+-- `bad argument #N to '<fn>' (<expected> expected, got <actual>)` from inside
+-- `register_on_render_window_callback`, aborting the frame wherever it happened to be.
+--
+-- A fake that accepted anything CERTIFIED that code, and it did exactly that: `shell.lua` passed a
+-- string animation id and two bare coordinates where `animate_widget` documents an integer and two
+-- vec2 (`api/ui-custom.md`, "Animate Widget"). The suite stayed green through every commit while
+-- the live client logged the throw on every frame the tab marker moved, and the operator saw the
+-- shell's chrome drawn over a body that had never been repainted.
+--
+-- So the types the SDK enforces are enforced here. Only the documented ones: a check the docs do
+-- not state would fail code the injector accepts, which is the same lie in the other direction.
+
+--- Word-for-word the shape the injector raises, so a test failure here reads the same as the client
+--- log that sent you looking.
+local function type_error(index, method, expected, got)
+    return string.format("bad argument #%d to '%s' (%s expected, got %s)",
+        index, method, expected, type(got))
+end
+
+local function expect_integer(value, index, method)
+    if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge
+        or value ~= math.floor(value) then
+        return type_error(index, method, "number", value)
+    end
+end
+
+local function expect_number(value, index, method)
+    if type(value) ~= "number" then return type_error(index, method, "number", value) end
+end
+
+local function expect_boolean(value, index, method)
+    if type(value) ~= "boolean" then return type_error(index, method, "boolean", value) end
+end
+
+--- A vec2 is duck-typed rather than checked against `common/geometry/vector_2`: that module exists
+--- only inside the injector, so requiring it here would make the harness unloadable offline — the
+--- one place it has to work.
+local function expect_vec2(value, index, method)
+    if type(value) ~= "table" or type(value.x) ~= "number" or type(value.y) ~= "number" then
+        return type_error(index, method, "vec2", value)
+    end
+end
+
 -- Off-screen by a wide margin. A fake whose pointer starts at (0,0) would hover every widget
 -- anchored at the origin, and the resting half of every widget test would silently pass.
 local NOWHERE = { x = -1e6, y = -1e6 }
@@ -49,6 +96,56 @@ function FakeWindow.new(opts)
     self._line_height = opts.line_height or 14
     self._dynamic = { x = 0, y = 0 }
     return self
+end
+
+local CHECKS = {
+    int = expect_integer, num = expect_number, vec2 = expect_vec2, bool = expect_boolean,
+}
+
+--- Positional argument types, transcribed from `api/ui-custom.md`. A `false` slot is one whose type
+--- the docs leave open (colours, optional flags, text) and is deliberately unchecked — a rule the
+--- docs do not state would reject code the injector accepts, which is the same lie inverted.
+local SIGNATURES = {
+    render_text                        = { "int", "vec2" },
+    render_rect                        = { "vec2", "vec2" },
+    render_rect_filled                 = { "vec2", "vec2" },
+    render_rect_filled_multicolor      = { "vec2", "vec2" },
+    render_circle                      = { "vec2", "num" },
+    render_circle_filled               = { "vec2", "num" },
+    render_circle_percentage           = { "vec2", "vec2" },
+    render_line                        = { "vec2", "vec2" },
+    render_triangle                    = { "vec2", "vec2", "vec2" },
+    render_triangle_filled             = { "vec2", "vec2", "vec2" },
+    render_triangle_filled_multi_color = { "vec2", "vec2", "vec2" },
+    render_bezier_quadratic            = { "vec2", "vec2", "vec2" },
+    render_bezier_cubic                = { "vec2", "vec2", "vec2", "vec2" },
+    push_font                          = { "int" },
+    is_mouse_hovering_rect             = { "vec2", "vec2" },
+    is_rect_clicked                    = { "vec2", "vec2" },
+    is_rect_double_clicked             = { "vec2", "vec2" },
+    set_initial_size                   = { "vec2" },
+    set_initial_position               = { "vec2" },
+    set_visibility                     = { "bool" },
+    add_menu_element_pos_offset        = { "vec2" },
+    set_next_close_cross_pos_offset    = { "vec2" },
+    force_next_begin_window_pos        = { "vec2" },
+    set_next_window_items_spacing      = { "vec2" },
+    set_next_window_items_inner_spacing = { "vec2" },
+    set_next_window_padding            = { "vec2" },
+    set_next_window_min_size           = { "vec2" },
+    make_loading_circle_animation      = { "int", "vec2", "num" },
+    animate_widget = { "int", "vec2", "vec2", "int", "int", "num", "num", "bool" },
+}
+
+--- Raise on the first argument whose type the SDK would refuse. Called from the method itself so
+--- `error(_, 2)` blames the render code that passed the argument rather than the harness.
+local function check_args(method, ...)
+    local signature = SIGNATURES[method]
+    if not signature then return end
+    for index, kind in ipairs(signature) do
+        local message = CHECKS[kind](select(index, ...), index, method)
+        if message then error(message, 3) end
+    end
 end
 
 -- ============================================================================
@@ -116,16 +213,19 @@ end
 -- ============================================================================
 
 function FakeWindow:is_mouse_hovering_rect(rect_min, rect_max)
+    check_args("is_mouse_hovering_rect", rect_min, rect_max)
     self:_record("is_mouse_hovering_rect", rect_min, rect_max)
     return contains(self._mouse, rect_min, rect_max)
 end
 
 function FakeWindow:is_rect_clicked(rect_min, rect_max)
+    check_args("is_rect_clicked", rect_min, rect_max)
     self:_record("is_rect_clicked", rect_min, rect_max)
     return contains(self._click, rect_min, rect_max)
 end
 
 function FakeWindow:is_rect_double_clicked(rect_min, rect_max)
+    check_args("is_rect_double_clicked", rect_min, rect_max)
     self:_record("is_rect_double_clicked", rect_min, rect_max)
     return contains(self._double_click, rect_min, rect_max)
 end
@@ -149,6 +249,7 @@ local DRAW_CALLS = {
 
 for _, name in ipairs(DRAW_CALLS) do
     FakeWindow[name] = function(self, ...)
+        check_args(name, ...)
         self:_record(name, ...)
     end
 end
@@ -159,6 +260,7 @@ function FakeWindow:add_text_on_dynamic_pos(color, text)
 end
 
 function FakeWindow:add_menu_element_pos_offset(pos_offset)
+    check_args("add_menu_element_pos_offset", pos_offset)
     self:_record("add_menu_element_pos_offset", pos_offset)
     if pos_offset then
         self._dynamic.x = self._dynamic.x + (pos_offset.x or 0)
@@ -222,17 +324,38 @@ function FakeWindow:get_text_centered_x_pos(text)
     return (self.size.x - self:get_text_size(text).x) * 0.5
 end
 
-function FakeWindow:set_initial_size(size) self:_record("set_initial_size", size) end
-function FakeWindow:set_initial_position(pos) self:_record("set_initial_position", pos) end
-function FakeWindow:set_visibility(v) self:_record("set_visibility", v); self.visible = v and true or false end
+function FakeWindow:set_initial_size(size)
+    check_args("set_initial_size", size); self:_record("set_initial_size", size)
+end
+
+function FakeWindow:set_initial_position(pos)
+    check_args("set_initial_position", pos); self:_record("set_initial_position", pos)
+end
+
+function FakeWindow:set_visibility(v)
+    check_args("set_visibility", v)
+    self:_record("set_visibility", v)
+    self.visible = v
+end
+
 function FakeWindow:is_being_shown() return self.visible end
 function FakeWindow:get_type() return 0 end
 
 ---Deterministic stand-in for `animate_widget`: reports the animation already finished, so a test
 ---observes the settled frame rather than an arbitrary point on a curve.
-function FakeWindow:animate_widget(id, from, to, start_alpha, max_alpha, ...)
-    self:_record("animate_widget", id, from, to, start_alpha, max_alpha, ...)
-    return { current_position = to, alpha = max_alpha }
+---
+---The full signature is type-checked. This is the one call whose permissiveness was PROVEN to have
+---shipped a crash: a string id and two scalar positions passed every offline run and threw on every
+---animating frame in the injector.
+function FakeWindow:animate_widget(id, from, to, start_alpha, max_alpha, alpha_speed,
+                                   movement_speed, only_once)
+    check_args("animate_widget", id, from, to, start_alpha, max_alpha, alpha_speed,
+        movement_speed, only_once)
+    self:_record("animate_widget", id, from, to, start_alpha, max_alpha, alpha_speed,
+        movement_speed, only_once)
+    -- A COPY, not the caller's table. Returning `to` itself let a render layer mutate the argument
+    -- it had just passed and see the change reflected in the "result".
+    return { current_position = { x = to.x, y = to.y }, alpha = max_alpha }
 end
 
 function FakeWindow:is_animation_finished() return true end

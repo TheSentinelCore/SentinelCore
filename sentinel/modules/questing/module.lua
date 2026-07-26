@@ -6,7 +6,9 @@
 --- - Execute actions via Sylvanas APIs
 --- - Track quest state and progress
 --- - Navigate between objectives
---- - In-game editor (optional, toggled via /qe or toggle_editor())
+---
+--- It owns NO UI. The in-game surface is the IDE shell (`sentinel/ui/`), which renders this
+--- module's state through `runner_state.lua`; authoring lives outside the client entirely.
 
 local RuntimeProfile = require("modules/questing/runtime_profile")
 local RunnerState = require("modules/questing/runner_state")
@@ -1187,12 +1189,6 @@ end
 -- ======================================================================
 -- Editor integration
 -- ======================================================================
-
---- Toggle the in-game quest profile editor.
---- Fires event for the editor subsystem to pick up.
-function QuestingModule:toggle_editor()
-    self._event_bus:publish("questing:toggle_editor", {})
-end
 
 --- Reload the current executor from a compiled profile.
 --- Useful after the editor compiles a project — the new profile JSON

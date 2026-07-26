@@ -159,6 +159,66 @@ function M.test_the_active_tab_is_marked_in_the_accent()
     T.assert_true(found, "the active tab must carry an accent marker")
 end
 
+--- Drive the shell to the frame on which the marker is travelling: one frame to place it, a click
+--- to move the active tab, one frame for the switch to land, then the frame under test.
+local function frame_with_a_moving_marker(shell, fake)
+    shell:_on_render_window()
+    fake:click(tab_bounds(shell, "graph"))
+    shell:_on_render_window()
+    fake:clear_click()
+    fake:reset()
+    shell:_on_render_window()
+end
+
+function M.test_the_travelling_marker_animates_through_the_documented_signature()
+    -- The bug: `animate_widget` was handed the string "sentinel_ide_tab_marker" and two bare
+    -- coordinates. Sylvannas takes an integer id and two vec2, so the injector threw
+    -- `bad argument #1 to 'animate_widget' (number expected, got string)` on every frame the marker
+    -- moved -- inside the render callback, BEFORE the body drew. The frame aborted between the tab
+    -- strip and the panel, which is why the operator saw chrome over a stale body.
+    local shell, fake = open_shell({ recording_panel("runner"), recording_panel("graph") })
+    frame_with_a_moving_marker(shell, fake)
+
+    local anim = fake:calls_of("animate_widget")[1]
+    T.assert_not_nil(anim, "a tab switch must animate the marker; ADR 09b §5.7, motion to explain")
+    T.assert_equal(type(anim.args[1]), "number", "the animation id must be a number")
+    T.assert_equal(anim.args[1], math.floor(anim.args[1]), "and an integer, per api/ui-custom.md")
+    T.assert_equal(type(anim.args[2].x), "number", "the start position is a vec2")
+    T.assert_equal(type(anim.args[3].x), "number", "and so is the end position")
+end
+
+function M.test_the_marker_animation_id_is_the_same_integer_on_every_frame()
+    -- Sylvannas carries an animation's progress under its id. An id allocated per frame would hand
+    -- the SDK a brand-new animation each time, so the marker would restart at `from` forever and
+    -- never arrive at the tab the operator clicked.
+    local shell, fake = open_shell({ recording_panel("runner"), recording_panel("graph") })
+    frame_with_a_moving_marker(shell, fake)
+    local first = fake:calls_of("animate_widget")[1].args[1]
+
+    for _ = 1, 5 do
+        fake:reset()
+        -- Re-arm the transition: a stationary marker legitimately stops animating.
+        shell:activate("runner"); shell:_on_render_window()
+        fake:reset()
+        shell:activate("graph"); shell:_on_render_window()
+        local call = fake:calls_of("animate_widget")[1]
+        T.assert_not_nil(call, "the marker must still be animating")
+        T.assert_equal(call.args[1], first, "the animation id must be stable across frames")
+    end
+end
+
+function M.test_a_frame_that_animates_the_marker_still_draws_the_body()
+    -- The symptom the crash produced. The whole shell render is pcall-wrapped by `main.lua`, so a
+    -- throw in the tab strip silently skipped `_draw_body` and left the previous frame's content
+    -- on screen -- which reads as a layout bug rather than an exception.
+    local runner, graph = recording_panel("runner"), recording_panel("graph")
+    local shell, fake = open_shell({ runner, graph })
+    frame_with_a_moving_marker(shell, fake)
+
+    T.assert_true(#fake:calls_of("animate_widget") > 0, "the frame under test is an animating one")
+    T.assert_true(fake:drew_text("body:graph"), "and the body must still have been painted")
+end
+
 -- ---------------------------------------------------------------------------
 -- Bodies
 -- ---------------------------------------------------------------------------

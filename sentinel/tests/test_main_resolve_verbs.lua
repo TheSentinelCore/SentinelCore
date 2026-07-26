@@ -2,9 +2,12 @@
 -- ADR 09a W13: the host surface for resolve-and-run.
 --
 -- The module owning `resolve_recording` is only half the link. `_G.Sentinel` is the only surface an
--- operator has from outside the client (the debug bridge evaluates against it) and the menu is the
--- only one they have from inside it, so a verb the host never exposes is reachable by nobody --
--- exactly the dead end recorder.lua was in before W12.
+-- operator has from outside the client (the debug bridge evaluates against it), so a verb the host
+-- never exposes is reachable by nobody -- exactly the dead end recorder.lua was in before W12.
+--
+-- The menu buttons these verbs once had are gone: the IDE is the only UI surface now, and its
+-- editor panel will call the verbs directly. The verbs therefore matter MORE than they did, not
+-- less, which is why what remains here is pinned harder.
 --
 -- The menu construction site is measured rather than reviewed: Sylvannas forbids creating windows
 -- and menu elements inside a render callback, and that failure happens in the injector, at runtime,
@@ -66,9 +69,8 @@ local function with_main(opts, fn)
     _G.core.log = function() end
     _G.core.log_error = function() end
 
-    -- The stub omits `get_event_bus` on purpose, which makes ensure_editor_wired and
-    -- ensure_diagnostics_wired return early; neither is under test and the editor path would drag
-    -- in runner_ui.lua's injector-only window surface.
+    -- The stub omits `get_event_bus` on purpose, which makes ensure_diagnostics_wired return
+    -- early; it is not under test here.
     local questing_wrapper = nil
     if opts.questing ~= false then
         questing_wrapper = { _questing = opts.questing }
@@ -129,23 +131,6 @@ local function created_in(env, phase)
         if entry.phase == phase then out[#out + 1] = entry end
     end
     return out
-end
-
---- Every needle must appear in the id. More than one is sometimes needed: the cockpit button is
---- `sentinel_open_runner_cockpit`, so a lone "run" matches it before it matches anything else --
---- which is how this suite first "passed" while asserting nothing about the run button.
-local function button_id_matching(env, ...)
-    local needles = { ... }
-    for _, entry in ipairs(env.created) do
-        if entry.id then
-            local hit = true
-            for _, needle in ipairs(needles) do
-                if not entry.id:find(needle, 1, true) then hit = false end
-            end
-            if hit then return entry.id end
-        end
-    end
-    return nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -222,46 +207,17 @@ function M.test_no_menu_element_is_constructed_inside_the_render_callback()
     end)
 end
 
-function M.test_the_menu_offers_resolve_and_run_without_a_debugger()
-    with_main({ questing = stub_questing() }, function(env)
-        T.assert_not_nil(button_id_matching(env, "resolve"),
-            "there must be a resolve button -- the record-to-run loop must be closable in game")
-        T.assert_not_nil(button_id_matching(env, "plan", "run"),
-            "and a button that runs what was resolved")
-    end)
-end
-
---- Present is not wired. A rendered button whose click path calls nothing looks identical offline to
---- one that works.
-function M.test_the_resolve_button_actually_resolves()
-    local resolve_id = nil
-    with_main({ questing = stub_questing() }, function(env)
-        resolve_id = button_id_matching(env, "resolve")
-    end)
-    T.assert_not_nil(resolve_id, "there must be a resolve button to press")
-
+--- The complement of the menu-strip: not one menu click may reach the network. `resolve_recording`
+--- is the only verb here that leaves the machine, and it now has no button at all -- so a frame of
+--- menu rendering must call nothing on the questing module.
+function M.test_rendering_the_menu_drives_no_questing_verb()
     local questing = stub_questing()
-    with_main({ questing = questing, clicks = { [resolve_id] = true } }, function(env)
+    with_main({ questing = questing }, function(env)
         env.phase = "render"
-        env.render_menu()
-        T.assert_equal(#questing.calls, 1, "pressing resolve must drive the module")
-        T.assert_equal(questing.calls[1].verb, "resolve_recording", "through the resolve verb")
-    end)
-end
-
-function M.test_the_run_button_actually_runs()
-    local run_id = nil
-    with_main({ questing = stub_questing() }, function(env)
-        run_id = button_id_matching(env, "plan", "run")
-    end)
-    T.assert_not_nil(run_id, "there must be a run button to press")
-
-    local questing = stub_questing()
-    with_main({ questing = questing, clicks = { [run_id] = true } }, function(env)
-        env.phase = "render"
-        env.render_menu()
-        T.assert_equal(#questing.calls, 1, "pressing run must drive the module")
-        T.assert_equal(questing.calls[1].verb, "run_plan", "through the run verb")
+        for _ = 1, 5 do env.render_menu() end
+        T.assert_equal(#questing.calls, 0,
+            "the menu is one door to the IDE; nothing on it may resolve, run, or reach the "
+            .. "network on a frame the operator did not ask for")
     end)
 end
 

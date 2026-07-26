@@ -28,16 +28,12 @@ local last_init_error = nil
 -- elements inside a render callback; doing so fails in the injector at runtime with no offline
 -- signal at all. The render callback near the bottom of this file only ever calls `:render` on the
 -- objects below. `core.menu.button` also requires a unique string id, so each one gets its own.
+--
+-- THERE IS EXACTLY ONE BUTTON, AND THAT IS THE POINT. The IDE is the only UI surface; the menu is
+-- the door to it. The Recording, Resolve and Run buttons that used to live here are gone -- every
+-- one of them stays reachable as a host verb below, and the IDE's editor panel is what will drive
+-- them. A second control for a job the IDE also does is a control that drifts out of step with it.
 local _menu_tree = core.menu.tree_node()
-local _toggle_editor_btn = core.menu.button("sentinel_open_runner_cockpit")
--- Recording Mode (ADR 09a W12). Retiring the RestedXP importer left recording as the only source of
--- route content, so it needs a door a human can open without attaching the debug bridge.
-local _record_start_btn = core.menu.button("sentinel_recording_start")
-local _record_stop_btn = core.menu.button("sentinel_recording_stop")
-local _record_save_btn = core.menu.button("sentinel_recording_save")
--- ADR 09a W13. The two buttons that make a recorded route runnable without leaving the client.
-local _record_resolve_btn = core.menu.button("sentinel_recording_resolve")
-local _plan_run_btn = core.menu.button("sentinel_plan_run")
 
 -- In-game IDE shell (ADR 09b U2). Required HERE, at module scope, and not lazily: the shell's
 -- layout persistence is a set of `core.menu.slider_int` ghost elements built when this file is
@@ -57,13 +53,6 @@ local _ide_shell = IdeShell.new({
         return nil
     end,
 })
-
--- Runner cockpit UI (deferred load until app is ready, to avoid Sylvannas API issues in tests).
--- Authoring lives OUTSIDE the game (the sentinel-editor HTTP API); the client is a cockpit for
--- running compiled profiles, not for editing them.
-local RunnerUI = nil
-local _questing_editor = nil
-local _editor_subscribed = false
 
 local function log_error(message)
     if core and type(core.log_error) == "function" then
@@ -137,22 +126,6 @@ local function ensure_diagnostics_wired()
     _diagnostics_subscribed = true
 end
 
--- Wire the runner cockpit to the toggle event once the app and its event bus are ready.
-local function ensure_editor_wired()
-    if _editor_subscribed then return end
-    if not app or not app.get_event_bus then return end
-    -- Lazy-load the UI only when needed (avoids issues in test contexts)
-    RunnerUI = RunnerUI or require("modules/questing/runner_ui")
-    local questing = app:get_module("questing")
-    _questing_editor = RunnerUI:new(questing and questing._questing or nil)
-    app:get_event_bus():subscribe("questing:toggle_editor", function()
-        if _questing_editor then
-            _questing_editor:toggle()
-        end
-    end)
-    _editor_subscribed = true
-end
-
 local function clear_module_cache()
     if not package or not package.loaded then return end
     local prefixes = { "runtime/", "core/bt/", "modules/", "shared/" }
@@ -218,7 +191,6 @@ local function ensure_initialized()
     initialized = true
     last_init_error = nil
     ensure_diagnostics_wired()
-    ensure_editor_wired()
     log_info("SentinelCore loaded (Combat Engine)")
     return true
 end
@@ -252,18 +224,6 @@ function host_verbs.questing()
         return q and q._questing or nil
     end
     return nil
-end
-
-function host_verbs.toggle_quest_editor()
-    if ensure_initialized() then
-        local q = app:get_module("questing")
-        -- QuestingModuleInit wraps QuestingModule which has toggle_editor
-        if q and q._questing and type(q._questing.toggle_editor) == "function" then
-            q._questing:toggle_editor()
-            return true
-        end
-    end
-    return false
 end
 
 -- ---------------------------------------------------------------------------
@@ -451,10 +411,8 @@ function host_verbs.reload()
         app = result
         initialized = true
         publish_surface(app)
-        _editor_subscribed = false      -- re-subscribe with new event bus
         _diagnostics_subscribed = false -- re-subscribe with new event bus
         ensure_diagnostics_wired()
-        ensure_editor_wired()
         log_info("Reloaded successfully")
         return true
     else
@@ -477,7 +435,6 @@ core.register_on_pre_tick_callback(function()
 end)
 
 local _last_ide_tick_error = nil
-local _last_editor_create_error = nil
 core.register_on_update_callback(function()
     if ensure_initialized() then app:on_update() end
     -- The IDE shell's whole tick surface: window creation, the Escape/keybind edges, the combat
@@ -493,20 +450,6 @@ core.register_on_update_callback(function()
         end
     else
         _last_ide_tick_error = nil
-    end
-    -- Create quest editor frames in tick context: Sylvannas forbids creating
-    -- windows/menu elements inside render callbacks.
-    if _questing_editor then
-        local ok, err = pcall(function() _questing_editor:ensure_frames_created() end)
-        if not ok then
-            local msg = "Quest editor frame creation failed: " .. tostring(err)
-            if msg ~= _last_editor_create_error then
-                _last_editor_create_error = msg
-                log_error(msg)
-            end
-        else
-            _last_editor_create_error = nil
-        end
     end
 end)
 
@@ -524,7 +467,6 @@ core.register_on_render_callback(function()
 end)
 
 local _last_ide_render_error = nil
-local _last_editor_render_error = nil
 core.register_on_render_window_callback(function()
     if ensure_initialized() then app:on_render_window() end
     local ide_ok, ide_err = pcall(function() _ide_shell:_on_render_window() end)
@@ -536,18 +478,6 @@ core.register_on_render_window_callback(function()
         end
     else
         _last_ide_render_error = nil
-    end
-    if _questing_editor then
-        local ok, err = pcall(function() _questing_editor:_on_render_window() end)
-        if not ok then
-            local msg = "Quest editor render failed: " .. tostring(err)
-            if msg ~= _last_editor_render_error then
-                _last_editor_render_error = msg
-                log_error(msg)
-            end
-        else
-            _last_editor_render_error = nil
-        end
     end
 end)
 
@@ -565,32 +495,6 @@ core.register_on_render_menu_callback(function()
         if ide_keybind then
             ide_keybind:render("Toggle IDE")
         end
-        if _toggle_editor_btn:render("Open Runner Cockpit") then
-            host_verbs.toggle_quest_editor()
-        end
-        -- Recording Mode. Nothing is constructed here -- the three buttons are module-scope objects
-        -- (see the block near the top of this file); this body only renders them and forwards the
-        -- click to the host verb. The verbs themselves hold every decision, so the render layer
-        -- stays a projection that offline tests can exercise through the same entry point.
-        if _record_start_btn:render("Start Recording") then
-            host_verbs.start_recording()
-        end
-        if _record_stop_btn:render("Stop Recording") then
-            host_verbs.stop_recording()
-        end
-        if _record_save_btn:render("Save Recording") then
-            host_verbs.save_recording()
-        end
-        -- Resolve and Run (W13). A click is the ONLY thing that reaches the network here: resolution
-        -- is one explicit operator action, never a per-frame path, and `resolve_recording` answers
-        -- `pending` rather than waiting for the server -- a blocking call in this callback would
-        -- freeze the client for the length of the request.
-        if _record_resolve_btn:render("Resolve Recording") then
-            host_verbs.resolve_recording()
-        end
-        if _plan_run_btn:render("Run Resolved Plan") then
-            host_verbs.run_plan()
-        end
     end)
 end)
 
@@ -599,16 +503,11 @@ local function on_unload()
     -- menu elements that outlive the unload, and rebuilding them would mean rebuilding elements
     -- with ids Sylvannas already holds.
     pcall(_ide_shell.destroy, _ide_shell)
-    if _questing_editor and type(_questing_editor.destroy) == "function" then
-        pcall(_questing_editor.destroy, _questing_editor)
-    end
     if app and type(app.shutdown) == "function" then
         app:shutdown()
     end
     app = nil
     initialized = false
-    _questing_editor = nil
-    _editor_subscribed = false
     _diagnostics_subscribed = false
     _G.Sentinel = nil
 end

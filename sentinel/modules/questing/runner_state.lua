@@ -1,8 +1,10 @@
---- Sentinel Runner Cockpit — view-model (pure logic, zero Sylvannas calls).
+--- Sentinel Runner — view-model (pure logic, zero Sylvannas calls).
 ---
---- Everything the operator UI needs is computed here so it can be tested offline; the render
---- layer (`runner_ui.lua`) stays a thin projection of this table. The split is deliberate: the
---- Sylvannas widget layer cannot be exercised outside the game, so no decision logic lives there.
+--- Everything the operator UI needs is computed here so it can be tested offline; the render layer
+--- (the IDE's Runner panel, `ui/panels/runner.lua`) stays a thin projection of this table. The
+--- split is deliberate: the Sylvannas widget layer cannot be exercised outside the game, so no
+--- decision logic lives there. This file OUTLIVED the legacy cockpit that first consumed it --
+--- it is the model, never the chrome.
 ---
 --- Design rule: every field answers an operator question, not an internal one.
 ---   health    -> "do I need to intervene right now?"
