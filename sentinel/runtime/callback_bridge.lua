@@ -23,6 +23,12 @@ function CallbackBridge:new(event_bus)
             elseif event_name == "MAIL_INBOX_UPDATE" then
                 event_bus:publish("game:mail_inbox_update", {})
             elseif event_name == "QUEST_LOG_UPDATE" then
+                -- Deliberately payload-free: the client sends this event with NO arguments
+                -- (docs/SylvannasAPI/dev/api/events.md), so it can say that the log changed but
+                -- never which quest or in which direction. Anything richer here would be invented.
+                -- runtime/sensors/world_observer.lua consumes it as a CLOCK -- it is the only signal
+                -- that fires at the transition, which is the one moment the interacted npc is still
+                -- knowable -- and recovers the identity by diffing the log itself.
                 event_bus:publish("game:quest_log_update", {})
             elseif event_name == "UI_ERROR_MESSAGE" then
                 -- The ONLY signal the client gives for hard inventory errors —

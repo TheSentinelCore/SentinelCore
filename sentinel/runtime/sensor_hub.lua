@@ -6,6 +6,7 @@ local DeathSensor = require("runtime/sensors/death_sensor")
 local ProximitySensor = require("runtime/sensors/proximity_sensor")
 local TransitionDetector = require("runtime/sensors/transition_detector")
 local AuraSensor = require("runtime/sensors/aura_sensor")
+local WorldObserver = require("runtime/sensors/world_observer")
 
 local SensorHub = {}
 SensorHub.__index = SensorHub
@@ -26,6 +27,11 @@ function SensorHub:new(blackboard, event_bus)
     o._death_sensor = DeathSensor:new(blackboard)
     o._proximity_sensor = ProximitySensor:new(blackboard)
     o._aura_sensor = AuraSensor:new(blackboard, event_bus, o._izi)
+    -- ADR 09a W7. The Sylvannas SDK has no quest-lifecycle callback, so Recording Mode's eight
+    -- `game:*` topics are derived by diffing the quest log and the open interaction frames. That is
+    -- polling, which makes this a sensor, not a callback bridge. It paces and gates itself: with no
+    -- recording subscribed it performs zero SDK reads.
+    o._world_observer = WorldObserver:new(event_bus)
 
     return o
 end
@@ -67,6 +73,17 @@ function SensorHub:refresh()
         is_moving = self._blackboard:get("player.is_moving", false),
         is_casting = self._blackboard:get("player.is_casting", false),
         is_channeling = self._blackboard:get("player.is_channeling", false),
+    })
+
+    -- 8. World observation for Recording Mode. Runs AFTER the snapshot publish so a task node the
+    --    recorder emits this frame is stamped with THIS frame's position -- the position is what
+    --    disambiguates which spawn of a multi-spawn npc the human actually used.
+    --    Seconds, not now_ms: core.time() is the clock every other questing interval is expressed
+    --    in, and mixing the two would make the pacing constants silently 1000x wrong.
+    local now_s = (core and core.time and num(core.time())) or (now_ms / 1000)
+    self._world_observer:refresh(now_s, {
+        position = position,
+        target = target,
     })
 end
 

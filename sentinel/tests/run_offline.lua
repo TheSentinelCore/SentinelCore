@@ -435,6 +435,10 @@ local test_modules = {
     "tests/runtime/test_tick_isolation",
     "tests/runtime/test_app_tick",
     "tests/runtime/test_callback_bridge",
+    -- ADR 09a W7: the producers for recorder.lua's eight `game:*` topics. Every one of them is
+    -- DERIVED from a state diff because the SDK has no quest-lifecycle callback, so the derivation
+    -- rules are the product and this suite is where they are pinned.
+    "tests/runtime/test_world_observer",
 
     -- Combat module
     "tests/modules/combat/test_spell_catalog",
@@ -495,6 +499,10 @@ local test_modules = {
 
     -- Integration
     "tests/integration/test_combat_dummy",
+    -- ADR 09a W7: Recording Mode, connected. test_recorder drives `observe()` by hand and so stayed
+    -- green while nothing in the tree published eight of the nine topics it subscribes to; this
+    -- suite drives the real producers through a real bus instead.
+    "tests/integration/test_recording_pipeline",
     -- Phase 4c D5: one real path, end to end. A real SentinelApp through real ticks, with doubles
     -- at the SDK boundary and nowhere else. Registered LAST because it replaces `_G.core` for the
     -- duration -- it restores it, but running it late keeps that blast radius as small as possible.
