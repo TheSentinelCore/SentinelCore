@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "lx-debug": {
+      "command": "node",
+      "args": ["mcp/lx-debug-server/server.js"],
+      "env": {
+        "SYLVANNAS_DOCS_PATH": "docs/SylvannasAPI"
+      }
+    }
+  }
+}

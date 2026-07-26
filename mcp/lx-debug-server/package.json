@@ -1,0 +1,16 @@
+{
+  "name": "lx-debug-server",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP debug bridge between Claude Code and the Project Sylvannas game client",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "zod": "^3.25.0"
+  }
+}

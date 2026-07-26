@@ -81,3 +81,21 @@ tbcmangos.sqlite-wal
 
 # graphify output
 graphify-out/
+
+# MCP tooling.
+#
+# `ext*` (line 20) is a broad rule for injector-side scratch plugins, and it silently
+# swallowed mcp/ext_plugin_lx_debug — the in-game half of the debug bridge, which IS
+# source. Git cannot re-include a file whose parent directory is excluded, so the
+# directory has to be re-admitted before its contents.
+!mcp/ext_plugin_lx_debug/
+!mcp/ext_plugin_lx_debug/**
+
+# Node dependencies are reinstallable from package-lock.json; 36MB does not belong in history.
+node_modules/
+
+# Agent worktrees are local build state, not source (29MB). settings.json IS shared config.
+.claude/worktrees/
+
+# Runtime log emitted by the MCP server process.
+mcp/lx-debug-server/server.log
