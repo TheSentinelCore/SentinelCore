@@ -356,6 +356,19 @@ Blackboard.HANDLE_LEDGER = {
             .. "back into -- an inverted dependency. Belongs on the pet capability the control "
             .. "broker now owns.",
     },
+    ["rotation.kernel_profile"] = {
+        kind = "collaborator",
+        writers = { "sentinel/runtime/app.lua" },
+        readers = { "sentinel/modules/combat/module.lua" },
+        -- ADR 08 §14: the tree PluginRegistry:activate built from the eligible rotation
+        -- manifest, published for the combat module to adopt. A Profile instance carries
+        -- methods, so it trips the purity guard by construction — same class of handle as
+        -- `module.combat.profile` directly below, travelling the plugin path instead.
+        retire = "Retires when the combat module reads the active rotation's tree from the "
+            .. "plugin registry directly (registry:tree(id)) instead of through the blackboard "
+            .. "— one accessor call at the adoption site in modules/combat/module.lua replaces "
+            .. "both the app-side set() and this entry.",
+    },
     ["module.combat.profile"] = {
         kind = "collaborator",
         writers = { "sentinel/modules/combat/module.lua" },

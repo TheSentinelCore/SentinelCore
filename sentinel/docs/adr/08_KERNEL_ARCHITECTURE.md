@@ -1633,6 +1633,48 @@ property the current tree already satisfies trivially, which is exactly when it 
 
 ----------
 
+## 14.6 RESOLVED — the wiring, as landed
+
+The chain in §14.2 is closed, and not by the kernel learning any plugin's name:
+
+1. **Self-registration.** Each rotation package carries a `bootstrap.lua` that pushes its own
+   manifest onto `__SentinelPending` at require time — the same idiom an injector-loaded plugin
+   uses from its own entry point. The kernel and the app never require, list, or name a rotation.
+2. **The bundle inventory lives in the rotations layer.** `rotations/init.lua` requires the
+   bundled bootstraps; `main.lua` requires that one file, *after* its `package.path` block —
+   before it, the require fails on the first line of a live boot while passing in every offline
+   test, because the test harness pre-patches the path and the injector does not.
+3. **Ownership is detected by KIND.** After the publish drain (and again inside the SENSE stage,
+   for arrivals through the §2.4 tick window), the app sets `rotation.kernel_pending` iff any
+   registered manifest has `kind = "rotation"`. `main.lua` publishes **before** `initialize()` so
+   the flag exists when the combat module first reads it.
+4. **The SENSE stage carries the lifecycle end to end**: drain → `resolve()` when a late arrival
+   invalidated the resolution → `refresh_eligibility` over the frozen snapshot →
+   `_activate_eligible_rotation`, which publishes the built tree at `rotation.kernel_profile`
+   (HANDLE_LEDGER'd — a Profile carries methods).
+5. **§14.5's hazard is averted by ownership, not luck.** Under the flag, the combat module never
+   calls `Registry.resolve` — it adopts the published tree in `update()`. Without the flag
+   (kernel-less tests, direct construction), the classic path runs unchanged. Whichever side
+   builds first writes `rotation.profile_id`, and the activation step defers to an existing
+   profile it did not build — so the double-drive §14.5 dissects cannot occur in either order.
+   The registry's demotion path clears the guard, so a class change hands the rotation to the
+   newly eligible plugin rather than wedging on the old one.
+
+Pinned by `tests/kernel/test_rotation_discovery.lua` (lifecycle with the three real manifests,
+build-once under a counting stub, fallback deference, and the boot-silence rule: an empty
+snapshot must not raise the unmatched verdict) and by
+`test_kernel_end_to_end.test_a_self_registered_rotation_plugin_drives_combat_in_a_real_boot`,
+which asserts the module DEFERRED at init and adopted the plugin-built tree after one tick.
+
+**The end state, so the interim is not mistaken for it.** A rotation should ship as its own
+Project Sylvanas plugin: a `scripts/<plugin>/` folder whose `header.lua` gates loading (the SDK
+gates by class natively — a Paladin rotation plugin simply does not load for a Mage) and whose
+`main.lua` runs the §14.6 bootstrap idiom. Shipped that way, a rotation appears in no list
+anywhere in sentinel — `rotations/init.lua` shrinks by one line per departure and is deleted with
+the last one. The move is a live-session change, not an offline one: plugins share `_G` and
+`package.loaded`, reload is global F6, and none of that is exercisable against mocks.
+
+
 # 15. D15 — Who loads and executes an ADR 07 `kernel::RuntimeProfile`
 
 **Nobody. Measured, on both sides of the boundary. This is the largest gap in the stack, and ADR 08

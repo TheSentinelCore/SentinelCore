@@ -1306,4 +1306,39 @@ function M.test_no_stage_faults_during_the_run()
     end)
 end
 
+
+-- ADR 08 §14, end to end: a rotation plugin that REGISTERED ITSELF drives combat in a real boot.
+--
+-- The §14 road, witnessed in one process: bootstrap pushes the manifest onto `__SentinelPending`
+-- (the same idiom an injector-loaded plugin uses — nothing in the kernel names the package) ->
+-- the publish drain registers it -> `rotation.kernel_pending` flips by KIND before module init,
+-- so the combat module defers instead of building through Registry.resolve -> the first SENSE
+-- tick resolves, refreshes eligibility over the mage snapshot, activates, and publishes the tree
+-- -> the module's update() adopts it. Every earlier test in this file rode the fallback path;
+-- this is the one that proves the plugin path can carry the load alone, with no double-build.
+--
+-- CANNOT SEE: a genuinely external plugin (one loaded by the injector, not this bundle) — the
+-- push idiom is identical but the loader is not; and live-client timing, as ever.
+function M.test_a_self_registered_rotation_plugin_drives_combat_in_a_real_boot()
+    require("rotations/mage_frost/bootstrap").push()
+    with_live_app(nil, function(app, sdk)
+        local bb = app:get_blackboard()
+
+        T.assert_equal(bb:get("rotation.kernel_pending"), true,
+            "the publish drain must flip rotation ownership by KIND before modules initialize")
+        T.assert_nil(bb:get("module.combat.profile"),
+            "the combat module must DEFER at init -- a profile here means it built through "
+            .. "Registry.resolve as well, which is the §14 double-drive")
+
+        run_ticks(app, sdk, 1)
+
+        T.assert_equal(bb:get("rotation.kernel_plugin_id"), "sentinel.rotation.mage_frost",
+            "one tick must carry the manifest DISCOVERED -> ACTIVE and name the plugin that won")
+        local tree = bb:get("rotation.kernel_profile")
+        T.assert_not_nil(tree, "activation must publish the built rotation tree")
+        T.assert_equal(bb:get("module.combat.profile"), tree,
+            "and the combat module must have adopted THAT tree, not built its own")
+    end)
+end
+
 return M

@@ -227,7 +227,97 @@ end
 ---does, and only the host can tear one down and stand a new one up. A host verb colliding with a
 ---kernel field is refused at build time rather than silently shadowing it.
 function SentinelApp:publish_api(host)
-    return Api.publish(self:_kernel_table(host))
+    local surface, drain = Api.publish(self:_kernel_table(host))
+    -- The publish drain just registered whatever pushed itself onto `__SentinelPending` before we
+    -- came up. If ANY of it is a rotation, the kernel owns rotation selection from here on — and
+    -- the flag must be visible BEFORE initialize() runs the combat module, or the module builds
+    -- its own profile through Registry.resolve and the plugin path idles behind the §14 guard.
+    self:_note_rotation_ownership()
+    return surface, drain
+end
+
+---Set `rotation.kernel_pending` iff a plugin of kind "rotation" has registered. Detection is by
+---KIND — the kernel's own manifest vocabulary — never by plugin name or path: the app has no idea
+---which rotation packages exist, only that something claimed the rotation role. Called after the
+---publish drain and again from the SENSE stage, so an injector-loaded rotation that arrives
+---during the §2.4 window is noticed too.
+function SentinelApp:_note_rotation_ownership()
+    if self._blackboard:get("rotation.kernel_pending") then return end
+    local S = PluginRegistry.STATES
+    for _, state in ipairs({ S.VALIDATED, S.LOADED, S.ELIGIBLE, S.ACTIVE }) do
+        for _, id in ipairs(self._plugin_registry:ids_in_state(state)) do
+            local m = self._plugin_registry:manifest(id)
+            if m and m.kind == "rotation" then
+                self._blackboard:set("rotation.kernel_pending", true)
+                return
+            end
+        end
+    end
+end
+
+---Activate the first ELIGIBLE rotation plugin and publish its tree for the combat module.
+---
+---Guards, in order (each is a §14 hazard, not decoration):
+---  * `rotation.profile_id` set with no plugin id — `Registry.resolve`'s fallback built the
+---    profile first; building again here is the double-drive. Defer to it.
+---  * The plugin that built the current profile was demoted by `refresh_eligibility` (class or
+---    level moved) — retire its tree so a successor can activate.
+---  * No `player.class` in the snapshot yet — boot silence is NOT "no rotation matches"; raising
+---    the unmatched flag here would disable combat during startup.
+---@param snapshot table|nil the tick's frozen snapshot
+function SentinelApp:_activate_eligible_rotation(snapshot)
+    local registry = self._plugin_registry
+    local S = PluginRegistry.STATES
+
+    local existing = self._blackboard:get("rotation.profile_id")
+    local built_by = self._blackboard:get("rotation.kernel_plugin_id")
+    if existing ~= nil then
+        if built_by == nil then return end -- the fallback path owns the profile
+        if registry:state(built_by) == S.ACTIVE then return end
+        -- Demoted underneath us: retire the stale tree and fall through to a successor.
+        self._blackboard:set("rotation.kernel_profile", nil)
+        self._blackboard:set("rotation.kernel_plugin_id", nil)
+        self._blackboard:set("rotation.profile_id", nil)
+    end
+
+    local saw_rotation = false
+    for _, id in ipairs(registry:order()) do
+        local m = registry:manifest(id)
+        if m and m.kind == "rotation" then
+            saw_rotation = true
+            -- A rotation that arrived through the §2.4 tick-window drain rather than at publish:
+            -- flip ownership now. (If the combat module already built via the fallback, the §14
+            -- guard above keeps deferring to it — a late plugin takes over only after a demotion.)
+            if not self._blackboard:get("rotation.kernel_pending") then
+                self._blackboard:set("rotation.kernel_pending", true)
+            end
+            local state = registry:state(id)
+            if state == S.ACTIVE then return end
+            if state == S.ELIGIBLE then
+                local ok, reason = registry:activate(id, {
+                    blackboard = self._blackboard,
+                    event_bus = self._event_bus,
+                    api = _G.Sentinel,
+                })
+                if ok then
+                    self._blackboard:set("rotation.kernel_profile", registry:tree(id))
+                    self._blackboard:set("rotation.kernel_plugin_id", id)
+                else
+                    -- preflight veto / build error: the registry recorded the reason; a veto is
+                    -- retryable next tick, so this is not the unmatched verdict below.
+                    self:_log_error("rotation activation refused: " .. id
+                        .. " (" .. tostring(reason) .. ")")
+                end
+                return
+            end
+        end
+    end
+
+    -- Every bundled rotation is ineligible for this character. Only a CONFIRMED class earns the
+    -- verdict — it mirrors Registry.resolve's fail-loud nil, through the plugin path.
+    if saw_rotation and snapshot ~= nil and snapshot:get("player.class") ~= nil then
+        self._blackboard:set("rotation.kernel_unmatched", true)
+    end
 end
 
 --- Wire the existing 4-step frame onto the 7-stage pipeline (ADR 08 §7).
@@ -277,11 +367,20 @@ function SentinelApp:_register_kernel_stages()
     -- puts in the cold tier (poll-only). Calling it every tick is the RXPGuides mistake from the
     -- opposite direction -- §13 risk 6 caches a level-dependent gate and never invalidates it,
     -- while re-reading cold data 60 times a second just burns the frame budget.
+    --
+    -- Order inside the handler matters and is the §14 wiring: drain first so a late manifest is
+    -- in the registry this tick, re-resolve only when something actually landed (`discover` clears
+    -- `is_resolved`), refresh eligibility over the result, then activate. Activation last, so a
+    -- manifest can go DISCOVERED -> ACTIVE inside one tick instead of dribbling across four.
     sched:register("SENSE", "plugin_registry", function(ctx)
-        self._plugin_registry:refresh_eligibility(ctx.snapshot, ctx.tick_index)
         -- §2.4's deferred queue, re-drained for the first ~60 ticks: a plugin the injector loads
         -- after us can push at any point during startup. A no-op once the window closes.
         Api.tick_pending({ registry = self._plugin_registry }, ctx.tick_index)
+        if not self._plugin_registry:is_resolved() then
+            self._plugin_registry:resolve()
+        end
+        self._plugin_registry:refresh_eligibility(ctx.snapshot, ctx.tick_index)
+        self:_activate_eligible_rotation(ctx.snapshot)
     end)
 
     -- 3. INTERRUPT -- safety evaluators may push/pop the ActivityStack. No evaluators are
@@ -310,6 +409,13 @@ function SentinelApp:_register_kernel_stages()
     sched:register("ACCOUNT", "control_broker.end_tick", function()
         self._control_broker:end_tick()
     end)
+end
+
+---Same sink the EventBus logger uses; a method so stage handlers can reach it through `self`.
+function SentinelApp:_log_error(message)
+    if core and core.log_error then
+        pcall(core.log_error, "[SentinelApp] " .. tostring(message))
+    end
 end
 
 function SentinelApp:initialize()

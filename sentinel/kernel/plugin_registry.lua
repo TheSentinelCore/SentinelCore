@@ -382,6 +382,18 @@ function PluginRegistry:manifest(id)
     return entry and entry.manifest or nil
 end
 
+---The tree `activate` built via the manifest's declarative `build` (§8.2), or nil.
+function PluginRegistry:tree(id)
+    local entry = self._entries[id]
+    return entry and entry.tree or nil
+end
+
+---Whether capability resolution is current. `discover` clears this on every late arrival, so a
+---caller that drains a pending queue can re-resolve exactly when something actually landed.
+function PluginRegistry:is_resolved()
+    return self._resolved == true
+end
+
 function PluginRegistry:ids_in_state(state)
     local out = {}
     for _, id in ipairs(self._discovery_order) do

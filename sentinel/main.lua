@@ -10,6 +10,14 @@ package.path = table.concat({
     package.path,
 }, ";")
 
+-- Load the bundled rotation packages so each can self-register (ADR 08 §2.4/§14). The inventory
+-- lives in rotations/init.lua — the rotations layer owns its own contents; this host line only
+-- says "this bundle ships rotations", and a rotation running as its own Sylvanas plugin needs
+-- neither this line nor that inventory. AFTER the package.path block above, deliberately: in the
+-- injector nothing has patched the path yet when this file loads, and a require above the block
+-- fails on the very first line of a live boot while passing in every offline test.
+require("rotations/init")
+
 local app = nil
 local initialized = false
 local last_init_error = nil
@@ -155,6 +163,13 @@ local function ensure_initialized()
 
     local ok, result = pcall(function()
         local next_app = SentinelApp:new()
+        -- Publish BEFORE initialize (ADR 08 §14): the publish drain registers whatever pushed
+        -- itself onto `__SentinelPending`, and `rotation.kernel_pending` must be visible before
+        -- the combat module initialises — after, the module has already built its profile through
+        -- Registry.resolve and the plugin path idles behind the double-drive guard for the whole
+        -- session. The kernel components the surface exposes are all constructed in new(), so
+        -- publishing here exposes nothing half-built.
+        publish_surface(next_app)
         next_app:initialize()
         return next_app
     end)
@@ -170,7 +185,6 @@ local function ensure_initialized()
     app = result
     initialized = true
     last_init_error = nil
-    publish_surface(app)
     ensure_diagnostics_wired()
     ensure_editor_wired()
     log_info("SentinelCore loaded (Combat Engine)")
@@ -233,6 +247,13 @@ function host_verbs.reload()
     _cache_clear_count = _cache_clear_count + 1
     local ok, result = pcall(function()
         local next_app = SentinelApp:new()
+        -- Publish BEFORE initialize (ADR 08 §14): the publish drain registers whatever pushed
+        -- itself onto `__SentinelPending`, and `rotation.kernel_pending` must be visible before
+        -- the combat module initialises — after, the module has already built its profile through
+        -- Registry.resolve and the plugin path idles behind the double-drive guard for the whole
+        -- session. The kernel components the surface exposes are all constructed in new(), so
+        -- publishing here exposes nothing half-built.
+        publish_surface(next_app)
         next_app:initialize()
         return next_app
     end)

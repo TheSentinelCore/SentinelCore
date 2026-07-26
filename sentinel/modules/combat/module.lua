@@ -108,19 +108,29 @@ function SentinelCombat:initialize()
     class_id = class_id or 8
     self._class_id = class_id
     local spec_id = core and core.spell_book and core.spell_book.get_specialization_id and core.spell_book.get_specialization_id() or 0
-    local profile_module = ProfileRegistry.resolve(class_id, spec_id)
-    if not profile_module then
-        -- Unit C: no profile registered for this class_id (registry.lua fails
-        -- loud instead of silently falling back to Paladin). Disable combat
-        -- cleanly rather than crash the ModuleRegistry lifecycle or run the
-        -- wrong rotation.
-        if core and type(core.log) == "function" then
-            pcall(core.log, "[Combat] class_id=" .. tostring(class_id) .. " has no registered profile; combat disabled")
-        end
-        self._profile = nil
-        self._unsupported_class = true
+    if self._blackboard:get("rotation.kernel_pending") then
+        -- ADR 08 §14: the kernel owns rotation selection — a plugin of kind "rotation" has
+        -- registered itself, and the app's SENSE stage activates the eligible one once the
+        -- snapshot carries a class;
+        -- building here through Registry.resolve as well is the double-drive §14 forbids.
+        -- Usually nil this early — update() adopts the tree the tick it lands.
+        self._profile = self._blackboard:get("rotation.kernel_profile")
     else
-        self._profile = profile_module.build(self._blackboard, self._event_bus)
+        -- No kernel in this process (offline tests, direct construction): the classic path.
+        local profile_module = ProfileRegistry.resolve(class_id, spec_id)
+        if not profile_module then
+            -- Unit C: no profile registered for this class_id (registry.lua fails
+            -- loud instead of silently falling back to Paladin). Disable combat
+            -- cleanly rather than crash the ModuleRegistry lifecycle or run the
+            -- wrong rotation.
+            if core and type(core.log) == "function" then
+                pcall(core.log, "[Combat] class_id=" .. tostring(class_id) .. " has no registered profile; combat disabled")
+            end
+            self._profile = nil
+            self._unsupported_class = true
+        else
+            self._profile = profile_module.build(self._blackboard, self._event_bus)
+        end
     end
     self._blackboard:set("module.combat.profile", self._profile)
 
@@ -819,6 +829,15 @@ function SentinelCombat:_confirm_class_detection(blackboard)
         return
     end
     self._class_confirmed = true
+    if self._blackboard:get("rotation.kernel_pending") then
+        -- §14: under the kernel, a class change is the registry's concern — refresh_eligibility
+        -- demotes the wrong-class plugin and the app's SENSE stage activates the right one; this
+        -- module just adopts whatever tree is published (see the update() adoption below).
+        self._class_id = class_id
+        self._blackboard:set("player.class_id", class_id)
+        self._blackboard:set("player.class_name", CLASS_ID_TO_NAME[class_id] or "WARRIOR")
+        return
+    end
     if class_id == self._class_id then
         return
     end
@@ -945,6 +964,27 @@ function SentinelCombat:update(blackboard)
     end
 
     self:_confirm_class_detection(blackboard)
+
+    -- ADR 08 §14 adoption: under the kernel, the rotation profile is built by plugin activation
+    -- in the app's SENSE stage, not by this module. Adopt whatever tree is published — including
+    -- a swap after a demotion, and nil while activation is still pending. Same-reference writes
+    -- are skipped so the steady state costs one blackboard read.
+    if blackboard:get("rotation.kernel_pending") then
+        local kernel_profile = blackboard:get("rotation.kernel_profile")
+        if kernel_profile ~= self._profile then
+            self._profile = kernel_profile
+            blackboard:set("module.combat.profile", kernel_profile)
+        end
+        if blackboard:get("rotation.kernel_unmatched") and not self._unsupported_class then
+            -- The registry evaluated a CONFIRMED class and nothing matched: the same fail-loud
+            -- verdict Registry.resolve gives, arriving through the plugin path.
+            self._unsupported_class = true
+            blackboard:set("module.combat.enabled", false)
+            if core and type(core.log) == "function" then
+                pcall(core.log, "[Combat] no rotation plugin matches this character; combat disabled")
+            end
+        end
+    end
 
     local now_ms = blackboard:get("system.now_ms", 0)
     self._cooldowns:refresh(now_ms)
