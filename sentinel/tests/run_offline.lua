@@ -382,6 +382,7 @@ local test_modules = {
     "tests/kernel/test_plugin_registry",
     "tests/kernel/test_rotation_discovery",
     "tests/kernel/test_taxi_nodes",
+    "tests/kernel/test_taxi_paths",
     "tests/kernel/test_api",
     -- Phase 4c D1: the capability list stops being free text. Every entry in
     -- KERNEL_CAPABILITIES must resolve to something callable on the published surface.
