@@ -10,6 +10,7 @@ local Geometry = require("core/geometry")
 local EventBus = require("core/event_bus")
 local NavAdapter = require("integrations/nav_client/adapter")
 local EventSchema = require("core/event_schema")
+local ExecutionPlan = require("modules/questing/execution_plan")
 
 -- UnitHelper is exposed from RuntimeAction for object lookup (Sylvannas API compliant)
 local UnitHelper = RuntimeAction.UnitHelper
@@ -429,7 +430,10 @@ function RuntimeProfile:load()
         if not decoded then
             return nil, "profile JSON could not be parsed"
         end
-        self._profile = decoded
+        -- Two producers write this file now: the compiler (RuntimeProfile) and the resolver
+        -- (ExecutionPlan, ADR 09a §1.4). Normalizing here means the branch lives at the ONE place
+        -- a plan enters the runtime; everything past this line sees a single operation shape.
+        self._profile = ExecutionPlan.is_plan(decoded) and ExecutionPlan.normalize(decoded) or decoded
 
         -- T17 — Initialize variables from profile defaults
         self._variables = {}
@@ -1309,7 +1313,10 @@ function RuntimeProfile:_check_hot_reload()
 
     -- Preserve current variables, swap profile, re-init with defaults
     local saved_variables = self._variables
-    self._profile = decoded
+    -- Hot reload is a load path, so it needs the same normalization :load() does. Without it an
+    -- edited plan swaps in with raw 0-based `to_index` values and every branch lands one
+    -- operation early — with the suite green, because nothing else reads that field.
+    self._profile = ExecutionPlan.is_plan(decoded) and ExecutionPlan.normalize(decoded) or decoded
 
     -- Re-initialize variables from new profile defaults
     self._variables = {}
@@ -1397,9 +1404,16 @@ end
 -- ====================================================================
 
 --- Execute the entire profile in dry-run mode.
---- Walks all operations and actions sequentially. Conditions are evaluated
---- normally (read-only ctx methods are safe). All other actions are
+--- Conditions are evaluated normally (read-only ctx methods are safe). All other actions are
 --- simulated as "success". Navigation, saves, and hot reload are skipped.
+---
+--- Over an ExecutionPlan this WALKS THE GRAPH instead of iterating the array: it follows the same
+--- edge guards `_advance_operation` follows, so what it reports is the route the bot would
+--- actually take, not every operation the plan happens to contain. That is the point of the
+--- edit-then-simulate loop ADR 09a moves into phase 1 — an author needs to see which branch their
+--- character takes and where it stops, with no client, no QueryServer and no NavServer.
+---
+--- Pre-plan profiles keep the array iteration verbatim: there are no edges to follow.
 --- @return string, string "finished" status and summary message.
 function RuntimeProfile:_execute_dry_run()
     local operations = self._profile.operations or {}
@@ -1409,16 +1423,21 @@ function RuntimeProfile:_execute_dry_run()
         blocked_operations = 0,
         failed_actions = 0,
         skipped_conditions = 0,
+        -- Plan-era additions. Present for legacy profiles too (as zeros and a linear path) so a
+        -- consumer never has to ask which producer wrote the file it is looking at.
+        unmet_guards = 0,
+        path = {},
+        truncated = false,
     }
 
     local ctx = self:create_context()
 
-    for op_idx, op in ipairs(operations) do
-        local op_actions = op.actions or {}
+    local function simulate_operation(op_idx, op)
+        results.path[#results.path + 1] = { operation = op_idx, node_id = op.node_id }
         local op_actions_duration = 0
 
-        for _, action in ipairs(op_actions) do
-            local action_type = action.type or "unknown"
+        for _, action in ipairs(op.actions or {}) do
+            local action_type = action.type
 
             if action_type == "Condition" then
                 local cond = action.payload and action.payload.condition
@@ -1431,6 +1450,11 @@ function RuntimeProfile:_execute_dry_run()
             elseif action_type == "SetVariable" then
                 -- Safe to execute; doesn't call external APIs
                 RuntimeAction.execute_set_variable(action.payload, ctx)
+            elseif action_type == nil or action_type == "" then
+                -- The resolver emits an operation with no actions rather than dropping a node,
+                -- but an action with no TYPE is a lowering that produced garbage, and simulation
+                -- is the only place an author sees it before the bot no-ops its way past it.
+                results.failed_actions = results.failed_actions + 1
             else
                 -- All real actions: simulate success (the action itself
                 -- would trigger Sylvannas APIs, navigation, etc.)
@@ -1442,10 +1466,47 @@ function RuntimeProfile:_execute_dry_run()
         results.estimated_duration_seconds = results.estimated_duration_seconds + op_actions_duration
     end
 
+    if ExecutionPlan.has_transitions(self._profile) then
+        local function evaluate(condition)
+            return RuntimeAction.evaluate_condition(ctx, condition)
+        end
+        local idx = 1
+        local steps = 0
+        while operations[idx] do
+            steps = steps + 1
+            -- A DAG walk visits each node at most once, so exceeding the operation count proves a
+            -- cycle. The resolver emits topological order and would not produce one, but this is
+            -- the tool authors point at half-finished graphs, and a simulator that hangs reports
+            -- nothing at all.
+            if steps > #operations then
+                results.truncated = true
+                break
+            end
+            local op = operations[idx]
+            simulate_operation(idx, op)
+            local next_idx, outcome, detail = ExecutionPlan.select_transition(op, evaluate)
+            results.unmet_guards = results.unmet_guards + ((detail and detail.unmet) or 0)
+            if outcome == "dead_end" then
+                results.blocked_operations = results.blocked_operations + 1
+                break
+            elseif outcome == "terminal" then
+                break
+            elseif outcome == "linear" then
+                idx = idx + 1
+            else
+                idx = next_idx
+            end
+        end
+    else
+        for op_idx, op in ipairs(operations) do
+            simulate_operation(op_idx, op)
+        end
+    end
+
     self._sim_result = results
     self._state = "finished"
     self._current_operation_idx = #operations + 1
-    return "finished", "dry-run simulation complete: " .. #operations .. " operations"
+    return "finished", "dry-run simulation complete: " .. #results.path .. " operations"
 end
 
 --- Run the full profile simulation in dry-run mode.
@@ -1483,6 +1544,9 @@ function RuntimeProfile:simulate()
         blocked_operations = 0,
         failed_actions = 0,
         skipped_conditions = 0,
+        unmet_guards = 0,
+        path = {},
+        truncated = false,
     }
 
     self._state = saved_state
@@ -1497,6 +1561,23 @@ end
 -- ====================================================================
 -- W4.5 — Structured logging
 -- ====================================================================
+
+--- The graph node the executor is standing on, or nil for pre-plan content (which has none, and
+--- for which inventing one would make the field a lie).
+---
+--- Derived at emit time rather than pushed on every index write: `_current_operation_idx` moves
+--- from six places (advance, forward reconcile, backward rewind, the skipped-action advance, the
+--- save restore, and reset), and a pushed field goes stale at whichever one a later change
+--- forgets — leaving `operation` correct and `node_id` wrong, which is worse than nil.
+function RuntimeProfile:_node_id_for_current_operation()
+    if self._current_node_id then return self._current_node_id end
+    local operations = self._profile and self._profile.operations
+    local op = operations and operations[self._current_operation_idx]
+    local node_id = op and op.node_id
+    -- EventSchema.validate rejects a non-string node_id; a malformed plan must not be able to
+    -- invalidate every event the run emits.
+    return type(node_id) == "string" and node_id or nil
+end
 
 --- Emit a structured log entry to event bus and internal log.
 --- Shape is owned by core/event_schema.lua (ADR 09a §1.5) — this function decides WHEN an event
@@ -1519,7 +1600,7 @@ function RuntimeProfile:_log_event(event_type, data)
         state = self._state,
         seq = self._log_total,
         run_id = self._run_id,
-        node_id = self._current_node_id,
+        node_id = self:_node_id_for_current_operation(),
         legacy = { operation = self._current_operation_idx },
         data = data,
     })
@@ -2361,18 +2442,58 @@ function RuntimeProfile:_is_player_dead()
     return false -- Assume alive if no API
 end
 
---- Advance to the next operation based on the operation's next_condition.
+--- Advance to the next operation: follow the plan's outgoing edge guards when the operation has
+--- any, otherwise increment as pre-plan content always did.
 --- Also triggers auto-save of execution state (W5.3).
+---
+--- This is the single branch point ADR 09 §6.2 budgets for graph execution. The `next_condition`
+--- chain it replaced had three arms that all did `+1` — the "conditional" arm was a stub that
+--- never evaluated anything, so every non-linear guide compiled since has been running as if it
+--- were linear. Selection itself lives in `execution_plan.lua`; what belongs here is only WHERE
+--- the index lands and WHAT gets logged.
 function RuntimeProfile:_advance_operation(op)
-    if not op or not op.next_condition or op.next_condition == "auto" or op.next_condition == "always" then
+    local operations = (self._profile and self._profile.operations) or {}
+
+    -- One context for however many guards this boundary evaluates, built only if a guard exists.
+    -- create_context is on the per-tick hot path and a linear plan must not pay for the branch.
+    local ctx
+    local function evaluate(condition)
+        ctx = ctx or self:create_context()
+        return RuntimeAction.evaluate_condition(ctx, condition)
+    end
+
+    local next_idx, outcome, detail = ExecutionPlan.select_transition(op, evaluate)
+
+    -- Logged BEFORE the index moves, so `node_id` names the node the route is LEAVING — an edge
+    -- event attributed to its destination cannot be joined back to the decision that produced it.
+    if outcome == "guarded" then
+        self:_log_event("plan_branch_taken", {
+            guard_id = detail.guard_id,
+            to_operation = next_idx,
+            unmet = detail.unmet,
+        })
+    elseif outcome == "dead_end" then
+        -- No outgoing edge is satisfiable. Terminating and logging beats the two alternatives:
+        -- re-running this operation forever is invisible from inside the game, and falling
+        -- through to idx+1 would run a branch the author explicitly gated off.
+        self:_log_event("plan_dead_end", {
+            unmet = detail.unmet,
+            transitions = detail.transitions,
+            guards = detail.guards,
+        })
+    elseif outcome == "terminal" then
+        self:_log_event("plan_route_end", {})
+    end
+
+    if outcome == "linear" then
         self._current_operation_idx = self._current_operation_idx + 1
-    elseif op.next_condition == "conditional" and op.condition_id then
-        -- Evaluate the condition to decide next operation
-        -- For now, advance sequentially. Full conditional branching needs
-        -- the editor's condition evaluation integration.
-        self._current_operation_idx = self._current_operation_idx + 1
+    elseif outcome == "terminal" or outcome == "dead_end" then
+        -- Past the end, which `_execute_running` already reports as "finished". Topological order
+        -- does not put terminal nodes last, so `+1` here would run whatever operation happens to
+        -- sit at the next index with nothing pointing at it.
+        self._current_operation_idx = #operations + 1
     else
-        self._current_operation_idx = self._current_operation_idx + 1
+        self._current_operation_idx = next_idx
     end
 
     -- Re-reconcile at every operation boundary: the turn-in that just landed may prove a

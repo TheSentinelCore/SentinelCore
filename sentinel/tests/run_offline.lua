@@ -490,6 +490,10 @@ local test_modules = {
     "tests/modules/questing/test_quest_log_space",
     "tests/modules/questing/test_effect_verification",
     "tests/modules/questing/test_recorder",
+    -- W8 / ADR 09 §6.2: the executor stops incrementing an index and starts following the
+    -- resolver's edge guards. Registered next to the event-contract suite because the two share
+    -- the same hard constraint -- the addition must leave every pre-plan profile running as-is.
+    "tests/modules/questing/test_execution_plan",
 
     -- Shared libs
     "tests/shared/test_compat",
