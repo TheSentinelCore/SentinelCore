@@ -73,6 +73,9 @@ local GHOST_TIMEOUT = 300.0             -- Seconds before ghost recovery is aban
 local GHOST_RETRY_INTERVAL = 5.0        -- Seconds between death state checks
 local MAX_DEATHS_PER_OPERATION = 3      -- Deaths at one operation before it is abandoned
 local MAX_CONDITION_WAIT = 300.0        -- Seconds a Completion-role Condition gate may hold before forced advance
+local NAV_RECHECK_INTERVAL = 2.0        -- Seconds between "is this trip still needed?" checks while
+                                        -- navigating (the state ticks at frame rate; the check walks
+                                        -- the quest log)
 local RELOAD_CHECK_INTERVAL = 5.0       -- Seconds between hot-reload polls (each poll reads+hashes the profile)
 local MAX_LOG_ENTRIES = 500             -- In-memory execution log ring-buffer cap (oldest dropped)
 local SAVE_LOG_ENTRIES = 100            -- Newest log entries persisted in the save file
@@ -1873,6 +1876,37 @@ function RuntimeProfile:_confirm_nav_arrival()
 end
 
 function RuntimeProfile:_execute_navigating()
+    -- Mid-flight applicability. The `_operation_already_done` skip lives in _execute_running and
+    -- only fires at action index 1, so once a Travel hands control to this state nothing re-asks
+    -- whether the destination still matters — the bot commits to arriving. A quest accepted or
+    -- turned in BY HAND (or by a party member) mid-leg left it walking the whole way to an NPC it
+    -- no longer had business with; it arrived, the accept reported instant success off the quest
+    -- log, and the entire trip was wasted (user-reported).
+    --
+    -- Reconciliation already covers load and every operation advance — this closes the window in
+    -- between. Throttled because travel legs run for many seconds while this state ticks at frame
+    -- rate, and _op_quest_status walks the quest log.
+    local now = (core and core.time and core.time()) or 0
+    local last_recheck = self._nav_recheck_at
+    if last_recheck == nil or (now - last_recheck) >= NAV_RECHECK_INTERVAL then
+        self._nav_recheck_at = now
+        local operations = (self._profile and self._profile.operations) or {}
+        local op = operations[self._current_operation_idx]
+        -- Quest work only: _operation_already_done is deliberately silent on kill/travel-only
+        -- operations, so an unobservable leg is never aborted on a guess.
+        if op and self:_operation_already_done(op) then
+            self._nav:stop("operation_already_done")
+            self:_log_event("operation_already_done", {
+                operation = self._current_operation_idx,
+                during = "navigating",
+            })
+            self._state = "running"
+            self:_advance_operation(op)
+            self._current_action_idx = 1
+            return "running", "quest work satisfied mid-route, skipping operation"
+        end
+    end
+
     -- If nav completed without us noticing, check if we're there
     if not self._nav:is_active() then
         local state = self._nav:get_state()

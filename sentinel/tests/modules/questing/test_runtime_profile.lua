@@ -1022,7 +1022,125 @@ function M.test_level_gate_grind_flag_cleared_on_timeout_and_not_set_for_other_g
     _G.core.quests.is_quest_flagged_completed = nil
 end
 
+-- ============================================================================
+-- Mid-flight applicability: a trip that stopped being worth finishing
+-- ============================================================================
+--
+-- USER-REPORTED: accept "A Threat Within" by hand and the bot still walks the whole way to
+-- the quest giver. Route reconciliation gets this RIGHT at load and on every operation
+-- advance (verified against the real 1-11-Elwynn-Forest profile: with 783 in the log it
+-- starts at op 11, skipping the accept at op 10). The hole is narrower: the
+-- `_operation_already_done` skip lives in _execute_running and only fires at action index 1,
+-- so once a Travel action has handed control to the "navigating" state, nothing re-asks
+-- whether the destination still matters. The bot commits to arriving.
+
+function M.test_navigation_aborts_when_quest_work_satisfied_mid_flight()
+    local ops = {
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Travel", payload = {
+                        destination = "Elwynn Forest",
+                        position = { x = 1, y = 1, z = 1 },
+                    } },
+                    { type = "AcceptQuest", payload = { quest_id = 783, npc_entry = 823 } },
+                },
+                next_condition = "auto",
+            },
+            {
+                id = 2,
+                actions = { { type = "Comment", payload = { text = "the step after" } } },
+                next_condition = "auto",
+            },
+        },
+    }
+    local profile = create_profile(ops)
+
+    -- Accepted BY HAND while the bot is already en route to the quest giver.
+    _G.core.quests.is_on_quest = function(id) return id == 783 end
+    _G.core.quests.is_quest_flagged_completed = function() return false end
+    _G.core.quests.get_num_quest_log_entries = function() return 0 end
+    _G.core.quests.get_quest_log_title = function() return nil end
+
+    local stop_reason = nil
+    profile._nav = {
+        is_active = function() return true end,
+        poll = function() return "moving", {} end,
+        get_state = function() return "moving" end,
+        move_to = function() return true end,
+        stop = function(_, reason) stop_reason = reason end,
+    }
+    profile._state = "navigating"
+    profile._current_operation_idx = 1
+    profile._current_action_idx = 1
+    profile._nav_start_time = 0
+
+    profile:execute()
+
+    T.assert_true(stop_reason ~= nil,
+        "navigation must be stopped once the trip has become moot")
+    T.assert_equal(profile._current_operation_idx, 2,
+        "the satisfied operation must be skipped instead of walked to")
+end
+
+--- The mirror case: nothing has changed, so the trip must continue. A recheck that
+--- aborts navigation for an operation still genuinely pending would strand the route.
+function M.test_navigation_continues_while_quest_work_is_pending()
+    local ops = {
+        operations = {
+            {
+                id = 1,
+                actions = {
+                    { type = "Travel", payload = {
+                        destination = "Elwynn Forest",
+                        position = { x = 1, y = 1, z = 1 },
+                    } },
+                    { type = "AcceptQuest", payload = { quest_id = 783, npc_entry = 823 } },
+                },
+                next_condition = "auto",
+            },
+            {
+                id = 2,
+                actions = { { type = "Comment", payload = { text = "the step after" } } },
+                next_condition = "auto",
+            },
+        },
+    }
+    local profile = create_profile(ops)
+
+    -- Quest neither accepted nor rewarded: this trip is still required.
+    _G.core.quests.is_on_quest = function() return false end
+    _G.core.quests.is_quest_flagged_completed = function() return false end
+    _G.core.quests.get_num_quest_log_entries = function() return 0 end
+    _G.core.quests.get_quest_log_title = function() return nil end
+
+    local stop_reason = nil
+    profile._nav = {
+        is_active = function() return true end,
+        poll = function() return "moving", {} end,
+        get_state = function() return "moving" end,
+        move_to = function() return true end,
+        stop = function(_, reason) stop_reason = reason end,
+    }
+    profile._state = "navigating"
+    profile._current_operation_idx = 1
+    profile._current_action_idx = 1
+    profile._nav_start_time = 0
+
+    profile:execute()
+
+    T.assert_true(stop_reason == nil,
+        "a still-needed trip must not be aborted, got stop reason " .. tostring(stop_reason))
+    T.assert_equal(profile._current_operation_idx, 1,
+        "a pending operation must stay the current one")
+end
+
 local tests = {
+    test_navigation_aborts_when_quest_work_satisfied_mid_flight =
+        M.test_navigation_aborts_when_quest_work_satisfied_mid_flight,
+    test_navigation_continues_while_quest_work_is_pending =
+        M.test_navigation_continues_while_quest_work_is_pending,
     -- F3
     test_create_context_reuses_the_same_table_across_calls = M.test_create_context_reuses_the_same_table_across_calls,
     test_create_context_persist_field_is_stable_across_calls = M.test_create_context_persist_field_is_stable_across_calls,
