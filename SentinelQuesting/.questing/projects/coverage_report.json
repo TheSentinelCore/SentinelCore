@@ -71,7 +71,7 @@
       "unresolved": 4
     },
     "condition": {
-      "typed": 18951,
+      "typed": 19892,
       "inert_preserved": 0,
       "unresolved": 0
     },
@@ -120,11 +120,6 @@
       "inert_preserved": 0,
       "unresolved": 14
     },
-    "flygoto": {
-      "typed": 0,
-      "inert_preserved": 1,
-      "unresolved": 0
-    },
     "fp": {
       "typed": 189,
       "inert_preserved": 0,
@@ -141,13 +136,8 @@
       "unresolved": 0
     },
     "goto": {
-      "typed": 38087,
+      "typed": 38795,
       "inert_preserved": 0,
-      "unresolved": 0
-    },
-    "groundgoto": {
-      "typed": 0,
-      "inert_preserved": 114,
       "unresolved": 0
     },
     "group": {
@@ -201,7 +191,7 @@
       "unresolved": 0
     },
     "mob": {
-      "typed": 13678,
+      "typed": 14404,
       "inert_preserved": 0,
       "unresolved": 0
     },
@@ -267,7 +257,7 @@
     },
     "subzone": {
       "typed": 0,
-      "inert_preserved": 991,
+      "inert_preserved": 76,
       "unresolved": 0
     },
     "subzoneskip": {
@@ -300,11 +290,6 @@
       "inert_preserved": 1,
       "unresolved": 0
     },
-    "unitscan": {
-      "typed": 0,
-      "inert_preserved": 735,
-      "unresolved": 0
-    },
     "usespell": {
       "typed": 0,
       "inert_preserved": 204,
@@ -320,14 +305,9 @@
       "inert_preserved": 0,
       "unresolved": 4
     },
-    "waypoint": {
-      "typed": 0,
-      "inert_preserved": 593,
-      "unresolved": 0
-    },
     "xp": {
       "typed": 0,
-      "inert_preserved": 2051,
+      "inert_preserved": 2025,
       "unresolved": 0
     },
     "zone": {
@@ -342,8 +322,8 @@
     }
   },
   "totals": {
-    "typed": 90635,
-    "inert_preserved": 16319,
+    "typed": 93010,
+    "inert_preserved": 13935,
     "unresolved": 454
   }
 }

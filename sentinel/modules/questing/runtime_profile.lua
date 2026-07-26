@@ -1032,6 +1032,21 @@ function ContextMethods:get_player_xp()
     return nil
 end
 
+function ContextMethods:get_player_faction()
+    -- Faction is NOT directly readable (ADR 07 §9 item 17) — but race is, and race determines
+    -- faction by a static ten-entry map (shared/race_faction.lua). nil when the player object or
+    -- race id is unavailable; callers must treat nil as "unknown", never default a side.
+    local RaceFaction = require("shared/race_faction")
+    local player = UnitHelper.get_local_player()
+    if player and player.get_race_id then
+        local ok, race = pcall(player.get_race_id, player)
+        if ok then
+            return RaceFaction.resolve(race)
+        end
+    end
+    return nil
+end
+
 function ContextMethods:get_player_class()
     -- get_local_player():get_class() returns a numeric class_id (Sylvannas API);
     -- map it to the Title-Case class name that ClassIs conditions compare against.

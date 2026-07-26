@@ -1230,15 +1230,28 @@ function RuntimeAction.execute_flight(payload, ctx)
     -- VERIFY-IN-GAME: core.input.take_taxi is not a documented Sylvannas API
     -- (docs/SylvannasAPI/dev/api/input.md has no taxi/flight entry); if the injector does not
     -- expose it this guard stays false and the action correctly falls through to "retry" (A7a).
-    -- A7b: RuntimeFlight.destination (action.rs:245) is a STRING flight-node name, not a table —
-    -- `destination.index or destination.id or 1` indexed a string, which is a silent nil in Lua
-    -- (no error), so dest_idx always fell through to the WRONG hardcoded node 1. There is no
-    -- documented name->node lookup API, so only accept an already-numeric destination and fail
-    -- loudly rather than guess a node.
+    -- A7b history: `destination.index or destination.id or 1` once indexed a STRING silently and
+    -- always flew to hardcoded node 1. The name->node lookup that comment said did not exist now
+    -- does — kernel/catalogs/taxi_nodes.lua, generated from the client's own TaxiNodes.dbc —
+    -- so a string destination resolves through it, faction-disambiguated via the player's race
+    -- (shared/race_faction.lua; 98 corpus uses name a town that exists once PER SIDE). Every
+    -- resolution failure is loud and names its reason; a wrong flight is a cross-continent
+    -- mistake, so "unknown", "ambiguous" and "needs faction we could not read" all refuse.
     if core and core.input and core.input.take_taxi then
         local dest_idx = tonumber(destination)
         if not dest_idx then
-            return "failed" -- Cannot resolve a flight-node name to a taxi index; do not guess
+            local TaxiNodes = require("kernel/catalogs/taxi_nodes")
+            local faction = ctx.get_player_faction and ctx:get_player_faction() or nil
+            local node_id, err = TaxiNodes.resolve(destination, faction)
+            if not node_id then
+                publish_action_note(ctx, "flight_unresolved", {
+                    destination = tostring(destination),
+                    reason = tostring(err),
+                    faction = tostring(faction),
+                })
+                return "failed" -- never guess a node
+            end
+            dest_idx = node_id
         end
         core.input.take_taxi(dest_idx)
         return "success"

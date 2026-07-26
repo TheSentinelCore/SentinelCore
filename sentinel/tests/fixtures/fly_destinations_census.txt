@@ -1,0 +1,103 @@
+     37 Ironforge
+     37 Emerald Sanctuary
+     29 Tanaris
+     28 Orgrimmar
+     27 Stormwind
+     26 Theramore
+     25 Ratchet
+     24 Teldrassil
+     23 Tarren Mill
+     21 Booty Bay
+     18 Wetlands
+     17 Southshore
+     15 Thunder Bluff
+     14 Darkshore
+     13 Shattrath
+     13 Duskwood
+     13 Bloodvenom Post
+     12 Arathi
+     11 Western Plaguelands
+     11 Redridge
+     11 Gadgetzan
+     11 Auberdine
+     10 Westfall
+     10 Everlook
+      9 Mudsprocket
+      9 Grom'gol
+      8 Undercity
+      8 The Stormspire
+      8 Hammerfall
+      8 Burning Steppes
+      7 Un'Goro Crater
+      7 The Exodar
+      7 Talonbranch Glade
+      7 Evergrove
+      7 Area 52
+      6 Winterspring
+      6 Un'Goro
+      6 The Hinterlands
+      6 Stonebreaker Hold
+      6 Rebel Camp
+      6 Brackenwall Village
+      6 Blood Watch
+      6 Blasted Lands
+      5 Thrallmar
+      5 Swamprat Post
+      5 Loch Modan
+      5 Honor Hold
+      5 Badlands
+      5 Allerian Stronghold
+      4 Wildhammer Stronghold
+      4 Thunderlord Stronghold
+      4 The Sepulcher
+      4 Thalanaar
+      4 Telredor
+      4 Splintertree Post
+      4 Shadowprey Village
+      4 Nethergarde Keep
+      4 Moonglade
+      4 Menethil
+      4 Darnassus
+      4 Brackenwall
+      4 Arathi Highlands
+      3 Zabra'jin
+      3 Crossroads
+      3 Camp Taurajo
+      3 Azshara
+      2 Stormwind City
+      2 Stonard
+      2 Spinebreaker Post
+      2 Silvermoon
+      2 Shattrath City
+      2 Searing Gorge
+      2 Sanctum of the Stars
+      2 Orebor Harborage
+      2 Lakeshire
+      2 Freewind Post
+      2 Flame Crest
+      2 Feralas
+      2 Feathermoon
+      2 Falcon Watch
+      2 Eastern Plaguelands
+      2 Darkshire
+      2 Chillwind Camp
+      2 Astranaar
+      1 Valormok
+      1 Toshley's Station
+      1 Toshley
+      1 Temple of Telhamat
+      1 Sylvanaar
+      1 Sun Rock
+      1 Spinebreaker
+      1 Silithus
+      1 Shatter
+      1 Shadowmoon Village
+      1 Sentinel Hill
+      1 Rut'theran Village
+      1 Redridge Mountains
+      1 Mok'Nathal Village
+      1 Forest Song
+      1 Felwood
+      1 Camp Mojache
+      1 Ashenvale
+      1 Altar of Sha'tar

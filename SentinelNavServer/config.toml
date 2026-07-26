@@ -10,8 +10,14 @@ port = 47110
 max_concurrent_requests = 100
 
 [navmesh]
-# Default game when no ?game= parameter is provided in requests "tbc" or "retail"
-default_game = "retail"
+# Default game when no ?game= parameter is provided in requests "tbc" or "retail".
+# TBC: this deployment targets the 2.4.3 CMaNGOS server (tbcmangos.sqlite is the world DB and
+# every consumer in this repo — SentinelNavClient, the questing runtime, the guide corpus — is
+# TBC). "retail" here pointed at ./mmaps_retail, which does not exist on this machine, so every
+# boot served an empty mesh and no offline test noticed: nothing asserts the mesh directory
+# exists. The ./mmaps symlink to the extracted CMaNGOS mesh (4.0 GB, 2,826 files, maps 000/001/530
+# plus instances) is created alongside this change.
+default_game = "tbc"
 
 # Per-game mmap sources. Each game has its own mmap directory and preload list.
 # API requests select the game via ?game=<name> query parameter.

@@ -108,7 +108,11 @@ VERBATIM_QUOTES: dict[str, str] = {
 
 
 # Directories that hold build output or VCS metadata, never citations.
-SKIP_DIRS = {"target", ".git"}
+# `.questing/` holds GENERATED data — imported projects, compiled profiles, the chain manifest.
+# Their diagnostic strings quote corpus line numbers ("lines 103815, 103833"), which is exactly
+# what a diagnostic should do; they are artifacts, not living code or docs, and regenerating
+# them is the fix for anything stale inside them.
+SKIP_DIRS = {"target", ".git", ".questing"}
 
 # Text formats a citation can be written in. Binaries and lockfiles are skipped.
 SCAN_SUFFIXES = {".rs", ".md", ".json", ".toml", ".py", ".lua", ".txt", ".sh", ".yml", ".yaml"}

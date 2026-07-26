@@ -42,7 +42,10 @@ SentinelQuesting/tools/*
 # drifting from the database. Re-admit the directory before the file, per the note above.
 !sentinel/tools/
 sentinel/tools/*
-!sentinel/tools/regen_catalog_chain_fixture.py
+!sentinel/tools/*
+# (whole directory: these are curated, committed provenance tools — the generated catalogs are
+# only auditable if their generators ship beside them, and a per-file re-admit list here is how
+# the taxi-node generator got silently swallowed by the bare `tools` rule.)
 OLD*
 StrathDuoMage*
 _scripts
