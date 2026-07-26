@@ -115,10 +115,23 @@ function SentinelApp:new()
         -- aims at `combat.target`. They usually agree and are not guaranteed to, so every converted
         -- cast would have silently fought a different mob. One resolution, shared.
         unit_target = o:unit_target_resolver(),
+        -- The GCD gate's clock, and what the cast executor calls `note_cast` on. `gcd_gate` FAILS
+        -- OPEN without it (`if not timing then return true end`), so an unwired clock does not
+        -- break loudly -- it silently admits every cast for the whole session. Pinned at the SDK
+        -- boundary by `test_the_gcd_gate_holds_a_second_cast_because_timing_is_wired_to_the_executors`,
+        -- because nothing that drives `Timing` directly can see a `Timing` that is merely unplugged.
         timing = o._timing,
-        spell_catalog = o._spell_catalog,
-        units = o._units,
-        spells = o._spells,
+        -- `spell_catalog`, `units` and `spells` WERE PASSED HERE AND NEVER READ. Phase 4e reverted
+        -- each composition-root hand-off in turn and recorded what reddened; these three reddened
+        -- nothing, and the reason turned out not to be a missing test -- `kernel/intent_executors.lua`
+        -- reads exactly seven deps (`input`, `intent_queue`, `object_manager`, `spell_helper`,
+        -- `spell_queue`, `timing`, `unit_target`) and none of them is in this group.
+        --
+        -- Deleted rather than pinned: there is no wiring here to observe. All three reach plugins
+        -- through the API surface instead (`_kernel_table` below), where reverting each one DOES
+        -- redden -- 8, 4 and 3 cases respectively. A dead argument that reads as wiring is worse
+        -- than no argument, because the next reader trying to work out why the catalog is unused
+        -- starts from the assumption that it is.
         spell_queue = ok_sq and spell_queue or nil,
         object_manager = core and core.object_manager or nil,
         spell_helper = SpellHelper,

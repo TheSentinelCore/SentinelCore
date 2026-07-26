@@ -248,6 +248,60 @@ local CROSS_NAMESPACE_LEDGER = {
     ["sentinel/rotations/mage_frost/frost_support.lua"] = 1,
     ["sentinel/rotations/mage_frost/frost_tbc.lua"] = 4,
     ["sentinel/rotations/mage_frost/maintenance_tree.lua"] = 4,
+    -- ---------------------------------------------------------------------------
+    -- paladin_retribution: NEW ENTRIES, and every one of them is a RECLASSIFICATION
+    -- ---------------------------------------------------------------------------
+    -- These seven reads existed before the port and were LEGAL, because the files lived under
+    -- `sentinel/modules/combat/` and `module.combat.*` was their own namespace. Moving the package
+    -- to `sentinel/rotations/paladin_retribution` did not add a read; it changed who owns the
+    -- namespace, so the same lines are now cross-package. The count is therefore a measurement of
+    -- the coupling the port EXPOSED, not of coupling it introduced.
+    --
+    -- What each one is, so the burn-down has a target rather than a number:
+    --   retribution_conditions (5) -- `module.combat.cooldowns` x2 (gcd_ready, spell_ready),
+    --     `module.combat.twist_window_ms`, `module.combat.enable_burst`,
+    --     `module.combat.preferred_blessing`. The first two are the real dependency: there is no
+    --     cooldown or spell-book tier on the snapshot, so `spell_ready` cannot leave the blackboard
+    --     until one exists. The other three are combat's config, which `Sentinel.config` replaces
+    --     once the module publishes through it.
+    --   retribution_tbc (1) -- `module.combat.combat_range`, WRITTEN not read: the profile tells the
+    --     pull phase and chase controller that a Paladin fights at 5 yards. A write across a
+    --     namespace is the same defect as a read and is counted as one.
+    --   support (1) -- `module.combat.catalog`, for rank resolution. Identical to
+    --     `frost_support.lua`'s surviving 1, and it survives for the identical reason: the cast path
+    --     may not fall back to `Sentinel.catalogs.spell` (§6.3), and the blackboard catalog is what
+    --     the rotation was ported against.
+    ["sentinel/rotations/paladin_retribution/retribution_conditions.lua"] = 5,
+    ["sentinel/rotations/paladin_retribution/retribution_tbc.lua"] = 1,
+    ["sentinel/rotations/paladin_retribution/support.lua"] = 1,
+    -- ---------------------------------------------------------------------------
+    -- warlock_affliction: NEW ENTRIES, and every one of them is a RECLASSIFICATION
+    -- ---------------------------------------------------------------------------
+    -- Same shape as the paladin block above: these nine reads existed before the port and were
+    -- LEGAL, because the files lived under `sentinel/modules/combat/` where `module.combat.*` was
+    -- their own namespace. Four of them did not even live in the rotation -- they were inside
+    -- `modules/combat/condition_library.lua` and `action_library.lua`, which the profile borrowed.
+    -- Moving the package changed who owns the namespace, not how much coupling there is.
+    --
+    -- What each one is, so the burn-down has a target rather than a number:
+    --   affliction_conditions (5) -- `module.combat.cooldowns` x2 (gcd_ready, spell_ready),
+    --     `module.combat.catalog` x2 (spell_available's trained-rank lookup, target_missing_dot's
+    --     rank array), `module.combat.pet_controller` x1 (pet_not_attacking_target). The cooldown
+    --     and spell-book reads are the real dependency: the snapshot has neither tier, so
+    --     `spell_ready` and `spell_available` cannot leave the blackboard until it does.
+    --   affliction_conditions/support `module.combat.catalog` -- identical to `frost_support.lua`'s
+    --     surviving 1, and it survives for the identical reason: the cast path may not fall back to
+    --     `Sentinel.catalogs.spell` (§6.3), and the blackboard catalog is what the rotation was
+    --     ported against.
+    --   affliction_tbc (2) -- `module.combat.pet_controller` and `module.combat.combat_range`, both
+    --     WRITTEN not read: the profile publishes its Voidwalker so `module.lua:748` can recall it
+    --     on disengage, and tells the chase controller that a warlock fights at 28 yards. A write
+    --     across a namespace is the same defect as a read and is counted as one.
+    --   affliction_actions (1) -- `module.combat.pet_controller`, read back by `Act.pet_attack`.
+    ["sentinel/rotations/warlock_affliction/affliction_actions.lua"] = 1,
+    ["sentinel/rotations/warlock_affliction/affliction_conditions.lua"] = 5,
+    ["sentinel/rotations/warlock_affliction/affliction_tbc.lua"] = 2,
+    ["sentinel/rotations/warlock_affliction/support.lua"] = 1,
     -- combat's own `module.combat.*` traffic is legal today; only its reach into
     -- `module.grind.*` is not.
     ["sentinel/modules/combat/strategies/grind_target_strategy.lua"] = 2,
@@ -276,14 +330,43 @@ local RAW_HANDLE_LEDGER = {
     ["sentinel/rotations/mage_frost/frost_tbc.lua"] = 1,
     ["sentinel/rotations/mage_frost/kite_controller.lua"] = 1,
     ["sentinel/rotations/mage_frost/pet_controller.lua"] = 1,
+    -- paladin_retribution: RE-KEYED, not added. The same 13 `"player.object"` reads that were
+    -- ledgered against `sentinel/modules/combat/profiles/paladin/{retribution_actions,
+    -- retribution_conditions}.lua` (10 + 3), now under the package's own path, plus 1 in
+    -- `support.lua` -- which is `player_and_target`, the single read that used to live in
+    -- `shared/combat_helpers.lua` and was counted against no plugin at all because
+    -- `sentinel/shared/` is outside every audit's scope. The port did not add a handle read; it
+    -- moved one INTO scope, which is the ratchet doing its job.
+    ["sentinel/rotations/paladin_retribution/retribution_actions.lua"] = 10,
+    ["sentinel/rotations/paladin_retribution/retribution_conditions.lua"] = 3,
+    ["sentinel/rotations/paladin_retribution/support.lua"] = 1,
+    -- warlock_affliction: RE-KEYED and PARTLY RELOCATED, not added. The one `"player.object"` read
+    -- that was ledgered against `sentinel/modules/combat/profiles/warlock/pet_controller.lua` is now
+    -- under the package's own path. The other two came from files that were never the warlock's:
+    -- `support.lua`'s is `player_and_target`, which lived in `shared/combat_helpers.lua` and was
+    -- counted against no plugin at all because `sentinel/shared/` is outside every audit's scope,
+    -- and `affliction_actions.lua`'s is the `cast_self` guard, inlined from
+    -- `modules/combat/action_library.lua:39` -- whose own allowance of 4 stays where it is, because
+    -- the mage still routes through it.
+    --
+    -- So the port did not add a handle read; it moved two INTO scope, which is the ratchet doing its
+    -- job rather than failing at it.
+    ["sentinel/rotations/warlock_affliction/affliction_actions.lua"] = 1,
+    ["sentinel/rotations/warlock_affliction/pet_controller.lua"] = 1,
+    ["sentinel/rotations/warlock_affliction/support.lua"] = 1,
     ["sentinel/modules/combat/action_library.lua"] = 4,
     ["sentinel/modules/combat/combat_zone_detector.lua"] = 1,
     ["sentinel/modules/combat/condition_library.lua"] = 7,
     ["sentinel/modules/combat/context_builder.lua"] = 1,
     ["sentinel/modules/combat/module.lua"] = 4,
-    ["sentinel/modules/combat/profiles/paladin/retribution_actions.lua"] = 10,
-    ["sentinel/modules/combat/profiles/paladin/retribution_conditions.lua"] = 3,
-    ["sentinel/modules/combat/profiles/warlock/pet_controller.lua"] = 1,
+    -- `profiles/paladin/{retribution_actions,retribution_conditions}.lua` are GONE: the files moved
+    -- to `sentinel/rotations/paladin_retribution/` and their allowances moved with them, above.
+    -- Deleting the entries rather than zeroing them is required -- `assert_within_ledger` reports a
+    -- ledger entry whose file has fewer violations than allowed as out of date. The same is true of
+    -- `profiles/warlock/pet_controller.lua`, whose allowance of 1 moved to
+    -- `rotations/warlock_affliction/pet_controller.lua` above. What is left at
+    -- `profiles/warlock/affliction_tbc.lua` is a one-line forwarding stub keeping `registry.lua:3`
+    -- resolvable until that file is repointed; it touches no blackboard key and needs no entry.
     ["sentinel/modules/combat/shared_subtrees.lua"] = 4,
     ["sentinel/modules/combat/strategies/default_target_strategy.lua"] = 3,
     ["sentinel/modules/combat/strategies/grind_target_strategy.lua"] = 3,

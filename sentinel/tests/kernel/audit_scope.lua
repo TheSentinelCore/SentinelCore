@@ -38,6 +38,24 @@ Scope.PACKAGES = {
         migrating = false,
     },
     {
+        -- Ported in the Paladin migration. `migrating = false` from the first commit, deliberately:
+        -- the point of the port is that the profile holds under the same three audits the mage
+        -- does, and a package admitted as `migrating` would be scanned and never asserted -- which
+        -- is how a "port" quietly becomes a directory move.
+        name = "paladin_retribution",
+        dir = "sentinel/rotations/paladin_retribution",
+        require_prefix = "rotations/paladin_retribution",
+        namespace = "paladin_retribution",
+        migrating = false,
+    },
+    {
+        name = "warlock_affliction",
+        dir = "sentinel/rotations/warlock_affliction",
+        require_prefix = "rotations/warlock_affliction",
+        namespace = "warlock_affliction",
+        migrating = false,
+    },
+    {
         name = "combat",
         dir = "sentinel/modules/combat",
         require_prefix = "modules/combat",

@@ -151,9 +151,9 @@ Blackboard.HANDLE_LEDGER = {
             "sentinel/modules/combat/condition_library.lua",
             "sentinel/modules/combat/context_builder.lua",
             "sentinel/modules/combat/module.lua",
-            "sentinel/modules/combat/profiles/paladin/retribution_actions.lua",
-            "sentinel/modules/combat/profiles/paladin/retribution_conditions.lua",
-            "sentinel/modules/combat/profiles/warlock/pet_controller.lua",
+            -- The two `profiles/paladin/*` readers moved to `rotations/paladin_retribution/*`
+            -- below; `support.lua` joins them because `player_and_target` came with the package
+            -- from `shared/combat_helpers.lua`, which still reads the key for its other callers.
             "sentinel/modules/combat/shared_subtrees.lua",
             "sentinel/modules/combat/strategies/default_target_strategy.lua",
             "sentinel/modules/combat/strategies/grind_target_strategy.lua",
@@ -165,6 +165,18 @@ Blackboard.HANDLE_LEDGER = {
             "sentinel/rotations/mage_frost/frost_tbc.lua",
             "sentinel/rotations/mage_frost/kite_controller.lua",
             "sentinel/rotations/mage_frost/pet_controller.lua",
+            "sentinel/rotations/paladin_retribution/retribution_actions.lua",
+            "sentinel/rotations/paladin_retribution/retribution_conditions.lua",
+            "sentinel/rotations/paladin_retribution/support.lua",
+            -- The `profiles/warlock/pet_controller.lua` reader moved here with the package.
+            -- `affliction_actions.lua` is the `cast_self` guard, inlined from
+            -- `modules/combat/action_library.lua`; `support.lua` is `player_and_target`, which came
+            -- from `shared/combat_helpers.lua`. Neither is a new read -- both are reads that were
+            -- previously counted against a shared file and are now counted against the rotation
+            -- that makes them.
+            "sentinel/rotations/warlock_affliction/affliction_actions.lua",
+            "sentinel/rotations/warlock_affliction/pet_controller.lua",
+            "sentinel/rotations/warlock_affliction/support.lua",
             "sentinel/runtime/app.lua",
             "sentinel/runtime/sensors/aura_sensor.lua",
             "sentinel/shared/combat_helpers.lua",
@@ -193,6 +205,10 @@ Blackboard.HANDLE_LEDGER = {
             "sentinel/rotations/mage_frost/frost_conditions.lua",
             "sentinel/rotations/mage_frost/frost_support.lua",
             "sentinel/rotations/mage_frost/kite_controller.lua",
+            "sentinel/rotations/paladin_retribution/support.lua",
+            "sentinel/rotations/warlock_affliction/affliction_actions.lua",
+            "sentinel/rotations/warlock_affliction/affliction_conditions.lua",
+            "sentinel/rotations/warlock_affliction/support.lua",
             "sentinel/runtime/app.lua",
             "sentinel/runtime/sensor_hub.lua",
             "sentinel/shared/combat_helpers.lua",
@@ -219,6 +235,10 @@ Blackboard.HANDLE_LEDGER = {
             "sentinel/rotations/mage_frost/frost_support.lua",
             "sentinel/rotations/mage_frost/frost_tbc.lua",
             "sentinel/rotations/mage_frost/kite_controller.lua",
+            "sentinel/rotations/paladin_retribution/support.lua",
+            "sentinel/rotations/warlock_affliction/affliction_actions.lua",
+            "sentinel/rotations/warlock_affliction/affliction_conditions.lua",
+            "sentinel/rotations/warlock_affliction/support.lua",
             "sentinel/runtime/app.lua",
             "sentinel/shared/combat_helpers.lua",
         },
@@ -253,11 +273,17 @@ Blackboard.HANDLE_LEDGER = {
             "sentinel/modules/combat/context_builder.lua",
             "sentinel/modules/combat/condition_library.lua",
             "sentinel/modules/combat/spell_dispatcher.lua",
-            "sentinel/modules/combat/profiles/warlock/affliction_conditions.lua",
             "sentinel/rotations/mage_frost/frost_combat_state.lua",
             "sentinel/rotations/mage_frost/frost_conditions.lua",
             "sentinel/rotations/mage_frost/frost_support.lua",
             "sentinel/rotations/mage_frost/frost_tbc.lua",
+            "sentinel/rotations/paladin_retribution/support.lua",
+            -- The `profiles/warlock/affliction_conditions.lua` reader moved here with the package
+            -- (`target_missing_dot`'s rank-array lookup, joined by `spell_available`'s trained-rank
+            -- lookup, which was inlined from `modules/combat/condition_library.lua`).
+            -- `support.lua` is the cast path's rank resolution, identical to `frost_support.lua`'s.
+            "sentinel/rotations/warlock_affliction/affliction_conditions.lua",
+            "sentinel/rotations/warlock_affliction/support.lua",
             "sentinel/shared/combat_helpers.lua",
         },
         retire = "kernel/catalogs/spell already exists. Rotations reach it through the plugin "
@@ -268,9 +294,15 @@ Blackboard.HANDLE_LEDGER = {
         writers = { "sentinel/modules/combat/module.lua" },
         readers = {
             "sentinel/modules/combat/condition_library.lua",
-            "sentinel/modules/combat/profiles/paladin/retribution_conditions.lua",
             "sentinel/rotations/mage_frost/frost_combat_state.lua",
             "sentinel/rotations/mage_frost/frost_conditions.lua",
+            -- Moved from `modules/combat/profiles/paladin/retribution_conditions.lua`. This is the
+            -- key that keeps `spell_ready` on the blackboard: there is no cooldown tier on the
+            -- frozen snapshot, so the kernel has nothing equivalent to read yet.
+            "sentinel/rotations/paladin_retribution/retribution_conditions.lua",
+            -- Inlined from `modules/combat/condition_library.lua` with the port: `gcd_ready` and
+            -- `spell_ready`. Same reason as the paladin's -- no cooldown tier on the snapshot.
+            "sentinel/rotations/warlock_affliction/affliction_conditions.lua",
         },
         retire = "Pass the cooldown service on the rotation context the kernel already builds, "
             .. "rather than parking it in shared state for anyone to find.",
@@ -305,7 +337,7 @@ Blackboard.HANDLE_LEDGER = {
         kind = "collaborator",
         writers = {
             "sentinel/rotations/mage_frost/frost_tbc.lua",
-            "sentinel/modules/combat/profiles/warlock/affliction_tbc.lua",
+            "sentinel/rotations/warlock_affliction/affliction_tbc.lua",
         },
         readers = {
             "sentinel/modules/combat/action_library.lua",
@@ -314,6 +346,11 @@ Blackboard.HANDLE_LEDGER = {
             "sentinel/rotations/mage_frost/frost_actions.lua",
             "sentinel/rotations/mage_frost/frost_combat_state.lua",
             "sentinel/rotations/mage_frost/frost_conditions.lua",
+            -- `Act.pet_attack` and `Cond.pet_not_attacking_target`, both inlined from
+            -- `modules/combat/{action,condition}_library.lua` -- whose own entries stay, because the
+            -- mage still routes through them.
+            "sentinel/rotations/warlock_affliction/affliction_actions.lua",
+            "sentinel/rotations/warlock_affliction/affliction_conditions.lua",
         },
         retire = "A rotation publishes its controller for the shared action library to call "
             .. "back into -- an inverted dependency. Belongs on the pet capability the control "

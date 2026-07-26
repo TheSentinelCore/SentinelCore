@@ -5,7 +5,7 @@
 -- guard: resolve() on an unknown class_id must return nil and must NOT return
 -- Paladin's profile module.
 local Registry = require("modules/combat/profiles/registry")
-local PaladinRetTBC = require("modules/combat/profiles/paladin/retribution_tbc")
+local PaladinRetTBC = require("rotations/paladin_retribution/retribution_tbc")
 local MageFrostTBC = require("rotations/mage_frost/frost_tbc")
 local T = require("tests/test_util")
 

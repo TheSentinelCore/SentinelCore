@@ -1,12 +1,46 @@
-local BT = require("core/bt/factory")
-local Runner = require("core/bt/runner")
-local Cond = require("modules/combat/profiles/warlock/affliction_conditions")
-local Act = require("modules/combat/profiles/warlock/affliction_actions")
-local MaintenanceTree = require("modules/combat/profiles/warlock/maintenance_tree")
-local PetController = require("modules/combat/profiles/warlock/pet_controller")
-local PriorityBuilder = require("kernel/lib/priority_builder")
-local SharedConditions = require("modules/combat/condition_library")
-local ActionLibrary = require("modules/combat/action_library")
+-- rotations/warlock_affliction/affliction_tbc.lua
+-- Warlock Affliction, TBC 1-70 leveling.
+--
+-- ================================================================================
+-- WHAT THE PORT CHANGED, AND WHAT IT DID NOT
+-- ================================================================================
+-- The priority list below is the tuned artefact and is UNCHANGED: same entries, same order, same
+-- thresholds, same numeric priorities. What changed is where the pieces come from:
+--
+--   BT / Runner        `require("core/bt/factory")` + `require("core/bt/runner")`
+--                        -> `Sentinel.bt`, late-bound so a tree built before the kernel published
+--                           still resolves once it has.
+--   PriorityBuilder    `require("kernel/lib/priority_builder")` -> `Sentinel.rotation`. Same
+--                           library; the difference is that the plugin no longer reaches into the
+--                           kernel tree to get it.
+--   Conditions         `modules/combat/condition_library` -> this package's own
+--                           `affliction_conditions`, which is a copy rather than a rewrite.
+--   Actions            `modules/combat/action_library` -> this package's own
+--                           `affliction_actions`, which inlines the two combinators it used.
+--
+-- Every one of those was a cross-package require, which `tests/kernel/test_plugin_require_audit.lua`
+-- forbids for a package under the kernel registry: ADR 08 §8.1 -- "promotion later is mechanical IF
+-- AND ONLY IF no plugin ever reaches past the public API".
+
+local API = require("rotations/warlock_affliction/sentinel_api")
+
+local BT = setmetatable({}, { __index = function(_, k) return API.bt and API.bt[k] or nil end })
+-- The tree RUNNER, not a node constructor -- `Sentinel.bt.Runner`. Forwards `new` explicitly rather
+-- than proxying through `__index`: `Runner:new(root)` would pass THIS table as `self`, and the real
+-- constructor uses its own table as the instance metatable.
+local Runner = {
+    new = function(_, root) return API.bt.Runner:new(root) end,
+}
+-- `Sentinel.rotation` is the promoted PriorityBuilder (ADR §5.4). Resolved live so the plugin does
+-- not capture nil if it loads before the kernel publishes.
+local PriorityBuilder = setmetatable({}, { __index = function(_, k)
+    return API.rotation and API.rotation[k] or nil
+end })
+
+local Cond = require("rotations/warlock_affliction/affliction_conditions")
+local Act = require("rotations/warlock_affliction/affliction_actions")
+local MaintenanceTree = require("rotations/warlock_affliction/maintenance_tree")
+local PetController = require("rotations/warlock_affliction/pet_controller")
 
 local Profile = {}
 Profile.__index = Profile
@@ -19,22 +53,21 @@ Profile.__index = Profile
 local function build_off_gcd_root()
     return BT.selector("warlock_affliction_off_gcd", {
         -- Summon gates: out of combat (a 10s summon cast mid-combat stalls the
-        -- chase) AND "usable" (trained + Soul Shard reagent present via
-        -- core.spell_book.is_usable_spell) — "known" alone retried forever with
-        -- zero shards. When it can't summon, the selector falls through and
-        -- combat proceeds pet-less.
+        -- chase) AND "usable" (trained + Soul Shard reagent present) — "known"
+        -- alone retried forever with zero shards. When it can't summon, the
+        -- selector falls through and combat proceeds pet-less.
         BT.sequence("summon_voidwalker", {
             BT.condition("missing_voidwalker", Cond.missing_voidwalker),
-            BT.condition("out_of_combat", SharedConditions.not_in_combat),
-            BT.condition("summon_voidwalker_usable", SharedConditions.spell_available("summon_voidwalker", "usable")),
-            BT.condition("summon_voidwalker_ready", SharedConditions.spell_ready("summon_voidwalker", nil, "self")),
+            BT.condition("out_of_combat", Cond.not_in_combat),
+            BT.condition("summon_voidwalker_usable", Cond.spell_available("summon_voidwalker", "usable")),
+            BT.condition("summon_voidwalker_ready", Cond.spell_ready("summon_voidwalker", nil, "self")),
             BT.action("queue_summon_voidwalker", Act.summon_voidwalker),
         }),
         BT.sequence("pet_attack", {
             BT.condition("has_voidwalker", Cond.has_voidwalker),
-            BT.condition("target_valid", SharedConditions.target_valid),
-            BT.condition("pet_not_on_target", SharedConditions.pet_not_attacking_target()),
-            BT.action("send_pet", ActionLibrary.pet_attack()),
+            BT.condition("target_valid", Cond.target_valid),
+            BT.condition("pet_not_on_target", Cond.pet_not_attacking_target()),
+            BT.action("send_pet", Act.pet_attack),
         }),
     })
 end
@@ -52,32 +85,32 @@ local function build_gcd_root(blackboard)
     -- Agony > Immolate. Each only fires while its own debuff is missing from
     -- the target AND the spell is trained.
     builder:add_priority("corruption_maintain", {
-        SharedConditions.gcd_ready,
-        SharedConditions.target_valid,
+        Cond.gcd_ready,
+        Cond.target_valid,
         Cond.target_missing_dot("corruption"),
-        SharedConditions.spell_available("corruption"),
+        Cond.spell_available("corruption"),
     }, Act.cast_corruption, nil, 10)
 
     builder:add_priority("curse_of_agony_maintain", {
-        SharedConditions.gcd_ready,
-        SharedConditions.target_valid,
+        Cond.gcd_ready,
+        Cond.target_valid,
         Cond.target_missing_dot("curse_of_agony"),
-        SharedConditions.spell_available("curse_of_agony"),
+        Cond.spell_available("curse_of_agony"),
     }, Act.cast_curse_of_agony, nil, 20)
 
     builder:add_priority("immolate_maintain", {
-        SharedConditions.gcd_ready,
-        SharedConditions.target_valid,
+        Cond.gcd_ready,
+        Cond.target_valid,
         Cond.target_missing_dot("immolate"),
-        SharedConditions.spell_available("immolate"),
+        Cond.spell_available("immolate"),
     }, Act.cast_immolate, nil, 30)
 
     -- 4. SUSTAIN: Drain Life when low health (drain-tank survivability).
     builder:add_priority("drain_life_sustain", {
-        SharedConditions.gcd_ready,
-        SharedConditions.target_valid,
-        SharedConditions.health_below(0.40),
-        SharedConditions.spell_available("drain_life"),
+        Cond.gcd_ready,
+        Cond.target_valid,
+        Cond.health_below(0.40),
+        Cond.spell_available("drain_life"),
     }, Act.cast_drain_life, nil, 40)
 
     -- 4b. RECOVERY: Drain Life in the low-mana/low-HP wedge. Below 50% HP Life
@@ -86,34 +119,34 @@ local function build_gcd_root(blackboard)
     -- Drain Life converts enemy HP into ours, un-wedging both sustain gates.
     -- Wand (priority 900) remains the final fallback when Drain Life is untrained.
     builder:add_priority("drain_life_recovery", {
-        SharedConditions.gcd_ready,
-        SharedConditions.target_valid,
-        SharedConditions.mana_below(0.30),
-        SharedConditions.health_below(0.50),
-        SharedConditions.spell_available("drain_life"),
+        Cond.gcd_ready,
+        Cond.target_valid,
+        Cond.mana_below(0.30),
+        Cond.health_below(0.50),
+        Cond.spell_available("drain_life"),
     }, Act.cast_drain_life, nil, 45)
 
     -- 5. SUSTAIN: Life Tap when mana is low and health can afford it.
     builder:add_priority("life_tap_sustain", {
-        SharedConditions.gcd_ready,
-        SharedConditions.mana_below(0.30),
-        SharedConditions.health_above(0.50),
-        SharedConditions.spell_available("life_tap"),
+        Cond.gcd_ready,
+        Cond.mana_below(0.30),
+        Cond.health_above(0.50),
+        Cond.spell_available("life_tap"),
     }, Act.cast_life_tap, nil, 50)
 
     -- 6. FILLER: Shadow Bolt when mana-rich and DoTs/sustain didn't fire.
     builder:add_priority("shadow_bolt_filler", {
-        SharedConditions.gcd_ready,
-        SharedConditions.target_valid,
-        SharedConditions.mana_above(0.40),
-        SharedConditions.spell_available("shadow_bolt"),
+        Cond.gcd_ready,
+        Cond.target_valid,
+        Cond.mana_above(0.40),
+        Cond.spell_available("shadow_bolt"),
     }, Act.cast_shadow_bolt, nil, 60)
 
     -- 7. FINISHER: wand (Shoot) -- lowest priority, always available as long
     -- as a valid target exists. Not gated on gcd_ready: wand auto-attack is
     -- not on the global cooldown in-game.
     builder:add_priority("wand_finish", {
-        SharedConditions.target_valid,
+        Cond.target_valid,
     }, Act.cast_shoot, nil, 900)
 
     -- 8. NOOP

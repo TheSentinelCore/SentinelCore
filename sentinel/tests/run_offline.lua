@@ -340,6 +340,10 @@ do
 end
 
 local test_modules = {
+    -- The instrument itself. Registered FIRST because every figure below is its output: if the
+    -- runner's own contract is broken, no other number in this report means anything.
+    "tests/harness/test_suite_runner",
+
     -- Harness (offline-only; exercises _G.JSON mocked above)
     "tests/harness/test_json_mock",
 
@@ -384,6 +388,10 @@ local test_modules = {
     -- readers, written BEFORE the migration -- each reader fell back to a non-forecast branch, so
     -- deleting the write first would have turned the gating off with the suite still green.
     "tests/kernel/test_forecast_service",
+    -- Phase 4e D5: the catalog's two GCD flags, pinned against tbcmangos.sqlite. Four of the 64
+    -- entries carrying ids were wrong, and `ogcd` is one authority of the two-authority bypass
+    -- rule -- so a wrong entry here is one word in a rotation away from an illegal packet.
+    "tests/kernel/test_spell_catalog_gcd_truth",
     "tests/kernel/test_rotation_lib",
     -- The three Phase 4b audits. They share tests/kernel/audit_scope so they cannot disagree
     -- about what they cover.
@@ -479,60 +487,25 @@ local test_modules = {
     "tests/integration/test_kernel_end_to_end",
 }
 
-local passed = 0
-local failed = 0
-local errors = {}
+-- ---------------------------------------------------------------------------
+-- Execution
+-- ---------------------------------------------------------------------------
+-- The discovery/execution/counting rules live in `tests/harness/suite_runner.lua`, which is itself
+-- under test (`tests/harness/test_suite_runner.lua`, registered first above). Until Phase 4e that
+-- logic lived inline here, where nothing could observe it -- and it was wrong in two ways that both
+-- understated failure: a `run()` suite was one pcall whose first `error` hid every case after it,
+-- and `run()` was preferred over `test*` even when a suite exported both.
+--
+-- WHAT THIS FILE STILL CANNOT SEE, beyond suite_runner's own list: the `test_modules` table above
+-- is hand-maintained. A suite that exists on disk and is registered nowhere does not run, does not
+-- fail, and does not appear -- so the totals below are a count of what was ASKED for, never of what
+-- exists.
+local SuiteRunner = require("tests/harness/suite_runner")
 
-for _, mod_name in ipairs(test_modules) do
-    local ok, result = pcall(function()
-        local test_suite = require(mod_name)
+local report = SuiteRunner.run_all(test_modules)
+print(SuiteRunner.format_report(report))
 
-        if type(test_suite.run) == "function" then
-            local run_ok, run_err = pcall(test_suite.run)
-            if run_ok then
-                passed = passed + 1
-                io.write(".")
-            else
-                failed = failed + 1
-                table.insert(errors, string.format("FAIL: %s.run: %s", mod_name, tostring(run_err)))
-                io.write("F")
-            end
-        else
-            local found = false
-            for name, fn in pairs(test_suite) do
-                if type(fn) == "function" and name:match("^test") then
-                    found = true
-                    local test_ok, test_err = pcall(fn)
-                    if test_ok then
-                        passed = passed + 1
-                        io.write(".")
-                    else
-                        failed = failed + 1
-                        table.insert(errors, string.format("FAIL: %s.%s: %s", mod_name, name, tostring(test_err)))
-                        io.write("F")
-                    end
-                end
-            end
-            if not found then
-                failed = failed + 1
-                table.insert(errors, string.format("ERROR: %s has no run() or test* functions", mod_name))
-                io.write("E")
-            end
-        end
-    end)
-    if not ok then
-        failed = failed + 1
-        table.insert(errors, string.format("ERROR loading %s: %s", mod_name, tostring(result)))
-        io.write("E")
-    end
-end
-
-print(string.format("\n\n%d passed, %d failed", passed, failed))
-if failed > 0 then
-    print("\nFailures:")
-    for _, err in ipairs(errors) do
-        print("  " .. err)
-    end
+if report.failed > 0 or report.opaque_failed > 0 then
     os.exit(1)
 else
     os.exit(0)

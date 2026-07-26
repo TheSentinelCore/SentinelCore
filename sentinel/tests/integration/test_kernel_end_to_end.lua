@@ -762,6 +762,84 @@ function M.test_a_symbolic_cast_commits_at_the_rotations_unit_not_the_clients()
 end
 
 -- ---------------------------------------------------------------------------
+-- 6b. THE GCD GATE'S WIRING (Phase 4e D4)
+-- ---------------------------------------------------------------------------
+-- MEASURED, not assumed. Phase 4e reverted each service's hand-off at the composition root one at
+-- a time and recorded what reddened. `timing = o._timing` in `IntentExecutors.install` reddened
+-- NOTHING -- the whole suite stayed green at 1099 with the GCD gate receiving no clock.
+--
+-- That is not a harmless omission, because `gcd_gate` FAILS OPEN on it:
+--
+--     local timing = deps.timing
+--     if not timing then return true end          -- kernel/intent_executors.lua
+--
+-- So an unwired clock does not break anything loudly; it silently admits every cast, every tick,
+-- for the whole session, and the cast executor's `deps.timing:note_cast(...)` stops recording the
+-- window that would have closed it. Fail-open is the right choice INSIDE the gate -- a kernel with
+-- no clock must not stop the character casting -- which is precisely why the wiring needs a pin
+-- somewhere else. Nothing that drives `Timing` directly can see this: the object works perfectly,
+-- it is just not plugged in.
+--
+-- This is the same species as the `unit_target` defect above, and it is pinned the same way: at the
+-- SDK boundary, counting the packets a real app actually sends.
+--
+-- WHAT IT CANNOT SEE: that the GCD's DURATION is right. It asserts a second cast 200 ms after the
+-- first is held, which needs only a window longer than 200 ms. `tests/kernel/test_timing.lua` owns
+-- the arithmetic; this owns the fact that the arithmetic is reachable from a real boot.
+
+function M.test_the_gcd_gate_holds_a_second_cast_because_timing_is_wired_to_the_executors()
+    with_live_app({ client_target = true, auras = BUFFED, mana_pct = 0.40 }, function(app, sdk)
+        local bb = app:get_blackboard()
+        local broker = app:get_control_broker()
+        local tick = 0
+
+        -- One cast per tick, distinctly labelled, through the real broker and the real queue.
+        app:get_scheduler():register("ACT", "test.gcd_prober", function()
+            tick = tick + 1
+            bb:set("combat.target", sdk.target)
+            local caretaker = broker:acquire({
+                channel = "CASTING",
+                owner = "test.gcd_prober",
+                band = "COMBAT", offset = 0, tier = "rotation",
+                ttl_ticks = 2,
+            })
+            if not caretaker then return end
+            caretaker:submit({
+                type = "cast",
+                payload = {
+                    spell_id = 133,
+                    unit = Executors.UNIT_TARGET,
+                    label = "gcd_probe_" .. tick,
+                    -- NO `off_gcd`. The gate returns early on that flag, so a probe carrying it
+                    -- would pass whether or not the clock was ever wired.
+                },
+            })
+        end)
+
+        -- `run_ticks` advances 200 ms per tick -- deliberately INSIDE the global cooldown the first
+        -- cast opens, and deliberately not zero, so the second cast is refused by the GCD rather
+        -- than by two submissions landing on one instant.
+        local reports = run_ticks(app, sdk, 2)
+
+        T.assert_not_nil(packet_labelled(sdk, "gcd_probe_1"),
+            "the FIRST cast must reach the SDK, or this test proves nothing about the second: "
+            .. describe_rejections(reports[1]))
+
+        T.assert_nil(packet_labelled(sdk, "gcd_probe_2"),
+            "the second cast, 200ms later, must NOT reach the SDK -- it does exactly when "
+            .. "`timing` is missing from IntentExecutors.install, because gcd_gate fails open")
+
+        local held = false
+        for _, rejection in ipairs(reports[2].intents and reports[2].intents.rejected or {}) do
+            if rejection.reason == "gcd_running" then held = true end
+        end
+        T.assert_true(held,
+            "and it must be the GCD gate that named the refusal, not some other stage refusing "
+            .. "for its own reasons: " .. describe_rejections(reports[2]))
+    end)
+end
+
+-- ---------------------------------------------------------------------------
 -- 7. THE WHOLE CHAIN, IN ONE TEST (Phase 4d D7)
 -- ---------------------------------------------------------------------------
 --

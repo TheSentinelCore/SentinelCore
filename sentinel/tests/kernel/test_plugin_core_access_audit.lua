@@ -360,8 +360,56 @@ local CORE_ACCESS_LEDGER = {
     ["sentinel/rotations/mage_frost/frost_actions.lua:571"] = "D2: guard for move_forward_start",
     ["sentinel/rotations/mage_frost/frost_actions.lua:572"] = "D2: core.input.move_forward_start",
 
+    -- ---------------------------------------------------------------------------
+    -- paladin_retribution: AUTO-ATTACK. There is no intent type for it.
+    -- ---------------------------------------------------------------------------
+    -- `Act.melee_fallback` starts the swing with `core.input.cast_target_spell(6603, target)`.
+    -- 6603 is the generic Attack ability -- a STANCE, not a spell cast -- and the intent vocabulary
+    -- has no verb for it (`intent_executors.lua`: cast, target, pet_command, use_item, face, move).
+    --
+    -- ADMITTED RATHER THAN CONVERTED, and the alternative was weighed rather than skipped. Emitting
+    -- it as a `cast` intent with `spell_id = 6603` would route the swing through `spell_queue`, the
+    -- castable gate and the GCD gate -- three checks auto-attack is not subject to, on the one
+    -- action whose entire job is to work when every other priority has failed. That is a behaviour
+    -- change, and this is a port. Adding an `auto_attack` intent type is a KERNEL deliverable with
+    -- its own channel, gate and tests; it does not belong inside the move.
+    --
+    -- Three lines rather than one because the guard spans two: the audit counts any mention of
+    -- `core.`, and guards exist only to reach the call underneath them.
+    --
+    -- This is the mage's `kite_controller` shape exactly -- a plugin action whose SDK verb the
+    -- intent vocabulary does not cover yet -- and it burns down the same way: when the type exists,
+    -- the call and both guard lines go together.
+    ["sentinel/rotations/paladin_retribution/retribution_actions.lua:188"] = "no auto_attack intent type: guard for cast_target_spell",
+    ["sentinel/rotations/paladin_retribution/retribution_actions.lua:189"] = "no auto_attack intent type: guard for cast_target_spell",
+    ["sentinel/rotations/paladin_retribution/retribution_actions.lua:190"] = "no auto_attack intent type: core.input.cast_target_spell(6603)",
+
+    -- ---------------------------------------------------------------------------
+    -- warlock_affliction: REAGENT USABILITY. The kernel surface cannot answer it.
+    -- ---------------------------------------------------------------------------
+    -- `Cond.spell_available(key, "usable")` asks `core.spell_book.is_usable_spell(id)`. That is the
+    -- only thing in reach that knows whether the character is holding a Soul Shard, and Summon
+    -- Voidwalker is unusable without one.
+    --
+    -- NOTHING ON `_G.Sentinel` ANSWERS IT, and the alternatives were weighed rather than skipped.
+    -- `Sentinel.spells` answers castability, line of sight and AoE placement; `Sentinel.catalogs.
+    -- spell` answers rank resolution. Neither knows about reagents. Dropping the check would leave
+    -- the summon gated on "trained" alone, which is precisely the bug the `"usable"` mode was added
+    -- to fix -- with zero shards the rotation retried the summon forever, and
+    -- `test_no_summon_without_shard_falls_back_petless` pins the fix. Routing it through the cast
+    -- path instead would emit a doomed intent every tick and let the commit gate absorb it, which
+    -- moves the retry loop rather than removing it.
+    --
+    -- Two lines rather than one because the guard is its own line: the audit counts any mention of
+    -- `core.`, and a guard exists only to reach the call underneath it. Both go together when
+    -- `Sentinel.spells` gains a usability/reagent query -- the API gap this entry exists to name.
+    ["sentinel/rotations/warlock_affliction/affliction_conditions.lua:241"] = "no reagent/usability query on the API: guard for is_usable_spell",
+    ["sentinel/rotations/warlock_affliction/affliction_conditions.lua:244"] = "no reagent/usability query on the API: core.spell_book.is_usable_spell",
+
     -- pet_controller's four calls and their guards are GONE (Phase 4b D3): every command now
-    -- leaves as a `pet_command` intent under a PET lease.
+    -- leaves as a `pet_command` intent under a PET lease. The WARLOCK's three (`pet_attack`,
+    -- `set_pet_passive`, `set_pet_follow`) went the same way in this port, which is why
+    -- `rotations/warlock_affliction/pet_controller.lua` appears nowhere in this ledger.
 
     -- frost_tbc's `core.log` is GONE (Phase 4b D3): §10's `Sentinel.log` now carries the GCD
     -- diagnostic, attributed from the call site. Logging was never an intent -- it contends

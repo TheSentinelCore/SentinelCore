@@ -1,10 +1,29 @@
-local BT = require("core/bt/factory")
-local Runner = require("core/bt/runner")
-local Cond = require("modules/combat/profiles/paladin/retribution_conditions")
-local Act = require("modules/combat/profiles/paladin/retribution_actions")
-local MaintenanceTree = require("modules/combat/profiles/paladin/maintenance_tree")
-local PriorityBuilder = require("kernel/lib/priority_builder")
-local SharedConditions = require("modules/combat/condition_library")
+local API = require("rotations/paladin_retribution/sentinel_api")
+
+-- The kernel-published BT library (§10 `Sentinel.bt`), late-bound: a tree built before the kernel
+-- publishes still resolves once it has, and `require("core/bt/factory")` is a cross-package require
+-- the audit refuses.
+local BT = setmetatable({}, { __index = function(_, k) return API.bt and API.bt[k] or nil end })
+-- The tree RUNNER, not a node constructor -- `Sentinel.bt.Runner`. Each of the three trees below is
+-- wrapped in one.
+-- Forwards `new` explicitly rather than proxying through `__index`: `Runner:new(root)` would pass
+-- THIS table as `self`, and the real constructor uses its own table as the instance metatable.
+local Runner = {
+    new = function(_, root) return API.bt.Runner:new(root) end,
+}
+local Cond = require("rotations/paladin_retribution/retribution_conditions")
+local Act = require("rotations/paladin_retribution/retribution_actions")
+local MaintenanceTree = require("rotations/paladin_retribution/maintenance_tree")
+
+-- `Sentinel.rotation` is the promoted PriorityBuilder (ADR §5.4). Resolved live so the plugin does
+-- not capture nil if it loads before the kernel publishes.
+--
+-- The old profile required `kernel/lib/priority_builder` directly. That is the SAME OBJECT --
+-- `kernel/api.lua:209` publishes exactly that module as `Sentinel.rotation` -- so this is a route
+-- change, not a library swap.
+local PriorityBuilder = setmetatable({}, { __index = function(_, k)
+    return API.rotation and API.rotation[k] or nil
+end })
 
 local Profile = {}
 Profile.__index = Profile
@@ -23,8 +42,14 @@ end
 
 local function build_gcd_root(blackboard)
     local builder = PriorityBuilder.new("PALADIN", "RETRIBUTION")
+    -- `SharedConditions.target_valid` from `modules/combat/condition_library` used to sit here,
+    -- alongside `Cond.target_valid` on every other priority. The two are the SAME FUNCTION BODY --
+    -- both read `player_and_target` and `safe_call(target, "is_dead")` with the identical
+    -- fail-open `not ok_dead or dead ~= true` -- so collapsing onto the package's own copy removes
+    -- a cross-package require without changing an answer. `condition_library` keeps its other
+    -- callers; nothing is orphaned.
     builder:add_priority("hammer_of_justice_interrupt", {
-        SharedConditions.target_valid,
+        Cond.target_valid,
         Cond.in_judgement_range,
         Cond.target_casting_interruptible,
         Cond.spell_ready("hammer_of_justice"),

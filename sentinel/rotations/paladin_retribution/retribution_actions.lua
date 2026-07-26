@@ -1,17 +1,30 @@
-local QueuePriorities = require("shared/queue_priorities")
-local Status = require("core/bt/status")
-local H = require("shared/combat_helpers")
+local API = require("rotations/paladin_retribution/sentinel_api")
+local H = require("rotations/paladin_retribution/support")
+
+local QueuePriorities = H.QueuePriorities
+
+-- Resolved live. `H.status()` reads `API.bt.Status`, so capturing it at load time would pin nil
+-- forever whenever this file loads before the kernel publishes (ADR 08 §2.4).
+local Status = setmetatable({}, { __index = function(_, k)
+    local s = H.status()
+    return s and s[k] or nil
+end })
 
 local Act = {}
 
--- Import AOE helper for optimal positioning
-local AoeHelper = nil
-local function get_aoe_helper()
-    if not AoeHelper then
-        AoeHelper = require("shared/aoe_helper")
-    end
-    return AoeHelper
-end
+--- AoE placement, through the kernel's spell service rather than `shared/aoe_helper`.
+---
+--- `Sentinel.spells:find_aoe_position` wraps the same `spell_prediction.find_optimal_position` the
+--- old helper reached for, and returns `(nil, 0)` on every failure -- which is exactly what the
+--- caller below already treats as "no good position". Signature and failure shape are unchanged; a
+--- lazy `require("shared/aoe_helper")` would be a cross-package require the audit refuses.
+local AoeHelper = {
+    find_optimal_position = function(spell_id, range, min_targets, radius)
+        local s = API.spells
+        if not s then return nil, 0 end
+        return s:find_aoe_position(spell_id, range, min_targets, radius)
+    end,
+}
 
 function Act.queue_avenging_wrath(blackboard)
     local player = blackboard:get("player.object")
@@ -99,20 +112,20 @@ function Act.queue_consecration(blackboard)
         local player = blackboard:get("player.object")
         return H.queue_target(blackboard, "consecration", "consecration", player, QueuePriorities.DEFAULT)
     end
-    
+
     -- Try to get optimal position using AOE helper (consecration is centered on caster, but we can move to optimize)
-    local optimal_pos, hit_count = get_aoe_helper().find_optimal_position(
-        spell_id, 
+    local optimal_pos, hit_count = AoeHelper.find_optimal_position(
+        spell_id,
         0,    -- Consecration is centered on caster, so we don't range from target
         2,    -- Minimum targets for AOE (try to hit at least 2 enemies)
         8     -- Consecration radius
     )
-    
+
     -- If we found a good position with enough targets, use it
     if optimal_pos and hit_count >= 2 then
         return H.queue_position(blackboard, "consecration", "consecration", optimal_pos, QueuePriorities.DEFAULT)
     end
-    
+
     -- Fallback to casting on self (original behavior)
     local player = blackboard:get("player.object")
     return H.queue_target(blackboard, "consecration", "consecration", player, QueuePriorities.DEFAULT)
@@ -135,10 +148,30 @@ end
 
 ---Melee fallback: signals that no spell action is available but a valid
 ---target exists. Returns SUCCESS so the GCD tree doesn't signal "no legal
----action" — the chase controller handles movement and WoW auto-attack
+---action" -- the chase controller handles movement and WoW auto-attack
 ---deals damage. Also starts auto-attack if not already attacking and in
 ---melee range (spell ID 6603 = generic Attack ability).
 ---Returns RUNNING if no target yet (wait for target), FAILURE if target dead.
+---
+--- ================================================================================
+--- THE ONE DIRECT SDK CALL LEFT IN THIS PACKAGE, AND WHY IT IS STILL HERE
+--- ================================================================================
+--- `core.input.cast_target_spell(6603, target)` starts the auto-attack swing. It is ledgered in
+--- `tests/kernel/test_plugin_core_access_audit.lua` rather than converted, because THERE IS NO
+--- INTENT TYPE FOR STARTING AN AUTO-ATTACK. The two candidate conversions are both behaviour
+--- changes, not refactors:
+---
+---   * A `cast` intent carrying `spell_id = 6603` would route the swing through `spell_queue`
+---     (a different SDK verb), through the castable gate, and through the GCD gate. Auto-attack is
+---     none of those things: it is a stance, not a spell cast, and gating it on the global cooldown
+---     would leave the Paladin standing still for the one action that works when nothing else does.
+---   * A new `auto_attack` intent type is a KERNEL change, not a rotation change, and it belongs in
+---     the deliverable that adds it -- with its own channel, gate and tests -- rather than being
+---     invented inside a port whose whole contract is that behaviour does not move.
+---
+--- So this is an admitted gap with a name, which is what the ledger is for. The mage carries the
+--- same shape for MOVEMENT (`kite_controller`'s `core.input.look_at` / `move_forward_start`) for
+--- the same reason: the intent vocabulary does not cover it yet.
 function Act.melee_fallback(blackboard)
     local player_obj, target = H.player_and_target(blackboard)
     if not target then

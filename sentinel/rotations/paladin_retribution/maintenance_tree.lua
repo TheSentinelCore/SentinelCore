@@ -1,6 +1,10 @@
-local BT = require("core/bt/factory")
-local Cond = require("modules/combat/profiles/paladin/retribution_conditions")
-local Act = require("modules/combat/profiles/paladin/retribution_actions")
+local API = require("rotations/paladin_retribution/sentinel_api")
+-- The kernel-published BT library (§10 `Sentinel.bt`), late-bound so a tree built before the kernel
+-- publishes still resolves once it has. `require("core/bt/factory")` is a cross-package require the
+-- audit refuses, and it would also pin the node constructors at load time.
+local BT = setmetatable({}, { __index = function(_, k) return API.bt and API.bt[k] or nil end })
+local Cond = require("rotations/paladin_retribution/retribution_conditions")
+local Act = require("rotations/paladin_retribution/retribution_actions")
 
 local MaintenanceTree = {}
 

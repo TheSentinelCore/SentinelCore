@@ -1,6 +1,15 @@
-local PaladinRetTBC = require("modules/combat/profiles/paladin/retribution_tbc")
+-- All three rotations now live under `rotations/`, each its own plugin package with a
+-- `manifest.lua` and a `sentinel_api.lua`. The temporary bridge files that used to sit at
+-- `modules/combat/profiles/{paladin,warlock}/` existed only to keep this require working while
+-- the two classes were being ported one at a time; they are deleted now that all three paths
+-- point at the same place.
+--
+-- These are cross-package requires out of `combat` into `rotations/*`. `tests/kernel/audit_scope.lua`
+-- marks `combat` as `migrating = true`, so they are scanned and counted but not asserted against —
+-- the same dispensation the mage require has had since it moved.
+local PaladinRetTBC = require("rotations/paladin_retribution/retribution_tbc")
 local MageFrostTBC = require("rotations/mage_frost/frost_tbc")
-local WarlockAfflictionTBC = require("modules/combat/profiles/warlock/affliction_tbc")
+local WarlockAfflictionTBC = require("rotations/warlock_affliction/affliction_tbc")
 
 local Registry = {}
 

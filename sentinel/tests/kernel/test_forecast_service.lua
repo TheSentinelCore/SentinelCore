@@ -42,7 +42,10 @@ local Api = require("kernel/api")
 local Forecast = require("kernel/forecast")
 local Blackboard = require("core/blackboard")
 local ConditionLibrary = require("modules/combat/condition_library")
-local RetCond = require("modules/combat/profiles/paladin/retribution_conditions")
+-- Repointed by the Paladin kernel port: the profile moved to `rotations/paladin_retribution/`.
+-- The pin below is UNCHANGED -- `target_execute` still asks `Sentinel.forecast:time_to_die` first
+-- and falls back to a health read, and that is what this file measures. Only the path moved.
+local RetCond = require("rotations/paladin_retribution/retribution_conditions")
 local FrostCombatState = require("rotations/mage_frost/frost_combat_state")
 local FrostCond = require("rotations/mage_frost/frost_conditions")
 local T = require("tests/test_util")
@@ -260,10 +263,10 @@ function M.test_health_prediction_below_reads_the_forecast_service()
 end
 
 -- ---------------------------------------------------------------------------
--- READER 4: modules/combat/profiles/paladin/retribution_conditions.lua
+-- READER 4: rotations/paladin_retribution/retribution_conditions.lua
 -- ---------------------------------------------------------------------------
 
---- `target_execute` is LIVE: `retribution_tbc.lua:53` gates Hammer of Wrath on it. This is the one
+--- `target_execute` is LIVE: `retribution_tbc.lua` gates Hammer of Wrath on it. This is the one
 --- migrated reader whose verdict reaches a real rotation entry today.
 function M.test_retribution_target_execute_reads_the_forecast_service()
     local bb = bb_with_target({ health_pct = 0.95 })

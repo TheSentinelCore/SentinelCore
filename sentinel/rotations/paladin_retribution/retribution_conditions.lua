@@ -1,19 +1,102 @@
-local AuraCatalog = require("kernel/catalogs/aura")
-local H = require("shared/combat_helpers")
-local SpellHelper = require("shared/spell_helper")
+local API = require("rotations/paladin_retribution/sentinel_api")
+local H = require("rotations/paladin_retribution/support")
+
+-- Resolved at CALL time, never captured at load time: `_G.Sentinel` may not exist yet when this
+-- file loads (ADR 08 §2.4 -- the getter fixes reads, the queue fixes registration).
+local AuraCatalog = setmetatable({}, { __index = function(_, k)
+    local c = API.catalogs
+    return c and c.aura and c.aura[k] or nil
+end })
+
+local SpellHelper = {
+    -- FAIL OPEN on "cannot say", preserving the ported behaviour EXACTLY: the original called
+    -- `shared/spell_helper.is_spell_castable` directly and tested `if not castable`, and that
+    -- helper returns the truthy string `UNKNOWN` when the spell-book helper is unresolved -- so
+    -- "cannot say" already read as castable. `Spells:castability` is the tri-state version of the
+    -- same question, so `~= false` reproduces the old answer for all three cases rather than
+    -- tightening it. A condition that went false on an unresolved helper would stop the Paladin
+    -- casting anything at all; the commit gate is the real check now.
+    is_spell_castable = function(id, src, dst)
+        local s = API.spells
+        if s == nil then return true end
+        return s:castability(id, src, dst) ~= false
+    end,
+    -- Fail open on "cannot say", for the same reason as `is_spell_castable` above.
+    is_spell_in_los = function(id, src, dst)
+        local s = API.spells
+        if s == nil then return true end
+        return s:los_state(id, src, dst) ~= false
+    end,
+}
 
 local Cond = {}
 
 --- The kernel's forecast service, RESOLVED AT CALL TIME.
 ---
---- Phase 4d D1: this used to be `blackboard:get("module.combat.izi_bridge")`. See
---- `modules/combat/condition_library.lua` for the full reasoning; the short version is that the
---- blackboard holds VALUES, the handle guard was right to refuse a live bridge, and `_G.Sentinel`
---- does not exist yet while combat initialises -- so the read has to happen per call, not once.
+--- Phase 4d D1: this used to be `blackboard:get("module.combat.izi_bridge")`, then a direct
+--- `_G.Sentinel.forecast` read. It is the same resolution either way -- `sentinel_api` IS the read
+--- of `_G.Sentinel` -- but routing it through the shim keeps this package's coupling to the kernel
+--- in the one file that is supposed to hold it.
 local function forecast()
-    local surface = _G.Sentinel
-    if surface == nil then return nil end
-    return surface.forecast
+    return API.forecast
+end
+
+-- ---------------------------------------------------------------------------
+-- Snapshot-backed health
+-- ---------------------------------------------------------------------------
+-- The rotation's only consumer of `Sentinel.cond`, and the only place a `Truth` crosses into this
+-- package. Copied from `rotations/mage_frost/frost_conditions.lua`, where the shape was worked out.
+--
+-- WHAT MOVED, AND WHAT DID NOT. `health_above` is the ONE condition in this file with an equivalent
+-- kernel predicate whose data is in the snapshot's HOT tier. Everything else stays on the
+-- blackboard, and the list of why is worth stating rather than leaving to be re-derived:
+--
+--   * `mana_above`      -- there is no `power_above` predicate. Only `power_below` is ported.
+--   * `in_melee` / `in_judgement_range` -- `cond.target_within` exists, and it reads
+--     `target.position` from a tier captured off `player:get_target()` (snapshot_source.lua:132).
+--     This rotation aims at `combat.target or player.target`, and `combat.target` is chosen by the
+--     combat module's target strategy -- routinely a DIFFERENT unit from the client's target.
+--     Converting would silently re-aim two range gates at whatever the client happens to have
+--     selected. That is a behaviour change wearing a refactor's clothes.
+--   * `target_valid`    -- `cond.has_target` under TreatFalse is fail-CLOSED; the ported version
+--     returns true when the `is_dead` read FAILS (`not ok_dead or dead ~= true`), i.e. fail-OPEN.
+--     Converting flips the polarity of the gate that guards every offensive priority.
+--   * `target_execute`'s HP fallback -- `cond.target_health_below` exists, but the forecast branch
+--     above it cannot move, and splitting one condition across two data sources buys nothing.
+--   * every `AuraCatalog.has_any*` check, every `rotation.*` key, `twist_window_open`,
+--     `enemy_count_at_least`, `aoe_mode`, `burst_*`, `preferred_blessing_is_kings`,
+--     `target_casting_interruptible`, `spell_ready`, `gcd_ready` -- no aura, cooldown, spell-book,
+--     swing, hostile-census or target-cast tier exists in the snapshot. ADR §8.4.1 measured this:
+--     42 of 65 combinators are blocked on warm/cold tiers that have not been built.
+--
+-- WHY `health_above` IS WORTH MOVING ANYWAY. It gates Avenging Wrath, the profile's one burst
+-- cooldown, and the blackboard version read `H.num(blackboard:get("player.health_pct", 0))` -- so
+-- an unreadable health read as 0%. For `health_above` that default happens to fail CLOSED, which is
+-- why this conversion changes no answer in either the readable or the unreadable case; what it buys
+-- is that the reading now comes from the tick's frozen snapshot rather than from whenever the
+-- sensor last wrote the key, and the "I could not read it" case is named instead of impersonated by
+-- a plausible-looking zero (ADR 07 §5.1.2).
+
+---Resolve one kernel predicate against the tick's frozen snapshot.
+---
+---Reads `Sentinel.snapshot` and `Sentinel.cond` at CALL time through the plugin's API shim, so a
+---condition built before the kernel published still works once it has.
+---
+---`predicates[name]` is indexed OUTSIDE the pcall on purpose: `Cond.bind` returns a namespace whose
+---`__index` RAISES on an unknown key, so a typo'd predicate name throws here rather than being
+---swallowed into a silent `false`.
+---@param name string a predicate on `Sentinel.cond`
+---@return boolean
+local function snapshot_predicate(name, ...)
+    local snapshot, cond, Truth = API.snapshot, API.cond, API.Truth
+    -- No kernel, or no snapshot yet, is NOT a reading. Answering false here is the same decision
+    -- `TreatFalse` makes below, taken one step earlier because there is nothing to bind against.
+    if snapshot == nil or cond == nil or Truth == nil then return false end
+    local ok, predicates = pcall(cond.bind, snapshot)
+    if not ok then return false end
+    local answered, verdict = pcall(predicates[name], ...)
+    if not answered then return false end
+    return Truth.resolve(verdict, Truth.Policy.TreatFalse) == true
 end
 
 function Cond.target_valid(blackboard)
@@ -150,9 +233,14 @@ function Cond.desired_seal_is_command(blackboard)
     return blackboard:get("rotation.desired_seal") == "command"
 end
 
+---Player health strictly above `threshold`, read from the tick's FROZEN SNAPSHOT.
+---
+---See the section header above. The blackboard version was
+---`H.num(blackboard:get("player.health_pct", 0)) > threshold`; both agree in every case, including
+---the unreadable one, which is why this is a route change rather than a behaviour change.
 function Cond.health_above(threshold)
-    return function(blackboard)
-        return H.num(blackboard:get("player.health_pct", 0)) > threshold
+    return function()
+        return snapshot_predicate("health_above", threshold)
     end
 end
 
@@ -210,7 +298,7 @@ function Cond.missing_kings(blackboard)
     return not AuraCatalog.has_any(player, AuraCatalog.blessing_of_kings)
 end
 
----True when no seal at all is up. Any seal satisfies the baseline — a level-3
+---True when no seal at all is up. Any seal satisfies the baseline -- a level-3
 ---Paladin only has Righteousness, and refusing it would leave the character
 ---permanently sealless, which in turn kills judgement (active_seal_present).
 function Cond.baseline_seal_missing(blackboard)

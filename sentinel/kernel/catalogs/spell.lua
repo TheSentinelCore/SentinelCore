@@ -1,15 +1,63 @@
 local SpellCatalog = {}
 SpellCatalog.__index = SpellCatalog
 
+-- ============================================================================
+-- `gcd` AND `ogcd` ARE TWO DIFFERENT QUESTIONS, NOT ONE FLAG AND ITS NEGATION
+-- ============================================================================
+-- This is stated HERE, at the data, and not only where it is enforced -- the rule was previously
+-- discoverable only by reading `frost_support.catalog_confirms_off_gcd`, which is a plugin, in a
+-- different package, that a catalog editor has no reason to open.
+--
+--   `gcd`  -- does casting this OPEN a global cooldown?   MaNGOS `Player::AddGCD` takes its
+--             duration from StartRecoveryTime and returns early when it is 0.
+--   `ogcd` -- may this be sent WHILE one is running?      MaNGOS `WorldObject::HasGCD` looks the
+--             spell's own StartRecoveryCategory up in the live category map, so category 0 is
+--             never blocked and category 133 is blocked by every ordinary 1.5s spell.
+--
+-- AVENGING WRATH IS THE WITNESS THAT THEY ARE INDEPENDENT: category 133, recovery time 0. It opens
+-- no global cooldown AND is blocked by one -- both flags false. Deriving either from the other gets
+-- this wrong, and gets it wrong in the direction that sends a packet the server refuses.
+--
+-- ============================================================================
+-- THE TWO-AUTHORITY RULE THIS TABLE IS ONE HALF OF
+-- ============================================================================
+-- An off-GCD bypass requires BOTH authorities to agree: the rotation's action declares
+-- `opts.off_gcd`, AND this table corroborates it via `is_ogcd_spell`. The `AND` is directional --
+-- either authority being wrong on its own CLOSES the gate, so drift can only ever cost a delayed
+-- cast, never an illegal one. Do not "simplify" it to one list: a catalog-only rule would have
+-- granted Ice Barrier a bypass for three phases, and a rotation-only list is the drift this table
+-- exists to prevent.
+--
+-- Callers must ask `is_ogcd_spell`, never `is_gcd_spell`, for a bypass decision. Both return a
+-- plain boolean and neither can say "unknown key", but they default in opposite directions:
+-- `is_gcd_spell("typo")` is false, which reads as "not on the GCD" and GRANTS the bypass.
+--
+-- ============================================================================
+-- AUDITED IN PHASE 4E -- FOUR OF THE 64 ENTRIES WITH IDS WERE WRONG
+-- ============================================================================
+-- Every id here was cross-checked against `spell_template` in tbcmangos.sqlite (TBC 2.4.3):
+--
+--     Judgement       20271     cat 0    time    0   ->  gcd=false ogcd=true   (was gcd=true)
+--     Counterspell     2139     cat 0    time    0   ->  gcd=false ogcd=true   (was gcd=true)
+--     Avenging Wrath  31884     cat 133  time    0   ->  gcd=false ogcd=FALSE  (was ogcd=true)
+--     Ice Barrier     11426+    cat 133  time 1500   ->  gcd=TRUE  ogcd=FALSE  (was both inverted)
+--
+-- The pattern is worth naming: the flags had been set from intuition about whether something felt
+-- like a rotational ability, not from the data. `tests/kernel/test_spell_catalog_gcd_truth.lua`
+-- pins all six, and states what that audit could not see.
+--
+-- WHAT THIS TABLE CANNOT SEE: the audit was a one-off script against a 300 MB sqlite file, and it
+-- is not re-runnable from the offline suite -- the Sylvannas sandbox has no database and no `io`.
+-- An entry added after Phase 4e is UNAUDITED, and nothing here will say so.
 local SPELLS = {
     seal_of_blood = { key = "seal_of_blood", id = 31892, gcd = true, description = "Seal of Blood" },
     seal_of_command = { key = "seal_of_command", ranks = { 20375, 20915, 20918, 20919, 20920, 27170 }, gcd = true, description = "Seal of Command" },
     seal_of_righteousness = { key = "seal_of_righteousness", ranks = { 20154, 20284, 20285, 20286, 20287, 20288, 20289, 20290, 20291, 27156 }, gcd = true, description = "Seal of Righteousness" },
-    judgement = { key = "judgement", id = 20271, gcd = true, description = "Judgement" },
+    judgement = { key = "judgement", id = 20271, gcd = false, ogcd = true, description = "Judgement" },  -- cat 0 / time 0: off the GCD in TBC
     judgement_of_blood = { key = "judgement_of_blood", id = 31898, gcd = false, description = "Judgement of Blood proc" },
     judgement_of_command = { key = "judgement_of_command", id = 27171, gcd = false, description = "Judgement of Command proc" },
     crusader_strike = { key = "crusader_strike", id = 35395, gcd = true, description = "Crusader Strike" },
-    avenging_wrath = { key = "avenging_wrath", id = 31884, gcd = false, ogcd = true, description = "Avenging Wrath" },
+    avenging_wrath = { key = "avenging_wrath", id = 31884, gcd = false, ogcd = false, description = "Avenging Wrath" },  -- cat 133 / time 0: opens no GCD, still BLOCKED by one
     consecration = { key = "consecration", ranks = { 26573, 20116, 20922, 20923, 20924, 27173 }, gcd = true, description = "Consecration" },
     blessing_of_might = { key = "blessing_of_might", ranks = { 19740, 19834, 19835, 19836, 19837, 19838, 25291, 27140 }, gcd = true, description = "Blessing of Might" },
     blessing_of_kings = { key = "blessing_of_kings", id = 20217, gcd = true, description = "Blessing of Kings" },
@@ -30,10 +78,10 @@ local SPELLS = {
     -- Mage: Fire/Arcane Combat
     fireball = { key = "fireball", ranks = { 133, 143, 145, 3140, 8400, 8401, 8402, 10148, 10149, 10150, 10151, 25306, 27070 }, gcd = true, description = "Fireball" },
     fire_blast = { key = "fire_blast", ranks = { 2136, 2137, 2138, 8412, 8413, 10197, 10199, 27078, 27079 }, gcd = true, description = "Fire Blast" },
-    counterspell = { key = "counterspell", id = 2139, gcd = true, description = "Counterspell" },
+    counterspell = { key = "counterspell", id = 2139, gcd = false, ogcd = true, description = "Counterspell" },  -- cat 0 / time 0: off the GCD in TBC
 
     -- Mage: Defensive
-    ice_barrier = { key = "ice_barrier", ranks = { 11426, 13031, 13032, 13033, 27134, 33405 }, gcd = false, ogcd = true, description = "Ice Barrier" },
+    ice_barrier = { key = "ice_barrier", ranks = { 11426, 13031, 13032, 13033, 27134, 33405 }, gcd = true, ogcd = false, description = "Ice Barrier" },  -- cat 133 / time 1500: a mage shield is ON the GCD
     ice_block = { key = "ice_block", id = 45438, gcd = true, description = "Ice Block" },
     blink = { key = "blink", id = 1953, gcd = true, description = "Blink" },
     mana_shield = { key = "mana_shield", ranks = { 1463, 8494, 8495, 10191, 10192, 10193, 27131 }, gcd = true, description = "Mana Shield" },
