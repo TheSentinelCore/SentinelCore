@@ -9,6 +9,7 @@ local QueryClient = require("shared/query_client")
 local Geometry = require("core/geometry")
 local EventBus = require("core/event_bus")
 local NavAdapter = require("integrations/nav_client/adapter")
+local EventSchema = require("core/event_schema")
 
 -- UnitHelper is exposed from RuntimeAction for object lookup (Sylvannas API compliant)
 local UnitHelper = RuntimeAction.UnitHelper
@@ -120,6 +121,8 @@ function RuntimeProfile:new(json_path, dry_run, event_bus, blackboard)
     o._execution_log = {}               -- Structured log entries (W4.5), ring-buffered
     o._log_total = 0                    -- Total events ever logged; entry.seq stays meaningful
                                         -- after the ring buffer drops the oldest entries
+    o._run_id = nil                     -- ADR 09a §1.5 run identity, minted by _log_event on the
+                                        -- first event of a seq sequence (see reset())
     o._wait_started_at = nil            -- When the current Completion-role Condition gate started waiting
     o._wait_action_key = nil            -- Identity of the action currently being waited on
     o._wait_level_progress = nil        -- "level:xp" snapshot for LevelAtLeast gates (XP1);
@@ -1496,20 +1499,31 @@ end
 -- ====================================================================
 
 --- Emit a structured log entry to event bus and internal log.
+--- Shape is owned by core/event_schema.lua (ADR 09a §1.5) — this function decides WHEN an event
+--- happens and which run it belongs to; it does not decide what an event looks like.
 function RuntimeProfile:_log_event(event_type, data)
-    local entry = {
-        event = event_type,
-        timestamp = (core and core.time and core.time()) or 0,
-        operation = self._current_operation_idx,
-        state = self._state,
-    }
-    if data then
-        for k, v in pairs(data) do entry[k] = v end
+    -- A run is the span of one seq sequence, so the run id is minted off the same counter:
+    -- reset() zeroes _log_total, and without a fresh id the restarted seq numbers would collide
+    -- with the pre-reset ones inside a single run_id — and (run_id, seq) is the only stable key
+    -- a replay or timeline can join entries on.
+    if not self._run_id or (self._log_total or 0) == 0 then
+        self._run_id = EventSchema.new_run_id()
     end
     -- Ring buffer: an unbounded log grew for the whole session (17k+ entries live-caught)
     -- and was serialized wholesale into every save. seq preserves the absolute event index.
     self._log_total = (self._log_total or 0) + 1
-    entry.seq = self._log_total
+
+    local entry = EventSchema.build({
+        event = event_type,
+        timestamp = (core and core.time and core.time()) or 0,
+        state = self._state,
+        seq = self._log_total,
+        run_id = self._run_id,
+        node_id = self._current_node_id,
+        legacy = { operation = self._current_operation_idx },
+        data = data,
+    })
+
     table.insert(self._execution_log, entry)
     while #self._execution_log > MAX_LOG_ENTRIES do
         table.remove(self._execution_log, 1)
