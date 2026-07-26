@@ -1,13 +1,16 @@
 use axum::{
+    body::Bytes,
     extract::{Extension, Json, Path, Query},
     http::StatusCode,
     Json as AxumJson,
 };
-use serde_json::json;
+use sentinel_models::platform::Campaign;
 use sentinel_query_types::*;
+use serde_json::json;
 use std::collections::HashMap;
 
 use crate::db::Db;
+use crate::resolve::{ResolveResponse, SqliteResolverDb};
 use crate::search::{parse_limit, SearchHit, SpawnPoint, SpawnType};
 
 pub async fn search_quests(
@@ -292,6 +295,35 @@ pub async fn get_spawns(
     }
 }
 
+/// `POST /resolve` — a Campaign (ADR 09a §1.3) in, `{ plan, diagnostics }` out.
+///
+/// A transport over `sentinel-resolver`, with no lowering rule of its own (ADR 09 §5). Two things
+/// this handler must not do: add anything clock- or iteration-derived to the response, which would
+/// break the crate's guarantee that the same intent plus the same `db_fingerprint` yields
+/// byte-identical output; and treat diagnostics as failure — a campaign with unresolvable
+/// references *resolved*, and reported problems, which is a 200.
+///
+/// The body is read as [`Bytes`] rather than through the `Json` extractor because that extractor's
+/// rejection is a plain-text body: malformed input would be the one response from this server not
+/// shaped like `{"error": …}`.
+pub async fn resolve(
+    Extension(db): Extension<Db>,
+    body: Bytes,
+) -> Result<AxumJson<ResolveResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let campaign: Campaign = serde_json::from_slice(&body).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+
+    let resolver_db = SqliteResolverDb::new(db)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
+
+    let (plan, diagnostics) = sentinel_resolver::resolve(&campaign, &resolver_db);
+    Ok(AxumJson(ResolveResponse { plan, diagnostics }))
+}
+
 fn kind_label(kind: SpawnType) -> &'static str {
     match kind {
         SpawnType::Npc => "npc",
@@ -304,6 +336,168 @@ mod tests {
     use super::*;
     use crate::db::test_db::open;
     use crate::search::MAX_SEARCH_LIMIT;
+    use sentinel_models::runtime::RuntimeAction;
+
+    /// A three-node linear route over entries that really exist in this snapshot: Deputy Willem
+    /// (npc 823) offers quest 783 "A Threat Within", Marshal McBride (npc 197) takes it back. The
+    /// `TurnIn` deliberately omits `to` so the resolver has to ask the database who ends the quest.
+    const LINEAR_CAMPAIGN: &str = r#"{
+      "schema_version": 3,
+      "id": "018f0000-0000-7000-8000-000000000001",
+      "name": "Elwynn opener",
+      "graphs": [{
+        "id": "018f0000-0000-7000-8000-000000000002",
+        "name": "Northshire",
+        "entry_node": "018f0000-0000-7000-8000-000000000010",
+        "nodes": [
+          { "id": "018f0000-0000-7000-8000-000000000010",
+            "type": "questing.AcceptQuest",
+            "intent": { "quest": { "ref": "quest:783", "label": "A Threat Within" },
+                        "from":  { "ref": "npc:823",   "label": "Deputy Willem" } } },
+          { "id": "018f0000-0000-7000-8000-000000000011",
+            "type": "questing.Travel",
+            "intent": { "to": { "ref": "npc:823", "label": "Deputy Willem" } } },
+          { "id": "018f0000-0000-7000-8000-000000000012",
+            "type": "questing.TurnIn",
+            "intent": { "quest": { "ref": "quest:783", "label": "A Threat Within" } } }
+        ],
+        "edges": [
+          { "id": "018f0000-0000-7000-8000-000000000020",
+            "from": "018f0000-0000-7000-8000-000000000010",
+            "to":   "018f0000-0000-7000-8000-000000000011" },
+          { "id": "018f0000-0000-7000-8000-000000000021",
+            "from": "018f0000-0000-7000-8000-000000000011",
+            "to":   "018f0000-0000-7000-8000-000000000012" }
+        ]
+      }]
+    }"#;
+
+    /// One `Travel` at an entry no snapshot has ever carried.
+    const UNRESOLVABLE_CAMPAIGN: &str = r#"{
+      "id": "018f0000-0000-7000-8000-000000000001",
+      "name": "Dangling",
+      "graphs": [{
+        "id": "018f0000-0000-7000-8000-000000000002",
+        "name": "Nowhere",
+        "entry_node": "018f0000-0000-7000-8000-000000000030",
+        "nodes": [
+          { "id": "018f0000-0000-7000-8000-000000000030",
+            "type": "questing.Travel",
+            "intent": { "to": { "ref": "npc:99999999", "label": "Ghost" } } }
+        ],
+        "edges": []
+      }]
+    }"#;
+
+    async fn resolved(campaign: &str) -> ResolveResponse {
+        resolve(Extension(open()), Bytes::from(campaign.to_string()))
+            .await
+            .expect("a resolvable campaign is a 200")
+            .0
+    }
+
+    #[tokio::test]
+    async fn resolve_lowers_one_operation_per_node_in_route_order() {
+        let response = resolved(LINEAR_CAMPAIGN).await;
+        let plan = &response.plan;
+        assert_eq!(plan.operations.len(), 3, "one operation per node");
+        assert_eq!(
+            plan.operations[0].node_id.to_string(),
+            "018f0000-0000-7000-8000-000000000010"
+        );
+        // Travel to the giver, then accept: the resolver, not the author, supplied the walk.
+        assert_eq!(plan.operations[0].actions.len(), 2);
+        assert_eq!(plan.operations[0].next[0].to_index, 1);
+        assert_eq!(plan.operations[1].next[0].to_index, 2);
+        assert!(plan.operations[2].next.is_empty(), "the route ends here");
+        assert!(
+            response.diagnostics.is_empty(),
+            "nothing in this route is unresolvable: {:?}",
+            response.diagnostics
+        );
+    }
+
+    #[tokio::test]
+    async fn the_turn_in_npc_comes_from_the_database_when_the_author_omitted_it() {
+        let response = resolved(LINEAR_CAMPAIGN).await;
+        let RuntimeAction::TurnInQuest(turn_in) = &response.plan.operations[2].actions[1].action
+        else {
+            panic!("the turn-in node lowers to Travel + TurnInQuest");
+        };
+        assert_eq!(turn_in.npc_entry, 197, "Marshal McBride ends quest 783");
+    }
+
+    #[tokio::test]
+    async fn resolving_the_same_campaign_twice_produces_byte_identical_plans() {
+        // The crate's purity guarantee has to survive the transport: a timestamp, a request id, or
+        // a HashMap iteration anywhere in this handler would make bulk re-resolution a rewrite
+        // instead of a diff.
+        let first = serde_json::to_string(&resolved(LINEAR_CAMPAIGN).await.plan).unwrap();
+        let second = serde_json::to_string(&resolved(LINEAR_CAMPAIGN).await.plan).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[tokio::test]
+    async fn a_travel_carries_the_real_ground_height() {
+        let response = resolved(LINEAR_CAMPAIGN).await;
+        let RuntimeAction::Travel(travel) = &response.plan.operations[1].actions[0].action else {
+            panic!("the travel node lowers to Travel");
+        };
+        assert_eq!(travel.position.map, 0);
+        // Deputy Willem stands at z = 83.4466 in `creature`. `world_z = 0` is the bug this whole
+        // phase exists to fix, so pin the actual height rather than merely "not zero".
+        assert!(
+            (travel.position.world_z - 83.4466).abs() < 0.01,
+            "world_z was {}",
+            travel.position.world_z
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unresolvable_reference_is_a_diagnostic_not_a_failure() {
+        // Resolution succeeded and reported a problem; that is a 200. Reserving non-2xx for
+        // malformed input is what lets the IDE show squiggles instead of an error toast.
+        let response = resolved(UNRESOLVABLE_CAMPAIGN).await;
+        let diagnostic = response
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "resolver.spawn.unknown")
+            .expect("an entry with no spawn must be reported");
+        assert_eq!(
+            diagnostic.node_id.map(|id| id.to_string()).as_deref(),
+            Some("018f0000-0000-7000-8000-000000000030"),
+            "a diagnostic the IDE cannot attribute to a node is unactionable"
+        );
+        assert_eq!(response.plan.operations.len(), 1, "the node is still there");
+    }
+
+    #[tokio::test]
+    async fn malformed_json_is_a_client_error_in_the_usual_error_shape() {
+        let err = resolve(Extension(open()), Bytes::from_static(b"{\"id\": "))
+            .await
+            .expect_err("truncated JSON is a client error, not a panic");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1 .0.get("error").is_some(), "{:?}", err.1 .0);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_entity_kind_is_refused_rather_than_defaulted() {
+        let body = LINEAR_CAMPAIGN.replace("npc:823", "mount:823");
+        let err = resolve(Extension(open()), Bytes::from(body))
+            .await
+            .expect_err("an unparseable ref must not deserialize into a default");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn the_plan_names_the_database_it_was_resolved_against() {
+        let response = resolved(LINEAR_CAMPAIGN).await;
+        assert!(
+            response.plan.db_fingerprint.starts_with("tbcmangos@"),
+            "fingerprint was {}",
+            response.plan.db_fingerprint
+        );
+    }
 
     fn params(pairs: &[(&str, &str)]) -> Query<HashMap<String, String>> {
         Query(

@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 
 mod db;
 mod handlers;
+mod resolve;
 mod search;
 
 use db::Db;
@@ -36,6 +37,7 @@ async fn main() {
         .route("/creatures/polygon", get(handlers::creatures_polygon))
         .route("/search", get(handlers::search))
         .route("/spawns/:type/:entry", get(handlers::get_spawns))
+        .route("/resolve", post(handlers::resolve))
         .route("/validate", post(handlers::validate))
         .route("/travel/estimate", post(handlers::travel_estimate))
         .layer(Extension(db))

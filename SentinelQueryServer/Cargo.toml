@@ -12,3 +12,5 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 sentinel-query-types = { path = "../SentinelQuesting/query-types" }
+sentinel-models = { path = "../SentinelQuesting/shared" }
+sentinel-resolver = { path = "../SentinelQuesting/resolver" }

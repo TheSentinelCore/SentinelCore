@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use sentinel_models::platform::EntityKind;
 use sentinel_query_types::*;
 use std::sync::{Arc, Mutex};
 
@@ -779,7 +780,101 @@ let exists = self.query_map::<bool, _>(
             })
         })
     }
+
+    /// The current display name for an entity reference, or `None` when the snapshot has no row
+    /// for it. `spell` and `map` have no name to give here — `spell_template` carries one but
+    /// `EntityKind::Map` has no template table at all — so those return `Ok(None)` rather than an
+    /// error, which is what "the database does not know this" means to the resolver.
+    pub fn entity_label(&self, kind: EntityKind, id: u32) -> Result<Option<String>, String> {
+        let sql = match kind {
+            EntityKind::Npc => "SELECT Name FROM creature_template WHERE Entry = ?1",
+            EntityKind::Quest => "SELECT Title FROM quest_template WHERE entry = ?1",
+            EntityKind::Item => "SELECT name FROM item_template WHERE entry = ?1",
+            EntityKind::Object => "SELECT name FROM gameobject_template WHERE entry = ?1",
+            EntityKind::Area => "SELECT name FROM game_tele WHERE id = ?1",
+            EntityKind::Spell => "SELECT SpellName FROM spell_template WHERE Id = ?1",
+            EntityKind::Map => return Ok(None),
+        };
+        let names = self.query_map::<Option<String>, _>(sql, [id], |row| row.get(0))?;
+        Ok(names.into_iter().flatten().next())
+    }
+
+    /// The npc that offers a quest. `ORDER BY id` is not decoration: a quest offered by several
+    /// npcs would otherwise resolve to whichever row the planner returned first, and the resolver's
+    /// byte-identity guarantee would depend on that.
+    pub fn quest_giver(&self, quest_id: u32) -> Result<Option<u32>, String> {
+        self.first_related_npc("creature_questrelation", quest_id)
+    }
+
+    /// The npc that takes a quest back. Frequently not the giver.
+    pub fn quest_ender(&self, quest_id: u32) -> Result<Option<u32>, String> {
+        self.first_related_npc("creature_involvedrelation", quest_id)
+    }
+
+    fn first_related_npc(&self, table: &'static str, quest_id: u32) -> Result<Option<u32>, String> {
+        // The table name is a literal from the two callers above, never caller text.
+        let sql = format!("SELECT id FROM {table} WHERE quest = ?1 ORDER BY id ASC LIMIT 1");
+        let ids = self.query_map::<i64, _>(&sql, [quest_id], |row| row.get(0))?;
+        Ok(ids.first().map(|id| *id as u32))
+    }
+
+    /// A deterministic identity for this snapshot's content, stamped onto every plan so a caller
+    /// can tell a stale plan from a wrong one (ADR 09a §1.4).
+    ///
+    /// Derived from the schema cookie, the file's page count, the shipped `db_version` string, and
+    /// the row counts of exactly the tables resolution reads. Cheap (header reads plus counted
+    /// index scans, ~25 ms) and, unlike a file mtime or a hash of 300 MB, both stable across copies
+    /// of the same snapshot and sensitive to the rows that actually change a plan.
+    pub fn fingerprint(&self) -> Result<String, String> {
+        let db = self.0.lock().unwrap();
+        let mut material = String::new();
+
+        for pragma in ["schema_version", "page_count"] {
+            let value: i64 = db
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))
+                .map_err(|e| e.to_string())?;
+            material.push_str(&format!("{pragma}={value};"));
+        }
+
+        // MIN rather than LIMIT 1: an aggregate over an unordered table is the same value every
+        // time, a row is not.
+        let version: String = db
+            .query_row("SELECT COALESCE(MIN(version), '') FROM db_version", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        material.push_str(&format!("db_version={version};"));
+
+        for table in FINGERPRINTED_TABLES {
+            let count: i64 = db
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .map_err(|e| e.to_string())?;
+            material.push_str(&format!("{table}={count};"));
+        }
+
+        // The same polynomial `sentinel_models::platform::compute_content_hash` uses. Not
+        // `DefaultHasher`: its output is explicitly not guaranteed stable across Rust releases, so
+        // a toolchain upgrade would silently invalidate every stored plan's fingerprint.
+        let mut hash: u64 = 0;
+        for byte in material.bytes() {
+            hash = hash.wrapping_mul(31).wrapping_add(byte as u64);
+        }
+        Ok(format!("tbcmangos@{hash:016x}"))
+    }
 }
+
+/// Exactly the tables `SqliteResolverDb` reads. A row added anywhere else cannot change a plan, so
+/// counting it would only invalidate fingerprints for no reason.
+const FINGERPRINTED_TABLES: &[&str] = &[
+    "creature",
+    "creature_template",
+    "creature_involvedrelation",
+    "creature_questrelation",
+    "game_tele",
+    "gameobject",
+    "gameobject_template",
+    "item_template",
+    "quest_template",
+    "spell_template",
+];
 
 /// `creature_zone` is empty in this snapshot, so there is no zone name to show; the level band
 /// plus the spawn map is the best disambiguator available.
