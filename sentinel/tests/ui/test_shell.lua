@@ -400,6 +400,187 @@ function M.test_a_shell_with_no_ghost_sliders_still_works()
 end
 
 -- ---------------------------------------------------------------------------
+-- Panel commands and panel tick time (ADR 09b §2.1, §2.2, §2.4)
+-- ---------------------------------------------------------------------------
+-- A panel answers a frame with a COMMAND rather than performing the effect, because a side effect
+-- inside `register_on_render_window_callback` is a side effect no test can reach and one Sylvannas
+-- re-enters at arbitrary times. The shell is what carries that command out of the render callback,
+-- and it does so without knowing what any command means: the panel supplies its own dispatcher.
+--
+-- Before this existed both halves were individually green and the product was broken -- the panel
+-- returned commands and the shell discarded the return value, so every control on it was inert.
+
+--- A panel that answers each frame with `spec.next_command`, and records what it is later handed
+--- back on the tick. `dispatched` is the observable that distinguishes "the command was carried
+--- out of the render callback" from "the command was acted on inside it".
+local function commanding_panel(id, opts)
+    opts = opts or {}
+    local spec = recording_panel(id)
+    spec.next_command = opts.command
+    spec.dispatched = {}
+    spec.ticks = 0
+    spec.dispatch_result = opts.dispatch_result
+
+    local draw = spec.render
+    spec.render = function(window, bounds, ctx)
+        draw(window, bounds, ctx)
+        return spec.next_command
+    end
+    if opts.no_dispatcher ~= true then
+        spec.dispatch = function(command, ctx)
+            spec.dispatched[#spec.dispatched + 1] = { command = command, ctx = ctx }
+            if opts.dispatch_throws then error("dispatcher exploded", 0) end
+            if spec.dispatch_result ~= nil then return spec.dispatch_result, opts.dispatch_reason end
+            return true
+        end
+    end
+    spec.on_tick = function(ctx)
+        spec.ticks = spec.ticks + 1
+        spec.tick_ctx = ctx
+    end
+    return spec
+end
+
+function M.test_a_command_a_panel_returns_is_not_dispatched_inside_the_render_callback()
+    local runner = commanding_panel("runner", { command = { kind = "stop" } })
+    local shell = open_shell({ runner })
+
+    shell:_on_render_window()
+    T.assert_equal(#runner.dispatched, 0,
+        "a side effect inside a render callback is one no test can reach and one Sylvannas "
+        .. "re-enters at arbitrary times")
+    T.assert_equal(#shell:pending_commands(), 1, "it must be queued instead")
+
+    shell:on_tick()
+    T.assert_equal(#runner.dispatched, 1, "and dispatched in tick context")
+    T.assert_equal(runner.dispatched[1].command.kind, "stop", "with the command the panel returned")
+    T.assert_equal(#shell:pending_commands(), 0, "the queue drains")
+end
+
+function M.test_a_dispatched_command_is_given_the_same_context_shape_the_body_gets()
+    local runner = commanding_panel("runner", { command = { kind = "pause" } })
+    local shell = open_shell({ runner })
+    shell:_on_render_window()
+    shell:on_tick()
+
+    local ctx = runner.dispatched[1].ctx
+    T.assert_equal(ctx.shell, shell, "a dispatcher is handed the shell it belongs to")
+    T.assert_not_nil(ctx.state, "and the view-model")
+    T.assert_nil(ctx.split, "but no split geometry -- panes only exist while a frame is being drawn")
+end
+
+function M.test_a_panel_that_returns_no_command_queues_nothing()
+    local runner = commanding_panel("runner", { command = nil })
+    local shell = open_shell({ runner })
+    for _ = 1, 5 do shell:_on_render_window() end
+    T.assert_equal(#shell:pending_commands(), 0, "a quiet frame must cost nothing on the tick")
+end
+
+function M.test_a_command_from_a_panel_with_no_dispatcher_is_refused_not_swallowed()
+    -- The failure this whole unit exists to answer: a control that looks live, is pressed, and
+    -- does nothing at all. A shell that dropped the command silently would recreate it exactly.
+    local runner = commanding_panel("runner", { command = { kind = "start" }, no_dispatcher = true })
+    local shell = open_shell({ runner })
+    shell:_on_render_window()
+    shell:on_tick()
+
+    local last = shell:last_dispatch()
+    T.assert_not_nil(last, "the attempt must be recorded")
+    T.assert_false(last.ok, "a command nobody consumes is a failure, not a no-op")
+    T.assert_true(type(last.reason) == "string" and last.reason ~= "",
+        "and it must name why, or nobody can tell an inert control from a quiet one")
+end
+
+function M.test_a_dispatcher_that_refuses_reports_its_reason()
+    local runner = commanding_panel("runner", {
+        command = { kind = "wat" }, dispatch_result = false, dispatch_reason = "unknown command",
+    })
+    local shell = open_shell({ runner })
+    shell:_on_render_window()
+    shell:on_tick()
+
+    local last = shell:last_dispatch()
+    T.assert_false(last.ok, "the dispatcher's refusal must survive the trip back")
+    T.assert_equal(last.reason, "unknown command", "with the reason it gave")
+end
+
+function M.test_a_dispatcher_that_throws_does_not_take_the_shell_tick_down()
+    -- `main.lua` pcalls `on_tick` as a whole, so an uncaught throw here would silently skip the
+    -- Escape edge, the combat read and the ghost-slider write for that tick.
+    local elements = fake_elements()
+    local runner = commanding_panel("runner", {
+        command = { kind = "stop" }, dispatch_throws = true,
+    })
+    local shell = open_shell({ runner }, elements)
+    shell:_on_render_window()
+
+    local ok = pcall(function() shell:on_tick() end)
+    T.assert_true(ok, "a panel's dispatcher must not be able to break the shell's tick")
+    T.assert_false(shell:last_dispatch().ok, "and the throw is reported as a failed dispatch")
+end
+
+function M.test_only_the_active_panel_is_given_tick_time()
+    -- Same reason exactly one body draws: a panel nobody is looking at must cost nothing, and a
+    -- model refresh is the most expensive thing a panel does off the render path.
+    local runner, graph = commanding_panel("runner"), commanding_panel("graph")
+    local shell = open_shell({ runner, graph })
+    shell:on_tick()
+
+    T.assert_equal(runner.ticks, 1, "the active panel gets the tick")
+    T.assert_equal(graph.ticks, 0, "an inactive panel must never be refreshed")
+end
+
+function M.test_a_closed_shell_gives_no_panel_tick_time()
+    local runner = commanding_panel("runner")
+    local shell = Shell.new({ window = FakeWindow.new(), elements = fake_elements() })
+    shell:register_panel(runner)
+
+    for _ = 1, 10 do shell:on_tick() end
+    T.assert_equal(runner.ticks, 0, "a closed IDE must not refresh a model nobody can see")
+end
+
+function M.test_a_queued_command_survives_the_shell_being_closed()
+    -- Stop, then Escape. The stop must still land, or the one control an operator reaches for in a
+    -- hurry is the one that loses the race with the window closing.
+    local runner = commanding_panel("runner", { command = { kind = "stop" } })
+    local shell = open_shell({ runner })
+    shell:_on_render_window()
+    shell:hide()
+    shell:on_tick()
+    T.assert_equal(#runner.dispatched, 1, "a command already issued must not be lost on close")
+end
+
+function M.test_the_command_queue_cannot_grow_without_bound()
+    -- The tick is what drains this, so a render callback that appended with no ceiling would leak
+    -- for exactly as long as the tick is starved -- the one situation in which it matters.
+    local runner = commanding_panel("runner", { command = { kind = "stop" } })
+    local shell = open_shell({ runner })
+    for _ = 1, 200 do shell:_on_render_window() end
+    T.assert_true(#shell:pending_commands() <= 32,
+        "the pending queue must be bounded, not one entry per unserviced frame")
+end
+
+function M.test_a_panel_may_declare_no_dispatcher_or_tick_hook_at_all()
+    -- Both are optional: U3-U7 include panels that only paint.
+    local runner = recording_panel("runner")
+    local shell = open_shell({ runner })
+    shell:_on_render_window()
+    shell:on_tick()
+    T.assert_equal(runner.renders, 1, "a plain panel still draws")
+end
+
+function M.test_a_non_function_dispatcher_is_refused_at_registration()
+    -- Refused now rather than at the first command, for the same reason a missing render function
+    -- is: inside a render callback the only symptom is a control that does nothing.
+    local shell = open_shell({})
+    local ok, reason = shell:register_panel({
+        id = "runner", render = function() end, dispatch = "nope",
+    })
+    T.assert_false(ok, "a dispatcher that is not callable must be rejected")
+    T.assert_true(type(reason) == "string" and reason ~= "", "with a reason")
+end
+
+-- ---------------------------------------------------------------------------
 -- The Sylvannas construction rule (ADR 09b §2.2)
 -- ---------------------------------------------------------------------------
 

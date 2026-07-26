@@ -292,6 +292,24 @@ ide_action = function(action_id)
     return nil
 end
 
+-- ADR 09b U2b: the seam between the shell (U2) and the Runner panel (U5).
+--
+-- REGISTRATION LIVES HERE, not in either of them. `shell.lua` may not name a panel and
+-- `panels/runner.lua` may not reach for a module from inside a render callback, so the host is the
+-- only place that can legitimately know the Runner drives questing. `ui/ide_panels.lua` holds that
+-- knowledge; this line is only the host handing it a shell and a way to find the module.
+--
+-- The resolver is a FUNCTION on purpose. `reload()` tears the app down and stands a new one up, and
+-- `toggle_ide` deliberately opens the IDE without `ensure_initialized` — so "the questing module"
+-- has to be looked up per refresh, and answering nil has to be normal rather than an error.
+local IdePanels = require("ui/ide_panels")
+local _ide_bindings = IdePanels.install(_ide_shell, {
+    questing = function() return host_verbs.questing() end,
+})
+if not _ide_bindings then
+    log_error("IDE runner panel failed to register; the IDE will open with an empty switcher")
+end
+
 -- ---------------------------------------------------------------------------
 -- Recording Mode verbs (ADR 09a W12)
 -- ---------------------------------------------------------------------------

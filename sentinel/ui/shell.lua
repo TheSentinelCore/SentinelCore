@@ -32,10 +32,22 @@
 --         split             = "primary",        -- optional, a persisted divider key
 --         split_axis        = "x",              -- optional, "x" (default) or "y"
 --         requires_campaign = true,             -- optional, opts into the empty state
+--         on_tick           = function(ctx) end,            -- optional, tick context
+--         dispatch          = function(command, ctx) end,   -- optional, tick context
 --     })
 --
 -- `ctx` carries `{ shell, state, split }`. `ctx.split` is `{ first, second, divider }` when the
 -- panel declared one and nil otherwise.
+--
+-- COMMANDS: `render` may RETURN a command instead of performing an effect, and the shell carries
+-- it to `dispatch` on the next tick without ever inspecting it. That indirection is not ceremony —
+-- it is the only arrangement in which a panel can act on a click AND the shell can stay ignorant of
+-- what any panel drives. A shell that mapped `{kind="start"}` onto the questing module would be a
+-- shell that knows about questing, and rule 3 above would be dead.
+--
+-- ON_TICK: the active panel's chance to refresh whatever its render reads. Everything expensive a
+-- panel needs — an HTTP result, a directory listing, a rebuilt snapshot — is fetched here and
+-- rendered from cache, because the render path runs every frame (ADR 09b §2.4).
 
 local Theme = require("ui/theme")
 local Widgets = require("ui/widgets")
@@ -193,6 +205,8 @@ function Shell.new(opts)
     self._tab_layout = {}
     self._empty_action_bounds = nil
     self._window_visible = nil
+    self._pending = {}
+    self._last_dispatch = nil
 
     -- Restore BEFORE any panel registers. `ShellState` holds the restored choice until the panel
     -- that owns it exists, which is the only ordering that honours a persisted tab.
@@ -226,6 +240,14 @@ function Shell:set_split_ratio(key, value) return self._state:set_split_ratio(ke
 ---a test that recomputed the layout would pass while the shell painted somewhere else.
 function Shell:tab_layout() return self._tab_layout end
 function Shell:empty_action_bounds() return self._empty_action_bounds end
+
+---Commands returned by a panel this frame that the tick has not carried out yet.
+function Shell:pending_commands() return self._pending end
+
+---The most recent dispatch attempt, as `{ panel_id, command, ok, reason }`, or nil.
+---Kept because the failure mode this whole seam exists to fix — a control that looks live and does
+---nothing — is silent by construction. Something has to be able to say a command went nowhere.
+function Shell:last_dispatch() return self._last_dispatch end
 
 -- ============================================================================
 -- Tick context — the ONLY place anything is constructed
@@ -316,12 +338,80 @@ function Shell:_persist_layout()
     self._saved_layout = snapshot
 end
 
+-- The queue is drained by the tick, so a render callback that appended without a ceiling would
+-- grow for exactly as long as the tick is starved — the one situation in which the growth matters.
+-- The OLDEST is dropped: whatever the operator pressed most recently is the command worth keeping.
+local MAX_PENDING_COMMANDS = 16
+
+function Shell:_queue_command(panel_id, command)
+    local pending = self._pending
+    pending[#pending + 1] = { panel_id = panel_id, command = command }
+    while #pending > MAX_PENDING_COMMANDS do table.remove(pending, 1) end
+end
+
+function Shell:_tick_context()
+    -- No `split` here on purpose: pane geometry is produced by a widget mid-frame and does not
+    -- exist outside one. Handing over a stale rect would let a panel lay something out against the
+    -- previous frame's divider.
+    return { shell = self, state = self._state }
+end
+
+---Hand every queued command to the panel that produced it. Tick context, never render.
+function Shell:_dispatch_pending()
+    local pending = self._pending
+    if #pending == 0 then return end
+    -- Swapped out before dispatching, so a dispatcher that re-enters the shell cannot see the
+    -- commands it is already being handed.
+    self._pending = {}
+
+    local ctx = self:_tick_context()
+    for _, entry in ipairs(pending) do
+        local spec = self._state:panel(entry.panel_id)
+        local record = { panel_id = entry.panel_id, command = entry.command }
+        if not spec or type(spec.dispatch) ~= "function" then
+            record.ok = false
+            record.reason = "panel '" .. tostring(entry.panel_id) .. "' registered no dispatcher"
+        else
+            -- Contained, because `main.lua` pcalls `on_tick` as a whole: an uncaught throw here
+            -- would silently skip the Escape edge, the combat read and the ghost-slider write for
+            -- that tick, and the operator would see the IDE stop responding rather than a bad panel.
+            local ok, result, reason = pcall(spec.dispatch, entry.command, ctx)
+            record.ok = ok and (result ~= false)
+            record.reason = ok and reason or tostring(result)
+        end
+        self._last_dispatch = record
+    end
+end
+
+---Give the active panel its chance to refresh what the next frame will read.
+function Shell:_tick_active_panel()
+    if not self._state:is_visible() then return end
+    -- A body replaced by an empty pane is a body that is not drawing, so refreshing its model buys
+    -- nothing and costs whatever that panel's refresh costs.
+    if self._state:empty_state() then return end
+    local spec = self._state:active_panel()
+    if not spec or type(spec.on_tick) ~= "function" then return end
+    local ok, err = pcall(spec.on_tick, self:_tick_context())
+    if not ok then self._last_panel_error = tostring(err) end
+end
+
+---The last error a panel hook raised, or nil.
+function Shell:last_panel_error() return self._last_panel_error end
+
 ---Driven from `register_on_update_callback`. Everything with a construction, an SDK read, or a
 ---write to a persisted element happens here, so the render callback stays paint-only.
 function Shell:on_tick()
     self:ensure_frames_created()
     self:_poll_input()
     self:_poll_combat()
+    -- Commands land BEFORE the refresh, so a control's effect is visible in the very next frame
+    -- rather than one refresh interval later. A Stop that left the panel reading RUNNING for a
+    -- quarter of a second is indistinguishable from a Stop that did nothing.
+    --
+    -- Dispatch is NOT gated on visibility: Stop then Escape must still stop the run, or the one
+    -- control an operator reaches for in a hurry is the one that loses the race with the window.
+    self:_dispatch_pending()
+    self:_tick_active_panel()
     self:_apply_visibility()
     self:_persist_layout()
 end
@@ -426,7 +516,11 @@ function Shell:_draw_body(window, vm, bounds)
         body = pane.first
     end
 
-    spec.render(window, body, ctx)
+    -- The return value is the panel's ANSWER to whatever the operator just pressed. Discarding it
+    -- is what made every Runner control inert while both units' suites stayed green, so it is
+    -- queued here and carried out on the next tick — never acted on inside this callback.
+    local command = spec.render(window, body, ctx)
+    if command ~= nil then self:_queue_command(spec.id, command) end
 end
 
 ---Driven from `register_on_render_window_callback`.

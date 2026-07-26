@@ -152,7 +152,13 @@ end
 
 ---Register a panel. This is the entire contract between the shell and U3-U7.
 ---
----@param spec table { id, render, title?, badge?, order?, split?, split_axis?, requires_campaign? }
+---`render` may ANSWER with a command. It never performs the effect itself, because a side effect
+---inside `register_on_render_window_callback` is one no test can reach and one Sylvannas re-enters
+---at arbitrary times. `dispatch` is where that command is carried out, in tick context, by the
+---panel's own host — which is what lets the shell move commands it cannot interpret.
+---
+---@param spec table { id, render, title?, badge?, order?, split?, split_axis?, requires_campaign?,
+---                    dispatch?, on_tick? }
 ---@return boolean ok, string|nil reason
 function ShellState:register_panel(spec)
     if type(spec) ~= "table" then return false, "a panel spec must be a table" end
@@ -163,6 +169,13 @@ function ShellState:register_panel(spec)
         -- Refused now rather than at the first frame the panel is selected: inside a render
         -- callback the only symptom of a missing render function is a blank pane.
         return false, "panel '" .. spec.id .. "' needs a render function"
+    end
+    -- Same reason, one step further out: a dispatcher that is not callable produces a control the
+    -- operator can press forever with no effect, and nothing on screen says so.
+    for _, hook in ipairs({ "dispatch", "on_tick" }) do
+        if spec[hook] ~= nil and type(spec[hook]) ~= "function" then
+            return false, "panel '" .. spec.id .. "' declared a " .. hook .. " that is not a function"
+        end
     end
 
     self._sequence = self._sequence + 1
@@ -177,6 +190,8 @@ function ShellState:register_panel(spec)
         split = spec.split,
         split_axis = spec.split_axis,
         requires_campaign = spec.requires_campaign and true or false,
+        dispatch = spec.dispatch,
+        on_tick = spec.on_tick,
         sequence = self._sequence,
     }
     self:_reorder()

@@ -531,6 +531,10 @@ local test_modules = {
     -- ADR 09b U5: the Runner panel. Registered after the widget suites because it is built
     -- entirely out of them -- a widget regression must fail as a widget bug, not as this panel's.
     "tests/ui/test_runner_panel",
+    -- ADR 09b U2b: the seam between them. Registered after BOTH, because a failure here is only
+    -- meaningful once the shell and the panel are each known good -- U2 and U5 were individually
+    -- green while nothing registered the panel and every control on it was inert.
+    "tests/ui/test_ide_panels",
     -- The guard on ui/* staying loadable with no Sylvannas API present. It blanks `_G.core` for
     -- the duration, so it is registered AFTER the suites that consume the real mocked surface.
     "tests/ui/test_offline_loadable",

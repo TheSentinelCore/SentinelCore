@@ -13,7 +13,7 @@ local T = require("tests/test_util")
 
 local M = {}
 
-local UI_MODULES = { "ui/theme", "ui/widgets", "tests/harness/fake_window" }
+local UI_MODULES = { "ui/theme", "ui/widgets", "ui/ide_panels", "tests/harness/fake_window" }
 
 --- Load `module_name` from source with `_G.core` and the `common/*` libraries absent.
 --- Restores `package.loaded` exactly, because the suites that already hold references to these
@@ -79,6 +79,19 @@ function M.test_widgets_render_with_no_sylvannas_api_present()
     local rendered = pcall(widgets.button, fake, { x = 0, y = 0, w = 100, h = 30 }, { label = "Go" })
     T.assert_true(rendered, "a widget must render against a fake window with no SDK present")
     T.assert_true(fake:drew_text("Go"), "and it must actually have drawn something")
+end
+
+function M.test_the_panel_wiring_loads_and_refreshes_with_no_sylvannas_api_present()
+    -- `ide_panels` reads `core.time()` to pace its refresh. An unguarded read makes the host
+    -- wiring unloadable offline, and a clock that answers nothing must not freeze the panel on its
+    -- first reading -- so the refresh has to survive being run, not just required.
+    local ok, panels = require_without_sdk("ui/ide_panels")
+    T.assert_true(ok, "ui/ide_panels failed to load offline: " .. tostring(panels))
+
+    local binding = panels.new_runner({ questing = function() return nil end })
+    local refreshed = pcall(function() binding:refresh() end)
+    T.assert_true(refreshed, "a refresh with no clock and no module must not throw")
+    T.assert_nil(binding:model().view, "and it must leave the panel's empty state to draw")
 end
 
 function M.test_fake_window_loads_with_no_sylvannas_api_present()
