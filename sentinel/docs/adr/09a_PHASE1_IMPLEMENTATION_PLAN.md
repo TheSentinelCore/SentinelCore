@@ -77,13 +77,22 @@ A linear route is a graph where every node has exactly one outgoing edge with `g
   "operations": [
     { "node_id": "018f...", "actions": [ /* runtime Action objects, unchanged vocabulary */ ],
       "next": [ { "to_index": 4, "guard": null } ] }
-  ]
+  ],
+  "conditions": [ { "id": "018f...", "type": "LevelAtLeast", "payload": 10 } ]
 }
 ```
 
 `operations` are in topological order. `next` with a single `guard: null` entry is today's
 sequential advance. The runtime's existing Action vocabulary is unchanged — this is the
 **stable contract** and no work unit may extend it.
+
+`conditions` carries every `ConditionDef` the plan's own guards name, and only those — the
+runtime has no campaign to dereference a `guard` id against, so a plan that omitted them would
+resolve every guarded edge to nothing and stop at its first branch. The field is **omitted when
+empty**, which is what keeps a linear route's bytes and `content_hash` identical to a plan
+produced before the field existed. `content_hash` covers `operations` plus `conditions`: two
+plans that branch on different conditions have identical operations, and hot-reload keys on the
+hash.
 
 ### 1.5 Event contract
 

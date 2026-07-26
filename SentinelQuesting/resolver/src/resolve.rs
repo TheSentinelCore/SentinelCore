@@ -18,8 +18,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sentinel_models::platform::{
-    compute_content_hash, Campaign, Edge, ExecutionPlan, Graph, Intent, Node, PlanOperation,
-    PlanTransition, PLATFORM_SCHEMA_VERSION,
+    compute_content_hash, Campaign, ConditionDef, Edge, ExecutionPlan, Graph, Intent, Node,
+    PlanOperation, PlanTransition, PLATFORM_SCHEMA_VERSION,
 };
 use uuid::Uuid;
 
@@ -203,6 +203,8 @@ impl<'a> Resolver<'a> {
             });
         }
 
+        let conditions = referenced_conditions(campaign, &operations);
+
         let mut plan = ExecutionPlan {
             schema_version: PLATFORM_SCHEMA_VERSION,
             campaign_id: campaign.id,
@@ -210,6 +212,7 @@ impl<'a> Resolver<'a> {
             db_fingerprint: db.fingerprint().to_string(),
             content_hash: String::new(),
             operations,
+            conditions,
         };
         plan.content_hash = compute_content_hash(&plan);
         Ok((plan, diagnostics))
@@ -255,6 +258,36 @@ impl<'a> Resolver<'a> {
     }
 }
 
+/// The [`ConditionDef`]s the emitted transitions actually name — the plan's half of the runtime
+/// contract, since the runtime has no campaign to dereference a guard id against.
+///
+/// Collected from the emitted operations rather than from the graph's edges, so an edge that was
+/// dropped as dangling cannot drag its guard along. Selection walks `campaign.conditions` in
+/// document order and keeps the first definition of each id: order has to be a property of the
+/// authored campaign, not of traversal, or two resolves of one campaign would differ in bytes; and
+/// where the campaign holds a duplicate id, `campaign.condition` takes the first while the Lua
+/// loader's `index_conditions` takes the last, so emitting both would have the two sides disagree
+/// on what the same guard means.
+///
+/// A guard naming no condition is deliberately absent here rather than defaulted: the resolver
+/// already reports it as `resolver.guard.unknown_condition`, and the runtime refuses an edge it
+/// cannot resolve instead of running a stretch of route the author gated off.
+fn referenced_conditions(campaign: &Campaign, operations: &[PlanOperation]) -> Vec<ConditionDef> {
+    let referenced: BTreeSet<Uuid> = operations
+        .iter()
+        .flat_map(|operation| operation.next.iter())
+        .filter_map(|transition| transition.guard)
+        .collect();
+
+    let mut emitted = BTreeSet::new();
+    campaign
+        .conditions
+        .iter()
+        .filter(|condition| referenced.contains(&condition.id) && emitted.insert(condition.id))
+        .cloned()
+        .collect()
+}
+
 fn empty_plan(campaign_id: Uuid, graph_id: Uuid, db: &dyn ResolverDb) -> ExecutionPlan {
     let mut plan = ExecutionPlan {
         schema_version: PLATFORM_SCHEMA_VERSION,
@@ -263,6 +296,7 @@ fn empty_plan(campaign_id: Uuid, graph_id: Uuid, db: &dyn ResolverDb) -> Executi
         db_fingerprint: db.fingerprint().to_string(),
         content_hash: String::new(),
         operations: Vec::new(),
+        conditions: Vec::new(),
     };
     plan.content_hash = compute_content_hash(&plan);
     plan

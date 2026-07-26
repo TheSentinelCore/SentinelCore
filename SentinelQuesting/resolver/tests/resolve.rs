@@ -5,10 +5,10 @@
 //! what QueryServer (W6), the CLI, and CI will call.
 
 use sentinel_models::platform::{
-    Campaign, CampaignImport, Edge, EntityKind, EntityRef, ExecutionPlan, Graph, Intent,
-    IntentValue, Node, NodeOverride,
+    Campaign, CampaignImport, ConditionDef, Edge, EntityKind, EntityRef, ExecutionPlan, Graph,
+    Intent, IntentValue, Node, NodeOverride,
 };
-use sentinel_models::runtime::RuntimeAction;
+use sentinel_models::runtime::{RuntimeAction, RuntimeCondition};
 use sentinel_resolver::{
     resolve, questing_task_types, DbError, Diagnostic, InMemoryDb, Resolver, ResolverDb, Severity,
     Spawn, TaskRegistry,
@@ -107,6 +107,49 @@ fn linear_campaign() -> Campaign {
         entry_node: id(1),
         nodes,
         edges,
+    });
+    campaign
+}
+
+/// Two guarded edges out of the accept node, plus a third condition the campaign defines and this
+/// graph never points at.
+///
+/// The unreferenced one is the whole point of the fixture: a campaign owns conditions for every
+/// graph it contains, and a plan that shipped all of them would grow with the campaign rather than
+/// with the route.
+fn branching_campaign() -> Campaign {
+    let mut campaign = linear_campaign();
+    campaign.conditions = vec![
+        ConditionDef {
+            id: id(801),
+            condition: RuntimeCondition::QuestCompleted(783),
+        },
+        ConditionDef {
+            id: id(802),
+            condition: RuntimeCondition::LevelAtLeast(10),
+        },
+        ConditionDef {
+            id: id(803),
+            condition: RuntimeCondition::HasItem(2589),
+        },
+    ];
+
+    let graph = &mut campaign.graphs[0];
+    graph.nodes.push(kill_node(4, 3));
+    // 1 --[801]--> 2 --> 3
+    //  \--[802]--> 4 --> 3
+    graph.edges[0].guard = Some(id(801));
+    graph.edges.push(Edge {
+        id: id(103),
+        from: id(1),
+        to: id(4),
+        guard: Some(id(802)),
+    });
+    graph.edges.push(Edge {
+        id: id(104),
+        from: id(4),
+        to: id(3),
+        guard: None,
     });
     campaign
 }
@@ -500,6 +543,114 @@ fn a_dangling_edge_guard_is_a_diagnostic() {
         Some(id(7777)),
         "the transition stays visible in the plan so the break is inspectable"
     );
+    assert!(
+        plan.conditions.is_empty(),
+        "a guard naming nothing must not be invented into the condition list — the runtime would \
+         then take an edge the author gated off: {:?}",
+        plan.conditions
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Guards travel with the plan
+//
+// The runtime has no campaign, no database and no network: whatever a plan's transitions
+// reference has to be inside the plan. Before this, `guard` was a `ConditionDef` id resolved
+// through `campaign.condition(id)` — a lookup that exists only on this side of the wire — so every
+// guarded edge reached Lua as `unresolved`, `select_transition` failed closed, and the route
+// stopped at its first branch. Linear routes were unaffected, which is why the whole corpus and
+// every fixture above missed it.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_branching_plan_carries_exactly_the_conditions_its_guards_reference() {
+    let (plan, diagnostics) = resolve(&branching_campaign(), &db()).expect(HEALTHY);
+
+    assert!(errors(&diagnostics).is_empty(), "{diagnostics:#?}");
+
+    let carried: Vec<Uuid> = plan.conditions.iter().map(|def| def.id).collect();
+    assert_eq!(
+        carried,
+        vec![id(801), id(802)],
+        "both guards travel, in campaign document order"
+    );
+    assert_eq!(
+        plan.conditions[0].condition,
+        RuntimeCondition::QuestCompleted(783),
+        "the definition travels, not just its id"
+    );
+    assert!(
+        !carried.contains(&id(803)),
+        "a condition this graph never points at must not ride along"
+    );
+}
+
+/// Every guard id in the emitted plan resolves inside the emitted plan. This is the property the
+/// Lua loader depends on — `index_conditions` builds `id -> condition` from this list alone.
+#[test]
+fn every_guard_in_a_plan_resolves_within_that_plan() {
+    let (plan, _) = resolve(&branching_campaign(), &db()).expect(HEALTHY);
+    let guards: Vec<Uuid> = plan
+        .operations
+        .iter()
+        .flat_map(|operation| operation.next.iter())
+        .filter_map(|transition| transition.guard)
+        .collect();
+
+    assert_eq!(guards.len(), 2, "the fixture has two guarded edges");
+    for guard in guards {
+        assert!(
+            plan.conditions.iter().any(|def| def.id == guard),
+            "guard `{guard}` has no definition in the plan"
+        );
+    }
+}
+
+/// Purity, restated for the new field: a condition list assembled through a `HashMap` would order
+/// differently between runs and break re-resolution diffing without failing anything.
+#[test]
+fn resolving_a_guarded_campaign_twice_is_byte_identical() {
+    let campaign = branching_campaign();
+    let db = db();
+
+    let first = serde_json::to_string(&resolve(&campaign, &db).expect(HEALTHY).0).unwrap();
+    for _ in 0..8 {
+        assert_eq!(
+            first,
+            serde_json::to_string(&resolve(&campaign, &db).expect(HEALTHY).0).unwrap()
+        );
+    }
+}
+
+/// A guard-free plan is what the entire stored corpus looks like. Its bytes must not have moved.
+#[test]
+fn a_guard_free_plan_carries_no_conditions_key_at_all() {
+    let (plan, _) = resolve(&linear_campaign(), &db()).expect(HEALTHY);
+    assert!(plan.conditions.is_empty());
+    let wire = serde_json::to_value(&plan).unwrap();
+    assert!(
+        wire.get("conditions").is_none(),
+        "an empty list must not reach the wire, or every stored content_hash changes at once"
+    );
+}
+
+/// Re-authoring a guard leaves the operations untouched, so the hash has to notice the conditions
+/// or a cached plan keeps executing the previous branch condition.
+#[test]
+fn changing_only_a_guards_definition_changes_the_plans_content_hash() {
+    let db = db();
+    let (before, _) = resolve(&branching_campaign(), &db).expect(HEALTHY);
+
+    let mut campaign = branching_campaign();
+    campaign.conditions[1].condition = RuntimeCondition::LevelAtLeast(20);
+    let (after, _) = resolve(&campaign, &db).expect(HEALTHY);
+
+    assert_eq!(
+        serde_json::to_string(&before.operations).unwrap(),
+        serde_json::to_string(&after.operations).unwrap(),
+        "the fixture only moves the condition"
+    );
+    assert_ne!(before.content_hash, after.content_hash);
 }
 
 /// A cycle is legal (a repeatable loop) but has no topological order. Every node must still make
@@ -999,3 +1150,4 @@ fn the_linear_campaigns_plan_hashes_to_a_pinned_value() {
     let (plan, _) = resolve(&linear_campaign(), &db()).expect(HEALTHY);
     assert_eq!(plan.content_hash, "bd97d5a1f130b0d1");
 }
+
