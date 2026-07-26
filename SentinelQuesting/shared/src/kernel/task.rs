@@ -103,7 +103,7 @@ pub enum Lifetime {
     /// This is the case ADR-000 §4.1 calls out: a sticky patrol holds
     /// [`Channel::Movement`] while a foreground turn-in holds [`Channel::Interaction`], and the two
     /// coexist. A `#completewith`-only task becomes `Background` with an *empty* channel set, so it
-    /// rides along without contending (§7.3.3 task 6).
+    /// rides along without contending (§7.3.3 task 5).
     Background {
         /// Channels claimed for the task's lifetime. May be empty.
         channels: Vec<Channel>,
@@ -204,13 +204,19 @@ pub struct Task {
     /// uses).
     ///
     /// `None` is a **correct** value, not an omission. Quest 983's ender is
-    /// `gameobject_involvedrelation` entry 17182, not a creature, which is exactly why §7.3.3 task 7
+    /// `gameobject_involvedrelation` entry 17182, not a creature, which is exactly why §7.3.3 task 6
     /// has a `.turnin` with no `.target`. A schema that assumed every turn-in has an NPC target
     /// would emit a null target and stall (§7.3.2, §8).
     pub interact_target: Option<NpcRef>,
     /// Per-task combat override (C6). `None` means use
-    /// [`ProfileDefaults::combat`](crate::kernel::ProfileDefaults::combat) — which is why 16,438 of
-    /// 23,894 tasks carry no policy at all (§5.6).
+    /// [`ProfileDefaults::combat`](crate::kernel::ProfileDefaults::combat) — which is why 18,404 of
+    /// 23,894 corpus steps (77.0%) carry no policy at all (§5.6).
+    ///
+    /// That figure counts steps carrying none of `.mob`, `.unitscan`, `.solo`, `.group` or
+    /// `.dungeon`, i.e. the steps for which every field of [`CombatPolicy`] would have to be
+    /// defaulted. An earlier revision said `16,438`, which was `23,894 − 7,456` — a step count minus
+    /// an *instance* count, and `.mob` occurs 7,456 times across only 3,526 steps (ADR 07 §9 item
+    /// 28).
     pub combat: Option<CombatPolicy>,
     /// Items to keep while this task is active. `.collect` (3,044) and `.addquestitem` (32).
     pub loot_filter: Vec<LootRule>,

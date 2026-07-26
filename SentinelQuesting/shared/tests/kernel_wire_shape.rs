@@ -21,9 +21,15 @@
 //! 2. **Scalar vocabulary is a bare JSON string** — `Class`, `Race`, `Faction`, `Expansion`,
 //!    `Allegiance`, `ProfileMode`, `Channel`, `TravelMode`, `AreaKind`, `UnitRef`, `SkillLine`,
 //!    `Standing`, `CooldownKind`, `ItemStat`, `BehaviorId`, `VendorMode`, `FlightMode`,
-//!    `HearthMode`, `BankMode`, `StableMode`, `CorpseIntent`. §7.3.3 depends on this: it contains
-//!    `"class": "Hunter"`, `"expansion": "Tbc"`, `"mode": "Ground"`, `"kind": "SubArea"`,
+//!    `HearthMode`, `BankMode`, `StableMode`, `CorpseIntent`, `DungeonId`. §7.3.3 depends on this:
+//!    it contains `"class": "Hunter"`, `"expansion": "Tbc"`, `"mode": "Any"`, `"kind": "SubArea"`,
 //!    `"channels": ["MOVEMENT"]`.
+//!
+//!    **`ProfileMode` is the one member of that group with a payload-carrying variant.**
+//!    `Dungeon { instance: DungeonId }` is externally tagged — `{"Dungeon": {"instance": "Mara"}}` —
+//!    and that is deliberate, not an oversight: rule 2 is about role, so `archetype.mode` belongs
+//!    here even though it is not uniformly a string. See
+//!    `profile_mode_dungeon_is_externally_tagged_and_carries_a_dungeon_id`.
 //!
 //! `shape_check_rejects_external_internal_and_untagged_enums` is the control experiment: it runs
 //! this file's own shape checker against locally declared externally-tagged, internally-tagged and
@@ -35,10 +41,10 @@ use serde_json::{json, Value};
 
 use sentinel_models::kernel::{
     Allegiance, AreaKind, BankMode, BehaviorId, Channel, Class, Cmp, CombatStance, CompletionSource,
-    CooldownKind, CorpseIntent, DelegatePayload, Expansion, Faction, FlightMode, GossipPolicy,
-    GroupExpectation, HearthMode, ItemStat, Lifetime, NpcRef, Op, Predicate, ProfileMode, Race,
-    Route, RouteKind, SkillLine, StableMode, Standing, TravelMode, UnitRef, UnknownPolicy,
-    VendorMode,
+    CooldownKind, CorpseIntent, DelegatePayload, DungeonId, Expansion, Faction, FlightMode,
+    GossipPolicy, GroupExpectation, HearthMode, ItemStat, Lifetime, NpcRef, Op, Predicate,
+    ProfileMode, Race, Route, RouteKind, SkillLine, StableMode, Standing, TravelMode, UnitRef,
+    UnknownPolicy, VendorMode,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -54,8 +60,9 @@ const C4: &str = "ADR 07 §5.4 (contract C4) + §7.2: kernel enums the runtime D
                   shipped once: it made every non-unit condition fail OPEN in Lua";
 
 const SCALAR: &str = "ADR 07 §7.3.3: scalar vocabulary enums are BARE JSON STRINGS \
-                      (`\"class\": \"Hunter\"`, `\"mode\": \"Ground\"`, `\"kind\": \"SubArea\"`). \
-                      Adjacently tagging one of these would stop the §7.3.3 fixture parsing";
+                      (`\"class\": \"Hunter\"`, `\"mode\": \"Any\"`, `\"kind\": \"SubArea\"`). \
+                      Adjacently tagging one of these would stop the §7.3.3 fixture parsing. \
+                      `ProfileMode::Dungeon` is the documented exception (§7.2 `$defs/ProfileMode`)";
 
 const FIELDS: &str = "ADR 07 §7.1 (the authoritative Rust structs)";
 
@@ -1131,6 +1138,85 @@ fn scalar_vocabulary_enums_are_bare_json_strings() {
         "CorpseIntent::DeliberateDeath",
         &CorpseIntent::DeliberateDeath,
         "DeliberateDeath",
+    );
+}
+
+/// `ProfileMode` is the one scalar-vocabulary enum with a payload-carrying variant, and its wire
+/// shape is **externally tagged** — the only external form this model ships on purpose.
+///
+/// Two spellings, one type, and both are load-bearing:
+///
+/// * `SpeedRoute` / `QuestGuide` stay bare strings, which is what §7.3.3 prints (`"mode":
+///   "SpeedRoute"`) and what every artifact compiled so far carries. Adjacent tagging would rewrite
+///   both.
+/// * `Dungeon { instance }` takes serde's default external form, `{"Dungeon": {"instance": "Mara"}}`.
+///
+/// That is not a C4 violation, because C4's rule is **role**: `archetype.mode` is provenance (§5.2),
+/// read by the compiler and by whoever audits an artifact, and the runtime never dispatches on it.
+/// The `RuntimeCondition` failure C4 exists to prevent was an external tag on a value Lua *did*
+/// dispatch on.
+///
+/// This test exists because both the type and the field went uncovered for two revisions: §7.2 had
+/// no `archetype` schema at all, so `ProfileMode::Dungeon`'s wire shape was written down nowhere
+/// (ADR 07 §9 item 28) and nothing would have noticed a tagging change to it.
+#[test]
+fn profile_mode_dungeon_is_externally_tagged_and_carries_a_dungeon_id() {
+    let bare = serde_json::to_value(ProfileMode::QuestGuide)
+        .expect("ProfileMode must serialize");
+    assert_eq!(
+        bare,
+        json!("QuestGuide"),
+        "ProfileMode's unit variants must stay bare strings.\n  {SCALAR}\n  got: {bare}"
+    );
+
+    let dungeon = serde_json::to_value(ProfileMode::Dungeon { instance: DungeonId::Mara })
+        .expect("ProfileMode must serialize");
+    assert_eq!(
+        dungeon,
+        json!({ "Dungeon": { "instance": "Mara" } }),
+        "ADR 07 §7.1 + §7.2 `$defs/ProfileMode`: the payload-carrying variant takes serde's DEFAULT \
+         EXTERNAL form, `{{\"Dungeon\": {{\"instance\": \"Mara\"}}}}`. Adjacent tagging here would \
+         rewrite the two bare spellings §7.3.3 pins, for a field nothing dispatches on.\n  \
+         got: {dungeon}"
+    );
+
+    let restored: ProfileMode = serde_json::from_value(dungeon.clone())
+        .unwrap_or_else(|why| panic!("§7.2's ProfileMode shape must load back: {why}\n  {dungeon}"));
+    assert_eq!(
+        restored,
+        ProfileMode::Dungeon { instance: DungeonId::Mara },
+        "ProfileMode must round-trip through its wire form"
+    );
+}
+
+/// `DungeonId` is closed and its variants are bare strings — 19 of them, one per `.dungeon`
+/// argument in the corpus after folding the `MARA`/`ULDA`/`RAMPARTS` case splits (§7.1).
+///
+/// The census matters for the same reason `predicate_tag_census_matches_adr_7_2` does: §7.2's
+/// `$defs/DungeonId` enumerates these spellings, and a variant added to the model without being
+/// added there produces an artifact the schema rejects.
+#[test]
+fn dungeon_id_census_matches_adr_7_2() {
+    let emitted: Vec<String> = [
+        DungeonId::Bf, DungeonId::Bfd, DungeonId::Crypts, DungeonId::Dm, DungeonId::Gnomer,
+        DungeonId::Mara, DungeonId::Mt, DungeonId::Ramparts, DungeonId::Rfd, DungeonId::Rfk,
+        DungeonId::Sfk, DungeonId::Sm, DungeonId::Sp, DungeonId::St, DungeonId::Stockades,
+        DungeonId::Ub, DungeonId::Ulda, DungeonId::Wc, DungeonId::Zf,
+    ]
+    .iter()
+    .map(|id| match serde_json::to_value(id) {
+        Ok(Value::String(tag)) => tag,
+        other => panic!("DungeonId must be a bare string, got {other:?}\n  {SCALAR}"),
+    })
+    .collect();
+
+    assert_census(
+        "DungeonId",
+        emitted,
+        &[
+            "Bf", "Bfd", "Crypts", "Dm", "Gnomer", "Mara", "Mt", "Ramparts", "Rfd", "Rfk", "Sfk",
+            "Sm", "Sp", "St", "Stockades", "Ub", "Ulda", "Wc", "Zf",
+        ],
     );
 }
 

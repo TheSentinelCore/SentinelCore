@@ -58,7 +58,7 @@ use crate::CompilerError;
 /// patrols are bands **34** and **35**, in task order.
 const FIRST_HOLDING_BAND: u8 = 34;
 
-/// The band a `#completewith` ride-along claims, from ADR 07 §7.3.3 task 6.
+/// The band a `#completewith` ride-along claims, from ADR 07 §7.3.3 task 5.
 ///
 /// Ride-alongs hold **no** channels, so they cannot deadlock against each other and do not need the
 /// per-task offset that §5.3 requires of the holders. They all sit at the bottom of the Goal band,
@@ -293,10 +293,14 @@ fn resolve_operations(
 
 /// Conjoin a step's predicate terms, without wrapping a lone one.
 ///
-/// A step may carry more than one `.complete` — §7.3.3 task 4 is the folded multi-`#requires` step
-/// and its `complete_when` is an `And` over one objective predicate per predecessor. One term must
-/// **not** become `And([term])`: §5.1.1 is explicit that there is to be one way to say one thing,
-/// and a single-element conjunction is a second spelling of its own operand.
+/// A step may carry more than one `.complete`, or a `.complete` alongside an `.isOnQuest`, and each
+/// term becomes one predicate; the conjunction is what makes them a single completion authority.
+/// One term must **not** become `And([term])`: §5.1.1 is explicit that there is to be one way to say
+/// one thing, and a single-element conjunction is a second spelling of its own operand.
+///
+/// §7.3.3's excerpt exercises only the `1 =>` arm — every one of its seven tasks carries a single
+/// term, which is why its `tags_used` census has no `And`. `kernel_authored_predicates.rs` is where
+/// the multi-term arm is covered.
 fn fold_and(mut terms: Vec<k::Predicate>) -> Option<k::Predicate> {
     match terms.len() {
         0 => None,
@@ -1441,7 +1445,7 @@ fn resolve_completion(
 ///   [`Channel::Movement`](k::Channel::Movement) for its lifetime, so a patrol keeps walking while a
 ///   foreground turn-in holds `INTERACTION`.
 /// * `#completewith` makes a task concurrent **by definition** — it cannot be the foreground task if
-///   the task it finishes with is — but it contends for nothing. §7.3.3 task 6 is
+///   the task it finishes with is — but it contends for nothing. §7.3.3 task 5 is
 ///   `Background { channels: [], band: 30 }`. Deriving its channels from its ops instead would hand
 ///   it `MOVEMENT` the moment `.subzone` gains a travel lowering, and it would then fight the very
 ///   task it is waiting for.

@@ -149,8 +149,8 @@ mod tests {
         assert_eq!(stance, CombatStance::Aggressive);
     }
 
-    /// Newtype variants put the value directly under `payload`: §7.3.3 task 6 has
-    /// `"completion": { "type": "LinkedTo", "payload": 7 }`.
+    /// Newtype variants put the value directly under `payload`: §7.3.3 task 5 has
+    /// `"completion": { "type": "LinkedTo", "payload": 6 }`.
     #[test]
     fn newtype_variants_carry_a_bare_payload() {
         assert_eq!(
@@ -270,7 +270,13 @@ mod tests {
         );
     }
 
-    /// P1: the dependency edge is plural. §7.3.3 task 4 carries `"deps": [2, 0]`.
+    /// P1: the dependency edge is plural, so a task may name more than one predecessor.
+    ///
+    /// §7.3.3 is **not** the witness for this and no longer claims to be: after the `--XXREQ`
+    /// placeholder is folded away its excerpt carries at most one dep per task (ADR 07 §9 item 28).
+    /// The plurality is required by §2.5's authoring measurement — RestedXP permits one `#requires`
+    /// per step, so authors encode a second predecessor as a throwaway step — and by the fold that
+    /// removes it. This test constructs the shape directly rather than borrowing an artifact.
     #[test]
     fn task_deps_are_plural() {
         let task = Task {

@@ -1,7 +1,31 @@
 # `adr07_worked_example.json` — provenance and deviations
 
-Companion note for the R1 test fixture. It records exactly where the fixture departs from
-ADR 07 §7.3.3 and why, so a future reader never has to re-derive it.
+Companion note for the R1 test fixture. It records how the fixture was derived and where it once
+departed from ADR 07 §7.3.3, so a future reader never has to re-derive it.
+
+## 0. Current state — read this first
+
+**The fixture and §7.3.3 are now the same bytes.** ADR 07 §7.3.3's listing is *generated from this
+file*, and three tests in `shared/tests/kernel_adr_listing.rs` refuse to let them part: the ADR fence
+must parse, must load into `sentinel_models::kernel::RuntimeProfile`, and must compare equal to this
+file leaf by leaf. There is **no remaining difference of any kind** — not even the two digests, which
+§7.3.3 now prints as this file's synthetic hex constants (ADR 07 §9 item 28).
+
+The fixture as it stands, measured:
+
+| | Value |
+|---|---|
+| Tasks | **7** — eight authored steps, the `--XXREQ` placeholder folded into its successor |
+| `waypoint_pool` | **22** entries, interned, `map_id: 1` (Kalimdor) with **world** `x`/`y` |
+| `tags_used` | **9**, sorted byte-ascending: `InArea` `QuestComplete` `QuestInLog` `QuestObjective` `QuestTurnedIn` `Travel` `TurnIn` `UseItem` `XpAtLeast` |
+| Route `mode` | `Any` on all five routes |
+| `meta.name` / `meta.next` | `12-14 Darkshore` / `["14-20 Bloodmyst"]` |
+| Multi-dep task | **none** — task 4 is `deps: [2]`, task 6 is `deps: [0]` |
+
+**Sections 1–5 below are a derivation record, and parts of them are written against earlier states of
+this file.** Where a section says "the fixture today" it may mean the fixture of an earlier wave; the
+table above is the authority, and each superseded claim is marked where it appears. Nothing below is
+deleted, because it is what shows the values were derived rather than typed.
 
 ## 1. Provenance
 
@@ -10,7 +34,8 @@ ADR 07 §7.3.3 and why, so a future reader never has to re-derive it.
 | Profile structure and every field value | `sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md` §7.3.3 "Compiled output" (search: `### 7.3.3 Compiled output`) |
 | Root required-key list | same ADR §7.2 (search: `"required": ["magic","schema_version","schema_hash"`) |
 | Waypoint coordinates | `sentinel/docs/adr/restedxp guides/A-11-23.lua:215–231, 240, 247–254, 262, 278` |
-| Game IDs (983, 5385, 2231, 2234, 3524, 12242, 2118, 2164, 7586, 984, 17182, map 1439) | ADR §7.3.2, verified there against `tbcmangos.sqlite` |
+| Game IDs (983, 5385, 2231, 2234, 3524, 12242, 2118, 2164, 7586, 984, 17182) | ADR §7.3.2, verified there against `tbcmangos.sqlite` |
+| Coordinate transform (ui map `1439` + percentage → `map_id: 1` + world `x`/`y`) | `shared/src/zone.rs::ZoneMap::to_world`, bounds row `(1439, ["Darkshore"], continent: 1)` |
 
 The archetype is the one §7.3.3 resolves for: Night Elf Hunter, Alliance, TBC, softcore,
 AH-permitted, `mode: SpeedRoute`.
@@ -38,16 +63,23 @@ prose is reproduced here verbatim against its task id. Task 1 carried no comment
 
 - **task 0** — "#sticky + #loop -> Background task holding MOVEMENT, running a CLOSED CIRCUIT"
 - **task 2** — "second sticky circuit; .use 7586 is an op, .unitscan feeds watch_units"
-- **task 3** — "zone NAME in source (Darkshore) normalises to the same map_id 1439 as tasks 0-2"
+- **task 3** — "zone NAME in source (Darkshore) normalises to the same map as tasks 0-2" — which is
+  `map_id: 1`, not `1439`: `1439` is the *authored* ui map id on tasks 0-2 and is a lookup key that
+  does not survive compilation (ADR 07 §2.6, §9 item 27). The original comment said `1439`.
 - **task 4** — "P1 — THE MULTI-DEPENDENCY TASK. Source lines 265-268 are the author's XXREQ hack:
   an empty #optional step carrying #requires, used because RXP allows only one requires per step.
   The compiler folds the placeholder away and emits BOTH predecessors directly in deps."
 - **task 5** — "#optional + .xp 10+6760 -> fallback grind objective"
 - **task 6** — "#completewith next -> CompletionSource::LinkedTo(7). Rides along with no channels
   of its own."
-- **task 7** — "#requires BuzzBox1 -> deps [0]. Turn-in target is GAMEOBJECT 17182, so
+- **task 7, now task 6** — "#requires BuzzBox1 -> deps [0]. Turn-in target is GAMEOBJECT 17182, so
   interact_target is null and the op carries the object. Verified: quest 983 ender is
   gameobject_involvedrelation 17182."
+
+The task ids above are the **pre-fold, eight-task** numbering these comments were written against.
+Post-fold: 0-3 unchanged, old 4 (the placeholder) is gone, old 5 → **4**, old 6 → **5** with
+`LinkedTo(6)` rather than `LinkedTo(7)`, old 7 → **6**. ADR 07 §7.3.3's per-task table carries the
+current numbering.
 
 Two of those are load-bearing and must not be lost:
 
@@ -55,11 +87,17 @@ Two of those are load-bearing and must not be lost:
   content is `#requires RabidThistle` plus the author's own `--XXREQ Placeholder invis step until
   multiple requires per step` marker. RestedXP permits one `#requires` per step, so the guide
   author encodes a second predecessor as a throwaway step. The compiler folds that placeholder
-  away and emits **both** predecessors directly, which is why `deps` is `[2, 0]` — plural, and in
-  that printed order. The order is preserved as-is and deliberately **not** sorted.
-- **The gameobject turn-in (task 7).** Quest 983's ender is `gameobject_involvedrelation` entry
-  **17182**, not a creature. So `interact_target: null` on task 7 is *correct*, not an omission —
-  there is no NPC to target.
+  away and emits **both** predecessors directly. **Superseded in the second wave**: the excerpt has
+  only *one* placeholder, and the step it folds into (the grind step) carries no other `#requires`,
+  so the fold yields `deps: [2]` — singular. The old `[2, 0]` spent the excerpt's single
+  `#requires BuzzBox1` twice, once here and once on the turn-in that actually names it (ADR 07 §9
+  items 27, 28). The plural edge is real and is exercised by
+  `compiler/tests/kernel_task_graph.rs::two_stacked_requires_lines_become_two_deps_because_the_stacking_is_an_and`,
+  not by this artifact. Where a fold does produce two, the order is preserved as-is and deliberately
+  **not** sorted.
+- **The gameobject turn-in (task 7, now task 6).** Quest 983's ender is
+  `gameobject_involvedrelation` entry **17182**, not a creature. So `interact_target: null` on that
+  task is *correct*, not an omission — there is no NPC to target.
 
 ## 3. Deviations from §7.3.3 — since folded back into the ADR
 
@@ -122,16 +160,22 @@ listing both use `area`. §7.1 is authoritative. The fixture uses `area` (task 6
 ### D4 — `tags_used` corrected: it is a census, and it was wrong in both directions
 
 §7.3.3 originally declared thirteen tags. Four of them — `Wait`, `Delegate`, `Or`, `Not` — appear in
-no task, and `QuestComplete`, which task 7's `applies_when` uses, was absent. §7.1 defines the field
+no task, and `QuestComplete`, which the turn-in task's `applies_when` uses, was absent. §7.1 defines the field
 as "every op/predicate tag referenced", i.e. a census, so the printed list contradicted its own
 definition in both directions at once.
 
-Measured by walking the artifact, it references exactly ten tags:
+Measured by walking the artifact **at the time of this wave**, it referenced exactly ten tags:
 
 | Kind | Tags |
 |---|---|
 | ops | `Travel`, `TurnIn`, `UseItem` |
 | predicates | `QuestComplete`, `QuestObjective`, `QuestInLog`, `QuestTurnedIn`, `InArea`, `XpAtLeast`, `And` |
+
+**Nine today.** `And` left the artifact with the `--XXREQ` fold: the folded task's `complete_when` was
+an `And` over one objective predicate per predecessor, and with a single predecessor there is nothing
+to conjoin (ADR 07 §9 item 27). The list is also emitted **sorted** byte-ascending, which is the
+ordering ADR 07 §5.4 now records — a census is a set, and any other order moves when an unrelated
+task is added or elided.
 
 Both directions are load-bearing, and ADR §5.10 now states it: a **spurious** tag makes a fail-closed
 kernel refuse an artifact it could actually have run, while a **missing** tag lets the loader's check
@@ -218,8 +262,11 @@ lowercase hex constants — a repeated hex word so no reader mistakes either for
 | `integrity.content_hash` | `cafebabe` × 8 | `cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe` |
 
 R1 does not compute hashes at all — BLAKE3 and `ContentIntegrity` are R3. When R3 lands, these two
-constants are the values it must replace. These two fields are the **only** remaining difference
-between this file and §7.3.3's listing; everything else compares equal key-for-key.
+constants are the values it must replace.
+
+*(An earlier revision of this paragraph called these two fields "the **only** remaining difference
+between this file and §7.3.3's listing". They are not a difference at all any more: §7.3.3 prints
+these exact constants, because its listing is generated from this file. See §0.)*
 
 ## 4. Things kept verbatim that a reader may mistake for errors
 
@@ -244,7 +291,8 @@ These are **not** deviations. They are §7.3.3 as printed, preserved deliberatel
 
 Verified without compiling (the model is authored in parallel):
 
-- `json.load` succeeds; 8 tasks, 22 pool points.
+- `json.load` succeeds; 22 pool points. **8 tasks at the time this check was run; 7 today** — the
+  `--XXREQ` fold landed in the second wave (ADR 07 §9 item 27).
 - All ten §7.2 root required keys present.
 - Both hashes match `^[0-9a-f]{64}$`.
 - Every route: `len(points) == len(radii)`, and every index `< 22`.
@@ -255,13 +303,16 @@ Verified without compiling (the model is authored in parallel):
 - Each of the five routes walks the same coordinate sequence, point for point, that it walked under
   the pre-interning numbering.
 - Every `deps` entry and the `LinkedTo(7)` payload resolve to an existing task id.
-- Task 4 `deps == [2, 0]`, order preserved.
+- Task 4 `deps == [2, 0]`, order preserved. **Superseded**: post-fold, task 4 is `deps == [2]` and no
+  task in the artifact carries two predecessors. The excerpt's single `#requires BuzzBox1` was being
+  spent twice under the old numbering (ADR 07 §9 items 27, 28).
 - Zero `_comment` keys remain.
 - All 28 source route lines re-derived from `A-11-23.lua` and compared field by field against the 22
   pool entries they intern to.
 - `tags_used` re-walked from the artifact (every op, plus `applies_when` / `complete_when` /
   `abort_when`, plus `Background.terminate_on`, recursing through `And` / `Or` / `Not`): the emitted
-  set is exactly the ten declared tags, with nothing spurious and nothing missing (D4).
+  set is exactly the declared tags — ten at the time of this check, nine today — with nothing
+  spurious and nothing missing (D4).
 - Every `"payload": null` occurrence was confirmed to be a two-key `{type, payload}` unit-variant
   envelope before removal — 19 of them, and no ordinary nullable field was touched (D5).
 

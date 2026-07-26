@@ -648,7 +648,13 @@ step
 ///
 /// RestedXP allows one `#requires` per step, so an author who needs two parks the extra on an empty
 /// directive-only step and marks it `--XXREQ`. The importer folds those 52 placeholders into the
-/// following real step; ADR 07 §7.3.3 task 4 is the lowered result, `"deps": [2, 0]`.
+/// following real step.
+///
+/// **This test, not ADR 07 §7.3.3, is where the plural case is witnessed.** §7.3.3's excerpt has
+/// exactly one `--XXREQ` placeholder and the step it folds into carries one other `#requires`, so
+/// after the fold its task 4 is `"deps": [2]` — singular. An earlier revision of this comment cited
+/// it as `[2, 0]`, which was the pre-fold eight-task listing (ADR 07 §9 item 28). The fragment below
+/// stacks two placeholders on purpose so the plural edge is exercised somewhere.
 ///
 /// The fold is upstream and done. What this pins is that the compiler does not undo it: the
 /// successor must come out with **both** edges, from two different `#requires` lines on two
@@ -1382,14 +1388,14 @@ step
     .goto 1439,36.634,46.250
 ]])"#;
 
-/// `A-11-23.lua:211-280`, the span ADR 07 §7.3.3 lowers into its eight-task worked example.
+/// `A-11-23.lua:211-280`, the span ADR 07 §7.3.3 lowers into its seven-task worked example.
 ///
 /// Condensed to what the graph tests need: two `#sticky` steps (§7.3.3 tasks 0 and 2), the XXREQ
-/// placeholder and its successor (task 4, `"deps": [2, 0]`), the `#completewith next` ride-along
-/// (task 6), and the `#requires BuzzBox1` turn-in that closes the chain (task 7). Whether the
-/// authored 70 lines produce exactly eight tasks is a route- and op-lowering question this file does
-/// not ask; what it asks is that whatever they produce has no cycle in it, and holds at least one
-/// concurrent task.
+/// placeholder and the grind step it folds into (task 4, `"deps": [2]`), the `#completewith next`
+/// ride-along (task 5), and the `#requires BuzzBox1` turn-in that closes the chain (task 6). Whether
+/// the authored 70 lines produce exactly seven tasks is a route- and op-lowering question this file
+/// does not ask — `kernel_worked_example.rs` does; what it asks is that whatever they produce has no
+/// cycle in it, and holds at least one concurrent task.
 const WORKED_EXAMPLE: &str = r#"
 RXPGuides.RegisterGuide([[
 #version 7

@@ -7,7 +7,7 @@
 //! Two design rules are visible here and are the point of the module:
 //!
 //! * **Step-as-container.** A task's `ops` are ordered and heterogeneous — travel, then use an
-//!   item, then turn in — instead of one action per step (§7.1, §7.3.3 task 2 and task 7).
+//!   item, then turn in — instead of one action per step (§7.1, §7.3.3 task 2 and task 6).
 //! * **Delegate, don't reimplement** (C5). Eleven commands (4,210 instances) become
 //!   [`Op::Delegate`] against a named kernel behaviour rather than a bespoke op each (§5.5).
 //!

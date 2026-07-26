@@ -135,7 +135,7 @@ pub enum CooldownKind {
 pub enum AreaKind {
     /// `.zone` / `.zoneskip` — a top-level zone.
     Zone,
-    /// `.subzone` / `.subzoneskip` — a sub-area within a zone, as in §7.3.3 task 6 (`"area": 442`).
+    /// `.subzone` / `.subzoneskip` — a sub-area within a zone, as in §7.3.3 task 5 (`"area": 442`).
     SubArea,
 }
 
@@ -164,13 +164,17 @@ pub enum ItemStat {
 /// [`UnknownPolicy`](crate::kernel::UnknownPolicy).
 ///
 /// Adjacently tagged per C4; `And`, `Or` and `Not` therefore serialize with their children directly
-/// under `payload` (`{"type":"And","payload":[…]}`, §7.3.3 task 4).
+/// under `payload` (`{"type":"And","payload":[…]}`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "payload", deny_unknown_fields)]
 pub enum Predicate {
     // ─── ADR-000 §7.2 baseline ───────────────────────────────────────────────────────────────
-    /// Conjunction. Needed because the folded multi-`#requires` task carries one objective
-    /// predicate per predecessor (§7.3.3 task 4).
+    /// Conjunction. Emitted when one step carries more than one predicate term — several
+    /// `.complete` lines, or a `.complete` alongside an `.isOnQuest`
+    /// (`compiler/src/kernel/task_graph.rs::fold_and`, which deliberately does *not* wrap a lone
+    /// term). §7.3.3's excerpt contains no `And` and its `tags_used` does not list one; an earlier
+    /// revision cited its task 4 as the witness, which the `--XXREQ` fold removed (ADR 07 §9 item
+    /// 28).
     And(Vec<Predicate>),
     /// Disjunction. `.isOnQuest` accepts any-of lists of up to 11 quest ids (§4.1).
     Or(Vec<Predicate>),
@@ -300,7 +304,7 @@ pub enum Predicate {
     XpAtLeast {
         /// Level the offset is measured against.
         level: u8,
-        /// Signed XP offset within that level, e.g. `6760` in §7.3.3 task 5.
+        /// Signed XP offset within that level, e.g. `6760` in §7.3.3 task 4.
         xp_offset: i32,
     },
     /// Cooldown remaining test. `.cooldown` (549), e.g. `item,6948,>2,1`. Hearthstone gating

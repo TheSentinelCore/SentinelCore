@@ -256,10 +256,16 @@ pub struct GuideMeta {
 
 /// How aggressively combat may act, and against what (C6, §5.6).
 ///
-/// Scope decision: a profile-level default with a per-task override. `.mob` (7,456) is per-step and
-/// names a step-specific whitelist, so policy cannot be profile-only; but 16,438 of 23,894 tasks
-/// carry no combat token at all, so per-task-only would mean emitting a redundant policy on
-/// two-thirds of tasks.
+/// Scope decision: a profile-level default with a per-task override. `.mob` (7,456 instances) is
+/// per-step and names a step-specific whitelist, so policy cannot be profile-only; but 18,404 of
+/// 23,894 corpus steps (77.0%) carry no combat token at all — none of `.mob`, `.unitscan`, `.solo`,
+/// `.group`, `.dungeon` — so per-task-only would mean emitting a redundant policy on more than three
+/// quarters of tasks.
+///
+/// The narrower readings measure 20,368 steps with no `.mob` and 19,718 with neither `.mob` nor
+/// `.unitscan`; the 18,404 figure governs because it is the set for which *every* field below would
+/// be defaulted. An earlier revision said `16,438`, which was `23,894 − 7,456` — a step count minus
+/// an instance count (ADR 07 §9 item 28).
 ///
 /// §7.1 types `targets` and `watch_units` as `Vec<CreatureEntry>`; §5.8 defines that concept as an
 /// entry id **plus** `expect_name`, which is exactly [`NpcRef`], and §7.3.3 serializes them as
@@ -288,12 +294,12 @@ pub enum CombatStance {
     /// Do not fight. Declared by §7.1; §5.6's corpus mapping table assigns no signal to it, so no
     /// corpus command currently produces this stance.
     Avoid,
-    /// Fight back only. The profile-level default for the 16,438 tasks with no combat token.
+    /// Fight back only. The profile-level default for the 18,404 steps with no combat token.
     Defensive,
     /// Kill only what blocks the objective and refuse adds. `.mob` present (7,456).
     Objective,
     /// Pull proactively. `#loop` + `.mob` + `.complete` (1,661) — a grind circuit *wants* pulls
-    /// (§7.3.3 task 0, task 5).
+    /// (§7.3.3 tasks 0 and 4).
     Aggressive,
 }
 

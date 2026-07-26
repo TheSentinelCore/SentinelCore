@@ -9,7 +9,8 @@
 **Status:** Proposal
 **Target:** Project Sylvanas, TBC Classic 2.4.3, levels 1–70, both factions
 **Consumer:** Quest Activity plugin, per `ADR-000 — Sentinel Kernel: API-First Plugin Architecture`
-**Producer:** `sentinel-compiler` (Rust, offline)
+**Producer:** `sentinel-compiler` (Rust, offline) — the `Compiler::compile_kernel` library entry
+point. **No binary emits one of these artifacts yet**; see §1.2 for delivery state.
 
 **Numbering.** The repository's ADR sequence runs `00_PRD` … `06_QUESTING_SCHEMA_V2`. `07` is the next
 free number. The kernel document is referred to throughout as ADR-000; see §1.1 for its status, which
@@ -29,6 +30,9 @@ static gate — class, race, faction, expansion, realm mode — is resolved away
 emits one artifact per character archetype. Concurrency is expressed as channel leases, not as a
 background flag. Behaviours the kernel already owns (vendor, flight, hearth, bank, trainer, corpse)
 are delegated with a payload rather than reimplemented.
+
+**Read §1.2 before reading §5.** This document is written in the present indicative throughout, and
+§1.2 is the only place that says which of those sentences describe working code.
 
 Four findings drove the design and each contradicts an obvious default:
 
@@ -69,6 +73,49 @@ The parts that are **not** contingent: step-as-container, compile-time static ga
 predicate result, the offset-indexed container, and the content-integrity fields. Those follow from the
 corpus and the Sylvanas API, not from the kernel.
 
+## 1.2 Delivery state — what is designed here versus what exists
+
+Everything below §2 is written in the present indicative: "the compiler resolves", "the kernel
+refuses", "the runtime probes". That is the register a schema document is written in, and on its own
+it is indistinguishable from a report on working software. **Most of it is not working software yet.**
+This section says which is which, so a reader can tell a contract from a description without reading
+the source to find out.
+
+Measured on the tree this revision was written against. The method is stated so each figure can be
+re-run.
+
+| Surface | Designed | Delivered | How this was measured |
+|---|---|---|---|
+| `Op` variants | 13 (§7.1, §7.2) | **4** — `Travel`, `Accept`, `TurnIn`, `UseItem` | Construction sites in `compiler/src/`, i.e. `k::Op::X { … }` in expression position. The other nine appear only as `match` patterns or in doc comments. |
+| `Predicate` variants | 24 (§7.1, §7.2) | **11** — `And`, `Or`, `Not`, `QuestInLog`, `QuestComplete`, `QuestTurnedIn`, `QuestObjective`, `LevelAtLeast`, `XpAtLeast`, `InArea`, `ItemCount` | Same method. The eight leaf arms live in `compiler/src/kernel/predicate.rs::leaf`; `And` / `Or` / `Not` come from the same file plus `task_graph.rs::fold_and`. |
+| `Op::Delegate` and §5.5's delegation table | 11 commands, **4,210 instances** | **nothing** | `Op::Delegate` is never constructed anywhere outside tests — only pattern-matched, in `task_graph.rs`'s irreversibility check. `DelegatePayload`, `BehaviorId`, `VendorMode`, `FlightMode`, `HearthMode`, `BankMode`, `StableMode` and `CorpseIntent` are declared, round-tripped and unreachable. |
+| A binary that emits an ADR 07 artifact | §6.2.5's container, §7.1's root | **none** | The workspace has two binaries. `compiler/src/main.rs` (`sentinel-compile`) calls `Compiler::compile` — the **ADR-05** path, which emits `sentinel_models::runtime::RuntimeProfile`, a different and unrelated struct. `Compiler::compile_kernel` is called only from `compiler/tests/`. `editor`'s `import-guides` produces authoring JSON. |
+| A Lua loader for the artifact | §5.4's fail-closed load, §6.2.5's chunked warmup | **none** | `magic`, `schema_hash`, `tags_used` and `waypoint_pool` appear nowhere under `sentinel/` outside this ADR and ADR 08. Nothing in the runtime can read one of these files. |
+| The two BLAKE3 digests and world provenance | §5.4.1 | **placeholders** | `compile_kernel` emits zeroes; §7.3.3 prints synthetic hex. Pinned as *not yet computed* by `compiler/tests/kernel_lowering.rs::compile_kernel_emits_zero_placeholder_digests_not_computed_ones`. |
+| The first-touch `expect_name` probe | §5.4.1 | **none** | It is a proposal that needs kernel support (§9 item 15). `expect_name` is carried in the artifact; nothing compares it against an observed unit. |
+| Route-level coordinate dedup | §2.6, §5.7, §8 — 4,190 triples | **none** | Explicitly a later deliverable; §7.3.3's task 2 is printed in its un-collapsed 8-point form (§9 item 26). |
+
+**What *is* delivered, end to end.** One real guide excerpt (`A-11-23.lua:211–280`) lowers through
+`parse_guide` → `ProjectBuilder::build` → `Compiler::compile_kernel` into the exact artifact §7.3.3
+prints, compared field for field, with the ids resolved against `tbcmangos.sqlite`
+(`compiler/tests/kernel_worked_example.rs`). The model in §7.1 exists in full as
+`sentinel_models::kernel`, including the variants nothing constructs; every dispatched enum's wire
+shape is pinned (`shared/tests/kernel_wire_shape.rs`); archetype gate resolution, band assignment,
+route aggregation, the unknown-policy rule and the tag census all have their own suites.
+
+So **9 of 13 `Op` variants and 13 of 24 `Predicate` variants are declared, wire-pinned and
+unreachable** — which is a defensible state for a schema ADR, but not one a reader should have to
+infer from the absence of a sentence saying so.
+
+**Why the unreachable variants are still in §7.1 rather than deleted.** They are not speculation:
+each is justified in §4's disposition table by a measured corpus command with an instance count, and
+§5.1.1 argues the model is unsatisfiable without them. Deleting them would make the schema look
+finished and force a breaking change to every artifact when the missing lowerings land (§6.5's
+`schema_version`). Declaring them costs a variant and an unreachable `$defs` entry; omitting them
+costs a format migration. What it does not license is prose that reads as though they were reachable
+— which is what this section exists to correct.
+
+
 ----------
 
 # 2. D2 — Corpus analysis
@@ -104,7 +151,9 @@ correct. Two discrepancies remain, and I resolved one of them.
 (`The Burning Crusade.lua:211`), a **missing-space typo** of `#completewith TBTurnins`. A tokeniser
 that prefix-matches against a known directive table folds it into `#completewith` and reports 48
 distinct; a tokeniser that reads the identifier greedily, as mine does, reports 49. Both are defensible.
-I report 49 and treat the extra as a malformed instance of `#completewith` (§4, §7.6).
+I report 49 and treat the extra as a malformed instance of `#completewith` (§4, §5.10 — whose closed
+alias table is where the six real typos are normalised; an earlier revision of this sentence cited a
+non-existent §7.6).
 
 **Instance counts, ~7% high — unresolved.** I tested and eliminated four hypotheses:
 
@@ -873,10 +922,33 @@ dispatched on uniformly.
 **Leaf vocabulary enums serialise as bare strings.** They only name a value and are never dispatched
 on: `Class`, `Race`, `Faction`, `Expansion`, `Allegiance`, `ProfileMode`, `Channel`, `TravelMode`,
 `BehaviorId`, `VendorMode`, `FlightMode`, `HearthMode`, `BankMode`, `StableMode`, `CorpseIntent`,
-`UnitRef`, `SkillLine`, `Standing`, `CooldownKind`, `AreaKind`, `ItemStat` (all 21 declared in §7.1).
-Each emits the Rust variant name verbatim; `Channel` alone is SCREAMING_SNAKE, per §7.2. §7.3.3
-requires this: `"class": "Hunter"`, `"mode": "Ground"`, `"kind": "SubArea"`,
+`UnitRef`, `SkillLine`, `Standing`, `CooldownKind`, `AreaKind`, `ItemStat`, `DungeonId` (all 22
+declared in §7.1). Each emits the Rust variant name verbatim; `Channel` alone is SCREAMING_SNAKE,
+per §7.2. §7.3.3 requires this: `"class": "Hunter"`, `"mode": "Any"`, `"kind": "SubArea"`,
 `"channels": ["MOVEMENT"]`.
+
+**One of the 22 is not uniformly a string, and this document said otherwise for two revisions.**
+`ProfileMode::Dungeon { instance: DungeonId }` carries a payload, so `archetype.mode` is a bare
+string for `SpeedRoute` / `QuestGuide` and an **externally tagged object**,
+`{"Dungeon": {"instance": "Mara"}}`, for the third. Earlier revisions of this section, of §7.1 and of
+§10 item 7 all claimed the 21 leaf enums "carry no payload", which stopped being true the moment
+`.dungeon`'s argument had to be preserved (§5.6, §8) — a mode that only says "this is a dungeon run"
+admits every dungeon's steps into every dungeon's profile. The claim is corrected in all three
+places (§9 item 28), and the count of enums that genuinely carry no payload is **21 of 22**.
+
+That external form is not the failure C4 names, for the same reason the rule is stated by role:
+nothing dispatches on `archetype.mode`. §5.2 makes the archetype **provenance** — the compiler reads
+it to resolve gates, an auditor reads it to know what an artifact is for, and the runtime never
+looks at it. Adjacently tagging it would buy nothing and would rewrite the two spellings §7.3.3
+prints. §7.2's `$defs/ProfileMode` and
+`shared/tests/kernel_wire_shape.rs::profile_mode_dungeon_is_externally_tagged_and_carries_a_dungeon_id`
+pin both spellings so the exception cannot become an accident.
+
+**`tags_used` is emitted sorted and deduplicated, byte-ascending.** It is a set, and sorted is the
+only spelling that does not move when an unrelated task is added, reordered or elided — which is
+what R3's digest over the emitted bytes depends on. §7.3.3's nine tags are printed in that order;
+`compiler/src/kernel/mod.rs::tag_census` collects into a `BTreeSet` and is where the ordering is
+enforced.
 
 **The failure C4 guards against is _external_ tagging on a dispatched sum type — not the absence of
 a wrapper on a leaf.** This repository has already been bitten by exactly that: `RuntimeCondition`
@@ -961,10 +1033,32 @@ from.
 **Contract.** The Quest Activity delegates `CASTING`+`TARGETING` with a policy.
 
 **Scope decision: a profile-level default with per-task override.** Justification from the corpus —
-`.mob` (7,456) is per-step and names a *step-specific* whitelist, so policy cannot be profile-only;
-but 16,438 of 23,894 tasks carry no combat token at all, so per-task-only would mean emitting a
-redundant policy on two-thirds of tasks. Default plus override is the smaller artifact and matches the
-authoring reality.
+`.mob` (7,456 instances) is per-step and names a *step-specific* whitelist, so policy cannot be
+profile-only; but **18,404 of 23,894 steps (77.0%) carry no combat token at all**, so per-task-only
+would mean emitting a redundant policy on more than three quarters of tasks. Default plus override is
+the smaller artifact and matches the authoring reality.
+
+*(An earlier revision of this sentence read "16,438 of 23,894", which was `23,894 − 7,456`: an
+**instance** count subtracted from a **step** count. `.mob` occurs 7,456 times but only on 3,526
+distinct steps — a step naming three mobs is one step and three instances — so the subtraction
+double-counts every multi-`.mob` step and the residual is too low by 1,966. The error propagated into
+`shared/src/kernel/profile.rs` and `shared/src/kernel/task.rs` doc comments and is corrected in all
+three places (§9 item 28). The direction of the argument is unaffected and gets stronger: the
+majority is larger than claimed.)*
+
+Measured three ways over the same 23,894 steps, because "no combat token" has three defensible
+readings and they differ by 1,964 steps:
+
+| Reading | Steps with none of them | Share |
+|---|---|---|
+| `.mob` only | 20,368 | 85.2% |
+| `.mob` / `.unitscan` | 19,718 | 82.5% |
+| `.mob` / `.unitscan` / `.solo` / `.group` / `.dungeon` | **18,404** | **77.0%** |
+
+The third row is the one that governs, because it is the set of steps for which *every* field of
+`CombatPolicy` would have to be defaulted: `.mob` fills `targets`, `.unitscan` fills `watch_units`,
+and `.solo` / `.group` / `.dungeon` fill `expect_group`. A step carrying only `.solo` still needs a
+policy emitted, so counting it as "no combat token" would overstate what the default covers.
 
 ```rust
 pub struct CombatPolicy {
@@ -1526,13 +1620,19 @@ pub enum Predicate {
 
 // ─── Leaf vocabulary: bare strings on the wire, never dispatched on ──────────
 //
-// These 21 enums only NAME a value. They carry no payload, the kernel never switches
-// on them, and they therefore carry NO tagging attribute: each serializes as the Rust
-// variant name verbatim. §7.3.3 forces exactly this — `"class": "Hunter"`,
-// `"expansion": "Tbc"`, `"mode": "Ground"`, `"kind": "SubArea"`. `Channel` alone is
-// SCREAMING_SNAKE, per §7.2's channel enum. Class / Race / Faction are reused from the
-// ADR-02 authoring vocabulary rather than redefined (§5.2); their variant names are
-// already the wire spellings.
+// These 22 enums only NAME a value. The kernel never switches on any of them, so none
+// carries a tagging attribute: each serializes as the Rust variant name verbatim.
+// §7.3.3 forces exactly this — `"class": "Hunter"`, `"expansion": "Tbc"`,
+// `"mode": "Any"`, `"kind": "SubArea"`. `Channel` alone is SCREAMING_SNAKE, per §7.2's
+// channel enum. Class / Race / Faction are reused from the ADR-02 authoring vocabulary
+// rather than redefined (§5.2); their variant names are already the wire spellings.
+//
+// TWENTY-ONE of the 22 carry no payload. `ProfileMode` is the exception and always has
+// been mis-described here: `Dungeon { instance: DungeonId }` carries one, so it is a
+// bare string for its two unit variants and an object for the third. It stays in this
+// group because the rule that puts an enum here is ROLE — the kernel does not dispatch
+// on it (§5.2 makes the archetype provenance, read by the compiler and by whoever
+// audits an artifact, never by the runtime) — not arity.
 
 #[derive(Serialize, Deserialize)]
 pub enum Class { Warrior, Paladin, Hunter, Rogue, Priest, Shaman, Mage, Warlock, Druid }
@@ -1553,11 +1653,27 @@ pub enum Allegiance { Aldor, Scryer }                   // #aldor / #scryer
 pub enum ProfileMode { SpeedRoute, QuestGuide, Dungeon { instance: DungeonId } }
 // absence of #questguide / #questguide / .dungeon <instance>. The dungeon variant carries WHICH
 // dungeon: `.dungeon Mara` (105) and `.dungeon ZF` (150) are different archetype variants, and a
-// unit variant admits every dungeon's steps into every dungeon's profile. DungeonId is the closed,
-// measured 19-argument set — BF BFD Crypts DM Gnomer Mara MT Ramparts RFD RFK SFK SM SP ST
-// Stockades UB Ulda WC ZF — after folding the MARA/ULDA/RAMPARTS case splits.
+// unit variant admits every dungeon's steps into every dungeon's profile.
 // Wire: the two unit variants stay bare strings ("mode": "SpeedRoute", as §7.3.3 prints); the
-// payload-carrying one takes serde's external form, {"Dungeon": {"instance": "Mara"}}.
+// payload-carrying one takes serde's DEFAULT EXTERNAL form, {"Dungeon": {"instance": "Mara"}}.
+// Adjacent tagging is deliberately NOT applied: it would rewrite the two spellings §7.3.3 pins,
+// and C4's tagging rule (§5.4) is by role — nothing dispatches on this field.
+
+#[derive(Serialize, Deserialize)]                       // .dungeon <instance> — the closed argument set
+pub enum DungeonId {
+    Bf, Bfd, Crypts, Dm, Gnomer, Mara, Mt, Ramparts, Rfd, Rfk,
+    Sfk, Sm, Sp, St, Stockades, Ub, Ulda, Wc, Zf,
+}
+// Instance counts, in that order: BF 27, BFD 66, Crypts 11, DM 157, Gnomer 41, Mara 105 (+MARA 91),
+// MT 24, Ramparts 11 (+RAMPARTS 11), RFD 69, RFK 37, SFK 25, SM 55, SP 16, ST 182, Stockades 36,
+// UB 26, Ulda 41 (+ULDA 25), WC 85, ZF 150. BF, MT, SP and UB are staged from an outdoor zone
+// (Hellfire Peninsula, Terokkar Forest, Zangarmarsh, Zangarmarsh).
+// NINETEEN variants, measured over the 1,351 `.dungeon` instances after folding the three
+// case-split spellings (MARA/Mara, ULDA/Ulda, RAMPARTS/Ramparts). Closed on purpose: an open
+// String would let a typo'd instance name compile into an archetype nothing matches. This
+// declaration was missing for two revisions — the type was referenced by `ProfileMode` above and
+// its 19 variants existed only inside a `//` comment, so the ADR named a type it never defined
+// (§9 item 28).
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]           // the ONE exception (§7.2)
@@ -1642,6 +1758,7 @@ Full schema is mechanical from the structs; these are the parts where agreement 
         "world_build":  { "type": "string" }
       }
     },
+    "archetype":      { "$ref": "#/$defs/Archetype" },
     "waypoint_pool": {
       "type": "array",
       "items": {
@@ -1657,6 +1774,47 @@ Full schema is mechanical from the structs; these are the parts where agreement 
     "tasks": { "type": "array", "items": { "$ref": "#/$defs/Task" } }
   },
   "$defs": {
+    "Archetype": {
+      "type": "object",
+      "required": ["class","race","faction","expansion","allegiance","hardcore","self_found",
+                   "can_fly","content_phase","mode","xp_rate_milli","hardcore_server","season"],
+      "properties": {
+        "class":     { "enum": ["Warrior","Paladin","Hunter","Rogue","Priest","Shaman","Mage",
+                                "Warlock","Druid"] },
+        "race":      { "enum": ["Human","Orc","Dwarf","NightElf","Undead","Tauren","Gnome","Troll",
+                                "BloodElf","Draenei"] },
+        "faction":   { "enum": ["Alliance","Horde","Neutral"] },
+        "expansion": { "enum": ["Classic","Tbc","Wotlk"] },
+        "allegiance":      { "oneOf": [{ "enum": ["Aldor","Scryer"] }, { "type": "null" }] },
+        "hardcore":        { "type": "boolean" },
+        "self_found":      { "type": "boolean" },
+        "can_fly":         { "type": "boolean" },
+        "content_phase":   { "type": ["integer","null"] },
+        "mode":            { "$ref": "#/$defs/ProfileMode" },
+        "xp_rate_milli":   { "type": "integer" },
+        "hardcore_server": { "type": "boolean" },
+        "season":          { "type": ["integer","null"] }
+      },
+      "$comment": "C2 provenance (§5.2). Not dispatched on, so nothing here is adjacently tagged."
+    },
+    "ProfileMode": {
+      "oneOf": [
+        { "enum": ["SpeedRoute","QuestGuide"] },
+        { "type": "object",
+          "required": ["Dungeon"],
+          "properties": {
+            "Dungeon": { "type": "object",
+                         "required": ["instance"],
+                         "properties": { "instance": { "$ref": "#/$defs/DungeonId" } } }
+          } }
+      ],
+      "$comment": "The ONE externally-tagged shape in this schema, and deliberately so: `mode` is a leaf vocabulary field the kernel never dispatches on (§5.4), the two unit variants are the bare strings §7.3.3 prints, and adjacent tagging would rewrite both. A `{type,payload}` spelling here would be a change to every artifact compiled so far, bought with nothing."
+    },
+    "DungeonId": {
+      "enum": ["Bf","Bfd","Crypts","Dm","Gnomer","Mara","Mt","Ramparts","Rfd","Rfk",
+               "Sfk","Sm","Sp","St","Stockades","Ub","Ulda","Wc","Zf"],
+      "$comment": "Closed: 19 variants over the 1,351 `.dungeon` instances, after folding the MARA/ULDA/RAMPARTS case splits. See §7.1."
+    },
     "Task": {
       "type": "object",
       "required": ["id","deps","blocking","lifetime","completion","unknown_policy","ops","source"],
@@ -1813,7 +1971,14 @@ Full schema is mechanical from the structs; these are the parts where agreement 
 | 7586 | item | `Tharnariun's Hope` | `A-11-23.lua:255` `[Tharnariun's Hope]` |
 | 984 | quest | `How Big a Threat?` | `A-11-23.lua:264` `.complete 984,1` |
 | 17182 | gameobject | `Buzzbox 827` | `A-11-23.lua:279` "Click the Buzzbox 827 on the ground" |
-| 1439 | zone/map | Darkshore | `A-11-23.lua:262` uses the **name** `Darkshore` for the same area |
+| 1439 | ui map | Darkshore | `A-11-23.lua:262` uses the **name** `Darkshore` for the same area |
+
+`1439` is the last row for a reason: it is the only id in the table that **does not appear in the
+compiled artifact**. It is a *lookup key* — the ui map the author wrote coordinates against — and
+§2.6 requires it to be consumed by the transform rather than emitted. §7.3.3's pool carries
+`map_id: 1` (Kalimdor, Darkshore's continent) with world `x`/`y`, via
+`ZoneMap::to_world` (`SentinelQuesting/shared/src/zone.rs`); a compiled `Point` still wearing `1439`
+is §2.6's named bug signature, and this listing printed exactly that for two revisions (§9 item 27).
 
 Three cross-checks that validate the whole pipeline, not just the ids:
 
@@ -1821,8 +1986,8 @@ Three cross-checks that validate the whole pipeline, not just the ids:
   comment `(6)` exactly.** This is why `Predicate::QuestObjective.need` can be baked offline instead of
   parsed from a localized progress string at runtime.
 - Quest 983's ender is **`gameobject_involvedrelation` entry 17182**, not a creature — which is exactly
-  why task 7 has a `.turnin` with **no `.target`**. The schema's `interact_target: None` is not an
-  omission, it is correct.
+  why §7.3.3's task 6 has a `.turnin` with **no `.target`**. The schema's `interact_target: None` is
+  not an omission, it is correct.
 - Quest 984 has **no `Req*` columns populated at all** — it is an exploration objective, matching
   `.complete 984,1 -- Find a corrupt furbolg camp`. So `QuestObjective.need` must permit `0`
   (satisfied by area discovery, not a count).
@@ -1831,6 +1996,35 @@ Three cross-checks that validate the whole pipeline, not just the ids:
 
 Archetype resolved for a Night Elf Hunter, Alliance, TBC, softcore, AH-permitted. Every route's
 `points` are indices into `waypoint_pool`, which is printed in full below.
+
+**This listing is generated from the fixture, not typed.** The artifact below is
+`SentinelQuesting/shared/tests/fixtures/adr07_worked_example.json` verbatim, and
+`shared/tests/kernel_adr_listing.rs` fails if the two stop matching: it extracts this fence by its
+heading anchor, loads it into `sentinel_models::kernel::RuntimeProfile`, and compares it to the
+fixture leaf by leaf. The fixture is the specification — its ids are verified against
+`tbcmangos.sqlite` (§7.3.2) and `compiler/tests/kernel_worked_example.rs` drives the real
+`parse_guide` → `ProjectBuilder` → `Compiler::compile_kernel` pipeline into it. When that guard
+fails, this section is what moves. It was written by hand once, and when the drift was finally
+measured the two sides disagreed on **136 leaf paths** (§9 item 28).
+
+Two consequences of being generated, both deliberate:
+
+- **The listing carries no `_comment` keys.** `RuntimeProfile` is `deny_unknown_fields` (C4, §5.4),
+  so a listing carrying prose keys is a worked example of something that cannot load. The per-task
+  prose that used to live in them is the table below instead.
+- **Both digests are valid 64-character hex, not prose.** `"<blake3-of-tagset>"` is 20 characters
+  against §7.2's `^[0-9a-f]{64}$`. `deadbeef × 8` and `cafebabe × 8` are obviously synthetic and
+  actually loadable; R3 replaces them with real BLAKE3 output (§5.4.1, §9 item 25).
+
+**The pool holds world coordinates on the continent map, not authored percentages.** All 28 source
+route lines are authored zone-percentage form against ui map `1439` (Darkshore), and every one is
+converted through `ZoneMap::to_world` (`SentinelQuesting/shared/src/zone.rs`) before it reaches the
+artifact, so each entry carries `map_id: 1` — Kalimdor, Darkshore's continent — and raw world
+`x`/`y`. §2.6 states why this is the only admissible shape: `1439` is a *lookup key*, and a
+compiled `Point` still wearing it is that section's **named bug signature**. An earlier revision of
+this listing printed exactly that signature on all 22 entries — the document demonstrated the
+failure it names (§9 item 28). `z` is `null` throughout: RestedXP supplies no Z, and the trailing
+`,0` on each source line is a flag argument.
 
 The pool is **interned**: one entry per *distinct* `(map_id, x, y, z)`, not one per source route
 line. The 28 route lines of `A-11-23.lua:211–280` visit only **22** distinct coordinates, so the
@@ -1853,6 +2047,18 @@ that do so do it for two different reasons that must not be conflated:
 A route that re-crosses a point says so by **repeating the index**, never by carrying a second copy
 of the point.
 
+**Eight authored steps lower to seven tasks.** `A-11-23.lua:265–268` is an empty `#optional` step
+whose only content is `#requires RabidThistle` plus the author's own marker
+`--XXREQ Placeholder invis step until multiple requires per step`: RestedXP permits one `#requires`
+per step, so a second predecessor is encoded as a throwaway step. The compiler folds that
+placeholder into its successor, the grind step, and the `#requires` edge goes with it — which is why
+task 4 spans `265–271` and carries `deps: [2]`. An earlier revision printed the placeholder as a
+task of its own, giving eight tasks and shifting every index from 4 upward (§9 item 28).
+
+**`meta.name` is `12-14 Darkshore`, from `#name`.** `A-11-23.lua` also carries three `#displayname`
+lines, one of them `10-14 Darkshore << Dwarf Hunter`. A Night Elf Hunter is not a Dwarf Hunter, and
+`GuideMeta.name` reads `#name` regardless; `10-14` was a display string in the wrong field.
+
 **What this listing does and does not demonstrate.** It demonstrates the **pool interning** of
 §7.1 (`waypoint_pool` "deduplicated; routes index into this") and §6.4 ("deduplicates shared points
 across tasks"): only the pool shrinks, no `points` array changes length, and no `radii` array
@@ -1863,66 +2069,112 @@ the way in"). Those three state a route-*length* consequence, which interning pr
 deliver — as the previous sentence says. Route-level dedup is a later deliverable, and task 2's
 route is printed below in its **un-deduplicated** 8-point form.
 
-The `_comment` keys are prose for the reader — `RuntimeProfile` is `deny_unknown_fields`, so a
-real artifact carries none of them.
+**It also does not demonstrate `Task.deps` plurality.** No task below has two predecessors: task 4
+carries `[2]` and task 6 carries `[0]`, and after the XXREQ fold nothing in this excerpt carries
+more. The pre-fold listing showed `deps: [2, 0]` on the placeholder task, which spent the excerpt's
+single `#requires BuzzBox1` twice — once there and once on the turn-in that actually names it. §8
+and §10 item 2 cited this excerpt as the multi-predecessor witness; it is not one, and both now say
+so. `Vec<TaskId>` is justified by §2.5's authoring measurement and by the fold itself, not by an
+artifact in this document.
+
+**Per-task prose.** What each task demonstrates, kept *outside* the artifact so the artifact loads.
+This replaces the seven `_comment` keys the listing used to carry — one of which annotated the folded
+placeholder and has no task left to describe, and one of which put `map_id 1439` in the reader's head
+as though it survived compilation:
+
+| Task | Source | What it demonstrates |
+|---|---|---|
+| 0 | `211–237` | `#sticky` + `#loop` → a `Background` task holding `MOVEMENT`, running a **closed** `Circuit`, band 34. `.mob` × 2 gives an `Aggressive` whitelist because a grind circuit wants pulls (§5.6). |
+| 1 | `238–242` | An `Exclusive` objective task. `.isOnQuest 3524` → `applies_when`, and the loot filter comes from the objective's `ReqItemId`. |
+| 2 | `243–260` | The second sticky circuit, band 35. `.use 7586` is an **op**, not a completion condition; `.unitscan` feeds `watch_units` rather than `targets`, and `stance: Objective` with `allow_adds: false` is what §5.6 maps a bare `.mob`-free objective circuit to. |
+| 3 | `261–264` | The zone **name** form (`.goto Darkshore,…`) normalises through the same `ZoneMap` as tasks 0–2 and lands on the same `map_id: 1`. `need: 0` is correct: quest 984 has no `Req*` columns (§7.3.2). |
+| 4 | `265–271` | The **XXREQ fold**. `#optional` + `.xp 10+6760` → a non-blocking fallback grind with `stance: Aggressive` and an empty whitelist; the folded placeholder's `#requires RabidThistle` is the `deps: [2]`. `unknown_policy: TreatFalse` — a grind that cannot read its own progress must not block the run. |
+| 5 | `272–275` | `#completewith next` → `CompletionSource::LinkedTo(6)`. A ride-along: `Background` with **empty** channels, because a task whose completion is decided elsewhere contends for nothing. Its `budget_ticks: 30` is the smaller of the two budgets (§9 item 25). |
+| 6 | `276–280` | `#requires BuzzBox1` → `deps: [0]`. A **gameobject** turn-in: quest 983's ender is `gameobject_involvedrelation` 17182, so `interact_target: null` is correct rather than missing (§7.3.2). Its `applies_when` / `complete_when` pair is authored nowhere and derived from the hand-in itself (`compiler/src/kernel/task_graph.rs::hand_in_predicates`). |
 
 ```json
 {
   "magic": "SNTL",
   "schema_version": 1,
-  "schema_hash": "<blake3-of-tagset>",
-  "tags_used": ["Travel","TurnIn","UseItem","QuestComplete","QuestObjective","QuestInLog",
-                "QuestTurnedIn","InArea","XpAtLeast","And"],
+  "schema_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "tags_used": [
+    "InArea",
+    "QuestComplete",
+    "QuestInLog",
+    "QuestObjective",
+    "QuestTurnedIn",
+    "Travel",
+    "TurnIn",
+    "UseItem",
+    "XpAtLeast"
+  ],
   "integrity": {
-    "content_hash": "<blake3-of-resolved-ids>",
+    "content_hash": "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
     "world_source": "tbcmangos.sqlite",
-    "world_build":  "sha256:…; quest_template=6599 creature_template=18799 gameobject_template=14216"
+    "world_build": "sha256:…; quest_template=6599 creature_template=18799 gameobject_template=14216"
   },
-  "archetype": { "class": "Hunter", "race": "NightElf", "faction": "Alliance",
-                 "expansion": "Tbc", "allegiance": null, "hardcore": false,
-                 "self_found": false, "can_fly": false, "content_phase": null,
-                 "mode": "SpeedRoute", "xp_rate_milli": 1000,
-                 "hardcore_server": false, "season": null },
-  "meta": { "name": "10-14 Darkshore", "group": "RestedXP TBC Guide (A)",
-            "subgroup": "RestedXP Alliance 1-20", "source_version": 7, "next": [] },
-
+  "archetype": {
+    "class": "Hunter",
+    "race": "NightElf",
+    "faction": "Alliance",
+    "expansion": "Tbc",
+    "allegiance": null,
+    "hardcore": false,
+    "self_found": false,
+    "can_fly": false,
+    "content_phase": null,
+    "mode": "SpeedRoute",
+    "xp_rate_milli": 1000,
+    "hardcore_server": false,
+    "season": null
+  },
+  "meta": {
+    "name": "12-14 Darkshore",
+    "group": "RestedXP TBC Guide (A)",
+    "subgroup": "RestedXP Alliance 1-20",
+    "source_version": 7,
+    "next": ["14-20 Bloodmyst"]
+  },
   "defaults": {
-    "combat": { "stance": { "type": "Defensive" }, "targets": [], "watch_units": [],
-                "leash_yards": 40, "allow_adds": true, "expect_group": { "type": "Solo" } },
+    "combat": {
+      "stance": { "type": "Defensive" },
+      "targets": [],
+      "watch_units": [],
+      "leash_yards": 40,
+      "allow_adds": true,
+      "expect_group": { "type": "Solo" }
+    },
     "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } }
   },
-
   "waypoint_pool": [
-    { "map_id": 1439, "x": 36.051, "y": 44.757, "z": null },
-    { "map_id": 1439, "x": 36.280, "y": 50.071, "z": null },
-    { "map_id": 1439, "x": 35.275, "y": 53.464, "z": null },
-    { "map_id": 1439, "x": 36.091, "y": 51.501, "z": null },
-    { "map_id": 1439, "x": 37.115, "y": 52.368, "z": null },
-    { "map_id": 1439, "x": 37.130, "y": 53.663, "z": null },
-    { "map_id": 1439, "x": 36.740, "y": 55.221, "z": null },
-    { "map_id": 1439, "x": 35.655, "y": 55.872, "z": null },
-    { "map_id": 1439, "x": 35.088, "y": 55.085, "z": null },
-    { "map_id": 1439, "x": 36.523, "y": 48.554, "z": null },
-    { "map_id": 1439, "x": 35.977, "y": 48.408, "z": null },
-    { "map_id": 1439, "x": 35.902, "y": 47.145, "z": null },
-    { "map_id": 1439, "x": 35.759, "y": 45.455, "z": null },
-    { "map_id": 1439, "x": 36.371, "y": 50.920, "z": null },
-    { "map_id": 1439, "x": 38.226, "y": 52.780, "z": null },
-    { "map_id": 1439, "x": 39.129, "y": 59.176, "z": null },
-    { "map_id": 1439, "x": 38.527, "y": 54.661, "z": null },
-    { "map_id": 1439, "x": 38.037, "y": 56.815, "z": null },
-    { "map_id": 1439, "x": 38.095, "y": 58.395, "z": null },
-    { "map_id": 1439, "x": 38.696, "y": 57.874, "z": null },
-    { "map_id": 1439, "x": 38.90,  "y": 53.59,  "z": null },
-    { "map_id": 1439, "x": 36.634, "y": 46.250, "z": null }
+    { "map_id": 1, "x": 6378.9443, "y": 580.3262, "z": null },
+    { "map_id": 1, "x": 6146.8994, "y": 565.3264, "z": null },
+    { "map_id": 1, "x": 5998.7383, "y": 631.15405, "z": null },
+    { "map_id": 1, "x": 6084.456, "y": 577.70605, "z": null },
+    { "map_id": 1, "x": 6046.597, "y": 510.6338, "z": null },
+    { "map_id": 1, "x": 5990.049, "y": 509.65137, "z": null },
+    { "map_id": 1, "x": 5922.0156, "y": 535.1963, "z": null },
+    { "map_id": 1, "x": 5893.589, "y": 606.26416, "z": null },
+    { "map_id": 1, "x": 5927.955, "y": 643.40234, "z": null },
+    { "map_id": 1, "x": 6213.1416, "y": 549.41016, "z": null },
+    { "map_id": 1, "x": 6219.517, "y": 585.1731, "z": null },
+    { "map_id": 1, "x": 6274.668, "y": 590.08545, "z": null },
+    { "map_id": 1, "x": 6348.465, "y": 599.45215, "z": null },
+    { "map_id": 1, "x": 6109.826, "y": 559.3662, "z": null },
+    { "map_id": 1, "x": 6028.6064, "y": 437.86328, "z": null },
+    { "map_id": 1, "x": 5749.3145, "y": 378.71704, "z": null },
+    { "map_id": 1, "x": 5946.4697, "y": 418.14795, "z": null },
+    { "map_id": 1, "x": 5852.4116, "y": 450.24316, "z": null },
+    { "map_id": 1, "x": 5783.418, "y": 446.4441, "z": null },
+    { "map_id": 1, "x": 5806.1685, "y": 407.0786, "z": null },
+    { "map_id": 1, "x": 5993.2363, "y": 393.7163, "z": null },
+    { "map_id": 1, "x": 6313.75, "y": 542.13965, "z": null }
   ],
-
   "tasks": [
     {
       "id": 0,
       "deps": [],
       "blocking": true,
-      "_comment": "#sticky + #loop -> Background task holding MOVEMENT, running a CLOSED CIRCUIT",
       "lifetime": {
         "type": "Background",
         "payload": {
@@ -1932,20 +2184,22 @@ real artifact carries none of them.
         }
       },
       "completion": { "type": "OwnPredicate" },
-      "applies_when":  { "type": "QuestInLog",     "payload": { "id": 983 } },
+      "applies_when": { "type": "QuestInLog", "payload": { "id": 983 } },
       "complete_when": { "type": "QuestObjective", "payload": { "id": 983, "index": 1, "need": 6 } },
       "abort_when": null,
       "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
       "ops": [
-        { "type": "Travel",
+        {
+          "type": "Travel",
           "payload": {
             "route": {
               "kind": { "type": "Circuit", "payload": { "close": true } },
-              "mode": "Ground",
-              "points": [0,1,2,3,4,5,6,7,8,2,3,1,9,10,11,12,0],
-              "radii":  [0,0,0,60,60,60,60,60,60,60,60,60,60,60,60,60,60]
+              "mode": "Any",
+              "points": [0, 1, 2, 3, 4, 5, 6, 7, 8, 2, 3, 1, 9, 10, 11, 12, 0],
+              "radii": [0, 0, 0, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60]
             }
-          } }
+          }
+        }
       ],
       "interact_target": null,
       "combat": {
@@ -1959,7 +2213,7 @@ real artifact carries none of them.
         "allow_adds": true,
         "expect_group": { "type": "Solo" }
       },
-      "loot_filter": [ { "item": 5385, "for_quest": 983 } ],
+      "loot_filter": [{ "item": 5385, "for_quest": 983 }],
       "serves_quests": [983],
       "suppress": [],
       "jump_to": null,
@@ -1972,20 +2226,29 @@ real artifact carries none of them.
       "blocking": true,
       "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
-      "applies_when":  { "type": "QuestInLog",     "payload": { "id": 3524 } },
+      "applies_when": { "type": "QuestInLog", "payload": { "id": 3524 } },
       "complete_when": { "type": "QuestObjective", "payload": { "id": 3524, "index": 1, "need": 1 } },
       "abort_when": null,
       "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
       "ops": [
-        { "type": "Travel",
-          "payload": { "route": { "kind": { "type": "Destination" },
-                                  "mode": "Any", "points": [13], "radii": [5] } } }
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Destination" },
+              "mode": "Any",
+              "points": [13],
+              "radii": [5]
+            }
+          }
+        }
       ],
       "interact_target": null,
       "combat": null,
-      "loot_filter": [ { "item": 12242, "for_quest": 3524 } ],
+      "loot_filter": [{ "item": 12242, "for_quest": 3524 }],
       "serves_quests": [3524],
-      "suppress": [], "jump_to": null,
+      "suppress": [],
+      "jump_to": null,
       "source": { "file": "A-11-23.lua", "line_start": 238, "line_end": 242 }
     },
 
@@ -1993,39 +2256,49 @@ real artifact carries none of them.
       "id": 2,
       "deps": [],
       "blocking": true,
-      "_comment": "second sticky circuit; .use 7586 is an op, .unitscan feeds watch_units",
       "lifetime": {
         "type": "Background",
         "payload": {
           "channels": ["MOVEMENT"],
           "band": 35,
-          "terminate_on": { "type": "QuestObjective",
-                            "payload": { "id": 2118, "index": 1, "need": 1 } }
+          "terminate_on": {
+            "type": "QuestObjective",
+            "payload": { "id": 2118, "index": 1, "need": 1 }
+          }
         }
       },
       "completion": { "type": "OwnPredicate" },
-      "applies_when":  { "type": "QuestInLog",     "payload": { "id": 2118 } },
+      "applies_when": { "type": "QuestInLog", "payload": { "id": 2118 } },
       "complete_when": { "type": "QuestObjective", "payload": { "id": 2118, "index": 1, "need": 1 } },
       "abort_when": null,
       "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
       "ops": [
-        { "type": "Travel",
-          "payload": { "route": { "kind": { "type": "Circuit", "payload": { "close": true } },
-                                  "mode": "Ground",
-                                  "points": [14,15,14,16,17,18,19,15],
-                                  "radii":  [0,0,50,50,50,50,50,50] } } },
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Circuit", "payload": { "close": true } },
+              "mode": "Any",
+              "points": [14, 15, 14, 16, 17, 18, 19, 15],
+              "radii": [0, 0, 50, 50, 50, 50, 50, 50]
+            }
+          }
+        },
         { "type": "UseItem", "payload": { "item": 7586 } }
       ],
       "interact_target": null,
       "combat": {
         "stance": { "type": "Objective" },
-        "targets": [ { "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null } ],
-        "watch_units": [ { "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null } ],
+        "targets": [{ "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null }],
+        "watch_units": [{ "entry": 2164, "expect_name": "Rabid Thistle Bear", "pos": null }],
         "leash_yards": 50,
         "allow_adds": false,
         "expect_group": { "type": "Solo" }
       },
-      "loot_filter": [], "serves_quests": [2118], "suppress": [], "jump_to": null,
+      "loot_filter": [],
+      "serves_quests": [2118],
+      "suppress": [],
+      "jump_to": null,
       "source": { "file": "A-11-23.lua", "line_start": 243, "line_end": 260 }
     },
 
@@ -2033,52 +2306,38 @@ real artifact carries none of them.
       "id": 3,
       "deps": [],
       "blocking": true,
-      "_comment": "zone NAME in source (Darkshore) normalises to the same map_id 1439 as tasks 0-2",
       "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
       "applies_when": { "type": "QuestInLog", "payload": { "id": 984 } },
-      "complete_when": { "type": "QuestObjective",
-                         "payload": { "id": 984, "index": 1, "need": 0 } },
+      "complete_when": { "type": "QuestObjective", "payload": { "id": 984, "index": 1, "need": 0 } },
       "abort_when": null,
       "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 60 } },
       "ops": [
-        { "type": "Travel",
-          "payload": { "route": { "kind": { "type": "Destination" },
-                                  "mode": "Any", "points": [20], "radii": [5] } } }
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Destination" },
+              "mode": "Any",
+              "points": [20],
+              "radii": [5]
+            }
+          }
+        }
       ],
-      "interact_target": null, "combat": null, "loot_filter": [],
-      "serves_quests": [984], "suppress": [], "jump_to": null,
+      "interact_target": null,
+      "combat": null,
+      "loot_filter": [],
+      "serves_quests": [984],
+      "suppress": [],
+      "jump_to": null,
       "source": { "file": "A-11-23.lua", "line_start": 261, "line_end": 264 }
     },
 
     {
       "id": 4,
-      "_comment": "P1 — THE MULTI-DEPENDENCY TASK. Source lines 265-268 are the author's XXREQ hack: an empty #optional step carrying #requires, used because RXP allows only one requires per step. The compiler folds the placeholder away and emits BOTH predecessors directly in deps.",
-      "deps": [2, 0],
+      "deps": [2],
       "blocking": false,
-      "lifetime": { "type": "Exclusive" },
-      "completion": { "type": "OwnPredicate" },
-      "applies_when": null,
-      "complete_when": {
-        "type": "And",
-        "payload": [
-          { "type": "QuestObjective", "payload": { "id": 2118, "index": 1, "need": 1 } },
-          { "type": "QuestObjective", "payload": { "id": 983,  "index": 1, "need": 6 } }
-        ]
-      },
-      "abort_when": null,
-      "unknown_policy": { "type": "Block" },
-      "ops": [],
-      "interact_target": null, "combat": null, "loot_filter": [],
-      "serves_quests": [2118, 983], "suppress": [], "jump_to": null,
-      "source": { "file": "A-11-23.lua", "line_start": 265, "line_end": 268 }
-    },
-
-    {
-      "id": 5,
-      "deps": [],
-      "blocking": false,
-      "_comment": "#optional + .xp 10+6760 -> fallback grind objective",
       "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
       "applies_when": null,
@@ -2089,68 +2348,100 @@ real artifact carries none of them.
       "interact_target": null,
       "combat": {
         "stance": { "type": "Aggressive" },
-        "targets": [], "watch_units": [], "leash_yards": 40,
-        "allow_adds": true, "expect_group": { "type": "Solo" }
+        "targets": [],
+        "watch_units": [],
+        "leash_yards": 40,
+        "allow_adds": true,
+        "expect_group": { "type": "Solo" }
       },
-      "loot_filter": [], "serves_quests": [], "suppress": [], "jump_to": null,
-      "source": { "file": "A-11-23.lua", "line_start": 269, "line_end": 271 }
+      "loot_filter": [],
+      "serves_quests": [],
+      "suppress": [],
+      "jump_to": null,
+      "source": { "file": "A-11-23.lua", "line_start": 265, "line_end": 271 }
     },
 
     {
-      "id": 6,
+      "id": 5,
       "deps": [],
       "blocking": true,
-      "_comment": "#completewith next -> CompletionSource::LinkedTo(7). Rides along with no channels of its own.",
       "lifetime": {
         "type": "Background",
-        "payload": { "channels": [], "band": 30,
-                     "terminate_on": { "type": "InArea",
-                                       "payload": { "area": 442, "kind": "SubArea" } } }
+        "payload": {
+          "channels": [],
+          "band": 30,
+          "terminate_on": { "type": "InArea", "payload": { "area": 442, "kind": "SubArea" } }
+        }
       },
-      "completion": { "type": "LinkedTo", "payload": 7 },
+      "completion": { "type": "LinkedTo", "payload": 6 },
       "applies_when": null,
       "complete_when": { "type": "InArea", "payload": { "area": 442, "kind": "SubArea" } },
       "abort_when": null,
       "unknown_policy": { "type": "Defer", "payload": { "budget_ticks": 30 } },
       "ops": [],
-      "interact_target": null, "combat": null, "loot_filter": [],
-      "serves_quests": [], "suppress": [], "jump_to": null,
+      "interact_target": null,
+      "combat": null,
+      "loot_filter": [],
+      "serves_quests": [],
+      "suppress": [],
+      "jump_to": null,
       "source": { "file": "A-11-23.lua", "line_start": 272, "line_end": 275 }
     },
 
     {
-      "id": 7,
+      "id": 6,
       "deps": [0],
       "blocking": true,
-      "_comment": "#requires BuzzBox1 -> deps [0]. Turn-in target is GAMEOBJECT 17182, so interact_target is null and the op carries the object. Verified: quest 983 ender is gameobject_involvedrelation 17182.",
       "lifetime": { "type": "Exclusive" },
       "completion": { "type": "OwnPredicate" },
-      "applies_when":  { "type": "QuestComplete", "payload": { "id": 983 } },
+      "applies_when": { "type": "QuestComplete", "payload": { "id": 983 } },
       "complete_when": { "type": "QuestTurnedIn", "payload": { "id": 983 } },
       "abort_when": null,
       "unknown_policy": { "type": "Block" },
       "ops": [
-        { "type": "Travel",
-          "payload": { "route": { "kind": { "type": "Destination" },
-                                  "mode": "Any", "points": [21], "radii": [5] } } },
-        { "type": "TurnIn",
-          "payload": { "quest": 983, "any_of": [], "reward_choice": null,
-                       "optional": false, "repeatable": false } }
+        {
+          "type": "Travel",
+          "payload": {
+            "route": {
+              "kind": { "type": "Destination" },
+              "mode": "Any",
+              "points": [21],
+              "radii": [5]
+            }
+          }
+        },
+        {
+          "type": "TurnIn",
+          "payload": {
+            "quest": 983,
+            "any_of": [],
+            "reward_choice": null,
+            "optional": false,
+            "repeatable": false
+          }
+        }
       ],
       "interact_target": null,
-      "combat": null, "loot_filter": [], "serves_quests": [983],
-      "suppress": [], "jump_to": null,
+      "combat": null,
+      "loot_filter": [],
+      "serves_quests": [983],
+      "suppress": [],
+      "jump_to": null,
       "source": { "file": "A-11-23.lua", "line_start": 276, "line_end": 280 }
     }
   ]
 }
 ```
 
-**Step types exercised:** `Background`+`Circuit` sticky loop with declared channels (task 0, 2),
-`Exclusive` objective task (1, 3), multi-dependency task (4), fallback grind (5),
-`CompletionSource::LinkedTo` fused task (6), and a dependency-gated turn-in against a gameobject (7).
+**Step types exercised:** `Background`+`Circuit` sticky loop with declared channels (tasks 0 and 2),
+`Exclusive` objective task (1, 3), the XXREQ fold carrying a folded `#requires` (4), fallback grind
+(4, the same task), `CompletionSource::LinkedTo` ride-along with empty channels (5), and a
+dependency-gated turn-in against a gameobject (6). Four distinct `unknown_policy` values appear
+across the seven tasks — `Defer{60}`, `TreatFalse`, `Defer{30}`, `Block` — which is the whole
+evidence base in this document for §5.1.2's per-task rule.
 `Op::Travel`, `Op::UseItem`, `Op::TurnIn` all appear; `Op::Delegate` is shown in §5.5 rather than here
-because this excerpt contains no vendor/flight/hearth step.
+because this excerpt contains no vendor/flight/hearth step — and, per §1.2, is emitted by nothing at
+all yet.
 
 ----------
 
@@ -2158,7 +2449,7 @@ because this excerpt contains no vendor/flight/hearth step.
 
 | Edge case | Schema mechanism | ADR-000 subsystem |
 |---|---|---|
-| **Multi-predecessor chains across non-adjacent steps** | `Task.deps: Vec<TaskId>` — plural in the struct (§7.1, task 4). Compiler folds the XXREQ placeholder and emits both edges. | Quest Activity cursor |
+| **Multi-predecessor chains across non-adjacent steps** | `Task.deps: Vec<TaskId>` — plural in the struct (§7.1). Compiler folds the XXREQ placeholder into its successor and carries the edge with it. §7.3.3's excerpt is **not** a witness for the plural case: after the fold no task in it carries two deps (§9 item 28); the justification is §2.5's authoring measurement, not an artifact printed here. | Quest Activity cursor |
 | **Grind/patrol loops on dynamic conditions** | `RouteKind::Circuit` + `complete_when` predicate. `#loop`+`.mob`+`.complete` → `Aggressive` stance with an objective predicate (§7.3, task 0). | ControlBroker (`MOVEMENT`), `service.combat` |
 | **Group/party content and tag contention** | `CombatPolicy.expect_group` (`Solo`/`Party{n}`/`Dungeon`). `.group` 190, `.solo` 13. Tag contention is **not schema-solvable** — the schema exposes `targets` and `allow_adds` so the combat service can decide to abandon a tagged mob; the retry budget lives in the runtime. | `service.combat`, ControlBroker `TARGETING` |
 | **Escort quests** | **Not expressible in the source DSL.** Escorts appear only as `>>` display prose (`A-23-30.lua:2017` "Escort Corporal Keeshan back to Lakeshire"). The schema exposes `Op::Interact` with `GossipPolicy` to *start* one (`.gossip 6669,0`, `A-11-23.lua:3661`) and `complete_when` to detect the outcome, but following/protecting the NPC is a behaviour the kernel must own. Flagged in §9 as a genuine gap. | Would need a new `behavior.escort` |
@@ -2172,7 +2463,7 @@ because this excerpt contains no vendor/flight/hearth step.
 | **Vendor / restock / bank / hearth / flight** | `Op::Delegate` with typed `DelegatePayload` (§5.5). Five of the six behaviours do not yet exist (K3). | §3.2 built-in behaviours |
 | **Dungeon steps** | `.dungeon` (1,351) is a **compile-time archetype gate**, not a runtime branch — a dungeon run is a different artifact, not a conditional inside the solo path. `expect_group: Dungeon` sets the combat policy. | Compiler; `service.combat` |
 | **Daily quests in a solo leveling path** | `Op::Accept { repeatable: true }` / `Op::TurnIn { repeatable: true }` from `.daily`/`.dailyturnin`. `QuestTurnedIn` is unreliable for repeatables (a daily retaken after completion reads true on both `is_on_quest` and `is_quest_flagged_completed`), so the compiler emits `QuestInLog` as the gate for repeatables instead. | `Sentinel.objectives` |
-| **Fallback grinding when quests run dry** | `.xp` (2,133) → `Predicate::XpAtLeast` on a non-blocking task with `Aggressive` stance and an empty whitelist (§7.3, task 5). | `service.combat` |
+| **Fallback grinding when quests run dry** | `.xp` (2,133) → `Predicate::XpAtLeast` on a non-blocking task with `Aggressive` stance and an empty whitelist (§7.3.3, task 4). | `service.combat` |
 | **Faction-choice branches (`#aldor`/`#scryer`)** | `Archetype.allegiance`, resolved at compile time. The choice is irreversible in-game, so a runtime branch would be dead weight. The choice *point* itself is `Op::TurnIn { any_of: [10551, 10552] }` from `.turninmultiple`. | Compiler |
 | **Content phasing (`#phase`)** | `Archetype.content_phase`. | Compiler |
 | **Hardcore / softcore / SSF variants** | `Archetype.hardcore`, `Archetype.self_found`, plus `#hardcoreserver`/`#softcoreserver` for realm type. | Compiler |
@@ -2282,11 +2573,18 @@ because this excerpt contains no vendor/flight/hearth step.
 
 **Internal discrepancies found by the R1 model audit.**
 
-Items 1–7 above are corpus semantics that could not be determined from the evidence. Items 21–24
-and 26 below are different in kind: authoring errors in *this* document with a determinate right
-answer, surfaced by building the §7.1 model and testing it against §7.3.3. All five are resolved in
-place, above, and are recorded here only so the correction is traceable. Item 25 is a genuine open
-question that the same audit exposed but cannot settle from this document.
+Items 1–7 above are corpus semantics that could not be determined from the evidence. Items 21–24,
+26, 27 and 28 below are different in kind: authoring errors in *this* document with a determinate
+right answer, surfaced by building the §7.1 model, driving the real lowering against §7.3.3, and
+finally pinning the two with a test. All are resolved in place, above, and are recorded here only so
+the correction is traceable. Item 25 is a genuine open question that the same audit exposed but
+cannot settle from this document.
+
+The three waves are worth distinguishing, because each found what the previous one could not:
+**items 21–24 and 26** came from building a model and reading it against the printed listing;
+**item 27** came from compiling the corpus excerpt for real, which is the only thing that can catch a
+coordinate transform or a `#displayname`/`#name` confusion; **item 28** came from asking why any of
+this drifted, and the answer was that the specification existed twice.
 
 21. **§7.3.3's task 0 route was one point too long — resolved.** `A-11-23.lua:215–231` is 3 `.goto`
     (radius 0) plus 14 `.waypoint` (radius 60) = **17** route points, not 18. That route-length
@@ -2300,11 +2598,20 @@ question that the same audit exposed but cannot settle from this document.
     collapse untouched; task 2's two do not, and that collapse will take its route from 8 points to
     6. Nothing was invented in either correction (§7.3.2). §7.3.1's own elisions were already correct
     and are unchanged.
-22. **§7.3.3 was not a loadable artifact as printed — resolved.** §7.2's root `required` array names
-    `waypoint_pool` and `defaults`; the listing printed neither, so the worked example could not
-    satisfy its own schema. Both are now present, with **22 distinct real coordinates drawn from the
-    28 source route lines** of `A-11-23.lua:211–280` (item 26), every one of them taken from the
-    corpus.
+22. **§7.3.3 was not a loadable artifact as printed — resolved, but only at item 28.** §7.2's root
+    `required` array names `waypoint_pool` and `defaults`; the listing printed neither, so the worked
+    example could not satisfy its own schema. Both are now present, with **22 distinct real
+    coordinates drawn from the 28 source route lines** of `A-11-23.lua:211–280` (item 26), every one
+    of them taken from the corpus.
+
+    **This item claimed "resolved" for two revisions while the listing still would not load**, in two
+    independent ways it did not check: both digests were printed as prose (`"<blake3-of-tagset>"` is
+    20 characters and `"<blake3-of-resolved-ids>"` 25, against §7.2's `^[0-9a-f]{64}$`), and seven
+    `_comment` keys survived against a `deny_unknown_fields` root — guarded only by a sentence saying
+    a real artifact carries none of them, which is not a mechanism. Adding the two missing *fields*
+    was necessary and not sufficient. Loadability is now **checked rather than claimed**:
+    `shared/tests/kernel_adr_listing.rs::the_adr_listing_loads_into_the_kernel_model` extracts the
+    fence and deserializes it into `RuntimeProfile` (item 28).
     The `defaults` block takes its *shape* from §5.1.2 (`Defer` is the default for `complete_when`)
     and §5.6 (`stance: Defensive`), but two of its magnitudes — `leash_yards: 40` and
     `budget_ticks: 60` — are stated in **no** section of this ADR and originate in the worked example
@@ -2375,6 +2682,68 @@ question that the same audit exposed but cannot settle from this document.
     consequence, and interning changes no route's length. That route-level collapse is a **separate,
     later deliverable**; §7.3.3 demonstrates the pool interning of §7.1 and §6.4 alone.
 
+27. **§7.3.3's worked example was wrong in four more ways, all corpus-determinate — resolved.** A
+    second audit wave, run while the real lowering
+    (`parse_guide` → `ProjectBuilder` → `Compiler::compile_kernel`) was built against the section:
+
+    - **The pool stored authored percentages wearing ui map id `1439`** on all 22 entries. That is
+      §2.6's own **named bug signature** (search: `a percentage that survived compilation wearing a
+      ui map id`) — the section demonstrated the failure another section of the same document names.
+      Every entry now carries `map_id: 1` (Kalimdor) and world `x`/`y` from
+      `ZoneMap::to_world` (`SentinelQuesting/shared/src/zone.rs`).
+    - **Eight tasks, not seven.** The `--XXREQ` placeholder at `A-11-23.lua:265–268` was printed as a
+      task of its own. The compiler folds it into its successor, so the excerpt is **seven** tasks
+      and every index from 4 upward shifted down by one. Two consequences the old numbering hid: the
+      excerpt's single `#requires BuzzBox1` was spent **twice** (once on the placeholder, once on the
+      turn-in that actually names it), and `deps: [2, 0]` — this document's only printed
+      multi-predecessor task — does not exist. See item 28 for the citations that were withdrawn.
+    - **Route `mode` was `Ground`.** §7.1's own `TravelMode` annotation sends `.goto` / `.waypoint`
+      to `Any` and reserves `Ground` for `.groundgoto` (114 instances, none in this excerpt).
+    - **`meta.name` was `10-14 Darkshore`.** That string is a `#displayname` gated
+      `<< Dwarf Hunter`; `#name` is `12-14 Darkshore`, and `GuideMeta.name` reads `#name`. The
+      archetype §7.3.3 resolves for is a *Night Elf* Hunter. `meta.next` was `[]` against a
+      `#next 14-20 Bloodmyst` in the source.
+
+    `tags_used` also lost `And` with the fold, leaving **nine** tags, and is emitted sorted (§5.4).
+
+28. **§7.3.3 was hand-maintained beside a second copy of itself, and drifted 136 leaf paths —
+    resolved structurally, not by patching.** `shared/tests/fixtures/adr07_worked_example.json` holds
+    the same artifact as a loadable file, and it is the one that is right: it is derived from the
+    corpus, its ids are verified against `tbcmangos.sqlite` (§7.3.2), and
+    `compiler/tests/kernel_worked_example.rs` drives the real lowering into it field by field. The
+    two copies were maintained by hand and diverged on **136 leaf paths** — items 26 and 27's
+    findings plus every index they shifted.
+
+    Patching 136 values by hand is how the 137th appears, so the fix is not a patch. **§7.3.3's
+    listing is now the fixture, and three tests refuse to let them part again**
+    (`shared/tests/kernel_adr_listing.rs`): the fence must parse, must load into
+    `sentinel_models::kernel::RuntimeProfile`, and must compare equal to the fixture leaf by leaf.
+    Editing either side alone fails. That guard, not the corrected values, is the deliverable — the
+    values were only ever a symptom of there being two of them.
+
+    Four further claims in this document were false and are corrected in place:
+
+    - **§5.4, §7.1 and §10 item 7 each said the 21 leaf vocabulary enums "carry no payload".** False
+      since `ProfileMode::Dungeon { instance: DungeonId }` landed: 21 of **22** carry none, and
+      `archetype.mode` is a bare string for two variants and an externally tagged object for the
+      third. §10 item 7's self-verification restated the claim and so passed on a false premise.
+    - **`DungeonId` was referenced but never declared.** `ProfileMode` above named the type, and its
+      19 variants existed only inside a `//` comment — no declaration in §7.1, no `$defs` entry, and
+      §7.2 had **no `archetype` schema at all**, so `ProfileMode::Dungeon`'s wire shape was written
+      down nowhere. All three now exist, and
+      `shared/tests/kernel_wire_shape.rs::profile_mode_dungeon_is_externally_tagged_and_carries_a_dungeon_id`
+      pins the shape the schema claims.
+    - **§5.6's "16,438 of 23,894 tasks carry no combat token" subtracted an instance count from a
+      step count.** `23,894 − 7,456` treats `.mob`'s 7,456 *instances* as 7,456 steps; it occurs on
+      only 3,526 distinct steps. Measured, 18,404 steps (77.0%) carry none of
+      `.mob` / `.unitscan` / `.solo` / `.group` / `.dungeon`, 19,718 carry neither `.mob` nor
+      `.unitscan`, and 20,368 carry no `.mob`. The bad figure had been copied into
+      `shared/src/kernel/profile.rs` and `shared/src/kernel/task.rs` doc comments and is corrected
+      there too. The argument it supports is unaffected and gets stronger.
+    - **Delivery state was stated nowhere**, so every "the compiler emits", "the kernel refuses" and
+      "the runtime probes" in §5 read as description. §1.2 now measures what is designed against what
+      is delivered.
+
 ----------
 
 # 10. Self-verification
@@ -2384,12 +2753,12 @@ Run before finishing. Failures were fixed, not reported.
 | # | Check | Result |
 |---|---|---|
 | 1 | Disposition table contains all 74 commands and all 48/49 directives | **PASS — 74/74 commands, 49/49 directives.** Verified programmatically: every corpus token has exactly one verdict, no token missing, no verdict for a non-existent token. The 49th is `#completewithTBTurnins`, reconciled against the stated 48 in §2.2. |
-| 2 | Every mechanism promised in rationale exists in the formal schema *and* the Rust structs | **PASS.** Spot-checked the ones most likely to be prose-only: multi-dependency → `Task.deps: Vec<TaskId>` (§7.1) and exercised in §7.3 task 4; tri-state → `UnknownPolicy` enum + `Task.unknown_policy`; resume granularity → `ResumeCursor` with all four fields; content integrity → `ContentIntegrity` struct + `expect_name` on `NpcRef`; channels → `Lifetime::Background.channels`. All appear in both §7.1 and §7.2. |
+| 2 | Every mechanism promised in rationale exists in the formal schema *and* the Rust structs | **PASS on presence, with one witness withdrawn.** Spot-checked the ones most likely to be prose-only: multi-dependency → `Task.deps: Vec<TaskId>` (§7.1) — *declared* there, but **no longer exercised in §7.3.3**: the `--XXREQ` fold leaves every task in that excerpt with at most one dep, so the earlier "exercised in §7.3 task 4" is withdrawn (§9 item 28). The field's justification is §2.5's authoring measurement and the fold itself; `compiler/tests/kernel_task_graph.rs` is where plurality is exercised executably. tri-state → `UnknownPolicy` enum + `Task.unknown_policy`; resume granularity → `ResumeCursor` with all four fields; content integrity → `ContentIntegrity` struct + `expect_name` on `NpcRef`; channels → `Lifetime::Background.channels`. All appear in both §7.1 and §7.2. |
 | 3 | Every game ID in the worked example traceable to a real corpus line, with citation | **PASS.** 13 IDs, each with a corpus `file:line` **and** an independent `tbcmangos.sqlite` name lookup (§7.3.2). Nothing invented. Three structural cross-checks also passed (objective count 6 matches the author's comment; quest 983's ender is a gameobject, explaining the absent `.target`; quest 984 has no count columns). |
 | 4 | Worked example violates no exclusion rule stated in this document | **PASS.** The example is archetype-resolved for a Night Elf Hunter and contains no class-gated content — the source region `A-11-23.lua:211–280` carries no `<<` gate on any step or command, so nothing was excluded and nothing class-specific was smuggled in. No dropped token appears in the output. |
 | 5 | `#sticky`/`#completewith` modeled via channels and leases, not desugared, not a background flag, not dropped | **PASS.** `Lifetime::Background { channels, band, terminate_on }` and `CompletionSource::LinkedTo` are **separate fields** on `Task`, justified by the disjointness measurement (§2.4). Tasks 0, 2 and 6 in §7.3 exercise all three combinations. Full lifecycle in §5.3. |
 | 6 | Every runtime condition lowers to a `Predicate`; no second condition system | **PASS.** All three predicate slots on `Task` hold the same type. `Cmp` is a shared operator enum, not a parallel language. Static gates do not survive compilation (§5.2), so they are not a second system either. |
-| 7 | Every **dispatched** sum type adjacently tagged; `schema_hash` / `tags_used` / content-integrity present | **PASS — restated by the R1 model audit (§9 item 23).** The original claim, "all enums adjacently tagged", was false: §7.1 also declares 21 **leaf vocabulary** enums that serialise as bare strings, exactly as §7.3.3 prints them (`"class": "Hunter"`, `"mode": "Ground"`, `"kind": "SubArea"`, `"channels": ["MOVEMENT"]`). The rule is by **role**, not arity. The eleven sum types the kernel dispatches on — `Lifetime`, `CompletionSource`, `UnknownPolicy`, `Op`, `RouteKind`, `GossipPolicy`, `DelegatePayload`, `CombatStance`, `GroupExpectation`, `Cmp`, `Predicate` — each carry `#[serde(tag = "type", content = "payload")]`, including `Cmp`, `CombatStance` and `GroupExpectation` where every variant happens to be a unit variant; the JSON Schema mirrors them with `{type, payload}` and an explicit `$comment`. Root has `schema_hash`, `tags_used`, and `integrity: ContentIntegrity`. |
+| 7 | Every **dispatched** sum type adjacently tagged; `schema_hash` / `tags_used` / content-integrity present | **PASS — restated twice, at §9 item 23 and again at §9 item 28.** The original claim, "all enums adjacently tagged", was false: §7.1 also declares **22** leaf vocabulary enums that are not, and that serialise as bare strings exactly as §7.3.3 prints them (`"class": "Hunter"`, `"mode": "Any"`, `"kind": "SubArea"`, `"channels": ["MOVEMENT"]`). Item 23's restatement then introduced a second false premise of its own — that all of those "carry no payload" — which this row repeated: `ProfileMode::Dungeon { instance: DungeonId }` carries one, so **21 of the 22** do and `archetype.mode` is externally tagged for the third. The rule is by **role**, not arity, in both directions: `Cmp` is tagged with no payload, `ProfileMode` is untagged with one. The eleven sum types the kernel dispatches on — `Lifetime`, `CompletionSource`, `UnknownPolicy`, `Op`, `RouteKind`, `GossipPolicy`, `DelegatePayload`, `CombatStance`, `GroupExpectation`, `Cmp`, `Predicate` — each carry `#[serde(tag = "type", content = "payload")]`, including `Cmp`, `CombatStance` and `GroupExpectation` where every variant happens to be a unit variant; the JSON Schema mirrors them with `{type, payload}` and an explicit `$comment`. Root has `schema_hash`, `tags_used`, and `integrity: ContentIntegrity`. |
 | 8 | Unknown/unavailable predicate state handled explicitly, not collapsed to false | **PASS.** `Truth { True, False, Unknown }` (K2) plus a four-way per-task `UnknownPolicy`. `TreatFalse` is never the default for `complete_when`; `TreatTrue` requires explicit opt-in and emits a diagnostic. Grounded in three documented API facts (§5.1.2). |
 | 9 | D5 lists every required kernel change, or states none required | **PASS.** Eight changes, K1–K8, in §5.9, each with an ADR-000 section reference and a forcing reason. Explicitly *not* "none". |
 | 10 | No files created or modified other than this ADR | **PASS.** One file written: `sentinel/docs/adr/07_RUNTIME_PROFILE_SCHEMA.md`. All corpus analysis ran read-only or wrote to the session scratchpad outside the repository. No source file, test, or config touched. |
