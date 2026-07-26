@@ -521,6 +521,9 @@ local test_modules = {
     -- immediate-mode UI can be observed outside the injector.
     "tests/ui/test_theme",
     "tests/ui/test_widgets",
+    -- ADR 09b U5: the Runner panel. Registered after the widget suites because it is built
+    -- entirely out of them -- a widget regression must fail as a widget bug, not as this panel's.
+    "tests/ui/test_runner_panel",
     -- The guard on ui/* staying loadable with no Sylvannas API present. It blanks `_G.core` for
     -- the duration, so it is registered AFTER the suites that consume the real mocked surface.
     "tests/ui/test_offline_loadable",
