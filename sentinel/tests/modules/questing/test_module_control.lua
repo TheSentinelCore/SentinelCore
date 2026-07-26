@@ -91,6 +91,95 @@ function M.test_skip_without_executor_is_a_safe_noop()
 end
 
 -- ============================================================================
+-- Terminal-failure recovery — `failed` used to have no exit.
+--
+-- MEASURED before the fix: `RuntimeProfile:_check_consecutive_failures` sets
+-- `_state = "failed"` at MAX_CONSECUTIVE_FAILURES (3), and `execute()` then returns
+-- "error" on every later tick. `skip_current_step` reset the operation index, action index,
+-- retry counter and wait timers but NOT `_state` and NOT `_consecutive_failures` — so the
+-- cockpit's own recovery verb could not rescue a failed run; only stop() + start() could.
+-- For an unattended bot, three consecutive failing actions ended the session permanently
+-- while `tick` kept re-calling an executor that could only answer "error".
+-- ============================================================================
+
+--- A REAL RuntimeProfile whose first three operations cannot execute (an unknown action type
+--- resolves to "failed" every tick), followed by executable Comment operations so recovery has
+--- somewhere to land. Deliberately NOT dry_run: dry-run mode short-circuits into
+--- `_execute_dry_run` and never reaches the failure state machine under test.
+local function executor_that_fails_three_times()
+    local executor = RuntimeProfile:new("test_failed.json")
+    local function failing_op(id)
+        return { id = id, actions = { { type = "NonExistentType", payload = {} } }, next_condition = "auto" }
+    end
+    local function comment_op(id, text)
+        return { id = id, actions = { { type = "Comment", payload = { text = text } } }, next_condition = "auto" }
+    end
+    executor._profile = {
+        content_hash = "test",
+        operations = {
+            failing_op(1), failing_op(2), failing_op(3),
+            comment_op(4, "recovered"), comment_op(5, "still going"),
+        },
+    }
+    return executor
+end
+
+--- Tick the module until its executor reaches the terminal `failed` state (bounded, so a
+--- regression that never fails reports as an assertion rather than hanging the suite).
+local function drive_until_failed(m)
+    for _ = 1, 20 do
+        if m._executor._state == "failed" then return end
+        m:tick(0.1)
+    end
+end
+
+function M.test_three_consecutive_failures_end_the_run()
+    local m = QuestingModule:new(Blackboard:new(), EventBus:new())
+    m._executor = executor_that_fails_three_times()
+    m._enabled = true
+    drive_until_failed(m)
+
+    T.assert_equal(m._executor._state, "failed",
+        "three consecutive action failures must drive the executor into `failed`")
+    T.assert_true(m._executor._consecutive_failures >= 3,
+        "the consecutive-failure tally is what tripped the terminal state")
+    T.assert_equal(select(1, m._executor:execute()), "error",
+        "`failed` is terminal -- every later execute() answers error, so the run is over")
+end
+
+function M.test_tick_pauses_the_run_on_executor_error_instead_of_spinning()
+    local bus = EventBus:new()
+    local published = {}
+    bus:subscribe("questing:failed", function(payload) published[#published + 1] = payload end)
+    local m = QuestingModule:new(Blackboard:new(), bus)
+    m._executor = executor_that_fails_three_times()
+    m._enabled = true
+    drive_until_failed(m)
+    m:tick(0.1) -- the first tick that observes status == "error"
+
+    T.assert_equal(m:is_paused(), true,
+        "an errored executor must park the run, not be re-executed every tick forever")
+    T.assert_equal(#published, 1,
+        "the cockpit learns about the terminal failure through exactly one questing:failed event")
+end
+
+function M.test_skip_current_step_recovers_a_failed_run()
+    local m = QuestingModule:new(Blackboard:new(), EventBus:new())
+    m._executor = executor_that_fails_three_times()
+    m._enabled = true
+    drive_until_failed(m)
+    T.assert_equal(m._executor._state, "failed", "precondition: the run really is failed")
+
+    T.assert_equal(m:skip_current_step(), true, "skip succeeds on a failed run")
+    T.assert_equal(m._executor._state, "running",
+        "skip must clear the terminal state -- otherwise the only exit is stop() + start()")
+    T.assert_equal(m._executor._consecutive_failures, 0,
+        "a stale failure tally would re-trip `failed` on the very next single failure")
+    T.assert_true(select(1, m._executor:execute()) ~= "error",
+        "after recovery the executor executes again rather than answering error")
+end
+
+-- ============================================================================
 -- guardrails — unattended safety, the reason this is production-shaped
 -- ============================================================================
 
@@ -501,6 +590,9 @@ local tests = {
     test_stop_clears_the_executor = M.test_stop_clears_the_executor,
     test_skip_current_step_advances_the_operation = M.test_skip_current_step_advances_the_operation,
     test_skip_without_executor_is_a_safe_noop = M.test_skip_without_executor_is_a_safe_noop,
+    test_three_consecutive_failures_end_the_run = M.test_three_consecutive_failures_end_the_run,
+    test_tick_pauses_the_run_on_executor_error_instead_of_spinning = M.test_tick_pauses_the_run_on_executor_error_instead_of_spinning,
+    test_skip_current_step_recovers_a_failed_run = M.test_skip_current_step_recovers_a_failed_run,
     test_guardrail_trip_auto_pauses_the_run = M.test_guardrail_trip_auto_pauses_the_run,
     test_guardrail_below_limit_keeps_running = M.test_guardrail_below_limit_keeps_running,
     test_list_profiles_returns_json_stems_only = M.test_list_profiles_returns_json_stems_only,

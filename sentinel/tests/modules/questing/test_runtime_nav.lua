@@ -207,6 +207,118 @@ function M.test_travel_zone_only_no_position()
     T.assert_equal(result, "blocked", "Travel should return blocked when no position known")
 end
 
+-- ============================================================================
+-- The origin-waypoint trap.
+--
+-- The compiler used to lower a Travel with no resolved position to
+-- `RuntimeWaypoint::new(0, 0.0, 0.0, 0.0)` — world origin on map 0. `execute_travel` branched on
+-- `elseif target.world_x then`, and `0` is TRUTHY in LuaJIT, VERIFIED:
+--
+--     $ luajit -e 'if 0 then print("0 is TRUTHY in LuaJIT") else print("0 is falsy") end'
+--     0 is TRUTHY in LuaJIT
+--
+-- so the sentinel was accepted as a real destination, the zone-name fallback beneath that branch
+-- was structurally unreachable, and the bot flew to (0, 0, 0). The producer now emits an
+-- `(unresolved position)` Comment instead (SentinelQuesting/compiler/src/lib.rs, `Travel` arm);
+-- these lock the consumer side as redundancy for profiles compiled before that fix — and they
+-- check VALUES, because truthiness cannot express the difference.
+-- ============================================================================
+
+--- A nav mock that records whether move_to was ever asked for anything.
+local function recording_nav()
+    return {
+        _active = false,
+        _moved_to = nil,
+        _state = "idle",
+        is_active = function(self) return self._active end,
+        move_to = function(self, target)
+            self._moved_to = target
+            self._active = true
+            self._state = "requesting_path"
+            return true
+        end,
+        poll = function(self) return self._state, {} end,
+        stop = function(self) self._active = false self._state = "idle" end,
+        get_state = function(self) return self._state end,
+    }
+end
+
+function M.test_travel_refuses_to_navigate_to_the_origin_waypoint_sentinel()
+    local ctx = mock_context({
+        is_at_destination = function() return false end,
+        get_zone_waypoint = function() return nil end, -- the zone is unknown too
+    })
+    ctx.nav = recording_nav()
+
+    local action = { type = "Travel", payload = {
+        destination = "UnknownZone",
+        position = { map = 0, world_x = 0, world_y = 0, world_z = 0 },
+    } }
+    local result = RuntimeAction.execute(action, ctx)
+
+    T.assert_equal(result, "blocked",
+        "a zeroed waypoint is not a destination -- Travel must block, not fly to world origin")
+    T.assert_equal(ctx.nav._moved_to, nil,
+        "move_to must never be issued for (0, 0) on map 0")
+end
+
+function M.test_travel_falls_back_to_the_zone_waypoint_when_the_position_is_zeroed()
+    local ctx = mock_context({
+        is_at_destination = function() return false end,
+        get_zone_waypoint = function() return { x = 100, y = 200, z = 30 } end,
+    })
+    ctx.nav = recording_nav()
+
+    local action = { type = "Travel", payload = {
+        destination = "Elwynn Forest",
+        position = { map = 0, world_x = 0, world_y = 0, world_z = 0 },
+    } }
+    RuntimeAction.execute(action, ctx)
+
+    T.assert_not_nil(ctx.nav._moved_to,
+        "rejecting the sentinel must make the zone-name fallback reachable, not dead-end the action")
+    T.assert_equal(ctx.nav._moved_to.x, 100, "the zone waypoint is the destination actually used")
+    T.assert_equal(ctx.nav._moved_to.y, 200)
+end
+
+function M.test_travel_accepts_a_real_coordinate_with_one_zero_axis()
+    -- Only x == 0 AND y == 0 together are the sentinel. A single zero axis is a perfectly
+    -- ordinary WoW coordinate and must not be rejected as unresolved.
+    local ctx = mock_context({
+        is_at_destination = function() return false end,
+        get_zone_waypoint = function() return nil end,
+    })
+    ctx.nav = recording_nav()
+
+    local action = { type = "Travel", payload = {
+        destination = "Elwynn Forest",
+        position = { map = 0, world_x = 0, world_y = -132.49, world_z = 83.53 },
+    } }
+    RuntimeAction.execute(action, ctx)
+
+    T.assert_not_nil(ctx.nav._moved_to, "x == 0 with a real y is a legitimate destination")
+    T.assert_equal(ctx.nav._moved_to.x, 0)
+    T.assert_equal(ctx.nav._moved_to.y, -132.49)
+end
+
+function M.test_travel_refuses_the_legacy_zeroed_position_shape_too()
+    -- The legacy {x, y, z} branch has the identical hazard; both shapes go through one predicate.
+    local ctx = mock_context({
+        is_at_destination = function() return false end,
+        get_zone_waypoint = function() return nil end,
+    })
+    ctx.nav = recording_nav()
+
+    local action = { type = "Travel", payload = {
+        destination = "UnknownZone",
+        position = { x = 0, y = 0, z = 0 },
+    } }
+    local result = RuntimeAction.execute(action, ctx)
+
+    T.assert_equal(result, "blocked", "a zeroed legacy position must block just like the new shape")
+    T.assert_equal(ctx.nav._moved_to, nil, "move_to must never be issued for (0, 0)")
+end
+
 function M.test_travel_polls_for_arrival()
     local nav_mock = nil
     local ctx = mock_context({
@@ -546,6 +658,10 @@ local tests = {
     test_travel_already_at_destination = M.test_travel_already_at_destination,
     test_travel_starts_navigation = M.test_travel_starts_navigation,
     test_travel_zone_only_no_position = M.test_travel_zone_only_no_position,
+    test_travel_refuses_to_navigate_to_the_origin_waypoint_sentinel = M.test_travel_refuses_to_navigate_to_the_origin_waypoint_sentinel,
+    test_travel_falls_back_to_the_zone_waypoint_when_the_position_is_zeroed = M.test_travel_falls_back_to_the_zone_waypoint_when_the_position_is_zeroed,
+    test_travel_accepts_a_real_coordinate_with_one_zero_axis = M.test_travel_accepts_a_real_coordinate_with_one_zero_axis,
+    test_travel_refuses_the_legacy_zeroed_position_shape_too = M.test_travel_refuses_the_legacy_zeroed_position_shape_too,
     test_travel_polls_for_arrival = M.test_travel_polls_for_arrival,
 
     test_kill_npc_in_range = M.test_kill_npc_in_range,

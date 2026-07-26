@@ -548,18 +548,51 @@ end
 -- its horizontal-arrival logic was inlined directly into execute_travel (below) instead. Verified
 -- no requirer anywhere in sentinel/ before removal.
 
+--- Is a compiled position actually navigable, or is it the origin sentinel?
+---
+--- PROVEN: the compiler's `Travel` arm used to lower an action with no resolved position to
+--- `RuntimeWaypoint::new(0, 0.0, 0.0, 0.0)` — world origin on map 0, structurally
+--- indistinguishable from a real destination on the wire. Every consumer tested TRUTHINESS
+--- (`elseif target.world_x then`), and `0` is TRUTHY in LuaJIT:
+---
+---     $ luajit -e 'if 0 then print("0 is TRUTHY in LuaJIT") else print("0 is falsy") end'
+---     0 is TRUTHY in LuaJIT
+---
+--- so the sentinel was always accepted, the zone-name fallback beneath that branch was
+--- structurally unreachable, and the character flew to (0, 0, 0). The producer no longer emits
+--- this shape (SentinelQuesting/compiler/src/lib.rs lowers it to an `(unresolved position)`
+--- Comment plus an `UNRESOLVED_POSITION` diagnostic), so this predicate is redundancy for
+--- already-compiled profiles — which is exactly why it must check VALUES, not truthiness.
+---
+--- Only x == 0 AND y == 0 together are the sentinel: a single zero axis is an ordinary WoW
+--- coordinate and is accepted. Reads both the legacy `{x,y,z}` and compiler `{world_x,…}` shapes;
+--- `pos.x or pos.world_x` is safe precisely because 0 is truthy here.
+--- @param pos table|nil
+--- @return boolean
+function RuntimeAction.is_navigable_position(pos)
+    if type(pos) ~= "table" then return false end
+    local x = tonumber(pos.x or pos.world_x)
+    local y = tonumber(pos.y or pos.world_y)
+    if x == nil or y == nil then return false end
+    return not (x == 0 and y == 0)
+end
+
 function RuntimeAction.execute_travel(payload, ctx)
     local dest   = payload.destination    -- string zone name (e.g. "Elwynn Forest")
     local tol    = payload.tolerance or 5.0
     local target = payload.position       -- {x, y, z} from compiler (preferred)
 
-    -- Resolve target position: prefer explicit coords, fall back to zone waypoint
+    -- Resolve target position: prefer explicit coords, fall back to zone waypoint.
+    --
+    -- The fallback is a plain `if not target_pos`, not an `elseif` on the position table: an
+    -- unnavigable position (see is_navigable_position — the origin sentinel) must let the
+    -- zone-name lookup run, which the old `elseif` made structurally impossible.
     local target_pos = nil
-    if type(target) == "table" then
+    if type(target) == "table" and RuntimeAction.is_navigable_position(target) then
         if target.x then
             -- Legacy format: {x, y, z}
             target_pos = { x = target.x, y = target.y, z = target.z }
-        elseif target.world_x then
+        else
             -- New format from compiler: {world_x, world_y, world_z, map}. Guides supply no Z, so
             -- world_z is 0 and must be lifted onto the terrain before any distance check.
             target_pos = {
@@ -568,7 +601,8 @@ function RuntimeAction.execute_travel(payload, ctx)
                 z = RuntimeAction.resolve_ground_z(target.world_x, target.world_y, target.world_z),
             }
         end
-    elseif type(dest) == "string" then
+    end
+    if not target_pos and type(dest) == "string" then
         target_pos = ctx:get_zone_waypoint(dest)
     end
 

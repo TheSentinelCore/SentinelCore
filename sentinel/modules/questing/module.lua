@@ -288,6 +288,21 @@ function QuestingModule:tick(delta)
         self._counted_death = false
     end
 
+    -- Terminal failure. `error` is what RuntimeProfile answers once `_state == "failed"`, and it
+    -- answers the same thing on every later tick — nothing about re-executing changes it. Park the
+    -- run and tell the cockpit ONCE instead of spinning an executor that can no longer progress.
+    -- Recovery is skip_current_step (which clears the terminal state) followed by resume.
+    if status == "error" then
+        self:pause()
+        self._event_bus:publish("questing:failed", {
+            reason = message,
+            path = self._executor._json_path,
+            consecutive_failures = self._executor._consecutive_failures,
+        })
+        self:_invalidate_view()
+        return
+    end
+
     if status == "finished" then
         -- 1-70 continuity: a completed zone hands off to its RestedXP chain successor for
         -- this character's class. Only when there is no successor (end of chain, no manifest,
@@ -571,11 +586,20 @@ function QuestingModule:stop()
 end
 
 --- Manual recovery: abandon the current operation and move to the next one.
+---
+--- This is also the ONLY exit from the executor's terminal `failed` state. `failed` is entered by
+--- `_check_consecutive_failures` after MAX_CONSECUTIVE_FAILURES (3), after which `execute()` can
+--- only answer "error" forever. Resetting the indices without resetting `_state` left the run just
+--- as dead as before the skip — an unattended bot ended its session on three bad actions and only
+--- stop() + start() could revive it. Clearing `_consecutive_failures` matters just as much: a
+--- carried-over tally of 3 would re-trip `failed` on the very next single failure.
 function QuestingModule:skip_current_step()
     if not self._executor then return false end
     self._executor._current_operation_idx = (self._executor._current_operation_idx or 1) + 1
     self._executor._current_action_idx = 1
     self._executor._current_action_retries = 0
+    self._executor._state = "running"
+    self._executor._consecutive_failures = 0
     -- Releasing the wait timer matters: without it the next gate inherits a stale start time.
     self._executor._wait_started_at = nil
     self._executor._wait_action_key = nil

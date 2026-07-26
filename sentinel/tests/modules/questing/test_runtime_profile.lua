@@ -818,6 +818,59 @@ function M.test_handle_blocked_zone_destination_does_not_double_build_context()
 end
 
 -- ============================================================================
+-- The origin-waypoint trap, second consumer.
+--
+-- `_resolve_nav_target` is a FALLBACK CHAIN: explicit position, then npc_entry, then
+-- object_entry, then creature_entries, then the zone-destination string. A zeroed waypoint
+-- satisfied step 1 (`elseif p.position.world_x then` — and `0` is TRUTHY in LuaJIT, verified with
+-- `luajit -e 'if 0 then print("0 is TRUTHY in LuaJIT") else print("0 is falsy") end'`), so it
+-- shadowed every later step and handed nav the world origin. Rejecting the sentinel by VALUE lets
+-- resolution fall through to the steps that can still answer.
+-- ============================================================================
+
+function M.test_resolve_nav_target_rejects_a_zeroed_waypoint_and_falls_through_to_the_zone()
+    local profile = create_profile(make_profile_ops("Travel", {}))
+    mock_globals()
+    local action = { type = "Travel", payload = {
+        destination = "Elwynn Forest",
+        position = { map = 0, world_x = 0, world_y = 0, world_z = 0 },
+    } }
+
+    local ctx = profile:create_context()
+    ctx.get_zone_waypoint = function(_self, _zone) return { x = 42, y = -7, z = 11 } end
+
+    local target = profile:_resolve_nav_target(action, ctx)
+    T.assert_not_nil(target, "resolution must continue past a zeroed waypoint, not stop at it")
+    T.assert_equal(target.x, 42, "the zone-destination step answers once the sentinel is refused")
+    T.assert_equal(target.y, -7)
+end
+
+function M.test_resolve_nav_target_returns_nil_when_only_a_zeroed_waypoint_is_available()
+    local profile = create_profile(make_profile_ops("Travel", {}))
+    mock_globals()
+    -- No destination string, no npc/object entry: nothing but the sentinel. nil is the only
+    -- honest answer -- returning (0, 0) would send the character across the world.
+    local action = { type = "Travel", payload = {
+        position = { map = 0, world_x = 0, world_y = 0, world_z = 0 },
+    } }
+    T.assert_equal(profile:_resolve_nav_target(action, profile:create_context()), nil,
+        "a zeroed waypoint with no other source must resolve to nil, never to world origin")
+end
+
+function M.test_resolve_nav_target_still_honors_a_real_waypoint_with_one_zero_axis()
+    local profile = create_profile(make_profile_ops("Travel", {}))
+    mock_globals()
+    local action = { type = "Travel", payload = {
+        destination = "Elwynn Forest",
+        position = { map = 0, world_x = 0, world_y = -132.49, world_z = 83.53 },
+    } }
+    local target = profile:_resolve_nav_target(action, profile:create_context())
+    T.assert_not_nil(target, "x == 0 with a real y is a legitimate coordinate")
+    T.assert_equal(target.x, 0)
+    T.assert_equal(target.y, -132.49)
+end
+
+-- ============================================================================
 -- XP1 — `.xp` LevelAtLeast Completion gates: hours-long holds + grind-while-gated
 -- ============================================================================
 
@@ -975,6 +1028,9 @@ local tests = {
     test_create_context_persist_field_is_stable_across_calls = M.test_create_context_persist_field_is_stable_across_calls,
     test_create_context_resets_quest_log_cache_each_call = M.test_create_context_resets_quest_log_cache_each_call,
     test_handle_blocked_zone_destination_does_not_double_build_context = M.test_handle_blocked_zone_destination_does_not_double_build_context,
+    test_resolve_nav_target_rejects_a_zeroed_waypoint_and_falls_through_to_the_zone = M.test_resolve_nav_target_rejects_a_zeroed_waypoint_and_falls_through_to_the_zone,
+    test_resolve_nav_target_returns_nil_when_only_a_zeroed_waypoint_is_available = M.test_resolve_nav_target_returns_nil_when_only_a_zeroed_waypoint_is_available,
+    test_resolve_nav_target_still_honors_a_real_waypoint_with_one_zero_axis = M.test_resolve_nav_target_still_honors_a_real_waypoint_with_one_zero_axis,
 
     -- W4.1
     test_retry_counter_increments = M.test_retry_counter_increments,

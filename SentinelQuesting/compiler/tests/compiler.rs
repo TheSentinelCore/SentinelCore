@@ -275,6 +275,93 @@ fn unresolvable_loot_object_records_diagnostic_and_unresolved_count() {
 }
 
 // ---------------------------------------------------------------------------
+// The origin-waypoint trap.
+//
+// A `Travel` whose authoring `position` is `None` used to lower to
+// `RuntimeWaypoint::new(0, 0.0, 0.0, 0.0)` — a *structurally valid* waypoint aimed at world origin
+// on map 0. The Lua consumer then takes its `elseif target.world_x then` branch, because `0` is
+// TRUTHY in LuaJIT:
+//
+//     $ luajit -e 'if 0 then print("0 is TRUTHY in LuaJIT") else print("0 is falsy") end'
+//     0 is TRUTHY in LuaJIT
+//
+// so `runtime_action.lua`'s zone-name fallback below that branch is structurally unreachable and
+// the bot navigates to (0, 0, 0) on map 0 instead of blocking. Fixing this at the producer means
+// an unresolvable Travel degrades exactly like every other unresolvable reference already does:
+// an `(unresolved …)` Comment plus a diagnostic and an `unresolved` tally, never a zeroed
+// waypoint masquerading as a real destination.
+// ---------------------------------------------------------------------------
+
+fn travel_action(destination: &str, position: Option<Position>) -> Action {
+    Action {
+        id: Uuid::new_v4(),
+        enabled: true,
+        condition: None,
+        class_restriction: None,
+        gate: None,
+        note: None,
+        payload: ActionPayload::Travel(sentinel_models::authoring::TravelAction {
+            destination: destination.to_string(),
+            position,
+            tolerance: 5.0,
+            authored_radius: None,
+            medium: Default::default(),
+            source_line: None,
+            mount: None,
+            allow_flight: false,
+            timeout: None,
+        }),
+    }
+}
+
+#[test]
+fn travel_without_a_resolved_position_degrades_to_comment_and_is_reported() {
+    let mut project = new_project("test");
+    let mut op = Operation::new("test-op".to_string());
+    let action = travel_action("Elwynn Forest", None);
+    let action_id = action.id;
+    op.actions.push(action);
+    project.operations.push(op);
+
+    let (profile, report) = Compiler::compile(&project)
+        .expect("an unresolvable Travel must not abort the whole guide compile");
+
+    let lowered = &profile.operations[0].actions[0].action;
+    let RuntimeAction::Comment(c) = lowered else {
+        panic!(
+            "a positionless Travel must lower to a Comment, never a zeroed waypoint, got: {lowered:?}"
+        )
+    };
+    assert!(c.text.contains("unresolved position"), "got: {}", c.text);
+    assert!(c.text.contains("Elwynn Forest"), "the comment must name the lost destination, got: {}", c.text);
+    assert_eq!(report.unresolved, 1, "the degradation must be counted, not silent");
+    assert!(
+        report.unmapped_conditions.iter().any(|d| {
+            d.code == "UNRESOLVED_POSITION" && d.action.as_deref() == Some(&action_id.to_string())
+        }),
+        "got: {:?}", report.unmapped_conditions
+    );
+}
+
+#[test]
+fn travel_with_a_resolved_position_still_lowers_to_a_real_waypoint() {
+    let mut project = new_project("test");
+    let mut op = Operation::new("test-op".to_string());
+    op.actions.push(travel_action("Goldshire", Some(Position::new(0, -9460.0, 62.0, 56.0))));
+    project.operations.push(op);
+
+    let (profile, report) = Compiler::compile(&project).expect("compile ok");
+    let lowered = &profile.operations[0].actions[0].action;
+    let RuntimeAction::Travel(t) = lowered else {
+        panic!("a resolved Travel must stay a Travel, got: {lowered:?}")
+    };
+    assert_eq!(t.position.map, 0);
+    assert_eq!(t.position.world_x, -9460.0);
+    assert_eq!(t.position.world_y, 62.0);
+    assert_eq!(report.unresolved, 0, "a resolved Travel is not a degradation");
+}
+
+// ---------------------------------------------------------------------------
 // CL4 — class-restriction lowered to a per-action guard (RuntimeCondition).
 // ---------------------------------------------------------------------------
 

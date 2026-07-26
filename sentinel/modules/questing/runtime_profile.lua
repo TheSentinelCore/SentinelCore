@@ -2135,7 +2135,14 @@ function RuntimeProfile:_resolve_nav_target(action, ctx)
     local p = action.payload
 
     -- 1. Explicit position coordinates (handle both legacy {x,y,z} and new {world_x,world_y,world_z,map} formats)
-    if p.position and type(p.position) == "table" then
+    --
+    -- `is_navigable_position` gates this whole step, because this function is a FALLBACK CHAIN and
+    -- the origin sentinel used to win it. A Travel compiled with no resolved position carried
+    -- `{map=0, world_x=0, world_y=0, world_z=0}`; `elseif p.position.world_x then` accepted it (0
+    -- is TRUTHY in LuaJIT), so steps 2-5 below — npc_entry, object_entry, creature_entries, and
+    -- the zone-destination string that could still have answered — were never reached, and nav was
+    -- handed world origin. Refusing the sentinel by VALUE restores the fall-through.
+    if p.position and type(p.position) == "table" and RuntimeAction.is_navigable_position(p.position) then
         if p.position.x then
             -- Legacy format: {x, y, z}
             return { x = p.position.x, y = p.position.y, z = p.position.z }

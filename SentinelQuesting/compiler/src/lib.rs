@@ -369,17 +369,49 @@ fn resolve_action(
             }
         }
         ActionPayload::Travel(tr) => {
-            // Pass through .goto coordinates from importer as waypoint
-            let position = tr.position
-                .map(|p| RuntimeWaypoint::new(p.map, p.world_x, p.world_y, p.world_z))
-                .unwrap_or_else(|| RuntimeWaypoint::new(0, 0.0, 0.0, 0.0));
-            RuntimeAction::Travel(RuntimeTravel {
-                destination: tr.destination.clone(),
-                position,
-                tolerance: tr.tolerance,
-                allow_flight: tr.allow_flight,
-                timeout: tr.timeout,
-            })
+            // Pass through .goto coordinates from importer as waypoint.
+            //
+            // A missing position is NOT lowerable. `RuntimeTravel::position` is a plain
+            // `RuntimeWaypoint`, so there is no "absent" value to emit — this arm used to fall back
+            // to `RuntimeWaypoint::new(0, 0.0, 0.0, 0.0)`, a structurally valid waypoint aimed at
+            // world origin on map 0. The Lua consumer cannot tell that apart from a real
+            // destination: `runtime_action.lua` branches on `elseif target.world_x then`, and `0`
+            // is TRUTHY in LuaJIT —
+            //
+            //     $ luajit -e 'if 0 then print("0 is TRUTHY in LuaJIT") else print("0 is falsy") end'
+            //     0 is TRUTHY in LuaJIT
+            //
+            // — so the zone-name fallback below that branch was structurally unreachable and the
+            // bot flew to (0, 0, 0) on map 0. Degrade like every other unresolvable reference in
+            // this function instead: an `(unresolved …)` Comment plus a diagnostic and an
+            // `unresolved` tally, so the gap surfaces in the editor and the runtime never sees a
+            // zeroed waypoint at all.
+            match tr.position {
+                Some(p) => RuntimeAction::Travel(RuntimeTravel {
+                    destination: tr.destination.clone(),
+                    position: RuntimeWaypoint::new(p.map, p.world_x, p.world_y, p.world_z),
+                    tolerance: tr.tolerance,
+                    allow_flight: tr.allow_flight,
+                    timeout: tr.timeout,
+                }),
+                None => {
+                    *unresolved += 1;
+                    diagnostics.push(Diagnostic {
+                        severity: Severity::Warning,
+                        code: "UNRESOLVED_POSITION".to_string(),
+                        message: format!(
+                            "Travel action to '{}' has no resolved position and cannot be lowered \
+                             to a waypoint",
+                            tr.destination
+                        ),
+                        entity: None,
+                        action: Some(action.id.to_string()),
+                    });
+                    RuntimeAction::Comment(RuntimeComment {
+                        text: format!(".Travel {} (unresolved position)", tr.destination),
+                    })
+                }
+            }
         }
         ActionPayload::Vendor(v) => {
             match resolve_npc_or_report(Some(v.npc), npc_uuid_to_entry, action.id, "Vendor", diagnostics, unresolved) {
