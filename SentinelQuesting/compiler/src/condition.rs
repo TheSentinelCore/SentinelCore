@@ -8,6 +8,19 @@
 //! Precedence (tightest→loosest): `NOT` > `&&` > `||` —
 //! §23 gives no explicit table; corroborated by `NOT X || NOT Y || NOT Z` only parsing sensibly
 //! if `NOT` binds one predicate before `||` combines results.
+//!
+//! # One parser, two target models
+//!
+//! The §23 DSL is the input to *both* lowerings: [`RuntimeCondition`] for the ADR-05 model and
+//! [`Predicate`](sentinel_models::kernel::Predicate) for the ADR-07 kernel artifact. Only the leaf
+//! mapping and the three combinators differ, so this module is generic over a [`ConditionSink`]
+//! rather than duplicated.
+//!
+//! That is not a tidiness preference. [`MAX_CONDITION_DEPTH`] and [`MAX_CONDITION_TOKENS`] close a
+//! **network-reachable** stack-overflow DoS on the editor's `/compile` endpoint (pinned by
+//! `tests::recursion_depth_is_bounded`). A second, copied parser would reintroduce the crash the
+//! moment the copy drifted, so there is exactly one lexer, one precedence climb, and one pair of
+//! guards.
 
 use sentinel_models::runtime::RuntimeCondition;
 
@@ -16,8 +29,34 @@ use sentinel_models::runtime::RuntimeCondition;
 #[error("{0}")]
 pub struct ConditionParseError(pub String);
 
-fn err<T>(msg: impl Into<String>) -> Result<T, ConditionParseError> {
-    Err(ConditionParseError(msg.into()))
+fn err<T, E: From<ConditionParseError>>(msg: impl Into<String>) -> Result<T, E> {
+    Err(ConditionParseError(msg.into()).into())
+}
+
+/// The model-specific half of the parser: how a leaf predicate is built, and how the three
+/// combinators combine results.
+///
+/// Everything else — the lexer, the precedence climb, and the two DoS guards — is shared. Adding a
+/// target model means implementing this trait, never copying the file.
+///
+/// `leaf` takes `&self` because a lowering may need injected context to build a leaf: the kernel's
+/// `Objective(q,i)` needs the required count baked from `quest_template`, which only a metadata
+/// provider can answer.
+pub(crate) trait ConditionSink {
+    /// The condition type this sink builds.
+    type Output;
+    /// The error this sink reports. Parse failures reach it through [`From`].
+    type Error: From<ConditionParseError>;
+
+    /// Combine `||` terms. Only called with two or more terms.
+    fn any(&self, terms: Vec<Self::Output>) -> Self::Output;
+    /// Combine `&&` terms. Only called with two or more terms.
+    fn all(&self, terms: Vec<Self::Output>) -> Self::Output;
+    /// Negate one term.
+    fn not(&self, inner: Self::Output) -> Self::Output;
+    /// Map `NAME(arg, …)` to a leaf, or refuse it. An unknown predicate is a diagnostic, not a
+    /// guess.
+    fn leaf(&self, name: &str, args: &[u64]) -> Result<Self::Output, Self::Error>;
 }
 
 /// Recursion cap for paren-nesting / `NOT`-chaining — closes a network-reachable stack-overflow
@@ -59,9 +98,9 @@ fn tokenize(input: &str) -> Result<Vec<Token>, ConditionParseError> {
     Ok(tokens)
 }
 
-struct Parser<'a> { tokens: &'a [Token], pos: usize, depth: usize }
+struct Parser<'a, S: ConditionSink> { tokens: &'a [Token], pos: usize, depth: usize, sink: &'a S }
 
-impl<'a> Parser<'a> {
+impl<S: ConditionSink> Parser<'_, S> {
     fn peek(&self) -> Option<&Token> { self.tokens.get(self.pos) }
     fn advance(&mut self) -> Option<&Token> {
         let tok = self.tokens.get(self.pos);
@@ -69,39 +108,39 @@ impl<'a> Parser<'a> {
         tok
     }
     /// Bumps recursion depth; errors out before the caller recurses further (never a panic).
-    fn enter(&mut self) -> Result<(), ConditionParseError> {
+    fn enter(&mut self) -> Result<(), S::Error> {
         self.depth += 1;
         if self.depth > MAX_CONDITION_DEPTH {
             return err(format!("condition expression exceeds max nesting depth ({MAX_CONDITION_DEPTH})"));
         }
         Ok(())
     }
-    fn parse_expr(&mut self) -> Result<RuntimeCondition, ConditionParseError> { self.parse_or() }
+    fn parse_expr(&mut self) -> Result<S::Output, S::Error> { self.parse_or() }
 
-    fn parse_or(&mut self) -> Result<RuntimeCondition, ConditionParseError> {
+    fn parse_or(&mut self) -> Result<S::Output, S::Error> {
         let mut terms = vec![self.parse_and()?];
         while matches!(self.peek(), Some(Token::Or)) { self.advance(); terms.push(self.parse_and()?); }
-        Ok(if terms.len() == 1 { terms.pop().unwrap() } else { RuntimeCondition::Any(terms) })
+        Ok(if terms.len() == 1 { terms.pop().unwrap() } else { self.sink.any(terms) })
     }
 
-    fn parse_and(&mut self) -> Result<RuntimeCondition, ConditionParseError> {
+    fn parse_and(&mut self) -> Result<S::Output, S::Error> {
         let mut terms = vec![self.parse_not()?];
         while matches!(self.peek(), Some(Token::And)) { self.advance(); terms.push(self.parse_not()?); }
-        Ok(if terms.len() == 1 { terms.pop().unwrap() } else { RuntimeCondition::All(terms) })
+        Ok(if terms.len() == 1 { terms.pop().unwrap() } else { self.sink.all(terms) })
     }
 
-    fn parse_not(&mut self) -> Result<RuntimeCondition, ConditionParseError> {
+    fn parse_not(&mut self) -> Result<S::Output, S::Error> {
         if matches!(self.peek(), Some(Token::Not)) {
             self.advance();
             self.enter()?;
             let inner = self.parse_not()?;
             self.depth -= 1;
-            return Ok(RuntimeCondition::Not(Box::new(inner)));
+            return Ok(self.sink.not(inner));
         }
         self.parse_primary()
     }
 
-    fn parse_primary(&mut self) -> Result<RuntimeCondition, ConditionParseError> {
+    fn parse_primary(&mut self) -> Result<S::Output, S::Error> {
         match self.advance() {
             Some(Token::LParen) => {
                 self.enter()?;
@@ -117,7 +156,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_predicate(&mut self, name: &str) -> Result<RuntimeCondition, ConditionParseError> {
+    fn parse_predicate(&mut self, name: &str) -> Result<S::Output, S::Error> {
         if !matches!(self.advance(), Some(Token::LParen)) {
             return err(format!("expected '(' after predicate '{name}'"));
         }
@@ -136,52 +175,73 @@ impl<'a> Parser<'a> {
         if !matches!(self.advance(), Some(Token::RParen)) {
             return err(format!("expected ')' to close '{name}(...)'"));
         }
-        build_predicate(name, &args)
+        self.sink.leaf(name, &args)
     }
 }
 
-fn as_u32(n: u64, what: &str) -> Result<u32, ConditionParseError> {
+pub(crate) fn as_u32(n: u64, what: &str) -> Result<u32, ConditionParseError> {
     u32::try_from(n).map_err(|_| ConditionParseError(format!("{what} value {n} exceeds u32 range")))
 }
 
-fn as_u8(n: u64, what: &str) -> Result<u8, ConditionParseError> {
+pub(crate) fn as_u8(n: u64, what: &str) -> Result<u8, ConditionParseError> {
     u8::try_from(n).map_err(|_| ConditionParseError(format!("{what} value {n} exceeds u8 range")))
 }
 
-/// Maps a predicate + args to `RuntimeCondition` per `design.md`'s command → DSL → variant table.
-/// Only predicates the real importer emits are supported; anything else is a diagnostic, not a guess.
-fn build_predicate(name: &str, args: &[u64]) -> Result<RuntimeCondition, ConditionParseError> {
-    match (name, args) {
-        ("QuestAccepted", [id]) => Ok(RuntimeCondition::QuestAccepted(as_u32(*id, "quest id")?)),
-        ("QuestCompleted", [id]) => Ok(RuntimeCondition::QuestCompleted(as_u32(*id, "quest id")?)),
-        ("QuestRewarded", [id]) => Ok(RuntimeCondition::QuestRewarded(as_u32(*id, "quest id")?)),
-        ("Objective", [q, idx]) => Ok(RuntimeCondition::ObjectiveComplete(
-            as_u32(*q, "quest id")?,
-            as_u8(*idx, "objective index")?,
-        )),
-        ("ItemCount", [item, n]) => {
-            Ok(RuntimeCondition::ItemCountAtLeast(as_u32(*item, "item id")?, as_u32(*n, "count")?))
+/// The ADR-05 sink: the *only* model-specific code on this path.
+struct RuntimeConditionSink;
+
+impl ConditionSink for RuntimeConditionSink {
+    type Output = RuntimeCondition;
+    type Error = ConditionParseError;
+
+    fn any(&self, terms: Vec<RuntimeCondition>) -> RuntimeCondition { RuntimeCondition::Any(terms) }
+    fn all(&self, terms: Vec<RuntimeCondition>) -> RuntimeCondition { RuntimeCondition::All(terms) }
+    fn not(&self, inner: RuntimeCondition) -> RuntimeCondition {
+        RuntimeCondition::Not(Box::new(inner))
+    }
+
+    /// Maps a predicate + args to `RuntimeCondition` per `design.md`'s command → DSL → variant
+    /// table. Only predicates the real importer emits are supported; anything else is a diagnostic,
+    /// not a guess.
+    fn leaf(&self, name: &str, args: &[u64]) -> Result<RuntimeCondition, ConditionParseError> {
+        match (name, args) {
+            ("QuestAccepted", [id]) => Ok(RuntimeCondition::QuestAccepted(as_u32(*id, "quest id")?)),
+            ("QuestCompleted", [id]) => Ok(RuntimeCondition::QuestCompleted(as_u32(*id, "quest id")?)),
+            ("QuestRewarded", [id]) => Ok(RuntimeCondition::QuestRewarded(as_u32(*id, "quest id")?)),
+            ("Objective", [q, idx]) => Ok(RuntimeCondition::ObjectiveComplete(
+                as_u32(*q, "quest id")?,
+                as_u8(*idx, "objective index")?,
+            )),
+            ("ItemCount", [item, n]) => {
+                Ok(RuntimeCondition::ItemCountAtLeast(as_u32(*item, "item id")?, as_u32(*n, "count")?))
+            }
+            ("LevelAtLeast", [level]) => Ok(RuntimeCondition::LevelAtLeast(as_u8(*level, "level")?)),
+            (other, _) => err(format!("unknown predicate '{other}' with {} argument(s)", args.len())),
         }
-        ("LevelAtLeast", [level]) => Ok(RuntimeCondition::LevelAtLeast(as_u8(*level, "level")?)),
-        (other, _) => err(format!("unknown predicate '{other}' with {} argument(s)", args.len())),
     }
 }
 
-/// Parses a §23 condition expression into a typed `RuntimeCondition`. Never panics: malformed
-/// input (unbalanced parens, unknown predicate, trailing garbage, empty) yields `Err`.
-pub fn parse_condition(input: &str) -> Result<RuntimeCondition, ConditionParseError> {
+/// Parses a §23 condition expression into whatever [`ConditionSink`] the caller supplies. Never
+/// panics: malformed input (unbalanced parens, unknown predicate, trailing garbage, empty) yields
+/// `Err`, and both DoS guards apply here for every target model.
+pub(crate) fn parse_with<S: ConditionSink>(input: &str, sink: &S) -> Result<S::Output, S::Error> {
     let trimmed = input.trim();
     if trimmed.is_empty() { return err("condition expression is empty"); }
     let tokens = tokenize(trimmed)?;
     if tokens.len() > MAX_CONDITION_TOKENS {
         return err(format!("condition expression exceeds max token count ({MAX_CONDITION_TOKENS})"));
     }
-    let mut parser = Parser { tokens: &tokens, pos: 0, depth: 0 };
+    let mut parser = Parser { tokens: &tokens, pos: 0, depth: 0, sink };
     let result = parser.parse_expr()?;
     if parser.pos != tokens.len() {
         return err(format!("unexpected trailing input after token {}", parser.pos));
     }
     Ok(result)
+}
+
+/// Parses a §23 condition expression into a typed `RuntimeCondition` (the ADR-05 model).
+pub fn parse_condition(input: &str) -> Result<RuntimeCondition, ConditionParseError> {
+    parse_with(input, &RuntimeConditionSink)
 }
 
 #[cfg(test)]

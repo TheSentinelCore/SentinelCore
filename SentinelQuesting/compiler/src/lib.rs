@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 mod condition;
+pub mod kernel;
 
 use sentinel_models::authoring::{Action, ActionPayload, Diagnostic, Project, Severity};
 use sentinel_models::runtime::{
@@ -86,6 +87,14 @@ pub enum CompilerError {
     UnresolvedNpc,
     #[error("Quest reference could not be resolved")]
     UnresolvedQuest,
+    /// A refusal raised by the ADR-07 kernel lowering — today, only an unrecognised gate token
+    /// (`kernel::archetype`). Fatal on purpose: a gate the compiler cannot read is a gate it cannot
+    /// resolve away, and C2 leaves nowhere in the artifact to carry one (§5.2).
+    ///
+    /// Reached only through [`Compiler::compile_kernel`]. [`Compiler::compile`] is the ADR-05 path
+    /// and is untouched by it.
+    #[error("kernel lowering refused the project: {0}")]
+    KernelLowering(#[from] kernel::LoweringError),
 }
 
 /// Resolve an (optionally present) NPC UUID reference to a concrete entry. On any failure to
@@ -171,6 +180,135 @@ impl Compiler {
         profile.content_hash = compute_content_hash(&profile);
         let report = CompileReport { unmapped_conditions: diagnostics, unresolved };
         Ok((profile, report))
+    }
+
+    /// Compile a Project into the **ADR-07 kernel artifact**, for a named archetype.
+    ///
+    /// Additive and independent: [`Compiler::compile`] above is untouched, still produces the ADR-05
+    /// [`RuntimeProfile`] the Lua runtime executes today, and neither artifact is derived from the
+    /// other.
+    ///
+    /// # Why an archetype and a metadata provider are parameters
+    ///
+    /// * `archetype` is an **input**, not an output. C2 (§5.2) resolves every static gate at compile
+    ///   time and emits one artifact per archetype, because the runtime cannot evaluate them: player
+    ///   faction is not readable from the Sylvanas API and there is no race enum.
+    /// * `meta` supplies the required counts baked into
+    ///   [`Predicate::QuestObjective`](sentinel_models::kernel::Predicate::QuestObjective). Those
+    ///   come from `quest_template`, which a `&Project` does not carry. It is a synchronous trait on
+    ///   purpose: the QueryServer lookups happen *before* this call and populate the provider, so
+    ///   lowering itself stays pure and testable with no running server.
+    ///
+    ///   `meta` is consulted for every `.complete <quest>,<index>` a surviving step carries, and for
+    ///   nothing else. A project with no objective predicates never touches it, which is why
+    ///   `kernel_lowering::the_metadata_provider_is_not_consulted_until_the_task_graph_lands` still
+    ///   holds over an operation-free project.
+    ///
+    /// # What it does do: C2
+    ///
+    /// Every static gate is resolved here, against `archetype`, and **nothing that carries one
+    /// reaches the artifact** (§5.2). Resolution happens at **op granularity**, not task granularity:
+    /// the corpus has 3,052 command-level `<<` gates across 134 distinct expressions, and a
+    /// task-granular resolver is wrong on every one of them — `A-1-11-Human.lua:185-196` is one
+    /// ungated step containing six mutually exclusive class-gated `.accept`s, so it would give a
+    /// Warrior either all six letters or none. A task left with no surviving op is elided, and the
+    /// survivors are **renumbered**, with every `#requires` edge remapped: `Task::id` *is* the index
+    /// into `tasks`, so removing an entry moves every id and every edge past the hole, and an
+    /// off-by-one there is silent — the profile loads and the runner waits on the wrong predecessor
+    /// forever.
+    ///
+    /// `Operation::enabled` is **honoured, not re-derived**. The importer already decided it for the
+    /// 140 corpus steps carrying the `skip` disable sentinel, and an editor toggle produces the same
+    /// flag with no gate at all; re-deriving the decision from the gate string misses every disable
+    /// that did not come from `skip`.
+    ///
+    /// # And C3: the task graph
+    ///
+    /// `#label`, `#requires`, `#completewith`, `#sticky` and `#optional` are lowered by
+    /// [`kernel::lower_task_graph`], which owns the ordering constraints between them. Label names
+    /// are a symbol table and are consumed there: nothing carries one into the artifact.
+    ///
+    /// # What it still does not do
+    ///
+    /// The two digests, `tags_used`, per-task combat policy, `abort_when`, `interact_target`,
+    /// `serves_quests`, `suppress` and `jump_to`; routes are lowered only from a `Travel` action's
+    /// own resolved `Position`, with no circuit collapse. The report still carries a
+    /// `KERNEL_PROFILE_INCOMPLETE` warning naming each gap, so no caller can mistake this for a
+    /// shippable artifact.
+    ///
+    /// [`kernel::lower_task_graph`]: kernel::lower_task_graph
+    pub fn compile_kernel(
+        project: &Project,
+        archetype: &sentinel_models::kernel::Archetype,
+        meta: &dyn kernel::QuestMeta,
+    ) -> Result<(sentinel_models::kernel::RuntimeProfile, CompileReport), CompilerError> {
+        use sentinel_models::kernel as k;
+
+        let mut diagnostics = vec![Diagnostic {
+            severity: Severity::Warning,
+            code: "KERNEL_PROFILE_INCOMPLETE".to_string(),
+            message:
+                "kernel lowering is partial: archetype gates are resolved and the task graph carries \
+                 ops, dependency edges, lifetimes, completion links and the `.complete` / `.isOnQuest` \
+                 predicates, but no task carries a combat policy, an abort predicate or an interact \
+                 target, the waypoint pool holds only positions the importer had already resolved with \
+                 no circuit collapse, `tags_used` is empty, and `schema_hash` / `content_hash` are \
+                 zero placeholders rather than computed digests. Do not execute this artifact."
+                    .to_string(),
+            entity: Some(project.metadata.name.clone()),
+            action: None,
+        }];
+
+        let mut pool = kernel::WaypointPool::default();
+        let tasks =
+            kernel::lower_task_graph(project, archetype, &mut pool, meta, &mut diagnostics)?;
+
+        let profile = k::RuntimeProfile {
+            magic: k::MAGIC,
+            schema_version: k::SCHEMA_VERSION,
+            schema_hash: [0u8; 32],
+            // Computed from the tasks just built, never transcribed — see `kernel::tag_census` for
+            // why a hand-maintained list is wrong in two different ways at once.
+            tags_used: kernel::tag_census(&tasks),
+            integrity: k::ContentIntegrity {
+                content_hash: [0u8; 32],
+                world_source: String::new(),
+                world_build: String::new(),
+            },
+            archetype: archetype.clone(),
+            meta: k::GuideMeta {
+                name: project.metadata.name.clone(),
+                // `#group` / `#subgroup` / `#next` are guide-pack directives that live in the
+                // RestedXP source; the ADR-02 project does not carry them, so they are left empty
+                // rather than invented from an unrelated project field.
+                group: String::new(),
+                subgroup: None,
+                source_version: 0,
+                next: Vec::new(),
+            },
+            defaults: k::ProfileDefaults {
+                // §5.6: `Defensive` is the profile-level default — 16,438 of 23,894 corpus tasks
+                // carry no combat token at all.
+                combat: k::CombatPolicy {
+                    stance: k::CombatStance::Defensive,
+                    targets: Vec::new(),
+                    watch_units: Vec::new(),
+                    leash_yards: 0,
+                    allow_adds: false,
+                    expect_group: k::GroupExpectation::Solo,
+                },
+                // §5.1.2: `Defer` is the compiler's default for `complete_when`; 60 ticks is the
+                // budget §7.3.3 uses.
+                unknown_policy: k::UnknownPolicy::Defer { budget_ticks: 60 },
+            },
+            waypoint_pool: pool.into_points(),
+            tasks,
+        };
+
+        Ok((
+            profile,
+            CompileReport { unmapped_conditions: diagnostics, unresolved: 0 },
+        ))
     }
 }
 
