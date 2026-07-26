@@ -1256,7 +1256,20 @@ function RuntimeAction.execute_flight(payload, ctx)
         core.input.take_taxi(dest_idx)
         return "success"
     end
-    return "retry"
+    -- MEASURED LIVE (2026-07-26): `core.input.take_taxi` does not exist, and nothing taxi-shaped
+    -- exists anywhere in the SDK's 22 namespaces (enumerated through the debug bridge; the only
+    -- flight-adjacent surface is `world.is_flyable_area`). Flight-by-API is a hard SDK ceiling,
+    -- not a missing wire on our side. OPERATOR RULING: skip flight steps entirely rather than
+    -- retry-spin — the guides follow every `.fly` with `.goto` lines at the arrival zone, so the
+    -- runner walks there through nav instead. Noted once per profile run, not once per tick.
+    local P = ctx.persist or ctx
+    if not P._flight_skipped_logged then
+        P._flight_skipped_logged = true
+        publish_action_note(ctx, "flight_skipped_no_taxi_api", {
+            destination = tostring(destination),
+        })
+    end
+    return "success"
 end
 
 --- Hearth is a 10s cast followed by a teleport: using the item is not arriving.

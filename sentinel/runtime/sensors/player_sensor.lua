@@ -2,6 +2,8 @@ local Compat = require("shared/compat")
 local safe_call = Compat.safe_call
 local num = Compat.num
 
+local PlainPosition = require("shared/plain_position")
+
 local PlayerSensor = {}
 PlayerSensor.__index = PlayerSensor
 
@@ -59,19 +61,9 @@ function PlayerSensor:refresh(player, now_ms)
     local target = safe_call(player, "get_target")
     local position = safe_call(player, "get_position")
     bb:set("player.target", target)
-    -- MEASURED LIVE (first in-game run, 2026-07-26): get_position() returns a vec3 CLASS
-    -- instance — plain x/y/z number fields carrying the injector's ~35-method vector metatable
-    -- (dist_to, lerp, __add, ...). Offline mocks returned plain tables, so the purity guard's
-    -- refusal ("the table carries a metatable, and `pairs` cannot see through `__index`") fired
-    -- for the first time against the real SDK, and `player.position` was never written: every
-    -- consumer — distance checks, navigation, the death sensor — read nil for the whole session.
-    -- The blackboard holds VALUES (ADR 08 §2.7), so copy the three numbers out and drop the
-    -- metatable rather than ledgering a methods-object as if it were a handle.
-    if type(position) == "table" then
-        local x, y, z = tonumber(position.x), tonumber(position.y), tonumber(position.z)
-        position = (x and y) and { x = x, y = y, z = z } or nil
-    end
-    bb:set("player.position", position)
+    -- Live SDK positions are vec3 class instances (see shared/plain_position.lua for the
+    -- measured shape and the two boots that proved it, one refused write site each).
+    bb:set("player.position", PlainPosition.copy(position))
     bb:set("player.health_pct", player and self:_unit_health_pct(player) or 1)
     bb:set("player.mana_pct", player and self:_unit_mana_pct(player) or 1)
     bb:set("player.in_combat", safe_call(player, "is_in_combat") == true)

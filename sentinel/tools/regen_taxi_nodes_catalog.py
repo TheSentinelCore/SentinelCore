@@ -138,10 +138,11 @@ lines.append("""---Resolve a guide destination string to exactly one node id.
 ---given. Anything else plural is a REAL ambiguity ("feralas" has two Alliance nodes) and fails
 ---loud — a silent tie-break flies the character across a continent on a guess.
 ---@param dest string
----@param faction string|nil "alliance" | "horde" | nil
+---@param faction string|nil "Alliance" | "Horde" (any casing) | nil
 ---@return number|nil node_id, string|nil err "unknown_destination" | "ambiguous_destination" | "needs_faction"
 function M.resolve(dest, faction)
     if type(dest) ~= "string" then return nil, "unknown_destination" end
+    if type(faction) == "string" then faction = faction:lower() end
     local ids = M.aliases[dest:lower():match("^%s*(.-)%s*$")]
     if not ids then return nil, "unknown_destination" end
     local hits = {}

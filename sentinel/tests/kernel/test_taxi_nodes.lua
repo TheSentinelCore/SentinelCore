@@ -64,9 +64,9 @@ function M.test_the_shatter_point_pin_avoids_the_beach_assault_event_node()
 end
 
 function M.test_race_to_faction_never_guesses()
-    T.assert_equal(RaceFaction.resolve(1), "alliance", "Human")
-    T.assert_equal(RaceFaction.resolve(6), "horde", "Tauren")
-    T.assert_equal(RaceFaction.resolve(11), "alliance", "Draenei")
+    T.assert_equal(RaceFaction.resolve(1), "Alliance", "Human")
+    T.assert_equal(RaceFaction.resolve(6), "Horde", "Tauren")
+    T.assert_equal(RaceFaction.resolve(11), "Alliance", "Draenei")
     T.assert_equal(RaceFaction.resolve(9), nil, "9 is unused in 2.4.3 and must be nil, not a side")
     T.assert_equal(RaceFaction.resolve(nil), nil, "no race id means no faction, never a default")
 end

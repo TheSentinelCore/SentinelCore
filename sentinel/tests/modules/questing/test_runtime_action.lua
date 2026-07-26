@@ -638,4 +638,45 @@ function M.run()
     end
 end
 
+-- ============================================================================
+-- Flight — the take_taxi SDK ceiling, and the operator's skip ruling
+-- ============================================================================
+
+--- MEASURED LIVE (2026-07-26): `core.input.take_taxi` does not exist, and nothing taxi-shaped
+--- exists in any of the SDK's 22 namespaces. OPERATOR RULING: a flight step is SKIPPED, not
+--- retried — the guides follow every `.fly` with `.goto` lines at the arrival zone, so the
+--- runner nav-walks there instead of spinning its retry budget against a missing API.
+--- CANNOT SEE: whether a future injector build adds the API (the resolver path below covers it).
+function M.test_flight_without_taxi_api_is_skipped_not_retried()
+    local notes = {}
+    local ctx = mock_context({})
+    ctx.is_at_npc = function() return true end
+    ctx.persist = {}
+    ctx.publish = function(_, event, payload) notes[#notes + 1] = { event = event, payload = payload } end
+    local saved_input = core and core.input
+    if core then core.input = {} end -- the measured live shape: no take_taxi anywhere
+    local action = { type = "Flight", payload = { npc_entry = 123, destination = "Ironforge" } }
+    local result = RuntimeAction.execute(action, ctx)
+    if core then core.input = saved_input end
+    assert(result == "success", "a flight step with no taxi API must SKIP (ruling), got: " .. tostring(result))
+end
+
+--- The other half: when the API exists, a NAMED destination resolves through the taxi catalog
+--- (faction-disambiguated, Title-case accepted) and the node id — not the raw string, not a
+--- guessed index — is what reaches take_taxi.
+function M.test_flight_with_taxi_api_resolves_a_name_to_its_node()
+    local taken = {}
+    local ctx = mock_context({ get_player_faction = function() return "Alliance" end })
+    ctx.is_at_npc = function() return true end
+    ctx.persist = {}
+    local saved_input = core and core.input
+    if core then core.input = { take_taxi = function(idx) taken[#taken + 1] = idx end } end
+    local action = { type = "Flight", payload = { npc_entry = 123, destination = "Tanaris" } }
+    local result = RuntimeAction.execute(action, ctx)
+    if core then core.input = saved_input end
+    assert(result == "success", "resolvable flight must succeed, got: " .. tostring(result))
+    assert(#taken == 1 and taken[1] == 39,
+        "Tanaris + Alliance must fly node 39 (Gadgetzan A), got: " .. tostring(taken[1]))
+end
+
 return M

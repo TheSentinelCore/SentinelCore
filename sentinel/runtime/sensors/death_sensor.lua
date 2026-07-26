@@ -13,6 +13,8 @@ function DeathSensor:new(blackboard)
     }, DeathSensor)
 end
 
+local PlainPosition = require("shared/plain_position")
+
 function DeathSensor:refresh(player, now_ms)
     local bb = self._blackboard
     local is_dead = safe_call(player, "is_dead") == true
@@ -35,7 +37,9 @@ function DeathSensor:refresh(player, now_ms)
         corpse_position = safe_call0(game_ui.get_corpse_position, game_ui)
         resurrect_delay_s = num(safe_call0(game_ui.get_resurrect_corpse_delay, game_ui))
     end
-    bb:set("player.corpse_position", type(corpse_position) == "table" and corpse_position or nil)
+    -- MEASURED LIVE (run two): get_corpse_position() is a vec3 class instance, exactly like
+    -- get_position() on run one — copy it plain or the purity guard refuses the write.
+    bb:set("player.corpse_position", PlainPosition.copy(corpse_position))
     bb:set("player.resurrect_delay_s", resurrect_delay_s)
 end
 

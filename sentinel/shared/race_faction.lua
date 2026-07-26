@@ -10,20 +10,20 @@
 local RaceFaction = {}
 
 local RACE_TO_FACTION = {
-    [1] = "alliance",  -- Human
-    [2] = "horde",     -- Orc
-    [3] = "alliance",  -- Dwarf
-    [4] = "alliance",  -- Night Elf
-    [5] = "horde",     -- Undead
-    [6] = "horde",     -- Tauren
-    [7] = "alliance",  -- Gnome
-    [8] = "horde",     -- Troll
-    [10] = "horde",    -- Blood Elf
-    [11] = "alliance", -- Draenei
+    [1] = "Alliance",  -- Human
+    [2] = "Horde",     -- Orc
+    [3] = "Alliance",  -- Dwarf
+    [4] = "Alliance",  -- Night Elf
+    [5] = "Horde",     -- Undead
+    [6] = "Horde",     -- Tauren
+    [7] = "Alliance",  -- Gnome
+    [8] = "Horde",     -- Troll
+    [10] = "Horde",    -- Blood Elf
+    [11] = "Alliance", -- Draenei
 }
 
 ---@param race_id number|nil
----@return string|nil "alliance" | "horde", nil for an unknown or missing id — never a guess
+---@return string|nil "Alliance" | "Horde", nil for an unknown or missing id — never a guess
 function RaceFaction.resolve(race_id)
     return RACE_TO_FACTION[tonumber(race_id)]
 end
