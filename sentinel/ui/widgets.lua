@@ -342,7 +342,7 @@ local TOOLBAR_DEFAULT_WIDTH = {
 ---Returns the ACTIVATED ITEM'S ID rather than an index, so a caller's dispatch does not silently
 ---change meaning when an item is inserted. The second return is the full layout, which is what
 ---makes a toolbar testable: a test can locate an item's bounds and then click them.
----@param opts table { items = { { id, kind, label, glyph, disabled, width } }, elevation }
+---@param opts table { items = { { id, kind, label, glyph, disabled, width, bounds } }, elevation }
 ---@return string|nil activated_id, table layout
 function Widgets.toolbar(window, bounds, opts)
     opts = opts or {}
@@ -358,9 +358,21 @@ function Widgets.toolbar(window, bounds, opts)
     -- it; a single pass would have to guess how much room the trailing items need.
     local widths, fixed_total, spacers = {}, 0, 0
     for i, item in ipairs(items) do
-        local w = item.width or TOOLBAR_DEFAULT_WIDTH[item.kind or "button"] or TOOLBAR_DEFAULT_WIDTH.button
-        widths[i] = w
-        if item.kind == "spacer" then spacers = spacers + 1 else fixed_total = fixed_total + w end
+        if item.kind == "spacer" then
+            spacers = spacers + 1
+            widths[i] = 0
+        else
+            -- Per-item width, most explicit first: an item that carries its own rect wins over a
+            -- bare `width`, and both win over measuring the label. Measuring FLOORS at the kind's
+            -- default, so a short label keeps the strip it has always had while a long one can no
+            -- longer clip (the Runner panel measures the same way).
+            local min_w = TOOLBAR_DEFAULT_WIDTH[item.kind or "button"] or TOOLBAR_DEFAULT_WIDTH.button
+            local w = (item.bounds and item.bounds.w) or item.width
+                or math.max(min_w, #tostring(item.label or item.glyph or "") * APPROX_CHAR_WIDTH
+                    + 2 * Theme.space.md)
+            widths[i] = w
+            fixed_total = fixed_total + w
+        end
     end
 
     local inset = Theme.space.sm

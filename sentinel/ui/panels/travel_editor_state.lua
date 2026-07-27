@@ -799,15 +799,18 @@ function TravelEditorState.build_plan(view, bounds)
                         local wp_label = string.format("  %d. %-20s  %s", wi, pos_str, mvmt)
                         text_item(wp_label, "text_secondary", Theme.space.md, 0)
 
-                        -- Move up / Move down buttons
-                        local btn_w = math.min(48, (content_w - Theme.space.md * 2) * 0.2)
-                        local btn_y = y
+                        -- Move up / Move down buttons. Measured, and hit_min tall centred on the
+                        -- row: `hit_bounds` floors the click region to 30px either way, so a
+                        -- SMALL_H visual misreported where the pointer lands.
+                        local btn_w = math.min(#"Up" * CHAR_W + Theme.space.xl,
+                            (content_w - Theme.space.md * 2) * 0.2)
+                        local btn_y = y + (ROW_H - Theme.metrics.hit_min) * 0.5
                         local btn_x = text_x + content_w - (btn_w * 2 + Theme.space.sm * 2) - Theme.space.md
 
                         if wi > 1 then
                             push({
                                 kind = "button", id = string.format("travel_wp_up:%s:%d", route.id, wi),
-                                bounds = { x = btn_x, y = btn_y, w = btn_w, h = SMALL_H },
+                                bounds = { x = btn_x, y = btn_y, w = btn_w, h = Theme.metrics.hit_min },
                                 label = "Up", variant = "ghost",
                             })
                         end
@@ -816,7 +819,7 @@ function TravelEditorState.build_plan(view, bounds)
                         if wi < #wps then
                             push({
                                 kind = "button", id = string.format("travel_wp_down:%s:%d", route.id, wi),
-                                bounds = { x = btn_x, y = btn_y, w = btn_w, h = SMALL_H },
+                                bounds = { x = btn_x, y = btn_y, w = btn_w, h = Theme.metrics.hit_min },
                                 label = "Dn", variant = "ghost",
                             })
                         end

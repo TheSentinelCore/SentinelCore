@@ -402,16 +402,20 @@ function DatabaseState.build_plan(view, bounds)
         y = y + SECTION_H + Theme.space.xs
     end
 
-    -- Tab bar: Scanner | Grinding
-    local tab_w = math.min(90, content_w * 0.5 - Theme.space.sm)
+    -- Tab bar: Scanner | Grinding. Measured per label (Runner-panel formula): a fixed 90px
+    -- clipped "Spawn Scanner" to "Spawn Sc...".
+    local function tab_w(label)
+        return math.min(#label * CHAR_W + Theme.space.xl, content_w * 0.5 - Theme.space.sm)
+    end
+    local scanner_w = tab_w("Spawn Scanner")
     push({
         kind = "chip", id = "tab_scanner",
-        bounds = { x = text_x, y = y, w = tab_w, h = CONTROL_H },
+        bounds = { x = text_x, y = y, w = scanner_w, h = CONTROL_H },
         label = "Spawn Scanner", selected = view.active_tab == "scanner",
     })
     push({
         kind = "chip", id = "tab_grinding",
-        bounds = { x = text_x + tab_w + Theme.space.sm, y = y, w = tab_w, h = CONTROL_H },
+        bounds = { x = text_x + scanner_w + Theme.space.sm, y = y, w = tab_w("Grinding"), h = CONTROL_H },
         label = "Grinding", selected = view.active_tab == "grinding",
     })
     y = y + CONTROL_H + Theme.space.sm
@@ -450,10 +454,11 @@ function DatabaseState.build_plan(view, bounds)
             label = range_label, selected = true,
         })
 
-        local scan_x = text_x + content_w - 64
+        local scan_w = math.max(80, #"Scan!" * CHAR_W + Theme.space.xl)
+        local scan_x = text_x + content_w - scan_w
         push({
             kind = "button", id = "scan",
-            bounds = { x = scan_x, y = y, w = 60, h = CONTROL_H },
+            bounds = { x = scan_x, y = y, w = scan_w, h = CONTROL_H },
             label = "Scan!", variant = "primary",
         })
         y = y + CONTROL_H + Theme.space.sm

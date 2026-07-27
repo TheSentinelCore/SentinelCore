@@ -10,6 +10,10 @@
 
 local Theme = require("ui/theme")
 
+-- Approximate character width for layout maths (same constant the panels use); real glyph
+-- measurement only exists inside a render callback.
+local CHAR_W = 7
+
 local ValidationStatus = {}
 ValidationStatus.__index = ValidationStatus
 
@@ -305,11 +309,13 @@ function ValidationStatus.build_plan(view, bounds)
             token = "text_muted"
         end
 
-        -- Clickable status pill
+        -- Clickable status pill, measured per label (20px for the glyph column, label, right
+        -- padding): a fixed 120px forced the renderer to truncate every label to 14 chars.
+        local pill_w = 20 + #tostring(check.label or "") * CHAR_W + Theme.space.md
         table.insert(items, {
             kind = "validation_check",
             id = "validation_expand:" .. check.id,
-            bounds = { x = cx, y = y, w = 120, h = bounds.h },
+            bounds = { x = cx, y = y, w = pill_w, h = bounds.h },
             glyph = glyph,
             label = check.label,
             token = token,
@@ -317,7 +323,7 @@ function ValidationStatus.build_plan(view, bounds)
             expanded = check.expanded,
         })
 
-        cx = cx + 124
+        cx = cx + pill_w + Theme.space.xs
     end
 
     -- Show detail for expanded check
@@ -391,8 +397,8 @@ local HANDLERS = {
             v2(item.bounds.x + 4, centred_y(item.bounds, 16)),
             Theme.color[item.token](255), item.glyph)
 
+        -- The pill was measured for this label in build_plan, so it is drawn whole.
         local label = tostring(item.label or "")
-        if #label > 14 then label = label:sub(1, 14) end
         window:render_text(Theme.font.caption,
             v2(item.bounds.x + 20, centred_y(item.bounds, 13)),
             Theme.color[hovered and "text_primary" or "text_secondary"](255), label)

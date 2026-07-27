@@ -706,6 +706,9 @@ local SMALL_H = 14
 
 local Theme = require("ui/theme")
 
+-- Minimum button width so labels never clip (mirrors RunnerPanelState)
+local BUTTON_MIN_W = Theme.metrics.control_height * 3
+
 local function fit_label(text, width)
     text = tostring(text or "")
     local max_chars = math.floor((width or 0) / CHAR_W)
@@ -917,22 +920,18 @@ function GraphState.build_plan(view, bounds)
         add_label = add_label .. " (" .. (fi and fi.label or view.filter_type) .. ")"
     end
 
-    -- Add Node button + type chips row
-    local chip_w = 0
-    for i, nt in ipairs(node_types) do
-        if i <= 5 then  -- Show first 5 as inline chips
-            chip_w = chip_w + (#nt.label * CHAR_W + Theme.space.lg)
-        end
-    end
+    -- Add Node button + type chips row. Measured (Runner-panel formula): with a filter active
+    -- the label grows to "Add Node (<type>)" and a fixed 100px clipped it.
     local max_type_chips = math.floor(content_w / (64 + Theme.space.sm))
     local shown_types = 0
 
+    local add_w = math.min(#add_label * CHAR_W + Theme.space.xl, content_w)
     push({
         kind = "button", id = "add_node_toggle",
-        bounds = { x = text_x, y = y, w = math.min(100, content_w), h = CONTROL_H },
+        bounds = { x = text_x, y = y, w = add_w, h = CONTROL_H },
         label = add_label, variant = "primary",
     })
-    local cx = text_x + math.min(100, content_w) + Theme.space.sm
+    local cx = text_x + add_w + Theme.space.sm
 
     -- Type filter chips (limited to fit)
     for _, nt in ipairs(node_types) do
@@ -953,15 +952,19 @@ function GraphState.build_plan(view, bounds)
 
     -- Second toolbar row: actions
     local actions = {}
-    table.insert(actions, { kind = "button", id = "close_campaign", label = "Campaigns", width = 90 })
-    table.insert(actions, { kind = "button", id = "validate", label = "Validate", width = 80 })
-    table.insert(actions, { kind = "button", id = "compile", label = "Compile", width = 80 })
+    table.insert(actions, { kind = "button", id = "close_campaign", label = "Campaigns",
+        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #"Campaigns" * CHAR_W + Theme.space.xl), h = CONTROL_H } })
+    table.insert(actions, { kind = "button", id = "validate", label = "Validate",
+        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #"Validate" * CHAR_W + Theme.space.xl), h = CONTROL_H } })
+    table.insert(actions, { kind = "button", id = "compile", label = "Compile",
+        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #"Compile" * CHAR_W + Theme.space.xl), h = CONTROL_H } })
     table.insert(actions, { kind = "spacer", id = "spacer1" })
 
     local escort_label = view.escort_mode and "Stop Escort" or "Escort Rec"
     table.insert(actions, {
         kind = "chip", id = "toggle_escort",
-        label = escort_label, width = 90,
+        label = escort_label,
+        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #escort_label * CHAR_W + Theme.space.lg), h = CONTROL_H },
         tone = view.escort_mode and "warning" or nil,
         selected = view.escort_mode,
     })
@@ -969,7 +972,8 @@ function GraphState.build_plan(view, bounds)
     local wp_label = view.waypoint_mode and "Stop WP" or "Capture WP"
     table.insert(actions, {
         kind = "chip", id = "toggle_waypoint",
-        label = wp_label, width = 90,
+        label = wp_label,
+        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #wp_label * CHAR_W + Theme.space.lg), h = CONTROL_H },
         tone = view.waypoint_mode and "info" or nil,
         selected = view.waypoint_mode,
     })
@@ -990,7 +994,7 @@ function GraphState.build_plan(view, bounds)
 
         push({
             kind = "button", id = "commit_waypoint",
-            bounds = { x = text_x, y = y, w = math.min(140, content_w), h = CONTROL_H },
+            bounds = { x = text_x, y = y, w = math.max(BUTTON_MIN_W, #"Commit Waypoint" * CHAR_W + Theme.space.xl), h = CONTROL_H },
             label = "Commit Waypoint", variant = "primary",
         })
         y = y + CONTROL_H + Theme.space.sm
@@ -1002,10 +1006,13 @@ function GraphState.build_plan(view, bounds)
             string.format("Recording escort: %d pts captured", view.escort_timeline_count or 0))
         y = y + SMALL_H
 
+        -- Shorter label, measured (Runner-panel formula): "Generate Nodes from Recording"
+        -- needs ~227px and clipped hard at 160.
+        local gen_label = "Generate from Recording"
         push({
             kind = "button", id = "generate_escort_nodes",
-            bounds = { x = text_x, y = y, w = math.min(160, content_w), h = CONTROL_H },
-            label = "Generate Nodes from Recording", variant = "primary",
+            bounds = { x = text_x, y = y, w = math.min(#gen_label * CHAR_W + Theme.space.xl, content_w), h = CONTROL_H },
+            label = gen_label, variant = "primary",
         })
         y = y + CONTROL_H + Theme.space.sm
     end
@@ -1068,13 +1075,16 @@ function GraphState.build_plan(view, bounds)
             })
             y = y + ROW_H + 4
 
-            -- If selected, add action buttons
+            -- If selected, add action buttons. Both take the wider label's measure
+            -- ("Collapse", Runner-panel formula): a fixed 70px clipped it.
             if is_selected then
-                local btn_w = math.min(70, (content_w - Theme.space.sm) * 0.33)
+                local expand_label = is_expanded and "Collapse" or "Edit"
+                local btn_w = math.min(#"Collapse" * CHAR_W + Theme.space.xl,
+                    (content_w - Theme.space.sm) * 0.5)
                 push({
                     kind = "button", id = "toggle_expand:" .. node.id,
                     bounds = { x = text_x, y = y, w = btn_w, h = CONTROL_H },
-                    label = is_expanded and "Collapse" or "Edit",
+                    label = expand_label,
                     variant = "secondary",
                 })
                 push({
@@ -1113,16 +1123,22 @@ function GraphState.build_plan(view, bounds)
                         push({
                             kind = "text_input", id = "edit_value",
                             bounds = { x = text_x + Theme.space.md, y = y,
-                                       w = math.max(80, content_w - Theme.space.md), h = CONTROL_H },
+                                       w = math.max(BUTTON_MIN_W * 2, content_w - Theme.space.md), h = CONTROL_H },
                             model = view.edit_input,
                             placeholder = field.label,
                         })
                         y = y + CONTROL_H + Theme.space.xs
                     elseif type(field.value) ~= "table" and field.key ~= "" then
+                        -- Measured, and hit_min tall centred on the text row: `hit_bounds`
+                        -- floors the click region to 30px either way, so a 12px visual was an
+                        -- 18px lie about where the pointer lands.
                         local edit_id = string.format("edit_intent:%s:%s", node.id, field.key)
+                        local edit_w = #"Edit" * CHAR_W + Theme.space.xl
                         push({
                             kind = "button", id = edit_id,
-                            bounds = { x = text_x + content_w - 50, y = y - SMALL_H, w = 48, h = SMALL_H - 2 },
+                            bounds = { x = text_x + content_w - edit_w,
+                                       y = y - SMALL_H + (SMALL_H - Theme.metrics.hit_min) * 0.5,
+                                       w = edit_w, h = Theme.metrics.hit_min },
                             label = "Edit", variant = "ghost",
                         })
                     end

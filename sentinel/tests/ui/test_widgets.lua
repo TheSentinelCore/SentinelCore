@@ -485,6 +485,47 @@ function M.test_toolbar_disabled_item_never_activates()
         "a disabled toolbar item must not report activation")
 end
 
+function M.test_toolbar_honours_an_items_own_bounds_width_first()
+    -- `bounds.w` is the most explicit per-item declaration: the graph actions row carries
+    -- measured rects, and a toolbar that read only `item.width` made those declarations inert.
+    local fake = FakeWindow.new()
+    local _, layout = Widgets.toolbar(fake, { x = 0, y = 0, w = 600, h = Theme.metrics.toolbar_height }, {
+        items = { { id = "wide", kind = "button", label = "Go",
+                    bounds = { x = 0, y = 0, w = 180, h = 28 }, width = 40 } },
+    })
+    T.assert_equal(layout[1].bounds.w, 180, "an item's own bounds.w beats item.width")
+end
+
+function M.test_toolbar_honours_item_width_over_measuring()
+    local fake = FakeWindow.new()
+    local _, layout = Widgets.toolbar(fake, { x = 0, y = 0, w = 600, h = Theme.metrics.toolbar_height }, {
+        items = { { id = "explicit", kind = "button", label = "A Rather Long Label", width = 140 } },
+    })
+    T.assert_equal(layout[1].bounds.w, 140, "an explicit width beats the measured fallback")
+end
+
+function M.test_toolbar_measures_a_label_that_would_clip_the_kind_default()
+    -- 23 chars * 7 + 2 * space.md = 185, well past the 96 button default: before measuring,
+    -- this item clipped to "Generat...".
+    local label = "Generate from Recording"
+    local fake = FakeWindow.new()
+    local _, layout = Widgets.toolbar(fake, { x = 0, y = 0, w = 600, h = Theme.metrics.toolbar_height }, {
+        items = { { id = "gen", kind = "button", label = label } },
+    })
+    T.assert_equal(layout[1].bounds.w, #label * 7 + 2 * Theme.space.md,
+        "a label too long for the default width must be measured, not clipped")
+end
+
+function M.test_toolbar_measured_width_never_shrinks_below_the_kind_default()
+    -- Measuring is a floor-raiser only: short labels keep the strip they have always had, so
+    -- existing toolbars do not reflow.
+    local fake = FakeWindow.new()
+    local _, layout = Widgets.toolbar(fake, { x = 0, y = 0, w = 400, h = Theme.metrics.toolbar_height }, {
+        items = { { id = "open", kind = "button", label = "Open" } },
+    })
+    T.assert_equal(layout[1].bounds.w, 96, "a short label keeps the button default width")
+end
+
 -- ============================================================================
 -- section_header / empty_state / toast / badge
 -- ============================================================================
