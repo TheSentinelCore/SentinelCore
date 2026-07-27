@@ -39,6 +39,7 @@ async fn setup_test_client() -> MemoryQueryClient {
         faction: "35".to_string(),
         positions: vec![WorldPos { map: 0, x: -8000.0, y: 100.0, z: 100.0 }],
         roles: vec!["QuestGiver".to_string()],
+        ..Default::default()
     };
     let finisher = NpcDetail {
         entry: 456,
@@ -46,6 +47,7 @@ async fn setup_test_client() -> MemoryQueryClient {
         faction: "35".to_string(),
         positions: vec![WorldPos { map: 0, x: -8000.0, y: 150.0, z: 100.0 }],
         roles: vec!["QuestGiver".to_string()],
+        ..Default::default()
     };
     MemoryQueryClient::new()
         .with_quest(quest)
@@ -293,6 +295,7 @@ async fn vendor_command_creates_vendor_action() {
         faction: "35".to_string(),
         positions: vec![],
         roles: vec!["Vendor".to_string()],
+        ..Default::default()
     };
     let client = MemoryQueryClient::new().with_npc(vendor_npc);
     let guide = r#"
@@ -327,6 +330,7 @@ async fn train_command_creates_train_action() {
         faction: "35".to_string(),
         positions: vec![],
         roles: vec!["Trainer".to_string()],
+        ..Default::default()
     };
     let client = MemoryQueryClient::new().with_npc(trainer_npc);
     let guide = r#"
@@ -352,6 +356,7 @@ async fn fly_command_creates_flight_action() {
         faction: "35".to_string(),
         positions: vec![],
         roles: vec!["FlightMaster".to_string()],
+        ..Default::default()
     };
     let client = MemoryQueryClient::new().with_npc(flight_master);
     let guide = r#"

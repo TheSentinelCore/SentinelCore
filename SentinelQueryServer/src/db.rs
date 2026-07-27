@@ -4,6 +4,8 @@ use sentinel_query_types::*;
 use std::sync::{Arc, Mutex};
 
 use crate::search::{escape_like, SearchHit, SearchKind, SpawnPoint, SpawnType, MAX_SEARCH_LIMIT};
+use crate::spawn_zones;
+use crate::zone_names::{zone_exists, zone_name};
 
 #[derive(Clone)]
 pub struct Db(pub Arc<Mutex<Connection>>);
@@ -527,11 +529,25 @@ impl Db {
             .collect())
     }
 
+    /// Every distinct **positive** `quest_template.ZoneOrSort` in the snapshot, ascending.
+    ///
+    /// Exists for the zone-catalog coverage test: it is the exact set of ids `search_quests` will
+    /// ask [`crate::zone_names::zone_name`] about, so a catalog that cannot name one of them
+    /// renders a blank zone in the quest search panel and nothing else notices.
+    pub fn distinct_quest_zones(&self) -> Result<Vec<i64>, String> {
+        self.query_map::<i64, _>(
+            "SELECT DISTINCT ZoneOrSort FROM quest_template WHERE ZoneOrSort > 0 \
+             ORDER BY ZoneOrSort ASC",
+            [],
+            |row| row.get(0),
+        )
+    }
+
     pub fn search_quests(&self, query: &str) -> Result<Vec<QuestSummary>, String> {
         let db = self.0.lock().unwrap();
         let like = format!("%{}%", query);
         let mut stmt = db.prepare(
-            "SELECT entry, Title, QuestLevel, MinLevel FROM quest_template WHERE Title LIKE ?1"
+            "SELECT entry, Title, QuestLevel, MinLevel, ZoneOrSort FROM quest_template WHERE Title LIKE ?1"
         )
         .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -541,6 +557,7 @@ impl Db {
                     title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                     level: row.get::<_, i64>(2)? as u8,
                     min_level: row.get::<_, i64>(3)? as u8,
+                    zone: zone_name(row.get::<_, i64>(4)?).to_string(),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -554,7 +571,8 @@ impl Db {
     pub fn get_npc(&self, entry: u32) -> Result<Option<NpcDetail>, String> {
         let db = self.0.lock().unwrap();
         let mut stmt = db.prepare(
-            "SELECT ct.Entry, ct.Name, ct.Faction, ct.NpcFlags, c.position_x, c.position_y, c.position_z, c.map \
+            "SELECT ct.Entry, ct.Name, ct.Faction, ct.NpcFlags, c.position_x, c.position_y, c.position_z, c.map, \
+                    ct.MinLevel, ct.Rank \
              FROM creature_template ct \
              LEFT JOIN creature c ON c.id = ct.Entry \
              WHERE ct.Entry = ?1"
@@ -570,6 +588,8 @@ impl Db {
                 row.get::<_, Option<f64>>(5)?,
                 row.get::<_, Option<f64>>(6)?,
                 row.get::<_, Option<i64>>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
             ))
         })
         .map_err(|e| e.to_string())?;
@@ -586,6 +606,8 @@ impl Db {
             pos_y,
             pos_z,
             map_val,
+            min_level,
+            rank,
         ) = row;
         let name = name_opt.unwrap_or_default();
         let map = map_val.unwrap_or(0) as u32;
@@ -622,6 +644,60 @@ impl Db {
         }
         // Note: Mailbox flag is typically not in NpcFlags; it's often a separate gameobject type
 
+        // `rows` borrows `stmt`, which borrows the connection guard; both must go before the
+        // loot/quest statements can be prepared on the same guard.
+        drop(rows);
+        drop(stmt);
+
+        let mut loot_stmt = db
+            .prepare(
+                "SELECT clt.item, it.name, clt.ChanceOrQuestChance \
+                 FROM creature_loot_template clt \
+                 LEFT JOIN item_template it ON it.entry = clt.item \
+                 WHERE clt.entry = ?1 \
+                 ORDER BY ABS(clt.ChanceOrQuestChance) DESC, clt.item",
+            )
+            .map_err(|e| e.to_string())?;
+        let loot_iter = loot_stmt
+            .query_map([entry], |row| {
+                Ok(LootEntry {
+                    item: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    // Quest drops are stored negative; the sign is a flag, not a chance.
+                    drop_chance: row.get::<_, f64>(2)?.abs() as f32,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut loot = Vec::new();
+        for row in loot_iter {
+            loot.push(row.map_err(|e| e.to_string())?);
+        }
+
+        let mut quest_stmt = db
+            .prepare(
+                "SELECT r.quest, qt.Title, r.role FROM ( \
+                     SELECT quest, 'starter' AS role FROM creature_questrelation WHERE id = ?1 \
+                     UNION ALL \
+                     SELECT quest, 'finisher' AS role FROM creature_involvedrelation WHERE id = ?1 \
+                 ) r \
+                 LEFT JOIN quest_template qt ON qt.entry = r.quest \
+                 ORDER BY r.role, r.quest",
+            )
+            .map_err(|e| e.to_string())?;
+        let quest_iter = quest_stmt
+            .query_map([entry], |row| {
+                Ok(NpcQuestRef {
+                    quest_id: row.get::<_, i64>(0)? as u32,
+                    title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    role: row.get::<_, String>(2)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut quests = Vec::new();
+        for row in quest_iter {
+            quests.push(row.map_err(|e| e.to_string())?);
+        }
+
         Ok(Some(NpcDetail {
             entry: entry_val as u32,
             name,
@@ -633,6 +709,10 @@ impl Db {
                 z: pos_z as f32,
             }],
             roles,
+            level: min_level.clamp(0, u8::MAX as i64) as u8,
+            classification: classification_from_rank(rank).to_string(),
+            loot,
+            quests,
         }))
     }
 
@@ -669,13 +749,35 @@ impl Db {
         let name = name_opt.unwrap_or_default();
 
         let mut stmt = db
-            .prepare("SELECT item FROM npc_vendor WHERE entry = ?1")
+            .prepare(
+                "SELECT nv.item, it.name, it.BuyPrice, nv.ExtendedCost \
+                 FROM npc_vendor nv \
+                 LEFT JOIN item_template it ON it.entry = nv.item \
+                 WHERE nv.entry = ?1 \
+                 ORDER BY nv.slot, nv.item",
+            )
             .map_err(|e| e.to_string())?;
         let mut items = Vec::new();
-        let mut iter = stmt.query_map([entry], |row| row.get::<_, i64>(0)).map_err(|e| e.to_string())?;
-        while let Some(item) = iter.next() {
-            items.push(item.map_err(|e| e.to_string())? as u32);
+        let iter = stmt
+            .query_map([entry], |row| {
+                let extended_cost: i64 = row.get(3)?;
+                Ok(VendorItem {
+                    item_entry: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    // An ExtendedCost item is bought with honor/arena/token currency. BuyPrice is
+                    // meaningless there, so price 0 means "not purchasable for copper".
+                    price: if extended_cost != 0 {
+                        0
+                    } else {
+                        row.get::<_, Option<i64>>(2)?.unwrap_or(0).max(0) as u32
+                    },
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for item in iter {
+            items.push(item.map_err(|e| e.to_string())?);
         }
+        drop(stmt);
 
         // Check repairs flag from NpcFlags
         let mut repairs_stmt = db
@@ -919,6 +1021,171 @@ let exists = self.query_map::<bool, _>(
         let seconds = (distance / speed).ceil() as u64;
 
         Ok(TravelEstimateResponse { seconds })
+    }
+
+    /// Creature spawns within `radius` yards of a point, grouped by entry, nearest group first.
+    ///
+    /// The primary data source for the grind planner (F13). It is a **position** query and not a
+    /// zone query on purpose: `creature` has map and position columns and no zone, so every one of
+    /// the snapshot's 11,922 spawned entries is reachable this way, and the planner's real question
+    /// — "what can I pull from where I am standing" — is a radius, not an administrative boundary.
+    ///
+    /// Distance is horizontal. The request carries no `z` (a caller standing on a bridge would
+    /// otherwise exclude everything under it), and a grind radius is a walking radius.
+    pub fn spawns_nearby(
+        &self,
+        map: u32,
+        x: f32,
+        y: f32,
+        radius: f32,
+        limit: usize,
+    ) -> Result<Vec<SpawnGroup>, String> {
+        // The bounding box is what SQLite can filter on; the exact circle is applied below. Doing
+        // it the other way round means computing a square root for every one of 109k rows.
+        let rows = self.query_map::<(u32, String, i64, i64, i64, i64, f64, f32, f32, f32), _>(
+            "SELECT c.id, t.Name, t.MinLevel, t.MaxLevel, t.Rank, t.Expansion, \
+                    t.ExperienceMultiplier, c.position_x, c.position_y, c.position_z \
+             FROM creature c JOIN creature_template t ON t.Entry = c.id \
+             WHERE c.map = ?1 AND c.position_x BETWEEN ?2 AND ?3 \
+               AND c.position_y BETWEEN ?4 AND ?5",
+            rusqlite::params![
+                map,
+                (x - radius) as f64,
+                (x + radius) as f64,
+                (y - radius) as f64,
+                (y + radius) as f64
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u32,
+                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get::<_, f64>(7)? as f32,
+                    row.get::<_, f64>(8)? as f32,
+                    row.get::<_, f64>(9)? as f32,
+                ))
+            },
+        )?;
+
+        let mut groups: Vec<SpawnGroup> = Vec::new();
+        let mut index: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        for (entry, name, min, max, rank, expansion, xp_mult, px, py, pz) in rows {
+            let distance = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
+            if distance > radius {
+                continue;
+            }
+            let slot = *index.entry(entry).or_insert_with(|| {
+                groups.push(SpawnGroup {
+                    entry,
+                    name,
+                    spawn_count: 0,
+                    avg_level: average_level(min, max),
+                    classification: classification_from_rank(rank).to_string(),
+                    xp_reward: xp_reward(average_level(min, max), rank, expansion, xp_mult),
+                    nearest_distance: None,
+                    positions: Vec::new(),
+                });
+                groups.len() - 1
+            });
+            let group = &mut groups[slot];
+            group.spawn_count += 1;
+            if group.nearest_distance.map_or(true, |d| distance < d) {
+                group.nearest_distance = Some(distance);
+            }
+            if group.positions.len() < MAX_SAMPLE_POSITIONS {
+                group.positions.push(WorldPos {
+                    map,
+                    x: px,
+                    y: py,
+                    z: pz,
+                });
+            }
+        }
+
+        // Nearest first: the grind planner walks the list top-down looking for the closest viable
+        // pull, so the ordering is the answer and not presentation.
+        groups.sort_by(|a, b| {
+            a.nearest_distance
+                .unwrap_or(f32::MAX)
+                .partial_cmp(&b.nearest_distance.unwrap_or(f32::MAX))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.entry.cmp(&b.entry))
+        });
+        groups.truncate(limit);
+        Ok(groups)
+    }
+
+    /// Everything spawned in a zone, grouped by entry, from the committed spawn→zone index.
+    ///
+    /// `Ok(None)` means the zone id is not in the zone catalog at all — the caller turns that into
+    /// a 404. A real zone with nothing in it is `Ok(Some(..))` with empty arrays, because "nothing
+    /// spawns in Ironforge's bank" and "there is no zone 99999" are different answers.
+    pub fn zone_spawns(&self, zone: u32) -> Result<Option<ZoneSpawns>, String> {
+        if !zone_exists(zone) {
+            return Ok(None);
+        }
+        let index = spawn_zones::index();
+        let creature_counts = index.creatures.get(&zone);
+        let object_counts = index.objects.get(&zone);
+
+        let mut creatures = Vec::new();
+        if let Some(counts) = creature_counts {
+            // The entry ids come from a committed catalog of integers, never from caller text, so
+            // an inlined IN list is safe here and saves 250 round trips through the statement.
+            let sql = format!(
+                "SELECT Entry, Name, MinLevel, MaxLevel, Rank, Expansion, ExperienceMultiplier \
+                 FROM creature_template WHERE Entry IN ({})",
+                id_list(counts.keys().copied())
+            );
+            creatures = self.query_map::<SpawnGroup, _>(&sql, [], |row| {
+                let entry = row.get::<_, i64>(0)? as u32;
+                let min: i64 = row.get(2)?;
+                let max: i64 = row.get(3)?;
+                let rank: i64 = row.get(4)?;
+                let expansion: i64 = row.get(5)?;
+                let level = average_level(min, max);
+                Ok(SpawnGroup {
+                    entry,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    spawn_count: counts.get(&entry).copied().unwrap_or(0),
+                    avg_level: level,
+                    classification: classification_from_rank(rank).to_string(),
+                    xp_reward: xp_reward(level, rank, expansion, row.get(6)?),
+                    nearest_distance: None,
+                    positions: Vec::new(),
+                })
+            })?;
+            creatures.sort_by(|a, b| b.spawn_count.cmp(&a.spawn_count).then(a.entry.cmp(&b.entry)));
+        }
+
+        let mut objects = Vec::new();
+        if let Some(counts) = object_counts {
+            let sql = format!(
+                "SELECT entry, name, type FROM gameobject_template WHERE entry IN ({})",
+                id_list(counts.keys().copied())
+            );
+            objects = self.query_map::<ZoneObject, _>(&sql, [], |row| {
+                let entry = row.get::<_, i64>(0)? as u32;
+                Ok(ZoneObject {
+                    entry,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    spawn_count: counts.get(&entry).copied().unwrap_or(0),
+                    kind: row.get::<_, i64>(2)? as u32,
+                })
+            })?;
+            objects.sort_by(|a, b| b.spawn_count.cmp(&a.spawn_count).then(a.entry.cmp(&b.entry)));
+        }
+
+        Ok(Some(ZoneSpawns {
+            zone_id: zone,
+            zone_name: zone_name(zone as i64).to_string(),
+            creatures,
+            objects,
+        }))
     }
 
     /// Federated fuzzy search across npc / quest / item / object / area, ranked exact > prefix >
@@ -1209,6 +1476,121 @@ fn npc_context(subname: Option<&str>, min_level: i64, max_level: i64, map: Optio
     parts.join(" - ")
 }
 
+/// How many sample positions a spawn group carries. The grind generator turns these into
+/// waypoints; a route wants a handful of anchors, not all 264 Elwynn deer.
+const MAX_SAMPLE_POSITIONS: usize = 8;
+
+/// Yards per second on foot. The same 7.0 `travel_estimate` has always assumed — mangos
+/// `baseMoveSpeed[MOVE_RUN]` (`src/game/Entities/Unit.cpp`), i.e. unmounted running.
+const RUN_SPEED: f32 = 7.0;
+
+/// Yards per second on a taxi. mangos `TAXI_FLIGHT_SPEED`
+/// (`src/game/MotionGenerators/PathMovementGenerator.cpp`), the velocity the flight spline is
+/// initialised with.
+const TAXI_SPEED: f32 = 32.0;
+
+/// A creature entry is a level *range*; the planner needs one number.
+fn average_level(min: i64, max: i64) -> u8 {
+    let (min, max) = (min.max(0), max.max(0));
+    let level = if max >= min { (min + max) / 2 } else { min };
+    level.clamp(0, u8::MAX as i64) as u8
+}
+
+/// XP a character of the creature's own level earns for killing it.
+///
+/// mangos `MaNGOS::XP::BaseGain` + `Gain` (`src/game/Tools/Formulas.h`), evaluated at
+/// `unit_level == mob_level` so the answer is a property of the creature rather than of whoever is
+/// asking: `level * 5 + 45` for vanilla content, `+ 235` for Burning Crusade content, times 2.5
+/// for an elite on a non-raid map, times `creature_template.ExperienceMultiplier`.
+///
+/// The content tier comes from `creature_template.Expansion`, not from the level: a level-60 mob
+/// in an Outland instance and a level-60 mob in Silithus pay very differently, and guessing from
+/// the level gets every Hellfire mob below 61 wrong.
+///
+/// "Elite" follows mangos `Creature::IsElite`: any rank except normal (0) and rare (4) — so rare
+/// *elite* (2) counts, which is the tier a four-value classification enum loses.
+fn xp_reward(level: u8, rank: i64, expansion: i64, xp_multiplier: f64) -> u32 {
+    let base = f64::from(level) * 5.0 + if expansion >= 1 { 235.0 } else { 45.0 };
+    let elite = if rank != 0 && rank != 4 { 2.5 } else { 1.0 };
+    (base * elite * xp_multiplier).round().max(0.0) as u32
+}
+
+/// A comma-separated SQL integer list. Only ever called with ids from a committed catalog.
+fn id_list(ids: impl Iterator<Item = u32>) -> String {
+    let mut ids: Vec<u32> = ids.collect();
+    ids.sort_unstable();
+    ids.iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// `POST /travel/route` — per-segment and total time for a mixed walk/taxi route.
+///
+/// Touches no database: it is arithmetic over the positions the caller already holds, and it lives
+/// here beside [`Db::travel_estimate`], which it extends rather than replaces. `/travel/estimate`
+/// still answers the single-hop question in its own shape; nothing calling it has to change.
+///
+/// A taxi segment must carry `from`/`to` positions as well as its node ids. This server has no
+/// taxi tables at all (`get_flight` returns an empty destination list for the same reason), and
+/// `TaxiPathNode.dbc` — the flight geometry — is deliberately not in any committed catalog. The
+/// runtime *does* own node positions, in `sentinel/kernel/catalogs/taxi_nodes.lua`, so the caller
+/// that knows the node ids also knows where they are. Refusing the segment is the honest answer;
+/// inventing a per-hop constant would put a made-up number in the editor's total.
+pub fn plan_route(req: TravelRouteRequest) -> Result<TravelRouteResponse, String> {
+    let mut segments = Vec::with_capacity(req.segments.len());
+    for (i, seg) in req.segments.iter().enumerate() {
+        let taxi = seg.kind.as_deref() == Some("taxi");
+        match seg.kind.as_deref() {
+            None | Some("walk") | Some("taxi") => {}
+            Some(other) => return Err(format!("segment {i}: unknown type {other:?}")),
+        }
+        let (from, to) = match (seg.from, seg.to) {
+            (Some(from), Some(to)) => (from, to),
+            _ if taxi => {
+                return Err(format!(
+                    "segment {i}: a taxi segment needs from/to positions for its nodes \
+                     ({:?} -> {:?}); this server has no taxi tables",
+                    seg.from_node, seg.to_node
+                ))
+            }
+            _ => return Err(format!("segment {i}: a walk segment needs both from and to")),
+        };
+        // Cross-map legs have no meaningful straight line — the two coordinate systems are
+        // unrelated — so they are refused rather than measured as if they shared one.
+        if from.map != to.map {
+            return Err(format!(
+                "segment {i}: from and to are on different maps ({} and {})",
+                from.map, to.map
+            ));
+        }
+        let distance = ((to.x - from.x).powi(2) + (to.y - from.y).powi(2) + (to.z - from.z).powi(2))
+            .sqrt();
+        let speed = if taxi { TAXI_SPEED } else { RUN_SPEED };
+        segments.push(TravelRouteSegment {
+            kind: if taxi { "taxi" } else { "walk" }.to_string(),
+            distance_m: Some(distance),
+            estimated_s: (distance / speed).ceil() as u64,
+        });
+    }
+    let total_s = segments.iter().map(|s| s.estimated_s).sum();
+    Ok(TravelRouteResponse { segments, total_s })
+}
+
+/// `creature_template.Rank` → the classification string the NPC inspector renders.
+///
+/// Mangos ranks are `0` normal, `1` elite, `2` rare elite, `3` world boss, `4` rare. Anything else
+/// is data the client cannot classify, and reads as normal rather than as a blank chip.
+fn classification_from_rank(rank: i64) -> &'static str {
+    match rank {
+        1 => "elite",
+        2 => "rare elite",
+        3 => "boss",
+        4 => "rare",
+        _ => "normal",
+    }
+}
+
 /// Merge the per-kind hits into one page: every score tier is exhausted before the next, but
 /// within a tier the kinds take turns.
 ///
@@ -1394,5 +1776,93 @@ mod tests {
         let db = open();
         assert!(db.spawns(SpawnType::Npc, 99_999_999).unwrap().is_empty());
         assert!(db.spawns(SpawnType::Object, 99_999_999).unwrap().is_empty());
+    }
+
+    #[test]
+    fn npc_detail_carries_level_classification_loot_and_quests() {
+        // Hogger: MinLevel 11, Rank 1 (elite), 30 loot rows. The panel rendered blanks for all of
+        // this because NpcDetail simply had no fields for it.
+        let db = open();
+        let hogger = db.get_npc(448).unwrap().expect("Hogger exists");
+        assert_eq!(hogger.level, 11);
+        assert_eq!(hogger.classification, "elite");
+        assert_eq!(hogger.loot.len(), 30);
+
+        // `ChanceOrQuestChance` is stored as -100.0 for the quest drop; the sign is a flag, and a
+        // panel that renders it raw shows "-100%".
+        let claw = hogger
+            .loot
+            .iter()
+            .find(|l| l.item == 1931)
+            .expect("Hogger drops the Huge Gnoll Claw");
+        assert_eq!(claw.name, "Huge Gnoll Claw");
+        assert!((claw.drop_chance - 100.0).abs() < 0.001, "{}", claw.drop_chance);
+        assert!(hogger.loot.iter().all(|l| l.drop_chance >= 0.0));
+
+        // Deputy Willem starts 5 quests and finishes 2 of them; both relation tables must be read.
+        let willem = db.get_npc(823).unwrap().expect("Deputy Willem exists");
+        let starters: Vec<u32> = willem
+            .quests
+            .iter()
+            .filter(|q| q.role == "starter")
+            .map(|q| q.quest_id)
+            .collect();
+        let finishers: Vec<u32> = willem
+            .quests
+            .iter()
+            .filter(|q| q.role == "finisher")
+            .map(|q| q.quest_id)
+            .collect();
+        assert_eq!(starters, vec![6, 18, 783, 3903, 5261]);
+        assert_eq!(finishers, vec![6, 18]);
+        assert!(willem.quests.iter().all(|q| !q.title.is_empty()));
+    }
+
+    #[test]
+    fn npc_classification_defaults_to_normal() {
+        let db = open();
+        let willem = db.get_npc(823).unwrap().expect("Deputy Willem exists");
+        assert_eq!(willem.classification, "normal");
+        assert_eq!(willem.level, 18);
+    }
+
+    #[test]
+    fn vendor_sells_resolved_items_and_prices_extended_cost_at_zero() {
+        // Coreiel sells 7 items, 2 of them for arena/honor currency (ExtendedCost != 0). Bare item
+        // ids rendered as numbers in the Properties panel; there is no item lookup on the Lua side.
+        let db = open();
+        let vendor = db.get_vendor(21474).unwrap().expect("Coreiel exists");
+        assert_eq!(vendor.sells.len(), 7);
+        assert!(vendor.sells.iter().all(|i| !i.name.is_empty()));
+
+        let cookie = vendor
+            .sells
+            .iter()
+            .find(|i| i.item_entry == 30568)
+            .expect("Coreiel sells The Sharp Cookie");
+        assert_eq!(cookie.name, "The Sharp Cookie");
+        assert_eq!(cookie.price, 22142);
+
+        // BuyPrice is 0 anyway for these two, but the rule is the ExtendedCost flag, not the price:
+        // a copper price on an ExtendedCost item would be a lie about how it is bought.
+        let talbuk = vendor
+            .sells
+            .iter()
+            .find(|i| i.item_entry == 28915)
+            .expect("Coreiel sells the Dark Riding Talbuk");
+        assert_eq!(talbuk.price, 0);
+    }
+
+    #[test]
+    fn quest_search_resolves_the_zone_name() {
+        let db = open();
+        let hits = db.search_quests("Report to Goldshire").unwrap();
+        let quest = hits.iter().find(|q| q.id == 54).expect("quest 54 matches");
+        assert_eq!(quest.zone, "Northshire Valley");
+
+        // ZoneOrSort -263 is a sort bucket (a class/profession group), not an area id.
+        let lesson = db.search_quests("A Lesson to Learn").unwrap();
+        let lesson = lesson.iter().find(|q| q.id == 26).expect("quest 26 matches");
+        assert_eq!(lesson.zone, "");
     }
 }

@@ -9,6 +9,8 @@ mod db;
 mod handlers;
 mod resolve;
 mod search;
+mod spawn_zones;
+mod zone_names;
 
 use db::Db;
 
@@ -38,10 +40,15 @@ async fn main() {
         .route("/item/:item/sources", get(handlers::get_item_sources))
         .route("/creatures/polygon", get(handlers::creatures_polygon))
         .route("/search", get(handlers::search))
+        // Declared before `/spawns/:type/:entry`: axum's router would otherwise never see this
+        // path, since "nearby" matches `:type` and the entry segment is what distinguishes them.
+        .route("/spawns/nearby", get(handlers::spawns_nearby))
         .route("/spawns/:type/:entry", get(handlers::get_spawns))
+        .route("/zone/:id/spawns", get(handlers::zone_spawns))
         .route("/resolve", post(handlers::resolve))
         .route("/validate", post(handlers::validate))
         .route("/travel/estimate", post(handlers::travel_estimate))
+        .route("/travel/route", post(handlers::travel_route))
         .layer(Extension(db))
         .fallback(handler_404);
 

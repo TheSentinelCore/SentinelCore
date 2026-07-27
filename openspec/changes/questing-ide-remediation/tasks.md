@@ -17,6 +17,13 @@ Chained PRs recommended: Yes
 Chain strategy: stacked-to-main
 400-line budget risk: High
 
+**Granted exceptions** (maintainer decision, 2026-07-26):
+- `size:exception` for PR5 — 1,595 authored lines across 4 commits on 2 stacked branches.
+  `a66e20e` (603) is one generator + one derivation + its test, with no meaningful split.
+  `eb37b83` (792) interleaves three endpoints in `db.rs`/`handlers.rs`; re-slicing risked a
+  non-compiling intermediate. Generated catalog data excluded from authored counts.
+- PR2 was split retroactively into `qir/pr2a-async-slot` (435) and `qir/pr2b-panel-rearm` (307).
+
 Std = `luajit sentinel/tests/run_offline.lua` (run from repo root). Every task below names its PR slice; budget is per PR, not per phase.
 
 ### Suggested Work Units
@@ -66,17 +73,17 @@ Std = `luajit sentinel/tests/run_offline.lua` (run from repo root). Every task b
 
 ## Phase 2: Rust Contracts + Zone Data Pipeline [PR4–PR5]
 
-- [ ] 2.1 [PR4] `SentinelQuesting/query-types/src/lib.rs`: add `QuestSummary.zone: String`; `NpcDetail` += `level: u8, classification: String, loot: Vec<LootEntry>, quests: Vec<NpcQuestRef>`; `VendorInfo.sells: Vec<VendorItem>` (replaces `Vec<u32>`) — all new fields `#[serde(default)]`
-- [ ] 2.2 [PR4] `SentinelQueryServer/src/db.rs`: extend `get_npc` (MinLevel/MaxLevel/Rank, loot via `creature_loot_template ⋈ item_template`, quests via `creature_questrelation`+`creature_involvedrelation` ⋈ `quest_template`); extend `get_vendor` (`npc_vendor ⋈ item_template`, `ExtendedCost≠0` → price 0); extend `search_quests` (`ZoneOrSort` → new `zone_names.rs` static TBC area map)
-- [ ] 2.3 [PR4] Update ripple call sites for new required struct fields: `compiler/tests/{kernel_combat_policy,kernel_worked_example}.rs`, `importer/src/project_builder.rs`, `importer/tests/{mapper,importer}.rs`, `queryclient/tests/queryclient.rs`, `queryclient/src/memory.rs`
-- [ ] 2.4 [PR4] Test: `cargo test` green in `SentinelQueryServer/` and `SentinelQuesting/` (both workspaces, run from inside each)
-- [ ] 2.5 [PR5] Create `sentinel/tools/regen_zone_catalog.py` mirroring `regen_taxi_paths_catalog.py`: parse `Emulators/Mangos - Classic TBC/extracted/dbc/AreaTable.dbc` for zone names/hierarchy, parse `maps/*.map` area-ID grids to compute zoneId for all 109,352 creature spawns
-- [ ] 2.6 [PR5] Commit generated catalogs: `sentinel/kernel/catalogs/zones.json`, `zones.lua`, spawn-zone index
-- [ ] 2.7 [PR5] Test mirroring `sentinel/tests/kernel/test_taxi_paths.lua` pattern: catalog regen produces non-empty, structurally valid zone + spawn-zone catalogs
-- [ ] 2.8 [PR5] `SentinelQueryServer/src/handlers.rs`+`main.rs`: add `GET /spawns/nearby?map={id}&x={x}&y={y}&radius={r}` — F13's primary position-filtered creature data source
-- [ ] 2.9 [PR5] `handlers.rs`+`main.rs`: add `GET /zone/{id}/spawns` joining the spawn-zone index with `creature`+`creature_template`, returns `{zone_id, zone_name, creatures[], objects[]}`; unknown zone → 404 naming the id
-- [ ] 2.10 [PR5] `handlers.rs`+`main.rs`: add `POST /travel/route` (`{segments:[...]}` → `{segments:[{type,distance_m?,estimated_s}], total_s}`); extends the existing `/travel/estimate`, does not replace it
-- [ ] 2.11 [PR5] Test `cargo test -p sentinel-queryserver`: all three new endpoints, including the 404 unknown-zone case
+- [x] 2.1 [PR4] `SentinelQuesting/query-types/src/lib.rs`: add `QuestSummary.zone: String`; `NpcDetail` += `level: u8, classification: String, loot: Vec<LootEntry>, quests: Vec<NpcQuestRef>`; `VendorInfo.sells: Vec<VendorItem>` (replaces `Vec<u32>`) — all new fields `#[serde(default)]`
+- [x] 2.2 [PR4] `SentinelQueryServer/src/db.rs`: extend `get_npc` (MinLevel/MaxLevel/Rank, loot via `creature_loot_template ⋈ item_template`, quests via `creature_questrelation`+`creature_involvedrelation` ⋈ `quest_template`); extend `get_vendor` (`npc_vendor ⋈ item_template`, `ExtendedCost≠0` → price 0); extend `search_quests` (`ZoneOrSort` → new `zone_names.rs` static TBC area map)
+- [x] 2.3 [PR4] Update ripple call sites for new required struct fields: `compiler/tests/{kernel_combat_policy,kernel_worked_example}.rs`, `importer/src/project_builder.rs`, `importer/tests/{mapper,importer}.rs`, `queryclient/tests/queryclient.rs`, `queryclient/src/memory.rs`
+- [x] 2.4 [PR4] Test: `cargo test` green in `SentinelQueryServer/` and `SentinelQuesting/` (both workspaces, run from inside each)
+- [x] 2.5 [PR5] Create `sentinel/tools/regen_zone_catalog.py` mirroring `regen_taxi_paths_catalog.py`: parse `Emulators/Mangos - Classic TBC/extracted/dbc/AreaTable.dbc` for zone names/hierarchy, parse `maps/*.map` area-ID grids to compute zoneId for all 109,352 creature spawns
+- [x] 2.6 [PR5] Commit generated catalogs: `sentinel/kernel/catalogs/zones.json`, `zones.lua`, spawn-zone index
+- [x] 2.7 [PR5] Test mirroring `sentinel/tests/kernel/test_taxi_paths.lua` pattern: catalog regen produces non-empty, structurally valid zone + spawn-zone catalogs
+- [x] 2.8 [PR5] `SentinelQueryServer/src/handlers.rs`+`main.rs`: add `GET /spawns/nearby?map={id}&x={x}&y={y}&radius={r}` — F13's primary position-filtered creature data source
+- [x] 2.9 [PR5] `handlers.rs`+`main.rs`: add `GET /zone/{id}/spawns` joining the spawn-zone index with `creature`+`creature_template`, returns `{zone_id, zone_name, creatures[], objects[]}`; unknown zone → 404 naming the id
+- [x] 2.10 [PR5] `handlers.rs`+`main.rs`: add `POST /travel/route` (`{segments:[...]}` → `{segments:[{type,distance_m?,estimated_s}], total_s}`); extends the existing `/travel/estimate`, does not replace it
+- [x] 2.11 [PR5] Test `cargo test -p sentinel-queryserver`: all three new endpoints, including the 404 unknown-zone case
 
 ## Phase 3: Panel Remediation [PR6–PR10]
 

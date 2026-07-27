@@ -30,6 +30,7 @@ fn sample_client() -> MemoryQueryClient {
                 z: 3.0,
             }],
             roles: vec!["QuestGiver".into(), "Vendor".into()],
+            ..Default::default()
         })
         .with_vendor(VendorInfo {
             entry: 197,

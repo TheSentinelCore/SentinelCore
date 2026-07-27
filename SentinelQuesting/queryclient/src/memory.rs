@@ -81,6 +81,9 @@ impl QueryClient for MemoryQueryClient {
                 title: d.title.clone(),
                 level: d.level,
                 min_level: d.min_level,
+                // QuestDetail carries no zone — the server resolves it from ZoneOrSort at search
+                // time, and the in-memory fixture has nothing to resolve against.
+                zone: String::new(),
             })
             .collect())
     }
