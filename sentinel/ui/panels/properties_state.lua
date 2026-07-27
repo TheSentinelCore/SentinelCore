@@ -30,6 +30,11 @@ function PropertiesState.new(opts)
         object_info = nil,    -- ObjectInfo from /object/{entry}
         npc_spawns = nil,     -- [{ map, x, y, z }]
 
+        -- Graph node handed over by the selection bus's origin panel. There is no /node/{id}
+        -- endpoint and there never will be: a node lives in the campaign the Graph panel holds.
+        node_detail = nil,    -- { id, type, intent, preview }
+        node_edit = nil,      -- { field, kind, draft, error } while a payload field is being edited
+
         -- NPC inspector tab
         npc_tab = "info",     -- "info" | "loot" | "quests" | "spawns"
 
@@ -66,6 +71,8 @@ function PropertiesState:set_context(ctx)
         self.object_info = nil
         self.npc_spawns = nil
         self.vendor_items = nil
+        self.node_detail = nil
+        self.node_edit = nil
         self.condition_tree = nil
         self.inventory_rules = nil
         self.inventory_default = nil
@@ -88,6 +95,8 @@ function PropertiesState:set_context(ctx)
     self.object_info = nil
     self.npc_spawns = nil
     self.vendor_items = nil
+    self.node_detail = nil
+    self.node_edit = nil
     self.condition_tree = nil
     self.inventory_rules = nil
     self.inventory_default = nil
@@ -102,6 +111,70 @@ end
 function PropertiesState:set_npc_tab(tab)
     if self.npc_tab == tab then return end
     self.npc_tab = tab
+end
+
+---Hand a graph node to the inspector. Called by the binding when the selection bus reports
+---`kind == "node"`: the bus stays content-free (`{kind, id}`), so the node table arrives by this
+---separate door rather than riding on the event.
+function PropertiesState:set_node(node)
+    self.node_detail = node
+    self.node_edit = nil
+    self._dirty = true
+end
+
+---Begin editing one payload field. Refuses a field the node does not have, and refuses a list.
+---@return boolean started
+function PropertiesState:begin_node_edit(field_name)
+    for _, field in ipairs(PropertiesState.node_fields(self.node_detail)) do
+        if field.name == field_name then
+            if not field.editable then
+                self.node_edit = { field = field.name, kind = field.kind, draft = field.display,
+                    error = "this field is a list; edit it in the graph" }
+                return false
+            end
+            self.node_edit = { field = field.name, kind = field.kind, draft = tostring(field.value) }
+            return true
+        end
+    end
+    return false
+end
+
+---Replace the in-progress draft and re-validate it. This is the seam the `text_input` widget (PR6)
+---feeds: the keystrokes are its problem, the meaning of the string is this file's. Validation runs
+---per keystroke, not on commit, so a refusal is visible while it can still be corrected.
+function PropertiesState:set_node_draft(text)
+    if not self.node_edit then return end
+    self.node_edit.draft = tostring(text or "")
+    local _, err = PropertiesState.validate_node_field(self.node_edit.kind, self.node_edit.draft)
+    self.node_edit.error = err
+end
+
+---Apply the draft to the node's intent.
+---@return boolean applied, string|nil error, table|nil change { id, field, value } for the host
+function PropertiesState:commit_node_edit()
+    local edit = self.node_edit
+    if not edit then return false, "nothing is being edited" end
+
+    local value, err = PropertiesState.validate_node_field(edit.kind, edit.draft)
+    if err then
+        edit.error = err
+        return false, err
+    end
+
+    local node = self.node_detail
+    if type(node.intent) ~= "table" then node.intent = {} end
+    node.intent[edit.field] = value
+    self.node_edit = nil
+    self._dirty = true
+    -- The CHANGE is returned rather than written through: persisting it is a `PUT
+    -- /editor/campaigns/{name}/nodes/{id}` the editor client owns (PR7), and this panel reporting a
+    -- save it did not make is the phantom success the whole change is removing.
+    return true, nil, { id = node.id, field = edit.field, value = value }
+end
+
+function PropertiesState:cancel_node_edit()
+    self.node_edit = nil
+    self._dirty = true
 end
 
 -- ============================================================================
@@ -124,6 +197,14 @@ function PropertiesState.reduce(action_id)
         -- field name meaning both is how a toggle ends up matching the wrong row.
         return { kind = "toggle_vendor_item", item_entry = tonumber(id_str) }
     end
+
+    if prefix == "edit_node_field" then
+        return { kind = "begin_node_edit", field = id_str }
+    end
+
+    -- Node payload editing
+    if action_id == "commit_node_edit" then return { kind = "commit_node_edit" } end
+    if action_id == "cancel_node_edit" then return { kind = "cancel_node_edit" } end
 
     -- Condition editor
     if action_id == "add_condition"   then return { kind = "add_condition" } end
@@ -173,6 +254,11 @@ function PropertiesState:build()
     elseif ctype == "object" then
         view.object_view = {
             detail = self.object_info,
+        }
+    elseif ctype == "node" then
+        view.node_view = {
+            node = self.node_detail,
+            edit = self.node_edit,
         }
     elseif ctype == "condition" then
         view.condition_view = {
@@ -342,6 +428,98 @@ function PropertiesState.vendor_rows(info, items)
         }
     end
     return rows
+end
+
+-- ============================================================================
+-- Node payload projection and edit validation
+-- ============================================================================
+-- A graph node is `{ id, type, intent = {...}, preview }`. Its payload FIELDS are per kind, and the
+-- authority on which fields a kind has is `graph_state`'s `default_intent` for that type -- not a
+-- table copied into this file, which would drift the first time a node kind gained a field.
+
+local function node_type_defaults(node_type)
+    -- Deliberately soft: Properties must still render a node when the graph module is not loaded
+    -- (the source-audit test loads this file with no SDK at all).
+    local ok, GraphState = pcall(require, "ui/panels/graph_state")
+    if not ok or type(GraphState) ~= "table" or type(GraphState.node_type_info) ~= "function" then
+        return nil
+    end
+    local info = GraphState.node_type_info(node_type)
+    return info and info.default_intent or nil
+end
+
+---Classify a payload value so an edit can be validated against it.
+---A `table` value (a waypoint list, a spell list, a polygon) is NOT a scalar an inspector row can
+---edit; claiming otherwise would let an operator overwrite a route with the string they typed.
+local function field_kind(value)
+    local t = type(value)
+    if t == "number" or t == "boolean" or t == "string" then return t end
+    return "table"
+end
+
+local function field_display(value)
+    local t = type(value)
+    if t == "table" then
+        local n = #value
+        return (n > 0) and (n .. " entries") or "list"
+    end
+    if t == "string" and value == "" then return "(empty)" end
+    return tostring(value)
+end
+
+---The payload fields of one node, in a STABLE order.
+---
+---`intent` is a hash table, so `pairs` order varies between runs; the rows are sorted by name so a
+---field does not move under the operator's cursor between two frames of the same node.
+---@return table [{ name, value, kind, display, editable }]
+function PropertiesState.node_fields(node)
+    if type(node) ~= "table" then return {} end
+
+    local values = {}
+    -- The kind's declared payload comes first, so a field left at its default still gets a row
+    -- instead of vanishing until someone sets it.
+    for name, default in pairs(node_type_defaults(node.type) or {}) do values[name] = default end
+    for name, value in pairs(type(node.intent) == "table" and node.intent or {}) do
+        values[name] = value
+    end
+
+    local names = {}
+    for name in pairs(values) do names[#names + 1] = name end
+    table.sort(names)
+
+    local fields = {}
+    for _, name in ipairs(names) do
+        local value = values[name]
+        local kind = field_kind(value)
+        fields[#fields + 1] = {
+            name = name,
+            value = value,
+            kind = kind,
+            display = field_display(value),
+            editable = kind ~= "table",
+        }
+    end
+    return fields
+end
+
+---Validate a typed draft against the field's declared kind.
+---@return any value the coerced value, nil when invalid
+---@return string|nil error why it was refused
+function PropertiesState.validate_node_field(kind, raw)
+    local text = tostring(raw or "")
+    if kind == "number" then
+        local n = tonumber(text)
+        if n == nil then return nil, "must be a number" end
+        return n
+    elseif kind == "boolean" then
+        local lowered = text:lower()
+        if lowered == "true" then return true end
+        if lowered == "false" then return false end
+        return nil, "must be true or false"
+    elseif kind == "string" then
+        return text
+    end
+    return nil, "this field is a list; edit it in the graph"
 end
 
 -- ============================================================================
@@ -651,6 +829,66 @@ function PropertiesState.build_plan(view, bounds)
         else
             text_item("caption", "text_muted", fit("Loot is not served by /object/{entry}", content_w))
             y = y + SMALL_H
+        end
+
+        return { items = items }
+    end
+
+    -- -----------------------------------------------------------------------
+    -- Node Inspector
+    -- -----------------------------------------------------------------------
+    if view.context_type == "node" then
+        local nvw = view.node_view
+        local node = nvw and nvw.node
+        if not node then
+            -- A node id alone is not a node, and saying so beats an empty pane that reads as a node
+            -- with no payload.
+            text_item("body", "text_muted", fit("The graph has not handed this node over", content_w))
+            return { items = items }
+        end
+
+        text_item("title", "text_primary", fit(tostring(node.preview or node.type or "Node"), content_w))
+        y = y + Theme.line_height.title + Theme.space.xs
+        text_item("caption", "text_muted", fit(
+            tostring(node.type or "?") .. "    " .. tostring(node.id or "?"), content_w))
+        y = y + SMALL_H + Theme.space.md
+
+        local fields = PropertiesState.node_fields(node)
+        header("Payload (" .. tostring(#fields) .. ")")
+        for _, field in ipairs(fields) do
+            push({
+                kind = "list_row",
+                id = "edit_node_field:" .. field.name,
+                bounds = { x = text_x, y = y, w = content_w, h = ROW_TALL },
+                label = field.name,
+                secondary = field.display .. "    " .. field.kind,
+                selected = (nvw.edit and nvw.edit.field == field.name) or false,
+                disabled = not field.editable,
+            })
+            y = y + ROW_TALL + Theme.space.xs
+        end
+        if #fields == 0 then
+            text_item("body", "text_muted", fit("This node kind carries no payload", content_w))
+            y = y + ROW_H
+        end
+
+        if nvw.edit then
+            y = y + Theme.space.sm
+            header("Editing " .. tostring(nvw.edit.field))
+            text_item("body", "text_primary", fit(tostring(nvw.edit.draft or ""), content_w))
+            y = y + ROW_H
+            if nvw.edit.error then
+                text_item("caption", "danger", fit(tostring(nvw.edit.error), content_w))
+                y = y + SMALL_H
+            end
+            y = y + Theme.space.sm
+            local half = (content_w - Theme.space.sm) * 0.5
+            push({ kind = "button", id = "commit_node_edit",
+                bounds = { x = text_x, y = y, w = half, h = CONTROL_H },
+                label = "Apply", variant = "primary", disabled = nvw.edit.error ~= nil })
+            push({ kind = "button", id = "cancel_node_edit",
+                bounds = { x = text_x + half + Theme.space.sm, y = y, w = half, h = CONTROL_H },
+                label = "Cancel", variant = "ghost" })
         end
 
         return { items = items }

@@ -566,6 +566,18 @@ function PropertiesBinding:spec()
                     end
                 end
                 return true
+            elseif command.kind == "begin_node_edit" then
+                return state:begin_node_edit(command.field)
+            elseif command.kind == "commit_node_edit" then
+                -- The change is applied to the node in hand and REPORTED. Writing it back through
+                -- `PUT /editor/campaigns/{name}/nodes/{id}` is the editor client's job (PR7); this
+                -- binding has no client to write with and does not pretend otherwise.
+                local applied, err = state:commit_node_edit()
+                if not applied then return false, err end
+                return true
+            elseif command.kind == "cancel_node_edit" then
+                state:cancel_node_edit()
+                return true
             elseif command.kind == "add_condition" then
                 return true, "add_condition (not yet implemented)"
             elseif command.kind == "add_condition_group" then

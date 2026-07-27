@@ -85,6 +85,15 @@ local function sample_object_info()
     }
 end
 
+local function sample_node()
+    return {
+        id = "node_3_1234",
+        type = "questing.Kill",
+        preview = "Kill",
+        intent = { creature_entry = 567, count = 3, loot = true },
+    }
+end
+
 local function sample_condition_tree()
     return {
         type = "all",
@@ -810,6 +819,128 @@ function M.test_object_loot_absence_is_stated_not_blank()
     local fake = render_view(object_view(sample_object_info()))
     T.assert_true(fake:drew_text("Loot is not served"),
         "'we were never told' is a different fact from 'there is nothing in it'")
+end
+
+-- ============================================================================
+-- 13. Node view — payload fields per kind, validated edits
+-- ============================================================================
+
+local function node_view(node, edit_field, draft)
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "graph", selection_type = "node", selection_id = node and node.id })
+    state:set_node(node)
+    state.loading = false
+    if edit_field then
+        state:begin_node_edit(edit_field)
+        if draft ~= nil then state:set_node_draft(draft) end
+    end
+    return state:build(), state
+end
+
+function M.test_a_node_id_alone_is_not_a_node()
+    -- The selection bus is content-free, so `kind="node"` arrives with an id and nothing else.
+    local view = node_view(nil)
+    local fake = render_view(view)
+    T.assert_equal(view.context_type, "node")
+    T.assert_true(fake:drew_text("The graph has not handed this node over"),
+        "an empty pane would read as a node with no payload")
+end
+
+function M.test_node_fields_come_from_the_kind_and_are_stably_ordered()
+    local fields = PropertiesState.node_fields(sample_node())
+    local names = {}
+    for _, f in ipairs(fields) do names[#names + 1] = f.name end
+    -- questing.Kill declares creature_entry/count/loot/ignore_elites; the node sets the first three.
+    T.assert_equal(names[1], "count", "sorted, because `pairs` order moves rows under the cursor")
+    T.assert_equal(names[2], "creature_entry")
+    T.assert_true(T.table_contains(names, "ignore_elites"),
+        "a field left at its kind default still gets a row")
+end
+
+function M.test_node_field_kinds_drive_editability()
+    local fields = PropertiesState.node_fields({
+        id = "n1", type = "questing.Patrol", intent = { loop = false, waypoints = { 1, 2 } },
+    })
+    local by_name = {}
+    for _, f in ipairs(fields) do by_name[f.name] = f end
+    T.assert_equal(by_name.loop.kind, "boolean")
+    T.assert_true(by_name.loop.editable)
+    T.assert_equal(by_name.waypoints.kind, "table")
+    T.assert_false(by_name.waypoints.editable,
+        "a route is not a scalar; an inspector row must not be able to overwrite one")
+end
+
+function M.test_node_view_paints_a_row_per_payload_field()
+    local view = node_view(sample_node())
+    local plan = PropertiesState.build_plan(view, BOUNDS)
+    local ids = {}
+    for _, item in ipairs(plan.items) do
+        if item.kind == "list_row" then ids[#ids + 1] = item.id end
+    end
+    T.assert_true(#ids >= 3, "each payload field is a row")
+    T.assert_equal(ids[1], "edit_node_field:count")
+    local cmd = PropertiesState.reduce(ids[2])
+    T.assert_equal(cmd.kind, "begin_node_edit")
+    T.assert_equal(cmd.field, "creature_entry")
+
+    local fake = render_view(view)
+    T.assert_true(fake:drew_text("creature_entry"), "the field name must reach the frame")
+    T.assert_true(fake:drew_text("567"), "the field VALUE must reach the frame")
+end
+
+function M.test_a_number_field_refuses_a_non_number_draft()
+    local view, state = node_view(sample_node(), "creature_entry", "wolf")
+    T.assert_equal(state.node_edit.error, "must be a number")
+    local applied, err = state:commit_node_edit()
+    T.assert_false(applied, "an invalid draft must not reach the node")
+    T.assert_equal(err, "must be a number")
+    T.assert_equal(state.node_detail.intent.creature_entry, 567, "the payload is unchanged")
+    T.assert_true(render_view(view):drew_text("must be a number"),
+        "the refusal must be visible while it can still be corrected")
+end
+
+function M.test_a_boolean_field_takes_only_true_or_false()
+    local _, state = node_view(sample_node(), "loot", "yes")
+    T.assert_equal(state.node_edit.error, "must be true or false")
+    state:set_node_draft("false")
+    T.assert_nil(state.node_edit.error)
+    local applied, err, change = state:commit_node_edit()
+    T.assert_true(applied, tostring(err))
+    T.assert_false(state.node_detail.intent.loot, "the coerced boolean, not the string")
+    T.assert_equal(change.field, "loot")
+    T.assert_equal(change.id, "node_3_1234", "the host is told which node to persist")
+end
+
+function M.test_a_valid_edit_applies_and_reports_the_change()
+    local _, state = node_view(sample_node(), "count", "12")
+    local applied, _, change = state:commit_node_edit()
+    T.assert_true(applied)
+    T.assert_equal(state.node_detail.intent.count, 12, "coerced to a number, not left a string")
+    T.assert_equal(change.value, 12)
+    T.assert_nil(state.node_edit, "committing closes the editor")
+end
+
+function M.test_a_list_field_cannot_be_edited()
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "graph", selection_type = "node", selection_id = "n1" })
+    state:set_node({ id = "n1", type = "questing.Patrol", intent = { waypoints = { 1, 2 } } })
+    local started = state:begin_node_edit("waypoints")
+    T.assert_false(started, "a list is not editable from an inspector row")
+    T.assert_equal(state.node_edit.error, "this field is a list; edit it in the graph")
+end
+
+function M.test_cancel_discards_the_draft()
+    local _, state = node_view(sample_node(), "count", "999")
+    state:cancel_node_edit()
+    T.assert_nil(state.node_edit)
+    T.assert_equal(state.node_detail.intent.count, 3, "cancelling must not write")
+end
+
+function M.test_changing_selection_drops_the_node_and_its_edit()
+    local _, state = node_view(sample_node(), "count", "12")
+    state:set_context({ panel_id = "database", selection_type = "npc", selection_id = 823 })
+    T.assert_nil(state.node_detail, "a new selection cannot keep the old node")
+    T.assert_nil(state.node_edit, "nor an edit against it")
 end
 
 return M
