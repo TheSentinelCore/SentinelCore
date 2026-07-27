@@ -48,6 +48,14 @@ local HANDLERS = {
         return Widgets.list_row(window, item.bounds, item) and item.id or nil
     end,
 
+    -- The only widget that answers with a TABLE rather than a boolean, because Enter and Escape are
+    -- different commands. The typed value is not threaded through the id: it is already on the
+    -- model the item carries.
+    text_input = function(window, item)
+        local result = Widgets.text_input(window, item.bounds, item)
+        return result and (item.id .. "_" .. result.kind) or nil
+    end,
+
     section_header = function(window, item)
         return Widgets.section_header(window, item.bounds, item) and item.id or nil
     end,

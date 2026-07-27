@@ -299,7 +299,69 @@ function M.test_successful_init_publishes_the_surface_with_host_verbs()
     end)
 end
 
+--- The host half of the QueryClient seam (spec: QueryClient Wiring at Install).
+---
+--- `ide_panels.lua` can be exhaustively tested with a client handed to it and still ship an IDE
+--- that never fetches anything, because the party that decides whether a client exists is main.lua
+--- -- and main.lua installed the panels with `{ questing = ... }` and nothing else for the whole of
+--- the last cycle. The only test that can see that is one that loads the real entry point and reads
+--- what it actually passed.
+function M.test_main_installs_the_ide_panels_with_a_live_query_client()
+    with_main_loadable(function()
+        local real_panels = require("ui/ide_panels")
+        local saved = package.loaded["ui/ide_panels"]
+
+        local captured = nil
+        package.loaded["ui/ide_panels"] = setmetatable({
+            install = function(shell, deps)
+                captured = deps
+                return real_panels.install(shell, deps)
+            end,
+        }, { __index = real_panels })
+
+        package.loaded["main"] = nil
+        local ok, err = pcall(require, "main")
+
+        package.loaded["ui/ide_panels"] = saved
+        package.loaded["main"] = nil
+        if not ok then error(err, 0) end
+
+        T.assert_not_nil(captured, "main.lua must install the IDE panels")
+
+        local qc = captured.query_client
+        T.assert_not_nil(qc,
+            "main.lua must pass a query_client; without one every data panel is decorative")
+        T.assert_equal(type(qc), "table",
+            "the contract is a client TABLE, not a resolver function -- every binding call site "
+            .. "already writes `qc:get_npc(entry)`")
+        for _, verb in ipairs({ "get_quest", "get_npc", "get_vendor", "get_object",
+                                "search_quests", "get_quest_chain", "get_quest_objectives" }) do
+            T.assert_equal(type(qc[verb]), "function",
+                "the client main.lua supplies must answer " .. verb)
+        end
+
+        -- PR1 deliberately left this half out rather than pass a dep that resolved to nil, because
+        -- `shared/editor_client.lua` did not exist yet and a nil-valued dependency is the silent
+        -- contract this change removes. It exists now, so the omission is the defect again.
+        local ec = captured.editor_client
+        T.assert_not_nil(ec,
+            "main.lua must pass an editor_client; without one the Graph panel cannot create, open, "
+            .. "validate or compile anything, which is where the last cycle left it")
+        T.assert_equal(type(ec), "table", "a client TABLE, same contract as the query client")
+        T.assert_true(ec ~= qc,
+            "and a SEPARATE client: the QueryServer serves static game data that caches forever, "
+            .. "while the editor's campaigns change because this client changes them")
+        for _, verb in ipairs({ "list_campaigns", "create_campaign", "load_campaign", "save_graph",
+                                "add_nodes", "update_node", "validate", "compile" }) do
+            T.assert_equal(type(ec[verb]), "function",
+                "the editor client main.lua supplies must answer " .. verb)
+        end
+    end)
+end
+
 local tests = {
+    test_main_installs_the_ide_panels_with_a_live_query_client =
+        M.test_main_installs_the_ide_panels_with_a_live_query_client,
     test_successful_init_publishes_the_surface_with_host_verbs = M.test_successful_init_publishes_the_surface_with_host_verbs,
     test_module_fault_is_observed_by_the_diagnostics_sink = M.test_module_fault_is_observed_by_the_diagnostics_sink,
     test_module_fault_log_line_distinguishes_a_boot_death_from_a_tick_fault =

@@ -263,8 +263,38 @@ end
 -- `toggle_ide` deliberately opens the IDE without `ensure_initialized` — so "the questing module"
 -- has to be looked up per refresh, and answering nil has to be normal rather than an error.
 local IdePanels = require("ui/ide_panels")
+
+-- ONE QueryClient for the whole IDE, built here because the host owns service topology and the
+-- panels must not. Every data panel shares this instance on purpose: QueryClient is request-and-
+-- cache, so a single path-keyed cache and in-flight table means Explorer and Properties asking for
+-- `/npc/567` in the same frame produce one request, not two.
+--
+-- A TABLE, NOT A RESOLVER. `questing` above is a function because `reload()` tears the app down and
+-- stands a new one up, so "the questing module" has to be looked up per refresh. QueryClient has no
+-- such lifecycle -- it is a plain HTTP client with no reference into the app graph, so re-deriving
+-- it per tick would only throw away its cache. The binding docs in ide_panels.lua say `table|nil`
+-- for exactly this reason.
+--
+-- Constructing it costs nothing and touches no SDK surface: `QueryClient:new` only fills a table.
+-- The first `core.http_get` happens on the first fetch, from a tick callback, never from render.
+local QueryClient = require("shared/query_client")
+local _ide_query_client = QueryClient:new("127.0.0.1", 3030)
+
+-- And ONE EditorClient for the campaign editor at :3031. PR1 deliberately left this line out
+-- rather than pass a `deps.editor_client` that resolved to nil, because a nil-valued dependency is
+-- exactly the silent contract this change exists to remove; `shared/editor_client.lua` did not
+-- exist yet. It does now, so the line lands here, where the host already owns service topology.
+--
+-- A separate client from the one above, not a second port on the same one: the QueryServer serves
+-- static game data that can be cached forever, while the editor's campaigns change because this
+-- client changes them, and the two must not share a cache.
+local EditorClient = require("shared/editor_client")
+local _ide_editor_client = EditorClient:new("127.0.0.1", 3031)
+
 local _ide_bindings = IdePanels.install(_ide_shell, {
     questing = function() return host_verbs.questing() end,
+    query_client = _ide_query_client,
+    editor_client = _ide_editor_client,
 })
 if not _ide_bindings then
     log_error("IDE runner panel failed to register; the IDE will open with an empty switcher")

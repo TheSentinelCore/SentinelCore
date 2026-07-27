@@ -234,6 +234,219 @@ function M.test_build_with_detail()
 end
 
 -- ============================================================================
+-- 3b. Search-as-you-type: the debounce and the typed buffer
+-- ============================================================================
+
+function M.test_the_state_carries_an_editable_search_buffer()
+    -- The search bar was a rounded rect with a label in it. It looked identical to this and could
+    -- not be typed into, which is the whole reason F1-R1 never worked in-game.
+    local state = ExplorerState.new()
+    T.assert_not_nil(state.search_input, "the panel must own a real editable buffer")
+    T.assert_equal(state.search_input.value, "", "it starts on the current query")
+end
+
+function M.test_sync_pulls_the_typed_buffer_into_the_query()
+    local state = ExplorerState.new()
+    state.search_input:focus()
+    state.search_input.buffer = "wolf"
+
+    T.assert_true(state:sync_search_input(10.0), "sync must report that the query moved")
+    T.assert_equal(state.search_query, "wolf", "what was typed becomes the query")
+    T.assert_true(state._dirty, "and the binding is told to look")
+    T.assert_false(state:sync_search_input(10.0), "a second sync with no new typing is a no-op")
+end
+
+function M.test_sync_reads_the_committed_value_once_focus_is_gone()
+    -- Escape restores the committed value into the buffer. Reading `buffer` unconditionally would
+    -- search for the string the operator just discarded.
+    local state = ExplorerState.new()
+    state.search_input:set_value("wolf")
+    state.search_input.buffer = "wolfsbane"   -- an edit that was cancelled, not committed
+    state:sync_search_input(1.0)
+    T.assert_equal(state.search_query, "wolf", "an unfocused field speaks with its committed value")
+end
+
+function M.test_the_debounce_holds_the_query_for_300ms()
+    local state = ExplorerState.new()
+    state:set_query("wol", 1.00)
+    T.assert_false(state:search_due(1.00), "a query is not due the instant it changes")
+    T.assert_false(state:search_due(1.29), "nor 290ms later")
+    T.assert_true(state:search_due(1.30), "at 300ms it is due")
+    T.assert_equal(ExplorerState.SEARCH_DEBOUNCE_S, 0.30, "the spec asks for 300ms")
+end
+
+function M.test_each_keystroke_restarts_the_debounce()
+    local state = ExplorerState.new()
+    state:set_query("w", 1.00)
+    state:set_query("wo", 1.20)
+    T.assert_false(state:search_due(1.31),
+        "310ms after the FIRST key is only 110ms after the last; typing must reset the wait")
+    T.assert_true(state:search_due(1.50), "300ms after the last key it is due")
+end
+
+function M.test_the_gate_stays_open_until_the_results_land()
+    -- AsyncSlot polls a pending fetch across many ticks. A gate that shut when the request was
+    -- fired would starve the re-arm of the tick that collects the answer -- the PR2 freeze again.
+    local state = ExplorerState.new()
+    state:set_query("wolf", 1.00)
+    T.assert_true(state:search_due(1.40))
+    T.assert_true(state:search_due(1.41), "still due while the fetch is in flight")
+    state:mark_search_served()
+    T.assert_false(state:search_due(1.42), "and closed once the results are in")
+end
+
+function M.test_an_empty_query_is_never_due()
+    local state = ExplorerState.new()
+    state:set_query("wolf", 1.00)
+    state:set_query("", 1.10)
+    T.assert_false(state:search_due(9.00), "clearing the box must not search for everything")
+end
+
+function M.test_no_clock_reads_as_due()
+    -- `ide_panels.lua::default_clock` answers nil when there is no `core.time`. The house rule is
+    -- that callers treat nil as "always due"; a panel frozen on a clock it cannot read is worse
+    -- than one that debounces nothing.
+    local state = ExplorerState.new()
+    state:set_query("wolf", nil)
+    T.assert_true(state:search_due(nil), "a missing clock must not disable search entirely")
+end
+
+function M.test_reset_closes_the_search_gate()
+    local state = ExplorerState.new()
+    state:set_query("wolf", 1.00)
+    state:reset()
+    T.assert_equal(state.search_input.value, "", "reset clears the visible buffer too")
+    T.assert_false(state:search_due(9.00), "and leaves nothing pending")
+end
+
+-- ============================================================================
+-- 3c. Result rows carry level, zone and faction
+-- ============================================================================
+
+function M.test_result_meta_renders_level_zone_and_faction()
+    local meta = ExplorerState.result_meta(
+        { level = 10, zone = "Elwynn Forest", faction = "Alliance" })
+    T.assert_true(meta:find("10", 1, true) ~= nil, "the level must be shown")
+    T.assert_true(meta:find("Elwynn Forest", 1, true) ~= nil, "the zone must be shown")
+    T.assert_true(meta:find("Alliance", 1, true) ~= nil, "the faction must be shown")
+end
+
+function M.test_an_empty_zone_renders_as_a_dash_and_never_as_a_guess()
+    -- `QuestSummary.zone` is deliberately "" when `quest_template.ZoneOrSort` is non-positive:
+    -- mangos overloads that column and a negative value is a SORT bucket, not an area id. There is
+    -- genuinely no zone, and inventing one is the same fiction as the mock scans PR3 deleted.
+    local meta = ExplorerState.result_meta({ level = 60, zone = "", faction = "" })
+    T.assert_true(meta:find("—", 1, true) ~= nil, "an absent field is drawn as an em dash")
+    T.assert_true(meta:find("60", 1, true) ~= nil, "the fields that ARE present still show")
+end
+
+function M.test_the_rows_in_the_plan_carry_the_meta_line()
+    local state = ExplorerState.new()
+    state.results = { { id = 783, title = "A Threat Within", level = 10, zone = "Elwynn Forest" } }
+    local plan = ExplorerState.build_plan(state:build(), BOUNDS)
+    for _, item in ipairs(plan.items) do
+        if item.kind == "list_row" then
+            T.assert_not_nil(item.secondary, "a result row must show more than a title")
+            T.assert_true(item.secondary:find("Elwynn Forest", 1, true) ~= nil)
+            return
+        end
+    end
+    error("the plan contained no result row")
+end
+
+function M.test_the_plan_draws_a_real_text_input_for_the_search_box()
+    local state = ExplorerState.new()
+    local plan = ExplorerState.build_plan(state:build(), BOUNDS)
+    for _, item in ipairs(plan.items) do
+        if item.kind == "text_input" then
+            T.assert_true(item.model == state.search_input,
+                "the item must carry the LIVE model; a copy would look editable and change nothing")
+            T.assert_equal(item.id, "search_input")
+            return
+        end
+    end
+    error("the search box is still a label in a rectangle")
+end
+
+-- ============================================================================
+-- 3d. Authoring: quest to campaign nodes
+-- ============================================================================
+
+function M.test_add_to_profile_builds_the_exact_subgraph_the_spec_names()
+    -- SPEC: quest with kill(567x10) and loot(789x5) objectives produces
+    -- AcceptQuest(1234), Kill(567,10), Loot(789,5), TurnInQuest(1234).
+    local nodes, skipped = ExplorerState.build_quest_subgraph(
+        1234, { giver_entry = 823, finisher_entry = 197 },
+        { quest_id = 1234, objectives = {
+            { index = 1, kind = "kill", entry = 567, name = "Wolf", count = 10 },
+            { index = 2, kind = "collect", entry = 789, name = "Pelt", count = 5,
+              source_creatures = { 567 } },
+        } })
+
+    T.assert_equal(#skipped, 0, "both objective kinds must be understood")
+    T.assert_equal(#nodes, 4, "accept + two objectives + turn-in")
+
+    T.assert_equal(nodes[1].type, "questing.AcceptQuest")
+    T.assert_equal(nodes[1].intent.quest_id, 1234)
+    T.assert_equal(nodes[1].intent.npc_entry, 823, "AcceptQuest goes to the giver")
+
+    T.assert_equal(nodes[2].type, "questing.Kill")
+    T.assert_equal(nodes[2].intent.creature_entry, 567)
+    T.assert_equal(nodes[2].intent.count, 10)
+
+    T.assert_equal(nodes[3].type, "questing.Loot")
+    T.assert_equal(nodes[3].intent.item_id, 789, "a collect objective is counted in the ITEM")
+    T.assert_equal(nodes[3].intent.count, 5)
+    T.assert_equal(nodes[3].intent.source_creatures[1], 567,
+        "the creature that drops it rides along so the compiler needs no second lookup")
+
+    T.assert_equal(nodes[4].type, "questing.TurnInQuest")
+    T.assert_equal(nodes[4].intent.npc_entry, 197, "TurnInQuest goes to the finisher")
+end
+
+function M.test_an_interact_objective_becomes_an_object_loot()
+    local nodes = ExplorerState.build_quest_subgraph(1, {}, { objectives = {
+        { index = 1, kind = "interact", entry = 3714, name = "Chest", count = 1 },
+    } })
+    T.assert_equal(nodes[2].type, "questing.Loot")
+end
+
+function M.test_an_unknown_objective_kind_is_reported_and_not_guessed()
+    local nodes, skipped = ExplorerState.build_quest_subgraph(1, {}, { objectives = {
+        { index = 1, kind = "escort", entry = 5, name = "Someone", count = 1 },
+    } })
+    T.assert_equal(#nodes, 2, "only accept and turn-in; the middle was not invented")
+    T.assert_equal(skipped[1], "escort", "and the operator is told which kind was dropped")
+end
+
+function M.test_a_quest_with_no_objectives_still_brackets_correctly()
+    local nodes = ExplorerState.build_quest_subgraph(42, {}, nil)
+    T.assert_equal(#nodes, 2)
+    T.assert_equal(nodes[1].type, "questing.AcceptQuest")
+    T.assert_equal(nodes[2].type, "questing.TurnInQuest")
+    T.assert_equal(nodes[1].intent.npc_entry, 0, "an unknown giver is 0, not nil")
+end
+
+function M.test_add_chain_pairs_every_quest_in_prerequisite_order()
+    local nodes = ExplorerState.build_chain_subgraph({
+        quest_id = 783, title = "A Threat Within",
+        prerequisites = { { quest_id = 1, title = "First" } },
+        follow_ups = { { quest_id = 2158, title = "The Missing Diplomat" } },
+    })
+    T.assert_equal(#nodes, 6, "three quests, accept and turn-in each")
+    T.assert_equal(nodes[1].intent.quest_id, 1, "prerequisites come first")
+    T.assert_equal(nodes[3].intent.quest_id, 783, "then the quest itself")
+    T.assert_equal(nodes[5].intent.quest_id, 2158, "then the follow-ups")
+end
+
+function M.test_subgraph_ids_are_derived_so_a_duplicate_add_is_visible()
+    local a = ExplorerState.build_quest_subgraph(1234, {}, nil)
+    local b = ExplorerState.build_quest_subgraph(1234, {}, nil)
+    T.assert_equal(a[1].id, b[1].id,
+        "adding the same quest twice must read as a duplicate, not as two unrelated nodes")
+end
+
+-- ============================================================================
 -- 4. Reduce: command routing
 -- ============================================================================
 
@@ -268,6 +481,13 @@ function M.test_reduce_cycle_zone_filter()
     local cmd = ExplorerState.reduce("zone_filter")
     T.assert_not_nil(cmd, "zone_filter must produce a command")
     T.assert_equal(cmd.kind, "cycle_zone_filter")
+end
+
+function M.test_reduce_routes_the_text_input_commands()
+    T.assert_equal(ExplorerState.reduce("search_input_submit").kind, "submit_search",
+        "Enter in the search box must reach the tick as a command")
+    T.assert_equal(ExplorerState.reduce("search_input_cancel").kind, "cancel_search",
+        "Escape is a different command from Enter, not the absence of one")
 end
 
 function M.test_reduce_nil_returns_nil()

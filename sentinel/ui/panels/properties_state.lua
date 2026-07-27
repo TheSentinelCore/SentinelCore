@@ -9,6 +9,8 @@
 -- Decision logic (branches, layout arithmetic) lives in `build_plan`, which is in this
 -- file — the one module tests CAN reach.
 
+local AsyncSlot = require("ui/async_slot")
+
 local PropertiesState = {}
 PropertiesState.__index = PropertiesState
 
@@ -18,7 +20,7 @@ PropertiesState.__index = PropertiesState
 
 function PropertiesState.new(opts)
     opts = opts or {}
-    return setmetatable({
+    local state = setmetatable({
         -- Current selection context (set by shell or other panels via dispatch)
         context = nil,  -- { panel_id, selection_type, selection_id }
 
@@ -45,6 +47,11 @@ function PropertiesState.new(opts)
         error = nil,
         _dirty = true,
     }, PropertiesState)
+
+    -- The inspector shows one context at a time, so one slot covers the npc/vendor/object fetches:
+    -- they can never be in flight together, and `set_context` abandons whichever was.
+    state._slots = { detail = AsyncSlot.new({ label = "inspector detail", owner = state }) }
+    return state
 end
 
 -- ============================================================================
@@ -64,6 +71,7 @@ function PropertiesState:set_context(ctx)
         self.inventory_default = nil
         self.loading = false
         self.error = nil
+        self._slots.detail:reset()
         self._dirty = true
         return
     end
@@ -85,6 +93,8 @@ function PropertiesState:set_context(ctx)
     self.inventory_default = nil
     self.error = nil
     self.npc_tab = "info"
+    -- Whatever is in flight belongs to the selection being replaced.
+    self._slots.detail:reset()
     self.loading = true
     self._dirty = true
 end
@@ -132,7 +142,11 @@ end
 
 function PropertiesState:build()
     if not self.context then
-        return { context_type = nil, loading = false, error = nil }
+        -- The error is carried through even with nothing selected. It used to be hard-coded nil
+        -- here, which meant the inspector could only ever report a failure AFTER something had been
+        -- selected -- so "the query server is down" was unsayable in the exact state an operator
+        -- opens the panel in.
+        return { context_type = nil, loading = self.loading or false, error = self.error }
     end
 
     local ctype = self.context.selection_type
@@ -225,11 +239,15 @@ function PropertiesState.build_plan(view, bounds)
     -- No context
     -- -----------------------------------------------------------------------
     if view.context_type == nil then
+        -- An error outranks the invitation to select something: telling an operator to pick an NPC
+        -- when the panel could not fetch one either way is an instruction that cannot be followed.
         push({
             kind = "empty_state",
             bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
-            title = "No Selection",
-            message = "Select an NPC, vendor, object or node to inspect",
+            title = view.error and "Unavailable" or "No Selection",
+            message = view.error
+                and ("Error: " .. tostring(view.error))
+                or "Select an NPC, vendor, object or node to inspect",
         })
         return { items = items }
     end

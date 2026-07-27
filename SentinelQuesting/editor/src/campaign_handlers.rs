@@ -575,17 +575,87 @@ async fn handle_compile_campaign(
     }))
 }
 
+/// One campaign diagnostic, in the shape the Lua validation bar renders.
+///
+/// `node_id` is what makes a diagnostic navigable: clicking it selects the offending node in the
+/// Graph panel. A diagnostic that cannot name a node is still emitted, with `node_id: null`.
+///
+/// Deliberately local rather than `query_types::ValidationDiagnostic`, which has no `node_id` and
+/// belongs to a different (project-level) validation surface.
+#[derive(Debug, Clone, Serialize)]
+pub struct CampaignDiagnostic {
+    pub severity: String,
+    pub code: String,
+    pub message: String,
+    pub node_id: Option<Uuid>,
+}
+
+/// The intent field a node names a quest with, as an integer, or `None`.
+fn quest_id_of(node: &sentinel_models::platform::Node) -> Option<i64> {
+    match node.intent.get("quest_id") {
+        Some(sentinel_models::platform::IntentValue::Int(v)) => Some(*v),
+        Some(sentinel_models::platform::IntentValue::Float(v)) => Some(*v as i64),
+        Some(sentinel_models::platform::IntentValue::Text(v)) => v.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Campaign rules. Only MISSING_ACCEPT is implemented; the remaining archived rules (V2–V11) still
+/// need the campaign-aware validator and are NOT silently reported as clean by something else here.
+///
+/// A turn-in with no accept is the one the spec names, and it is the one that actually strands a
+/// run: the bot walks to the finisher for a quest it never took and stands there.
+fn validate_campaign(campaign: &sentinel_models::platform::Campaign) -> Vec<CampaignDiagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for graph in &campaign.graphs {
+        let accepted: std::collections::HashSet<i64> = graph
+            .nodes
+            .iter()
+            .filter(|n| n.node_type == "questing.AcceptQuest")
+            .filter_map(quest_id_of)
+            .collect();
+
+        for node in &graph.nodes {
+            if node.node_type != "questing.TurnInQuest" {
+                continue;
+            }
+            let Some(quest_id) = quest_id_of(node) else {
+                continue;
+            };
+            if accepted.contains(&quest_id) {
+                continue;
+            }
+            diagnostics.push(CampaignDiagnostic {
+                severity: "error".to_string(),
+                code: "MISSING_ACCEPT".to_string(),
+                message: format!(
+                    "TurnInQuest({}) has no AcceptQuest({}) in graph '{}'",
+                    quest_id, quest_id, graph.name
+                ),
+                node_id: Some(node.id),
+            });
+        }
+    }
+
+    diagnostics
+}
+
 async fn handle_validate_campaign(
     State(state): State<crate::server::AppState>,
     Path(name): Path<String>,
-) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<crate::server::ErrorResponse>)> {
-    // Load the campaign to ensure it exists; validation against the Campaign
-    // schema will be implemented when the campaign-aware validator is ready.
-    let _campaign = CampaignApi::load(&state.campaigns_dir, &name)
-        .map_err(editor_error_to_response)?;
+) -> Result<Json<Vec<CampaignDiagnostic>>, (StatusCode, Json<crate::server::ErrorResponse>)> {
+    // Read through the session when there is one: a campaign mutated this session and not yet
+    // re-read from disk must validate as it now IS, not as it was last saved.
+    let store = state.campaign_store.read().await;
+    if let Some(session) = store.get(&name) {
+        return Ok(Json(validate_campaign(&session.campaign)));
+    }
+    drop(store);
 
-    // For now, return empty diagnostics — no campaign-specific rules yet.
-    Ok(Json(Vec::new()))
+    let campaign = CampaignApi::load(&state.campaigns_dir, &name)
+        .map_err(editor_error_to_response)?;
+    Ok(Json(validate_campaign(&campaign)))
 }
 
 // ---------------------------------------------------------------------------
@@ -674,10 +744,17 @@ pub fn mount(router: Router<crate::server::AppState>) -> Router<crate::server::A
             get(handle_load_campaign).delete(handle_delete_campaign),
         )
         // Node mutations
+        //
+        // Update is reachable by POST as well as PUT. The Sylvannas SDK the in-game IDE runs on
+        // exposes `core.http_get` and `core.http_post` and no other verb
+        // (docs/SylvannasAPI/dev/api/core.md), so a PUT-only route is unreachable from the one
+        // client this endpoint exists for. PUT stays for every other caller.
         .route("/editor/campaigns/{name}/nodes", post(handle_add_node))
         .route(
             "/editor/campaigns/{name}/nodes/{node_id}",
-            put(handle_update_node).delete(handle_remove_node),
+            put(handle_update_node)
+                .post(handle_update_node)
+                .delete(handle_remove_node),
         )
         // Edge mutations
         .route("/editor/campaigns/{name}/edges", post(handle_add_edge))
@@ -695,4 +772,91 @@ pub fn mount(router: Router<crate::server::AppState>) -> Router<crate::server::A
         // Undo / Redo
         .route("/editor/campaigns/{name}/undo", post(handle_undo_campaign))
         .route("/editor/campaigns/{name}/redo", post(handle_redo_campaign))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sentinel_models::platform::{Campaign, Graph, Intent, IntentValue, Node};
+
+    fn quest_node(node_type: &str, quest_id: i64) -> Node {
+        let mut intent = Intent::new();
+        intent.insert("quest_id", IntentValue::Int(quest_id));
+        Node::new(node_type, intent)
+    }
+
+    fn campaign_with(nodes: Vec<Node>) -> Campaign {
+        let mut campaign = Campaign::new("stw");
+        let entry = nodes.first().map(|n| n.id).unwrap_or_else(Uuid::nil);
+        let mut graph = Graph::new("main", entry);
+        graph.nodes = nodes;
+        campaign.graphs.push(graph);
+        campaign
+    }
+
+    #[test]
+    fn turn_in_without_accept_is_reported_and_names_its_node() {
+        let turn_in = quest_node("questing.TurnInQuest", 9);
+        let turn_in_id = turn_in.id;
+        let campaign = campaign_with(vec![turn_in]);
+
+        let diagnostics = validate_campaign(&campaign);
+        assert_eq!(diagnostics.len(), 1, "the spec's scenario, exactly");
+        assert_eq!(diagnostics[0].code, "MISSING_ACCEPT");
+        assert_eq!(
+            diagnostics[0].node_id,
+            Some(turn_in_id),
+            "the node id is what makes the diagnostic navigable; without it the Graph panel has \
+             nothing to select when the operator clicks it"
+        );
+        assert!(
+            diagnostics[0].message.contains("TurnInQuest(9)"),
+            "and the message names the quest: {}",
+            diagnostics[0].message
+        );
+    }
+
+    #[test]
+    fn a_matching_accept_clears_it() {
+        let campaign = campaign_with(vec![
+            quest_node("questing.AcceptQuest", 9),
+            quest_node("questing.TurnInQuest", 9),
+        ]);
+        assert!(validate_campaign(&campaign).is_empty());
+    }
+
+    #[test]
+    fn an_accept_for_a_different_quest_does_not_cover_the_turn_in() {
+        let campaign = campaign_with(vec![
+            quest_node("questing.AcceptQuest", 8),
+            quest_node("questing.TurnInQuest", 9),
+        ]);
+        let diagnostics = validate_campaign(&campaign);
+        assert_eq!(diagnostics.len(), 1, "quest 9 is still never accepted");
+    }
+
+    #[test]
+    fn accepts_do_not_leak_across_graphs() {
+        // Each graph is an independently runnable route. An accept in one is not an accept in
+        // another, and treating it as one would hide the stranding this rule exists to catch.
+        let mut campaign = campaign_with(vec![quest_node("questing.AcceptQuest", 9)]);
+        let turn_in = quest_node("questing.TurnInQuest", 9);
+        let mut second = Graph::new("side", turn_in.id);
+        second.nodes = vec![turn_in];
+        campaign.graphs.push(second);
+
+        assert_eq!(validate_campaign(&campaign).len(), 1);
+    }
+
+    #[test]
+    fn a_turn_in_with_no_quest_id_is_not_blamed_for_a_missing_accept() {
+        // An unfilled template node is incomplete, not wrong, and reporting it as a broken chain
+        // would bury the real diagnostics under every node an author has not finished yet.
+        let campaign = campaign_with(vec![Node::new("questing.TurnInQuest", Intent::new())]);
+        assert!(validate_campaign(&campaign).is_empty());
+    }
 }

@@ -43,6 +43,55 @@ local StatsDashboard = require("ui/panels/stats_dashboard")
 local IdePanels = {}
 
 -- ============================================================================
+-- Absent query client (spec: QueryClient Wiring at Install)
+-- ============================================================================
+--
+-- Every data binding used to answer a missing client with a bare `return`. That is the failure this
+-- change exists to remove: the panel kept rendering its idle view, so an operator with no
+-- QueryServer running saw a panel that looked merely empty rather than one that was disconnected,
+-- and there was nothing on screen to distinguish "no results" from "nobody asked".
+--
+-- The states already carry an `error` field that every `build_plan` projects, so saying so costs one
+-- assignment and no new render branch. `_dirty` is deliberately NOT re-armed: render reads
+-- `state.error` fresh each frame, so the message stays on screen without spending a tick per frame.
+--
+-- Kept SHORT deliberately. The Explorer's error row runs the string through `fit(text, content_w)`,
+-- so a sentence of explanation would be truncated to an ellipsis at the width that matters most --
+-- a narrow panel. The explanation belongs in this comment; the panel gets the fact.
+local QUERY_SERVER_UNAVAILABLE = "query server unavailable"
+
+---Record the absent client on a panel state. Idempotent: re-running a tick rewrites the same string.
+---@param state table a panel state carrying `error` / `loading`
+local function mark_query_client_unavailable(state)
+    state.loading = false
+    state.error = QUERY_SERVER_UNAVAILABLE
+end
+
+---Exposed so tests assert against the real string instead of a copy that can drift out of step.
+IdePanels.QUERY_SERVER_UNAVAILABLE = QUERY_SERVER_UNAVAILABLE
+
+-- ============================================================================
+-- The selection channel (spec: Cross-Panel Selection Bus)
+-- ============================================================================
+--
+-- Selecting anything used to change nothing outside the panel it happened in — the inspector held a
+-- context nobody ever set, so it stayed on whatever it was last given. The shell now carries a
+-- content-free channel; this file is the one that knows what a `kind` means, because it is the only
+-- file allowed to know both the shell and the panels (ADR 09b §6).
+--
+-- Published from `dispatch`, never from `render`. `dispatch` is called by `Shell:_dispatch_pending`
+-- in TICK context, and `Shell:publish_selection` refuses a render frame outright.
+
+---@param ctx table|nil the tick context the shell hands to `dispatch`
+local function publish_selection(ctx, panel_id, kind, id)
+    -- nil ctx is the normal case in a unit test that calls `dispatch` directly, and a panel that
+    -- required a shell to select would be a panel no test could drive.
+    local shell = ctx and ctx.shell
+    if type(shell) ~= "table" or type(shell.publish_selection) ~= "function" then return end
+    shell:publish_selection({ panel_id = panel_id, kind = kind, id = id })
+end
+
+-- ============================================================================
 -- Refresh cadence (ADR 09b §2.4)
 -- ============================================================================
 
@@ -309,13 +358,61 @@ end
 local ExplorerBinding = {}
 ExplorerBinding.__index = ExplorerBinding
 
----@param opts table|nil { query_client = function():table|nil }
+---@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
+---@param opts table|nil { query_client = table|nil, editor_client = table|nil,
+---                        campaign = function():string|nil, now = function():number|nil }
 function IdePanels.new_explorer(opts)
     opts = opts or {}
     local self = setmetatable({}, ExplorerBinding)
     self._state = ExplorerState.new()
     self._query_client = opts.query_client
+    -- The :3031 campaign client. Absent until PR7 builds it, and absent in-game whenever the editor
+    -- is down -- both of which have to READ as absent rather than as a write that quietly did
+    -- nothing (obs #225: both authoring commands answered "(not yet implemented)" and returned ok).
+    self._editor_client = opts.editor_client
+    -- A RESOLVER: the campaign is owned by the Graph panel and changes under this one.
+    self._campaign = opts.campaign or function() return nil end
+    self._now = opts.now or default_clock
     return self
+end
+
+---Write generated nodes to the open campaign.
+---@return boolean ok, string reason
+function ExplorerBinding:_commit_nodes(nodes, what)
+    local state = self._state
+    if #nodes == 0 then
+        state.error = what .. " produced no nodes"
+        return false, state.error
+    end
+
+    local editor = self._editor_client
+    if not editor or type(editor.add_nodes) ~= "function" then
+        state.error = "editor unavailable: " .. what .. " needs the campaign editor at :3031"
+        return false, state.error
+    end
+
+    local campaign = self._campaign()
+    if not campaign or campaign == "" then
+        state.error = "no campaign is open: " .. what .. " has nowhere to write"
+        return false, state.error
+    end
+
+    -- Contained: a client that raises must surface as a failed write, not take the whole dispatch
+    -- down with it. `called` is pcall's own verdict; `wrote` is the client's.
+    local called, wrote, why = pcall(editor.add_nodes, editor, campaign, nodes)
+    if not called then
+        state.error = what .. " failed: " .. tostring(wrote)
+        return false, state.error
+    end
+    -- A live editor REFUSING the write is not the same thing as no editor, and neither may be
+    -- reported as success.
+    if wrote == false then
+        state.error = what .. " was refused by the editor: " .. tostring(why or "no reason given")
+        return false, state.error
+    end
+
+    state.error = nil
+    return true, string.format("%s: %d node(s) added to '%s'", what, #nodes, campaign)
 end
 
 ---Access the panel state, exposed so tests can inspect it.
@@ -334,45 +431,80 @@ function ExplorerBinding:spec()
         end,
         on_tick = function()
             local state = binding._state
+            local now = binding._now()
+
+            -- BEFORE the dirty gate, on purpose. Typing happens inside a render callback, which can
+            -- mutate the buffer but cannot schedule anything; nothing else would ever notice a
+            -- keystroke, and the search bar would be typeable and still inert.
+            state:sync_search_input(now)
+            -- A debounce that has not elapsed still has to be looked at next tick, or the search
+            -- fires only if a later keystroke happens to re-arm the flag.
+            if state._search_waiting then state._dirty = true end
+
             if not state._dirty then return end
             state._dirty = false
 
             local qc = binding._query_client
-            if not qc then return end
-
-            -- Only fire queries when there's an active selection or search
-            if state.selected_id then
-                local detail = qc:get_quest(state.selected_id)
-                if detail then
-                    state.selected_detail = detail
-                end
-
-                local chain = qc:get_quest_chain(state.selected_id)
-                if chain then
-                    state.chain_data = chain
-                end
-
-                local objectives = qc:get_quest_objectives(state.selected_id)
-                if objectives then
-                    state.objectives = objectives
-                end
+            if not qc then
+                mark_query_client_unavailable(state)
+                return
             end
 
-            if state.search_query ~= "" and #state.results == 0 then
-                local results = qc:search_quests(state.search_query)
-                if results then
+            -- Only fire queries when there's an active selection or search. Each fetch goes through
+            -- its own slot: a pending answer re-arms `_dirty` (see `ui/async_slot.lua`), so the tick
+            -- that collects the answer actually runs.
+            local slots = state._slots
+            if state.selected_id then
+                local id = state.selected_id
+                local ok_detail, detail = slots.detail:poll(function() return qc:get_quest(id) end)
+                if ok_detail == "ok" then state.selected_detail = detail end
+
+                local ok_chain, chain = slots.chain:poll(function() return qc:get_quest_chain(id) end)
+                if ok_chain == "ok" then state.chain_data = chain end
+
+                local ok_obj, objectives =
+                    slots.objectives:poll(function() return qc:get_quest_objectives(id) end)
+                if ok_obj == "ok" then state.objectives = objectives end
+            end
+
+            -- The gate is the debounce, not "results are empty". The old condition could only ever
+            -- run one search per panel: a second query with results still on screen never fired.
+            if state:search_due(now) then
+                local query = state.search_query
+                local ok_search, results =
+                    slots.search:poll(function() return qc:search_quests(query) end)
+                if ok_search == "ok" then
                     state.results = results
+                    state:mark_search_served()
+                elseif ok_search ~= "pending" then
+                    -- Resolved to nothing. The slot has already named it in `state.error`; leaving
+                    -- the gate open would re-fire the same doomed query every tick forever.
+                    state:mark_search_served()
                 end
             end
         end,
-        dispatch = function(command)
+        dispatch = function(command, ctx)
             local state = binding._state
             if command.kind == "select_quest" then
                 state:select(command.id)
+                publish_selection(ctx, Explorer.id, "quest", command.id)
                 return true
             elseif command.kind == "clear_search" then
-                state:set_query("")
+                state.search_input:set_value("")
+                state:set_query("", binding._now())
                 state.results = {}
+                state:mark_search_served()
+                return true
+            elseif command.kind == "submit_search" then
+                -- Enter skips the wait: the operator has already said they are finished typing.
+                state:sync_search_input(binding._now())
+                state._query_changed_at = nil
+                state._dirty = true
+                return true
+            elseif command.kind == "cancel_search" then
+                -- Escape put the committed value back in the buffer; the query follows it, so a
+                -- half-typed string never reaches the server.
+                state:sync_search_input(binding._now())
                 return true
             elseif command.kind == "cycle_zone_filter" then
                 -- Cycle through zones: nil -> first available zone from results -> nil
@@ -405,11 +537,30 @@ function ExplorerBinding:spec()
                 state._dirty = true
                 return true
             elseif command.kind == "add_to_profile" then
-                -- Placeholder: would POST to the editor crate's campaign endpoints
-                return true, "add_to_profile: " .. tostring(command.quest_id) .. " (not yet implemented)"
+                -- The objectives are what turn a quest into a route, and they arrive on their own
+                -- slot. Generating Accept→TurnIn with the middle missing because the fetch had not
+                -- landed yet would write a quest the bot accepts and then stands still in.
+                if not state.objectives then
+                    state.error = "add to profile: objectives for quest "
+                        .. tostring(command.quest_id) .. " have not loaded yet"
+                    return false, state.error
+                end
+                local nodes, skipped = ExplorerState.build_quest_subgraph(
+                    command.quest_id, state.selected_detail, state.objectives)
+                local ok_write, reason = binding:_commit_nodes(nodes, "add to profile")
+                if ok_write and #skipped > 0 then
+                    return true, reason .. "; skipped unknown objective kind(s): "
+                        .. table.concat(skipped, ", ")
+                end
+                return ok_write, reason
             elseif command.kind == "add_chain" then
-                -- Placeholder: would POST chain to editor crate
-                return true, "add_chain: " .. tostring(command.quest_id) .. " (not yet implemented)"
+                if not state.chain_data then
+                    state.error = "add chain: the chain for quest "
+                        .. tostring(command.quest_id) .. " has not loaded yet"
+                    return false, state.error
+                end
+                return binding:_commit_nodes(
+                    ExplorerState.build_chain_subgraph(state.chain_data), "add chain")
             end
             return false, "unknown explorer command '" .. tostring(command.kind) .. "'"
         end,
@@ -423,7 +574,7 @@ end
 local PropertiesBinding = {}
 PropertiesBinding.__index = PropertiesBinding
 
----@param opts table|nil { query_client = function():table|nil }
+---@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
 function IdePanels.new_properties(opts)
     opts = opts or {}
     local self = setmetatable({}, PropertiesBinding)
@@ -451,22 +602,30 @@ function PropertiesBinding:spec()
             if not state._dirty then return end
             state._dirty = false
 
+            -- The client check comes BEFORE the context check on purpose. Having no QueryServer is
+            -- a fact about the panel, not about the current selection: an inspector that waits for
+            -- a selection to admit it can never fetch anything is the silent idle this change kills.
+            local qc = binding._query_client
+            if not qc then
+                mark_query_client_unavailable(state)
+                return
+            end
+
             local ctx = state.context
             if not ctx then return end
 
-            local qc = binding._query_client
-            if not qc then return end
-
             local ctype = ctx.selection_type
             local sid = ctx.selection_id
+            -- One slot, because the inspector holds one context at a time. It owns `loading` too:
+            -- pending keeps it true and re-arms `_dirty`, resolution clears it.
+            local slot = state._slots.detail
 
             if ctype == "npc" and sid then
-                local detail = qc:get_npc(sid)
-                if detail then state.npc_detail = detail end
-                state.loading = false
+                local status, detail = slot:poll(function() return qc:get_npc(sid) end)
+                if status == "ok" then state.npc_detail = detail end
             elseif ctype == "vendor" and sid then
-                local info = qc:get_vendor(sid)
-                if info then
+                local status, info = slot:poll(function() return qc:get_vendor(sid) end)
+                if status == "ok" then
                     state.vendor_info = info
                     state.vendor_items = {}
                     for _, item in ipairs(info.sells or {}) do
@@ -480,10 +639,12 @@ function PropertiesBinding:spec()
                         }
                     end
                 end
-                state.loading = false
             elseif ctype == "object" and sid then
-                local obj = qc:get_object(sid)
-                if obj then state.object_info = obj end
+                local status, obj = slot:poll(function() return qc:get_object(sid) end)
+                if status == "ok" then state.object_info = obj end
+            else
+                -- A context nothing fetches for (node, condition, inventory): there is no request in
+                -- flight, so the spinner must not be left on from `set_context`.
                 state.loading = false
             end
         end,
@@ -526,13 +687,17 @@ end
 local GraphBinding = {}
 GraphBinding.__index = GraphBinding
 
----@param opts table|nil { }
+---@param opts table|nil { editor_client = table|nil } an EditorClient instance, not a resolver
 function IdePanels.new_graph(opts)
     opts = opts or {}
     local self = setmetatable({}, GraphBinding)
     self._state = GraphState.new()
     self._recorder = EscortRecorder.new()
-    self._campaign_name = nil
+    -- The :3031 campaign client. This binding took NO options at all before -- the Rust CRUD had
+    -- zero Lua callers (obs #225) and every campaign verb on this panel was a placeholder string.
+    self._editor_client = opts.editor_client
+    -- The name of a campaign whose CREATE is in flight. Nil the rest of the time.
+    self._creating = nil
     return self
 end
 
@@ -542,6 +707,272 @@ function GraphBinding:state() return self._state end
 ---Access the recorder, exposed for test inspection.
 function GraphBinding:recorder() return self._recorder end
 
+---The campaign this panel currently has open, or nil. The Explorer's authoring commands resolve
+---their target campaign through this, since the Graph owns it and it changes under them.
+function GraphBinding:campaign_name()
+    local name = self._state.campaign_name
+    if type(name) == "string" and name ~= "" then return name end
+    return nil
+end
+
+---The editor client, or nil plus the message the panel should be showing instead.
+function GraphBinding:_editor()
+    local ec = self._editor_client
+    if not ec then
+        return nil, "campaign editor unavailable: no client for the editor at :3031"
+    end
+    return ec
+end
+
+---Write one node of `node_type` into the open campaign, and re-read the graph from the editor.
+---
+---Nothing is inserted locally. On failure the panel gains an error and gains NO node, which is the
+---requirement in one line: editor down means `state.error`, never a phantom.
+---@return boolean handled, string reason
+function GraphBinding:_write_node(node_type)
+    local state = self._state
+    local info = GraphState.node_type_info(node_type)
+    if not info then
+        state.error = "unknown node type '" .. tostring(node_type) .. "'"
+        return true, state.error
+    end
+
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: a new node has nowhere to go"
+        return true, state.error
+    end
+
+    local intent = {}
+    for k, v in pairs(info.default_intent or {}) do intent[k] = v end
+
+    -- Contained: a client that raises must read as a failed write, not take the dispatch down.
+    local called, wrote, why = pcall(ec.add_nodes, ec, campaign, {
+        { id = "new_" .. info.label, type = node_type, preview = info.label, intent = intent },
+    })
+    if not called then
+        state.error = "add " .. info.label .. " failed: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "add " .. info.label .. " was refused: " .. tostring(why or "no reason given")
+        return true, state.error
+    end
+
+    state.error = nil
+    -- Yesterday's clean bill over a graph that has changed since is worse than no verdict at all,
+    -- because it is believed.
+    state:invalidate_validation()
+    -- F19-R1: every save re-validates. Armed rather than run, because the graph has to come back
+    -- from the editor first -- validating the copy the write just replaced answers about the wrong
+    -- document.
+    self._revalidate = true
+    -- The graph on screen is the editor's, so re-read it rather than patching the local copy.
+    state._slots.campaign:reset()
+    self._reload = true
+    state._dirty = true
+    return true, "added " .. info.label .. " to '" .. campaign .. "'"
+end
+
+---The player's position from the object manager, or nil. Nil-safe through two pcalls: a raising
+---object manager is still just no position.
+function GraphBinding:_player_position()
+    if type(core) ~= "table" or type(core.object_manager) ~= "table" then return nil end
+    local ok, player = pcall(core.object_manager.get_local_player)
+    if not ok or not player or type(player.get_position) ~= "function" then return nil end
+    local read, position = pcall(player.get_position, player)
+    if not read then return nil end
+    return position
+end
+
+---Turn the recorded escort path into Waypoint/Wait nodes IN THE CAMPAIGN (F15).
+---
+---The nodes are written through the editor and the graph is re-read, which is what makes them
+---"editable like any other sequence": they come back with the editor's own ids, so `edit_intent`
+---addresses them the same way it addresses a node that was authored by hand. Generated into a
+---local list instead, they would be a recording the operator could look at and nothing else.
+---@return boolean handled, string reason
+function GraphBinding:_commit_escort()
+    local state = self._state
+    local recorder = self._recorder
+
+    -- Read BEFORE stopping: `stop()` hands back the timeline and clears it.
+    local nodes = recorder:generate_nodes()
+    local samples = #recorder.timeline
+    recorder:stop()
+    state:set_escort_mode(false)
+    state.escort_timeline = {}
+
+    if #nodes == 0 then
+        state.error = samples == 0
+            and "nothing was recorded: the escort produced no player positions"
+            or "the recording produced no nodes"
+        return true, state.error
+    end
+
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: the recorded path has nowhere to go"
+        return true, state.error
+    end
+
+    local called, wrote, refused = pcall(ec.add_nodes, ec, campaign, nodes)
+    if not called then
+        state.error = "escort recording failed to write: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "escort recording was refused: " .. tostring(refused or "no reason given")
+        return true, state.error
+    end
+
+    state.error = nil
+    state:invalidate_validation()
+    self._revalidate = true
+    state._slots.campaign:reset()
+    self._reload = true
+    state._dirty = true
+    return true, string.format("wrote %d node(s) from %d sample(s) to '%s'",
+        #nodes, samples, campaign)
+end
+
+---Write the edited intent field through the editor and re-read the graph.
+---
+---The local node is NOT patched. `PUT|POST .../nodes/{id}` replaces the whole node, and the copy
+---worth believing afterwards is the one the editor answers with.
+---@return boolean handled, string reason
+function GraphBinding:_commit_intent()
+    local state = self._state
+    local editing = state.editing
+    if not editing then return true, "nothing is being edited" end
+
+    local value, why = state:edited_value()
+    if value == nil and why then
+        -- A field typed as the wrong type is refused HERE. Sent, it would arrive as an IntentValue
+        -- of the wrong variant -- a count as Text rather than Int -- and the resolver would read a
+        -- field of the wrong shape with nothing raising anywhere along the way.
+        state.error = editing.field .. ": " .. why
+        return true, state.error
+    end
+
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: the edit has nowhere to go"
+        return true, state.error
+    end
+
+    local node = state:node_by_id(editing.node_id)
+    if not node then
+        state.error = "the node being edited is no longer in the graph"
+        return true, state.error
+    end
+
+    local intent = {}
+    for k, v in pairs(node.intent or {}) do intent[k] = v end
+    intent[editing.field] = value
+
+    local called, wrote, refused = pcall(ec.update_node, ec, campaign, node.id,
+        { id = node.id, type = node.type, intent = intent, context = node.context }, state.graph_id)
+    if not called then
+        state.error = "edit " .. editing.field .. " failed: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "edit " .. editing.field .. " was refused: "
+                      .. tostring(refused or "no reason given")
+        return true, state.error
+    end
+
+    state:cancel_edit()
+    state.error = nil
+    state:invalidate_validation()
+    self._revalidate = true
+    state._slots.campaign:reset()
+    self._reload = true
+    state._dirty = true
+    return true, "wrote " .. editing.field .. " to '" .. campaign .. "'"
+end
+
+---Start a validate or compile. Both are POSTs whose ANSWER is the point, so the dispatch only
+---ARMS them and the tick collects the answer through a slot.
+---@param which string "validate" | "compile"
+---@return boolean handled, string reason
+function GraphBinding:_ask_editor(which)
+    local state = self._state
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: there is nothing to " .. which
+        return true, state.error
+    end
+
+    -- `forget` first, always. Validate and compile are ACTIONS, and a remembered answer would
+    -- replay the verdict from before the edit that prompted the second click.
+    if type(ec.forget) == "function" then ec:forget(which .. " '" .. campaign .. "'") end
+    state._slots[which]:reset()
+    self._asking = which
+    state.error = nil
+    state._dirty = true
+    return true, which .. " '" .. campaign .. "'"
+end
+
+---Poll a validate or compile that a dispatch armed. TICK CONTEXT.
+---@return boolean handled whether this owned the tick
+function GraphBinding:_poll_ask(ec)
+    local which = self._asking
+    if not which then return false end
+    local state = self._state
+    local campaign = self:campaign_name()
+    if not campaign then
+        self._asking = nil
+        return false
+    end
+
+    local status, answer = state._slots[which]:poll(function() return ec[which](ec, campaign) end)
+    if status == "pending" then return true end
+    self._asking = nil
+    if status ~= "ok" then return true end
+
+    if which == "validate" then
+        state:set_diagnostics(answer)
+    else
+        -- The editor's compile is still a summary rather than a profile, so the panel reports what
+        -- it actually said instead of claiming a build happened.
+        state.compile_message = tostring((answer or {}).message or "compiled")
+    end
+    return true
+end
+
+---Surface refusals the editor sent AFTER the write that caused them had already returned.
+---
+---A mutation can only report that its request LEFT. Everything the server said about it arrives
+---here, on a later tick, and this is the only place it becomes visible.
+function GraphBinding:_drain_editor_errors()
+    local ec = self._editor_client
+    if not ec or type(ec.take_error) ~= "function" then return end
+    local err = ec:take_error()
+    if err then self._state.error = err end
+end
+
 ---The panel spec the shell registers.
 function GraphBinding:spec()
     local binding = self
@@ -550,49 +981,133 @@ function GraphBinding:spec()
         title = Graph.title,
         order = Graph.order,
         render = function(window, bounds, ctx)
-            -- Pass current player position from tick context to the state
             local state = binding._state
-            if ctx and ctx.player_position then
-                if state.waypoint_mode then
-                    state:capture_position(ctx.player_position)
-                end
-                if state.escort_mode then
-                    state:tick_escort_position(ctx.player_position)
-                end
+            -- Waypoint capture only. Escort recording used to sample HERE, once per frame, which
+            -- made a two-minute walk sixty times longer than the path it was meant to describe;
+            -- it now samples on the tick, at the recorder's own interval.
+            if ctx and ctx.player_position and state.waypoint_mode then
+                state:capture_position(ctx.player_position)
             end
 
             local view = state:build()
             return Graph.render(window, bounds, view)
         end,
-        on_tick = function()
+        on_tick = function(ctx)
             local state = binding._state
             local recorder = binding._recorder
 
-            -- Tick the recorder (independent mode)
             if recorder.recording then
-                local ctx = { player_position = nil }
-                if type(core) == "table" and type(core.object_manager) == "table" then
-                    local player = core.object_manager.get_local_player()
-                    if player and type(player.get_position) == "function" then
-                        local ok, pos = pcall(player.get_position, player)
-                        if ok then ctx.player_position = pos end
-                    end
-                end
-                recorder:tick(ctx)
+                -- `ctx.player_position` is the shell's own tick reading (ADR 09b §2.4). The direct
+                -- object-manager read stays as a fallback for a binding ticked without a shell.
+                recorder:tick({ player_position = (ctx and ctx.player_position)
+                                                  or binding:_player_position() })
+                -- The indicator counts SAMPLES, so it has to read the recorder's timeline rather
+                -- than a second one the panel keeps beside it.
+                state.escort_timeline = recorder.timeline
             end
 
-            -- Respond to dirty state
-            if state._dirty then
-                state._dirty = false
-                -- In a real deployment, this would refresh from /editor/campaigns/{name}
+            -- Anything the editor refused since the last tick, whatever issued it.
+            binding:_drain_editor_errors()
+
+            if not state._dirty then return end
+            state._dirty = false
+
+            local ec = binding._editor_client
+            if not ec then
+                state.error = "campaign editor unavailable: no client for the editor at :3031"
+                state.loading = false
+                return
+            end
+
+            -- A create in flight owns the tick: the campaign it names cannot be opened until the
+            -- editor has answered, and asking early caches a 404.
+            if binding._creating then
+                local name = binding._creating
+                local status, summary = state._slots.create:poll(function()
+                    return ec:create_campaign(name)
+                end)
+                if status == "ok" then
+                    binding._creating = nil
+                    if type(ec.forget_create) == "function" then ec:forget_create(name) end
+                    state:set_campaign(tostring((summary or {}).name or name))
+                    binding._reload = true
+                elseif status ~= "pending" then
+                    binding._creating = nil
+                end
+                return
+            end
+
+            if state.campaign_name and state.campaign_name ~= "" then
+                -- Re-reading the graph comes FIRST, and only when something asked for it. A
+                -- validate left armed from a previous write would otherwise own every tick and the
+                -- reload after the NEXT write would never run -- the panel would keep showing the
+                -- graph from before the edit while cheerfully re-validating it.
+                if binding._reload then
+                    local name = state.campaign_name
+                    local status, loaded = state._slots.campaign:poll(function()
+                        return ec:load_campaign(name)
+                    end)
+                    if status == "pending" then return end
+                    binding._reload = nil
+                    if status == "ok" then state:apply_campaign(loaded) end
+                    if binding._revalidate then
+                        binding._revalidate = nil
+                        binding:_ask_editor("validate")
+                    end
+                    return
+                end
+                binding:_poll_ask(ec)
+                return
+            end
+
+            if binding:_poll_ask(ec) then return end
+
+            if not state.campaigns_loaded then
+                local status, list = state._slots.list:poll(function() return ec:list_campaigns() end)
+                if status == "ok" then state:set_campaigns(list) end
             end
         end,
-        dispatch = function(command)
+        dispatch = function(command, ctx)
             local state = binding._state
             local recorder = binding._recorder
 
-            if command.kind == "select_node" then
+            if command.kind == "create_campaign" then
+                local name = state:pending_campaign_name()
+                if name == "" then
+                    state.error = "name the campaign before creating it"
+                    return true, state.error
+                end
+                local ec, unavailable = binding:_editor()
+                if not ec then
+                    state.error = unavailable
+                    return true, unavailable
+                end
+                -- The create is only STARTED here. The panel opens the campaign when the editor
+                -- answers, on a later tick -- not on the assumption that it will.
+                binding._creating = name
+                state.name_input:set_value("")
+                state._slots.create:reset()
+                state.error = nil
+                state._dirty = true
+                return true, "creating campaign '" .. name .. "'"
+            elseif command.kind == "cancel_campaign_name" then
+                state.name_input:set_value("")
+                return true
+            elseif command.kind == "open_campaign" then
+                local ec, unavailable = binding:_editor()
+                if not ec then
+                    state.error = unavailable
+                    return true, unavailable
+                end
+                state:set_campaign(command.name)
+                binding._reload = true
+                return true, "opening campaign '" .. tostring(command.name) .. "'"
+            elseif command.kind == "close_campaign" then
+                state:close_campaign()
+                return true
+            elseif command.kind == "select_node" then
                 state:select_node(command.node_id)
+                publish_selection(ctx, Graph.id, "node", command.node_id)
                 return true
             elseif command.kind == "toggle_expand" then
                 state:toggle_expand_node(command.node_id)
@@ -601,13 +1116,22 @@ function GraphBinding:spec()
                 state:remove_node(command.node_id)
                 return true
             elseif command.kind == "show_add_node_menu" then
-                -- For v1, add a Kill node as a default template
-                state:add_node("questing.Kill")
-                state._dirty = true
-                return true
+                -- For v1 the template is a Kill node. It is WRITTEN, not inserted locally: a node
+                -- that appears because the panel assumed the write worked looks exactly like a node
+                -- the editor stored, and that is how the last cycle shipped phantom authoring.
+                return binding:_write_node("questing.Kill")
             elseif command.kind == "edit_intent" then
-                -- Placeholder: would prompt for a new value via the editor crate
-                return true, "edit_intent " .. tostring(command.node_id) .. ":" .. tostring(command.field) .. " (open editor)"
+                if not state:begin_edit(command.node_id, command.field) then
+                    state.error = "cannot edit " .. tostring(command.field) ..
+                                  " on " .. tostring(command.node_id)
+                    return true, state.error
+                end
+                return true, "editing " .. tostring(command.field)
+            elseif command.kind == "cancel_intent" then
+                state:cancel_edit()
+                return true
+            elseif command.kind == "commit_intent" then
+                return binding:_commit_intent()
             elseif command.kind == "toggle_waypoint" then
                 state:toggle_waypoint_mode()
                 return true
@@ -615,22 +1139,33 @@ function GraphBinding:spec()
                 state:commit_waypoint()
                 return true
             elseif command.kind == "toggle_escort" then
+                -- One switch, two objects: the recorder owns the samples, the state owns what the
+                -- panel paints. They were previously started independently and drifted apart.
                 if state.escort_mode then
+                    binding._recorder:stop()
                     state:set_escort_mode(false)
                 else
+                    binding._recorder:start()
                     state:set_escort_mode(true)
+                    state.escort_timeline = binding._recorder.timeline
                 end
                 return true
             elseif command.kind == "generate_escort_nodes" then
-                state:generate_escort_nodes()
-                return true
+                return binding:_commit_escort()
             elseif command.kind == "set_filter" then
                 state:set_filter(command.node_type)
                 return true
             elseif command.kind == "validate_graph" then
-                return true, "validate_graph (not yet implemented)"
+                return binding:_ask_editor("validate")
             elseif command.kind == "compile_graph" then
-                return true, "compile_graph (not yet implemented)"
+                return binding:_ask_editor("compile")
+            elseif command.kind == "select_diagnostic" then
+                -- A diagnostic that blames no node is still readable; it just does not navigate.
+                local node_id = state:diagnostic_node(command.index)
+                if not node_id then return true, "that diagnostic names no node" end
+                state:select_node(node_id)
+                publish_selection(ctx, Graph.id, "node", node_id)
+                return true, "selected " .. node_id
             end
             return false, "unknown graph command '" .. tostring(command.kind) .. "'"
         end,
@@ -644,7 +1179,7 @@ end
 local DatabaseBinding = {}
 DatabaseBinding.__index = DatabaseBinding
 
----@param opts table|nil { query_client = function():table|nil }
+---@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
 function IdePanels.new_database(opts)
     opts = opts or {}
     local self = setmetatable({}, DatabaseBinding)
@@ -673,6 +1208,17 @@ function DatabaseBinding:spec()
             state._dirty = false
 
             local qc = binding._query_client
+            if not qc then
+                -- Detail and grind are server-backed; drop them here rather than letting the state
+                -- reach its own nil-client branches, which currently answer with fabricated data.
+                -- (That fabrication is removed wholesale in the mock-data sweep; this gate means the
+                -- installed panel cannot reach it in the meantime.) The scan is NOT dropped: it
+                -- reads the object manager, a different source that a dead QueryServer does not
+                -- affect.
+                state._pending_detail = false
+                state._pending_grind = false
+                mark_query_client_unavailable(state)
+            end
 
             -- Execute pending scan
             if state._pending_scan then
@@ -689,7 +1235,7 @@ function DatabaseBinding:spec()
                 state:execute_grind(qc)
             end
         end,
-        dispatch = function(command)
+        dispatch = function(command, ctx)
             local state = binding._state
             if command.kind == "set_tab" then
                 state:set_tab(command.tab)
@@ -716,9 +1262,14 @@ function DatabaseBinding:spec()
                 return true
             elseif command.kind == "select_entry" then
                 state:select_entry(command.entry)
+                publish_selection(ctx, Database.id, "npc", command.entry)
                 return true
             elseif command.kind == "view_detail" then
+                -- "View NPC Detail" IS the spec's "Open in NPC Inspector": both land on the same
+                -- selection, and the second one exists only because a row click and a button click
+                -- arrive as different action ids.
                 state:select_entry(command.entry)
+                publish_selection(ctx, Database.id, "npc", command.entry)
                 return true
             elseif command.kind == "add_as_kill" then
                 return true, "add_as_kill: " .. tostring(command.entry) .. " (not yet implemented)"
@@ -807,7 +1358,14 @@ function IdePanels.install(shell, deps)
     -- ====================================================================
     -- Explorer panel — wrap render/dispatch to include travel editor
     -- ====================================================================
-    local explorer = IdePanels.new_explorer(deps)
+    -- Forward-declared on purpose. The Explorer's authoring commands write into whatever campaign
+    -- the GRAPH panel has open, and that is why `campaign` is a resolver rather than a value: it
+    -- changes under the Explorer every time the operator opens a different campaign.
+    local graph
+    local explorer_deps = setmetatable({
+        campaign = deps.campaign or function() return graph and graph:campaign_name() or nil end,
+    }, { __index = deps })
+    local explorer = IdePanels.new_explorer(explorer_deps)
     local explorer_spec = explorer:spec()
     local explorer_render = explorer_spec.render
     local explorer_dispatch = explorer_spec.dispatch
@@ -856,7 +1414,23 @@ function IdePanels.install(shell, deps)
     local ok3, reason3 = shell:register_panel(properties:spec())
     if not ok3 then return nil, reason3 end
 
-    local graph = IdePanels.new_graph(deps)
+    -- The other end of the selection channel. Subscribed exactly once, here, because this is the
+    -- only file that may know both that a shell has a channel and that Properties is the inspector.
+    --
+    -- FOCUS-FOLLOW: a selection made ELSEWHERE brings the inspector to the front, because the whole
+    -- point of selecting an NPC in the Database is to look at it — leaving the operator to find the
+    -- Properties tab themselves is the same dead end as not routing the selection at all. A
+    -- selection made INSIDE Properties does not re-activate it: the panel is already in front, and
+    -- an activate() from its own dispatch would fight a tab the operator just switched away from.
+    shell:on_selection(function(event)
+        properties:state():set_context({
+            selection_type = event.kind,
+            selection_id = event.id,
+        })
+        if event.panel_id ~= Properties.id then shell:activate(Properties.id) end
+    end)
+
+    graph = IdePanels.new_graph(deps)
     local ok4, reason4 = shell:register_panel(graph:spec())
     if not ok4 then return nil, reason4 end
 

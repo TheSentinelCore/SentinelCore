@@ -26,6 +26,7 @@
 -- frame (ADR 09b §2.4).
 
 local Theme = require("ui/theme")
+local TextInputState = require("ui/text_input_state")
 
 local function require_or(module_name, fallback)
     local ok, mod = pcall(require, module_name)
@@ -657,5 +658,90 @@ end)
 Widgets.combobox = stock_wrapper(function(opts)
     opts.element:render(opts.label or "", opts.options or {}, opts.tooltip)
 end)
+
+-- ============================================================================
+-- text_input — the one control with no stock element behind it
+-- ============================================================================
+--
+-- `stock_wrapper` cannot be reused here. ADR 09b §1 lists `text_input` among the stock elements,
+-- but `docs/SylvannasAPI/dev/api/ui-custom.md` has no such constructor and `element_value` above
+-- probes for an accessor that is never found -- which is why the Explorer's search box has been a
+-- rectangle nobody could type into. This widget reads the keyboard itself.
+--
+-- IT STILL HOLDS NOTHING. `opts.model` is a `ui/text_input_state` owned by the caller's panel
+-- state, exactly like every other widget's selection and scroll position. All of the decisions live
+-- there; this function draws the projection and forwards keys.
+--
+-- WHAT IS UNDOCUMENTED HERE, AND WHAT HAPPENS WITHOUT IT
+-- -----------------------------------------------------
+-- `window:block_input_capture()` keeps the keys out of the game while the field has focus. It is
+-- NOT in `ui-custom.md`; the only evidence it exists is `SentinelNavClient/lib/AstroUI.lua:2397`,
+-- a plugin that works in the injector. It is therefore called through a type check: where the
+-- method is absent the field still types, and the keystrokes also reach the game. That is the
+-- focus-gated fallback the design names, and it is the reason this widget must be confirmed live
+-- (tasks.md 3.2) before the undocumented half is trusted.
+
+---@param opts table { model, placeholder, label, disabled, events, input }
+---@return table|nil result `{ kind = "submit"|"cancel", value }` from the model
+---@return string state
+function Widgets.text_input(window, bounds, opts)
+    opts = opts or {}
+    local model = opts.model
+    if not model then
+        -- No model is a caller bug, not a user-visible state. Draw the frame so the layout does not
+        -- collapse, and refuse the keyboard rather than inventing a buffer to type into.
+        local _, empty_state = probe(window, bounds, opts)
+        draw_surface(window, bounds, empty_state, {
+            fill_token = "surface_raised", border_token = "border", rounding = Theme.radius.md,
+        })
+        return nil, empty_state
+    end
+
+    local view = model:view()
+    local clicked, state, hovered = probe(window, bounds, { disabled = opts.disabled, focused = view.focused })
+
+    draw_surface(window, bounds, state, {
+        fill_token = "surface_raised",
+        border_token = view.focused and "accent" or (hovered and "border_strong" or "border"),
+        rounding = Theme.radius.md,
+    })
+
+    local shown = view.placeholder_shown and tostring(opts.placeholder or "") or view.text
+    local token = view.placeholder_shown and "text_muted" or "text_primary"
+    window:render_text(Theme.font.body,
+        v2(bounds.x + Theme.space.md, centred_y(bounds, "body")),
+        Theme.color[token](Theme.interaction[state].text),
+        fit(shown, bounds.w - Theme.space.xl))
+
+    if view.focused and view.caret then
+        -- A solid caret rather than a blinking one: blink needs a clock read on the render path,
+        -- and a caret that is invisible half the time is worse at saying "this field has focus"
+        -- than the accent border already above it.
+        local caret_x = bounds.x + Theme.space.md + view.caret * APPROX_CHAR_WIDTH
+        window:render_rect_filled(
+            v2(caret_x, bounds.y + Theme.space.xs),
+            v2(caret_x + 1, bounds.y + bounds.h - Theme.space.xs),
+            Theme.color.text_primary(Theme.interaction[state].text), Theme.radius.none)
+    end
+
+    if opts.disabled then return nil, state end
+
+    if clicked then model:focus() end
+    if not model.focused then return nil, state end
+
+    -- Undocumented, so guarded. See the header above.
+    if type(window.block_input_capture) == "function" then
+        pcall(window.block_input_capture, window)
+    end
+
+    -- `opts.events` is the offline injection point and `opts.input` the live one; both land in the
+    -- SAME `apply_keys`, so a test that types "wolf" runs the code the injector runs.
+    local events = opts.events
+    if events == nil then
+        events = TextInputState.collect(opts.input or (type(core) == "table" and core.input) or nil)
+    end
+    local result = model:apply_keys(events)
+    return result, state
+end
 
 return Widgets

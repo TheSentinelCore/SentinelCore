@@ -118,6 +118,10 @@ function ShellState.new(opts)
     self._in_combat = false
     self._marker_x = nil
 
+    self._selection = nil
+    self._selection_subscribers = {}
+    self._selection_error = nil
+
     self._position = { x = opts.position and opts.position.x or ShellState.DEFAULT_POSITION.x,
                        y = opts.position and opts.position.y or ShellState.DEFAULT_POSITION.y }
     self._size = { x = opts.size and opts.size.x or ShellState.DEFAULT_SIZE.x,
@@ -272,6 +276,61 @@ function ShellState:empty_state()
     local spec = self:active_panel()
     if spec and spec.requires_campaign and not self._campaign then return EMPTY_NO_CAMPAIGN end
     return nil
+end
+
+-- ============================================================================
+-- The selection channel (spec: Cross-Panel Selection Bus)
+-- ============================================================================
+--
+-- Selecting a quest in the Explorer, a node in the Graph or an entry in the Database used to change
+-- nothing outside the panel it happened in: the Properties inspector held its own context and no
+-- caller ever set it, so the inspector sat on whatever it was last given — usually nothing at all.
+--
+-- The channel is deliberately CONTENT-FREE. It carries `{ panel_id, kind, id }` and this file does
+-- not know what any of the three mean, which is what keeps rule 3 of `shell.lua` alive: a shell that
+-- routed "npc" to the inspector would be a shell that names a panel. `ide_panels.lua` is the one
+-- file allowed to know both ends, so the subscription that reaches Properties lives there.
+
+---Subscribe to selections. Subscribers fire in registration order.
+---@param fn function function(event) where event is `{ panel_id, kind, id }`
+---@return boolean ok, string|nil reason
+function ShellState:on_selection(fn)
+    if type(fn) ~= "function" then return false, "a selection subscriber must be a function" end
+    self._selection_subscribers[#self._selection_subscribers + 1] = fn
+    return true
+end
+
+---The last selection published, or nil.
+function ShellState:selection() return self._selection end
+
+---The last error a subscriber raised, or nil. Kept for the same reason `Shell:last_dispatch` is:
+---a subscriber that throws is a selection that silently reached nobody.
+function ShellState:last_selection_error() return self._selection_error end
+
+---Publish a selection to every subscriber.
+---
+---Refused rather than normalised when the payload is incomplete: a selection with no kind cannot be
+---routed to a context, and one accepted here would surface as an inspector that simply stopped
+---following the cursor.
+---@param selection table { panel_id?, kind, id }
+---@return boolean ok, string|nil reason
+function ShellState:publish_selection(selection)
+    if type(selection) ~= "table" then return false, "a selection must be a table" end
+    if type(selection.kind) ~= "string" or selection.kind == "" then
+        return false, "a selection needs a non-empty string kind"
+    end
+    if selection.id == nil then return false, "a selection needs an id" end
+
+    local event = { panel_id = selection.panel_id, kind = selection.kind, id = selection.id }
+    self._selection = event
+    self._selection_error = nil
+    for _, fn in ipairs(self._selection_subscribers) do
+        -- Contained so one bad subscriber cannot stop the rest from hearing the selection, and
+        -- RECORDED so the failure is not the silence this whole channel exists to remove.
+        local ok, err = pcall(fn, event)
+        if not ok then self._selection_error = tostring(err) end
+    end
+    return true
 end
 
 -- ============================================================================

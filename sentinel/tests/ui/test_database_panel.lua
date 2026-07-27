@@ -198,35 +198,67 @@ function M.test_request_grind_refuses_without_entry()
 end
 
 -- ============================================================================
--- 3. DatabaseState: execute_scan (offline mock path)
+-- 3. DatabaseState: execute_scan (spec: No Mock Data in Production Paths)
 -- ============================================================================
+--
+-- These three used to assert that a scan with NO source produced six results. That was the defect
+-- verbatim: `_mock_scan` ran in the injector too, so an operator with no scan source saw invented
+-- wolves and had no way to tell them from real ones.
 
-function M.test_execute_scan_uses_mock_offline()
+--- Install a scan source for the duration of one test. `dbg` is a global the debug plugin publishes;
+--- the state reads it the same way in-game.
+local function with_scan_source(entities, fn)
+    local previous = _G.dbg
+    local seen = {}
+    _G.dbg = {
+        nearby = function(range, filter)
+            seen.range, seen.filter = range, filter
+            return entities
+        end,
+    }
+    local ok, err = pcall(fn, seen)
+    _G.dbg = previous
+    if not ok then error(err, 0) end
+end
+
+function M.test_execute_scan_without_a_source_errors_instead_of_inventing_results()
     local state = DatabaseState.new()
     state:request_scan()
     state:execute_scan(nil)
-    T.assert_true(#state.scan_results > 0, "mock scan must produce results")
+    T.assert_equal(#state.scan_results, 0,
+        "a scan with nothing to scan with must produce NO results -- fabricated spawns are "
+        .. "indistinguishable from real ones once they are on screen")
+    T.assert_not_nil(state.error, "and it must say so")
+    T.assert_true(tostring(state.error):find("spawn", 1, true) ~= nil,
+        "the message must name the missing source, got: " .. tostring(state.error))
     T.assert_false(state.loading, "execute_scan clears loading")
     T.assert_false(state._pending_scan, "execute_scan clears pending scan")
 end
 
-function M.test_execute_scan_respects_filter()
+function M.test_execute_scan_aggregates_what_the_source_returns()
     local state = DatabaseState.new()
-    state:set_scan_filter("herb")
-    state:request_scan()
-    state:execute_scan(nil)
-    T.assert_true(#state.scan_results > 0, "herb filter must produce results")
-    for _, r in ipairs(state.scan_results) do
-        T.assert_equal(r.kind, "herb", "all results must be herbs")
-    end
+    with_scan_source({
+        { entry = 567, name = "Wolf", level = 5, distance = 10, type = "creature" },
+        { entry = 567, name = "Wolf", level = 7, distance = 20, type = "creature" },
+    }, function()
+        state:request_scan()
+        state:execute_scan(nil)
+    end)
+    T.assert_equal(#state.scan_results, 1, "two spawns of one entry group into one row")
+    T.assert_equal(state.scan_results[1].count, 2, "with a real count")
+    T.assert_nil(state.error, "a scan that answered is not an error")
 end
 
-function M.test_execute_scan_empty_for_unmatched_filter()
+function M.test_execute_scan_hands_the_filter_to_the_source()
     local state = DatabaseState.new()
-    state:set_scan_filter("treasure")
-    state:request_scan()
-    state:execute_scan(nil)
-    T.assert_equal(#state.scan_results, 0, "unmatched filter produces no results")
+    state:set_scan_filter("herb")
+    with_scan_source({}, function(seen)
+        state:request_scan()
+        state:execute_scan(nil)
+        T.assert_equal(seen.filter, "herb", "the filter must reach the scan source")
+        T.assert_equal(seen.range, 50, "along with the range")
+    end)
+    T.assert_equal(#state.scan_results, 0, "an empty answer stays empty")
 end
 
 -- ============================================================================
@@ -267,24 +299,30 @@ function M.test_execute_load_detail_no_query_client()
 end
 
 -- ============================================================================
--- 5. DatabaseState: execute_grind (offline mock path)
+-- 5. DatabaseState: execute_grind (spec: No Mock Data in Production Paths)
 -- ============================================================================
 
-function M.test_execute_grind_uses_mock_without_query_client()
+function M.test_execute_grind_without_a_query_client_errors_instead_of_inventing_an_estimate()
     local state = DatabaseState.new()
     state:set_grinding_npc(567)
     state:set_grinding_zone("Elwynn")
     state:request_grind()
     state:execute_grind(nil)
 
-    T.assert_not_nil(state.grinding_result, "mock grind must produce a result")
-    T.assert_equal(state.grinding_result.xp_per_hour, 12450, "mock XP/hour")
-    T.assert_equal(state.grinding_result.gold_per_hour, 3.45, "mock gold/hour")
-    T.assert_equal(state.grinding_result.safe_spots, 3, "mock safe spots")
-    T.assert_equal(state.grinding_result.pull_radius, 18, "mock pull radius")
-    T.assert_equal(state.grinding_result.spawn_density, 24, "mock spawn density")
+    T.assert_nil(state.grinding_result,
+        "a grind estimate with no server behind it must not exist -- it used to read a flat "
+        .. "12,450 XP/hour, which is a route the operator walks for an hour to disprove")
+    T.assert_not_nil(state.error, "and the missing source must be named")
     T.assert_false(state.loading, "execute_grind clears loading")
     T.assert_false(state._pending_grind, "execute_grind clears pending grind")
+end
+
+function M.test_no_mock_fabricator_survives_on_the_state()
+    -- The sweep, held by a test rather than by a comment: a fixture reachable from an installed
+    -- panel is a fixture that reaches the injector, and both of these did.
+    local state = DatabaseState.new()
+    T.assert_nil(state._mock_scan, "_mock_scan must not exist on production state")
+    T.assert_nil(state._mock_grind_result, "_mock_grind_result must not exist on production state")
 end
 
 function M.test_execute_grind_with_query_client()

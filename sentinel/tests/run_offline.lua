@@ -526,6 +526,13 @@ local test_modules = {
     -- immediate-mode UI can be observed outside the injector.
     "tests/ui/test_theme",
     "tests/ui/test_widgets",
+    -- The one widget with no stock element behind it: it reads `core.input` directly, and two of
+    -- the calls it needs are undocumented. Registered right after `test_widgets` because a break
+    -- here must read as a widget bug, not as an Explorer search that stopped working. The
+    -- view-model goes first: a broken buffer must fail as a buffer, not as a widget that appears
+    -- not to draw.
+    "tests/ui/test_text_input",
+    "tests/ui/test_text_input_widget",
     -- ADR 09b U2: the shell. `test_shell_state` is the whole of the unit's decision-making;
     -- `test_shell` drives the real render path and counts `core.menu.*` constructions per phase,
     -- which is the only offline signal for a Sylvannas rule that otherwise fails in the injector
@@ -533,6 +540,14 @@ local test_modules = {
     -- `package.loaded` and `_G.core` itself rather than relying on ordering.
     "tests/ui/test_shell_state",
     "tests/ui/test_shell",
+    -- The poll-until-resolved primitive every data panel fetches through, plus the harness half
+    -- that makes an in-flight request observable offline. Registered BEFORE the panels: a panel
+    -- that freezes on a pending fetch must fail as a slot bug here first, not as four panel bugs.
+    "tests/ui/test_async_slot",
+    -- The :3031 campaign transport the Graph and Explorer authoring commands write through.
+    -- Registered next to the slot suite because it answers the same pending contract and is the
+    -- other half of "a write that was never issued must not read as a write that succeeded".
+    "tests/ui/test_editor_client",
     -- ADR 09b U5: the Runner panel. Registered after the widget suites because it is built
     -- entirely out of them -- a widget regression must fail as a widget bug, not as this panel's.
     "tests/ui/test_runner_panel",
@@ -552,6 +567,10 @@ local test_modules = {
     -- meaningful once the shell and the panel are each known good -- U2 and U5 were individually
     -- green while nothing registered the panel and every control on it was inert.
     "tests/ui/test_ide_panels",
+    -- F15 end to end: a walked path becomes editable Waypoint/Wait nodes in a campaign. After the
+    -- IDE panels suite, because it drives the real Graph binding and only means anything once the
+    -- binding itself is known good.
+    "tests/ui/test_escort_round_trip",
     -- Phase 5: shell extensions (F12 Travel Editor, F19 Auto Validation, F20 Profile Statistics).
     -- Registered after the IDE panels suite because the extensions integrate with it.
     "tests/ui/test_shell_extensions",

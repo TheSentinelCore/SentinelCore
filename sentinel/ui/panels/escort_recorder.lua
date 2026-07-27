@@ -12,6 +12,7 @@ EscortRecorder.__index = EscortRecorder
 -- Construction
 -- ============================================================================
 
+---@param opts table|nil { sample_interval = number|nil, now = function|nil }
 function EscortRecorder.new(opts)
     opts = opts or {}
     return setmetatable({
@@ -22,6 +23,10 @@ function EscortRecorder.new(opts)
         _last_position = nil,
         _sample_interval = opts.sample_interval or 1.0,  -- sample every second
         _last_sample_time = nil,
+        -- Injectable so a test can walk a path in less than the wall-clock time the walk took.
+        -- `os.clock` rather than `core.time` because this measures ELAPSED recording, and the two
+        -- disagree about their epoch; the timeline's times are only ever read as differences.
+        _now = opts.now or os.clock,
     }, EscortRecorder)
 end
 
@@ -32,7 +37,7 @@ end
 ---Start a new escort recording session.
 function EscortRecorder:start()
     self.recording = true
-    self.start_time = os.clock()
+    self.start_time = self._now()
     self.timeline = {}
     self.samples = 0
     self._last_position = nil
@@ -60,7 +65,7 @@ function EscortRecorder:tick(ctx)
     if not ctx or not ctx.player_position then return end
 
     local pos = ctx.player_position
-    local now = os.clock()
+    local now = self._now()
     local elapsed = now - (self.start_time or now)
 
     -- Sample at the configured interval
@@ -118,7 +123,7 @@ end
 function EscortRecorder:status()
     local elapsed = 0
     if self.recording and self.start_time then
-        elapsed = os.clock() - self.start_time
+        elapsed = self._now() - self.start_time
     end
     return {
         recording = self.recording,

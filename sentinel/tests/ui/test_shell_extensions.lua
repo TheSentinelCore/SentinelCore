@@ -863,4 +863,195 @@ function M.test_f4_spawn_overlay_is_documented_as_blocked()
     T.assert_true(true, "F4 is blocked pending Sylvannas 3D overlay investigation")
 end
 
+-- ============================================================================
+-- 15. The selection channel (spec: Cross-Panel Selection Bus)
+-- ============================================================================
+--
+-- The regression: selecting an NPC in the Database changed nothing anywhere else. Properties held a
+-- `context` that no caller ever set, so the inspector sat on whatever it was last given -- usually
+-- nothing at all -- while the operator watched the panel they had just selected in.
+
+local Shell = require("ui/shell")
+local IdePanels = require("ui/ide_panels")
+
+local function installed_shell()
+    local window = FakeWindow.new()
+    local shell = Shell.new({ window = window, elements = nil })
+    local bindings, reason = IdePanels.install(shell, { questing = function() return nil end })
+    T.assert_not_nil(bindings, "install must succeed: " .. tostring(reason))
+    shell:show()
+    return shell, bindings, window
+end
+
+function M.test_a_database_selection_drives_the_properties_inspector()
+    local shell, bindings = installed_shell()
+    shell:activate("database")
+
+    -- Dispatched, not rendered -- the shell hands `dispatch` its tick context, and that is the only
+    -- context a selection may be published from.
+    shell:_queue_command("database", { kind = "select_entry", entry = 567 })
+    shell:on_tick()
+
+    local context = bindings.properties:state().context
+    T.assert_not_nil(context, "the inspector must have received a context")
+    T.assert_equal(context.selection_type, "npc", "the Database publishes NPC entries")
+    T.assert_equal(context.selection_id, 567, "carrying the entry that was selected")
+end
+
+function M.test_a_selection_from_elsewhere_brings_the_inspector_to_the_front()
+    local shell = installed_shell()
+    shell:activate("database")
+    shell:_queue_command("database", { kind = "select_entry", entry = 567 })
+    shell:on_tick()
+    T.assert_equal(shell:active_id(), "properties",
+        "selecting an NPC in order to inspect it must not leave the operator hunting for the tab")
+end
+
+function M.test_the_explorer_and_graph_publish_their_own_kinds()
+    local shell, bindings = installed_shell()
+
+    shell:_queue_command("explorer", { kind = "select_quest", id = 1234 })
+    shell:on_tick()
+    T.assert_equal(shell:selection().kind, "quest", "the Explorer selects quests")
+    T.assert_equal(shell:selection().id, 1234)
+    T.assert_equal(bindings.properties:state().context.selection_type, "quest",
+        "and the inspector follows it")
+
+    shell:_queue_command("graph", { kind = "select_node", node_id = "n1" })
+    shell:on_tick()
+    T.assert_equal(shell:selection().kind, "node", "the Graph selects nodes")
+    T.assert_equal(shell:selection().id, "n1")
+end
+
+function M.test_a_selection_may_not_be_published_from_a_render_frame()
+    -- Every subscriber does real work: `set_context` abandons an in-flight fetch and re-arms the
+    -- panel. Doing that inside `register_on_render_window_callback` is the rule the whole shell is
+    -- arranged around, so the channel refuses it rather than trusting every future panel to behave.
+    local shell, _, window = installed_shell()
+    local heard = 0
+    shell:on_selection(function() heard = heard + 1 end)
+
+    local refused, reason
+    shell:register_panel({
+        id = "renderer",
+        render = function()
+            refused, reason = shell:publish_selection({ panel_id = "renderer", kind = "npc", id = 1 })
+            return nil
+        end,
+    })
+    shell:activate("renderer")
+    shell:_on_render_window()
+
+    T.assert_false(refused, "publishing mid-frame must be refused")
+    T.assert_not_nil(reason, "and it must say why")
+    T.assert_equal(heard, 0, "no subscriber may run inside a render callback")
+
+    -- And the guard must not latch: the very next tick can publish normally.
+    T.assert_true(shell:publish_selection({ panel_id = "database", kind = "npc", id = 2 }))
+    T.assert_equal(heard, 1, "a guard that jammed shut would disable the bus for the session")
+    T.assert_not_nil(window, "the fake window drove a real frame")
+end
+
+function M.test_an_incomplete_selection_is_refused_rather_than_normalised()
+    local shell = installed_shell()
+    T.assert_false(shell:publish_selection({ panel_id = "database", kind = "npc" }),
+        "a selection with no id cannot be routed to anything")
+    T.assert_false(shell:publish_selection({ panel_id = "database", id = 567 }),
+        "nor one with no kind")
+    T.assert_nil(shell:selection(), "and neither may become the current selection")
+end
+
+-- ============================================================================
+-- 16. The player position (spec: Shell Supplies Player Position)
+-- ============================================================================
+--
+-- The regression: `shell.lua` built its render ctx as `{ shell, state }` and never set
+-- `player_position`. The Graph panel's waypoint capture and escort recorder both read that field, so
+-- both branches were dead, and `travel_add_waypoint` answered "requires player position" forever.
+
+--- Swap the object manager for the duration of one test.
+local function with_object_manager(object_manager, fn)
+    local previous = _G.core.object_manager
+    _G.core.object_manager = object_manager
+    local ok, err = pcall(fn)
+    _G.core.object_manager = previous
+    if not ok then error(err, 0) end
+end
+
+function M.test_the_render_context_carries_the_players_position()
+    local shell, _, window = installed_shell()
+    local seen = {}
+    shell:register_panel({
+        id = "position_probe",
+        render = function(_w, _b, ctx) seen.position = ctx.player_position end,
+    })
+    shell:activate("position_probe")
+
+    with_object_manager({
+        get_local_player = function()
+            return { get_position = function() return { x = -8940, y = -140, z = 84 } end }
+        end,
+    }, function()
+        shell:on_tick()
+        shell:_on_render_window()
+    end)
+
+    T.assert_not_nil(seen.position, "the panel must be handed a position")
+    T.assert_equal(seen.position.x, -8940, "the one the object manager answered")
+    T.assert_equal(seen.position.z, 84)
+    T.assert_not_nil(window, "painted through the fake window")
+end
+
+function M.test_the_tick_context_carries_it_too()
+    -- `dispatch` runs in tick context, and every command that CAPTURES a position -- waypoint
+    -- commit, travel waypoint, escort -- is a dispatched command, not a rendered one.
+    local shell = installed_shell()
+    local seen = {}
+    shell:register_panel({
+        id = "tick_probe",
+        render = function() end,
+        dispatch = function(_cmd, ctx) seen.position = ctx.player_position; return true end,
+    })
+    shell:activate("tick_probe")
+    shell:_queue_command("tick_probe", { kind = "anything" })
+
+    with_object_manager({
+        get_local_player = function()
+            return { get_position = function() return { x = 1, y = 2, z = 3 } end }
+        end,
+    }, function() shell:on_tick() end)
+
+    T.assert_not_nil(seen.position, "dispatch must see the position too")
+    T.assert_equal(seen.position.y, 2)
+end
+
+function M.test_a_missing_position_is_nil_and_nothing_raises()
+    -- Out of world: loading screen, between injections, dead object manager. A shell that answered
+    -- `{0,0,0}` here would drop a waypoint in the middle of the map and say nothing about it.
+    local shell, _, window = installed_shell()
+    local rendered = false
+    shell:register_panel({
+        id = "nil_probe",
+        render = function(_w, _b, ctx)
+            rendered = true
+            T.assert_nil(ctx.player_position, "an absent player must read as nil, never as origin")
+        end,
+    })
+    shell:activate("nil_probe")
+
+    with_object_manager({ get_local_player = function() return nil end }, function()
+        shell:on_tick()
+        shell:_on_render_window()
+    end)
+    T.assert_true(rendered, "the frame must still paint")
+    T.assert_nil(shell:player_position(), "and the shell must hold nothing")
+
+    -- The harsher case: an object manager that throws.
+    with_object_manager({ get_local_player = function() error("out of world", 0) end }, function()
+        shell:on_tick()
+    end)
+    T.assert_nil(shell:player_position(), "a raising object manager is still just no position")
+    T.assert_not_nil(window, "painted through the fake window")
+end
+
 return M
