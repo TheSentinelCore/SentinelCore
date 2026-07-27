@@ -18,6 +18,9 @@ Mock._frame_count = 0
 function Mock.advance_time(ms)
     Mock._game_time = Mock._game_time + ms
     Mock._frame_count = Mock._frame_count + 1
+    -- One tick of game time is also one tick of the network (see `Mock.http_advance` below), so a
+    -- suite that already drives the clock resolves its held HTTP callbacks without new plumbing.
+    if Mock.http_advance then Mock.http_advance(1) end
 end
 
 function Mock.reset_time()
@@ -161,6 +164,97 @@ end
 
 Mock.core.log_error = function(message)
     print("[ERROR] " .. tostring(message))
+end
+
+-- ============================================================================
+-- core.http_get  (the ASYNC signature the injector actually has)
+-- ============================================================================
+--
+-- The live `core.http_get(url, callback)` returns BEFORE the server answers; the callback lands
+-- some ticks later, which is why `QueryClient:_get` answers `(nil, true)` first and the panels have
+-- to poll. This mock had no `http_get` at all, so every offline suite exercised only the
+-- resolves-immediately path -- the mechanical reason a whole cycle of panels shipped green while
+-- freezing on their first pending fetch in-game.
+--
+-- `Mock.http.pending_ticks` is how many harness ticks a request waits before its callback fires;
+-- 2 is the default because the interesting shape is "at least one tick answered nothing".
+-- `Mock.http_advance()` is that tick, and `Mock.advance_time` calls it, so a suite that already
+-- drives the clock gets the resolution for free.
+Mock.http = {
+    pending_ticks = 2,
+    routes = {},     -- { { match = "/npc/567", body = "...", status = 200 } }
+    requests = {},   -- every url asked for, in order
+    _inflight = {},  -- { { url, callback, remaining } }
+}
+
+---Answer any url CONTAINING `fragment` with `body` (a JSON string, or a table this encodes).
+function Mock.set_http_response(fragment, body, status)
+    if type(body) == "table" then
+        local ok, json = pcall(require, "core/JSON")
+        if not (ok and type(json) == "table" and json.encode) then
+            error("set_http_response was given a table but core/JSON is unavailable to encode it", 2)
+        end
+        body = json.encode(body)
+    end
+    Mock.http.routes[#Mock.http.routes + 1] =
+        { match = tostring(fragment), body = body, status = tonumber(status) or 200 }
+end
+
+local function http_route_for(url)
+    -- Last registration wins, so a test can override a fixture the suite set up.
+    for i = #Mock.http.routes, 1, -1 do
+        local route = Mock.http.routes[i]
+        if string.find(url, route.match, 1, true) then return route end
+    end
+    return nil
+end
+
+function Mock.core.http_get(url, callback)
+    url = tostring(url)
+    Mock.http.requests[#Mock.http.requests + 1] = url
+    if type(callback) ~= "function" then
+        -- The live SDK raises "function expected" on the one-argument form. Reproducing that is the
+        -- point: a caller that regresses to the synchronous shape must fail HERE, not in-game.
+        error("core.http_get expects (url, callback)", 2)
+    end
+
+    local wait = tonumber(Mock.http.pending_ticks) or 0
+    local route = http_route_for(url)
+    local entry = {
+        url = url,
+        callback = callback,
+        remaining = wait,
+        status = route and route.status or 404,
+        body = route and route.body or nil,
+    }
+    if wait <= 0 then
+        callback(entry.status, "application/json", entry.body)
+        return
+    end
+    Mock.http._inflight[#Mock.http._inflight + 1] = entry
+end
+
+---One harness tick of the network: fire every request whose wait has run out.
+function Mock.http_advance(ticks)
+    for _ = 1, (tonumber(ticks) or 1) do
+        local still_waiting = {}
+        local due = {}
+        for _, entry in ipairs(Mock.http._inflight) do
+            entry.remaining = entry.remaining - 1
+            if entry.remaining <= 0 then due[#due + 1] = entry else still_waiting[#still_waiting + 1] = entry end
+        end
+        Mock.http._inflight = still_waiting
+        for _, entry in ipairs(due) do
+            entry.callback(entry.status, "application/json", entry.body)
+        end
+    end
+end
+
+function Mock.reset_http()
+    Mock.http.pending_ticks = 2
+    Mock.http.routes = {}
+    Mock.http.requests = {}
+    Mock.http._inflight = {}
 end
 
 -- ============================================================================
@@ -309,6 +403,7 @@ end
 
 function Mock.reset()
     Mock.reset_time()
+    Mock.reset_http()
     Mock.clear_objects()
     _nav_path = {}
     _nav_state = "IDLE"

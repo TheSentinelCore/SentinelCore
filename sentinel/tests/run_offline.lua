@@ -528,6 +528,10 @@ local test_modules = {
     -- `package.loaded` and `_G.core` itself rather than relying on ordering.
     "tests/ui/test_shell_state",
     "tests/ui/test_shell",
+    -- The poll-until-resolved primitive every data panel fetches through, plus the harness half
+    -- that makes an in-flight request observable offline. Registered BEFORE the panels: a panel
+    -- that freezes on a pending fetch must fail as a slot bug here first, not as four panel bugs.
+    "tests/ui/test_async_slot",
     -- ADR 09b U5: the Runner panel. Registered after the widget suites because it is built
     -- entirely out of them -- a widget regression must fail as a widget bug, not as this panel's.
     "tests/ui/test_runner_panel",
