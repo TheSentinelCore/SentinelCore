@@ -8,8 +8,14 @@
 --
 -- Decision logic (branches, layout arithmetic) lives in `build_plan`, which is in this
 -- file — the one module tests CAN reach.
+--
+-- Design system: shares the Runner panel's vocabulary via `ui/panel_layout.lua`
+-- (spacing, control sizes, empty states, alert banners, accessibility glyphs).
 
 local AsyncSlot = require("ui/async_slot")
+local PanelLayout = require("ui/panel_layout")
+local Theme = require("ui/theme")
+local TextInputState = require("ui/text_input_state")
 
 local PropertiesState = {}
 PropertiesState.__index = PropertiesState
@@ -33,7 +39,7 @@ function PropertiesState.new(opts)
         -- Graph node handed over by the selection bus's origin panel. There is no /node/{id}
         -- endpoint and there never will be: a node lives in the campaign the Graph panel holds.
         node_detail = nil,    -- { id, type, intent, preview }
-        node_edit = nil,      -- { field, kind, draft, error } while a payload field is being edited
+        node_edit = nil,      -- { field, kind, draft, error, input } while a payload field is being edited
 
         -- NPC inspector tab
         npc_tab = "info",     -- "info" | "loot" | "quests" | "spawns"
@@ -132,7 +138,10 @@ function PropertiesState:begin_node_edit(field_name)
                     error = "this field is a list; edit it in the graph" }
                 return false
             end
-            self.node_edit = { field = field.name, kind = field.kind, draft = tostring(field.value) }
+            local input = TextInputState.new({ id = "node_edit_" .. field.name,
+                                               value = tostring(field.value), max_length = 128 })
+            self.node_edit = { field = field.name, kind = field.kind, draft = tostring(field.value),
+                               input = input }
             return true
         end
     end
@@ -142,11 +151,14 @@ end
 ---Replace the in-progress draft and re-validate it. This is the seam the `text_input` widget (PR6)
 ---feeds: the keystrokes are its problem, the meaning of the string is this file's. Validation runs
 ---per keystroke, not on commit, so a refusal is visible while it can still be corrected.
-function PropertiesState:set_node_draft(text)
-    if not self.node_edit then return end
-    self.node_edit.draft = tostring(text or "")
-    local _, err = PropertiesState.validate_node_field(self.node_edit.kind, self.node_edit.draft)
-    self.node_edit.error = err
+function PropertiesState:sync_node_edit()
+    local edit = self.node_edit
+    if not edit or not edit.input then return end
+    local text = edit.input.value
+    if edit.input.focused then text = edit.input.buffer or text end
+    edit.draft = tostring(text or "")
+    local _, err = PropertiesState.validate_node_field(edit.kind, edit.draft)
+    edit.error = err
 end
 
 ---Apply the draft to the node's intent.
@@ -154,6 +166,9 @@ end
 function PropertiesState:commit_node_edit()
     local edit = self.node_edit
     if not edit then return false, "nothing is being edited" end
+
+    -- One last sync so a submit/cancel keystroke is not one frame behind.
+    PropertiesState.sync_node_edit(self)
 
     local value, err = PropertiesState.validate_node_field(edit.kind, edit.draft)
     if err then
@@ -669,25 +684,14 @@ end
 -- Every if/elseif/while the render layer cannot have lives here, where tests
 -- can reach it. This is the same pattern ExplorerState.build_plan follows.
 
-local CHAR_W = 7
-local PAD = 12
-local CONTROL_H = 28
-local SECTION_H = 20
-local ROW_H = 18
-local SMALL_H = 14
--- A `list_row` with a `secondary` line stacks body over caption, so it needs the taller box.
-local ROW_TALL = 36
-
-local Theme = require("ui/theme")
-
-local function fit(text, width)
-    text = tostring(text or "")
-    local max_chars = math.floor((width or 0) / CHAR_W)
-    if max_chars < 1 then return "" end
-    if #text <= max_chars then return text end
-    if max_chars <= 3 then return text:sub(1, max_chars) end
-    return text:sub(1, max_chars - 3) .. "..."
-end
+local CHAR_W = PanelLayout.CHAR_W
+local PAD = PanelLayout.PAD
+local CONTROL_H = PanelLayout.CONTROL_H
+local SECTION_H = PanelLayout.SECTION_H
+local ROW_H = PanelLayout.ROW_H
+local BUTTON_MIN_W = PanelLayout.BUTTON_MIN_W
+local fit = PanelLayout.fit
+local glyph = PanelLayout.glyph
 
 function PropertiesState.build_plan(view, bounds)
     local items = {}
@@ -695,7 +699,21 @@ function PropertiesState.build_plan(view, bounds)
     local content_w = math.max(0, bounds.w - PAD * 2)
     local y = bounds.y + PAD
 
-    local function push(item) items[#items + 1] = item end
+    local controls = {}
+    local function push(item) items[#items + 1] = item; return item end
+
+    local function push_control(item)
+        if item.id and (item.kind == "button" or item.kind == "chip"
+                or item.kind == "list_row" or item.kind == "text_input"
+                or item.kind == "empty_state") then
+            controls[#controls + 1] = {
+                id = item.id,
+                kind = item.kind,
+                bounds = item.bounds,
+                disabled = item.disabled,
+            }
+        end
+    end
 
     local function text_item(font, token, str, ox, oy)
         push({
@@ -714,31 +732,109 @@ function PropertiesState.build_plan(view, bounds)
         y = y + SECTION_H + (extra_y or Theme.space.xs)
     end
 
+    local function empty_state_item(opts)
+        local item = {
+            kind = "empty_state",
+            bounds = opts.bounds,
+            id = opts.id,
+            title = opts.title,
+            message = opts.message,
+            action_label = opts.action_label,
+            disabled = opts.disabled,
+        }
+        push(item)
+        push_control(item)
+    end
+
+    local function alert_banner(opts)
+        local banner_items = PanelLayout.alert_banner_plan(opts)
+        for _, it in ipairs(banner_items) do push(it) end
+    end
+
+    local function toolbar_bar(toolbar_items)
+        local bar_h = Theme.metrics.toolbar_height
+        local bar = { x = bounds.x, y = y, w = bounds.w, h = bar_h }
+        local plan_items = PanelLayout.toolbar_plan(toolbar_items, bar)
+        for _, it in ipairs(plan_items) do push(it) end
+        for _, it in ipairs(toolbar_items) do push_control(it) end
+        y = y + bar_h + Theme.space.md
+    end
+
+    local function push_button(id, label, variant, disabled, bx, bw)
+        local item = {
+            kind = "button",
+            id = id,
+            bounds = { x = bx, y = y, w = bw, h = CONTROL_H },
+            label = label,
+            variant = variant,
+            disabled = disabled,
+        }
+        push(item)
+        push_control(item)
+    end
+
     -- -----------------------------------------------------------------------
     -- No context
     -- -----------------------------------------------------------------------
     if view.context_type == nil then
-        -- An error outranks the invitation to select something: telling an operator to pick an NPC
-        -- when the panel could not fetch one either way is an instruction that cannot be followed.
-        push({
-            kind = "empty_state",
+        if view.error then
+            alert_banner({
+                bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H * 2 },
+                token = "danger",
+                glyph = glyph("error"),
+                title = "Unavailable",
+                lines = { "Error: " .. tostring(view.error) },
+            })
+        else
+            empty_state_item({
+                bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
+                id = "no_selection",
+                title = glyph("empty") .. "  No Selection",
+                message = "Select an NPC, vendor, object or node to inspect",
+                action_label = "Open Database",
+                disabled = true,
+            })
+        end
+        return { items = items, controls = controls }
+    end
+
+    -- -----------------------------------------------------------------------
+    -- Quest selection (Explorer owns the detail view; Properties stays out of the way).
+    -- Checked before the loading banner so selecting a quest never leaves the inspector
+    -- spinning on a fetch it has no endpoint for.
+    -- -----------------------------------------------------------------------
+    if view.context_type == "quest" then
+        empty_state_item({
             bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
-            title = view.error and "Unavailable" or "No Selection",
-            message = view.error
-                and ("Error: " .. tostring(view.error))
-                or "Select an NPC, vendor, object or node to inspect",
+            id = "quest_inspector_hint",
+            title = glyph("info") .. "  Quest Selected",
+            message = "Quest details are shown in the Explorer panel. Select an NPC, vendor, object or node here to inspect.",
+            action_label = "Open Explorer",
+            disabled = true,
         })
-        return { items = items }
+        return { items = items, controls = controls }
     end
 
     if view.loading then
-        text_item("body", "text_muted", "Loading...")
-        return { items = items }
+        alert_banner({
+            bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H * 2 },
+            token = "info",
+            glyph = glyph("loading"),
+            title = "Loading",
+            lines = { "Waiting for details from the query server..." },
+        })
+        return { items = items, controls = controls }
     end
 
     if view.error then
-        text_item("body", "danger", "Error: " .. tostring(view.error))
-        return { items = items }
+        alert_banner({
+            bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H * 2 },
+            token = "danger",
+            glyph = glyph("error"),
+            title = "Error",
+            lines = { tostring(view.error) },
+        })
+        return { items = items, controls = controls }
     end
 
     -- -----------------------------------------------------------------------
@@ -747,8 +843,15 @@ function PropertiesState.build_plan(view, bounds)
     if view.context_type == "npc" then
         local nv = view.npc_view
         if not nv or not nv.detail then
-            text_item("body", "text_muted", "Select an NPC to inspect")
-            return { items = items }
+            empty_state_item({
+                bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
+                id = "npc_no_detail",
+                title = glyph("empty") .. "  No NPC Data",
+                message = "Select an NPC in the Database to inspect",
+                action_label = "Open Database",
+                disabled = true,
+            })
+            return { items = items, controls = controls }
         end
 
         local d = nv.detail
@@ -763,26 +866,28 @@ function PropertiesState.build_plan(view, bounds)
 
         if d.faction then
             text_item("caption", "text_muted", fit("Faction: " .. tostring(d.faction), content_w))
-            y = y + SMALL_H
+            y = y + Theme.line_height.caption + Theme.space.xs
         end
         y = y + Theme.space.sm
 
-        -- Tab bar
+        -- Tab bar (raised toolbar with top border)
         local tabs = {
-            { id = "npc_tab_info",   label = "Info",   sel = nv.tab == "info" },
-            { id = "npc_tab_loot",   label = "Loot",   sel = nv.tab == "loot" },
-            { id = "npc_tab_quests", label = "Quests", sel = nv.tab == "quests" },
-            { id = "npc_tab_spawns", label = "Spawns", sel = nv.tab == "spawns" },
+            { kind = "chip", id = "npc_tab_info",   label = "Info",   selected = nv.tab == "info" },
+            { kind = "chip", id = "npc_tab_loot",   label = "Loot",   selected = nv.tab == "loot" },
+            { kind = "chip", id = "npc_tab_quests", label = "Quests", selected = nv.tab == "quests" },
+            { kind = "chip", id = "npc_tab_spawns", label = "Spawns", selected = nv.tab == "spawns" },
         }
+        local chip_y = y + (Theme.metrics.toolbar_height - CONTROL_H) * 0.5
         local tx = text_x
         for _, t in ipairs(tabs) do
-            local w = #t.label * CHAR_W + Theme.space.lg
-            push({ kind = "chip", id = t.id,
-                bounds = { x = tx, y = y, w = w, h = CONTROL_H },
-                label = t.label, selected = t.sel })
-            tx = tx + w + Theme.space.sm
+            t.bounds = {
+                x = tx, y = chip_y,
+                w = math.max(BUTTON_MIN_W, #t.label * CHAR_W + Theme.space.lg),
+                h = CONTROL_H,
+            }
+            tx = tx + t.bounds.w + Theme.space.sm
         end
-        y = y + CONTROL_H + Theme.space.md
+        toolbar_bar(tabs)
 
         -- ---- Info tab ----
         if nv.tab == "info" then
@@ -790,18 +895,16 @@ function PropertiesState.build_plan(view, bounds)
             if classification then
                 header("Classification")
                 text_item("body", "text_secondary", fit(classification, content_w), Theme.space.sm)
-                y = y + ROW_H + Theme.space.sm
+                y = y + Theme.line_height.body + Theme.space.sm
             end
             if d.roles and #d.roles > 0 then
                 header("Roles")
                 text_item("body", "text_secondary", fit(table.concat(d.roles, ", "), content_w), Theme.space.sm)
-                y = y + ROW_H
+                y = y + Theme.line_height.body
             end
 
         -- ---- Spawns tab ----
         elseif nv.tab == "spawns" then
-            -- `NpcDetail.positions` is Vec<WorldPos> {map,x,y,z}; `nv.spawns` is the same shape from
-            -- a separate lookup when one has been made.
             local spawns = nv.spawns or d.positions or {}
             if #spawns > 0 then
                 header("Spawns (" .. tostring(#spawns) .. ")")
@@ -831,7 +934,6 @@ function PropertiesState.build_plan(view, bounds)
                     drew = true
                     header(group.title)
                     for _, q in ipairs(group.quests) do
-                        -- `NpcQuestRef` carries `quest_id`, never `id`.
                         local label = string.format("  [%s] %s",
                             tostring(q.quest_id or "?"), tostring(q.title or ""))
                         text_item("body", "text_primary", fit(label, content_w))
@@ -852,7 +954,6 @@ function PropertiesState.build_plan(view, bounds)
                 for _, bucket in ipairs(buckets) do
                     header(bucket.name .. " (" .. tostring(#bucket.entries) .. ")")
                     for _, entry in ipairs(bucket.entries) do
-                        -- `LootEntry` carries `item` and `drop_chance` (percent), never `chance`.
                         local chance = tonumber(entry.drop_chance)
                         local label = string.format("  [%s] %s  %s",
                             tostring(entry.item or "?"), tostring(entry.name or ""),
@@ -868,7 +969,7 @@ function PropertiesState.build_plan(view, bounds)
             end
         end
 
-        return { items = items }
+        return { items = items, controls = controls }
     end
 
     -- -----------------------------------------------------------------------
@@ -877,8 +978,15 @@ function PropertiesState.build_plan(view, bounds)
     if view.context_type == "vendor" then
         local vv = view.vendor_view
         if not vv or not vv.info then
-            text_item("body", "text_muted", "Select a vendor to inspect")
-            return { items = items }
+            empty_state_item({
+                bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
+                id = "vendor_no_info",
+                title = glyph("empty") .. "  No Vendor Data",
+                message = "Select a vendor in the Database to inspect",
+                action_label = "Open Database",
+                disabled = true,
+            })
+            return { items = items, controls = controls }
         end
 
         local info = vv.info
@@ -889,29 +997,28 @@ function PropertiesState.build_plan(view, bounds)
                 info.repairs and "Yes" or "No"), content_w))
         y = y + Theme.line_height.body + Theme.space.md
 
-        -- Rows, not text lines: the rule toggle only becomes reachable when something the operator
-        -- can click carries its id. `reduce` has understood `vendor_toggle:<id>` since the panel
-        -- was written, but nothing had ever pushed a control that emits one.
         local rows = PropertiesState.vendor_rows(info, vv.items)
         if #rows > 0 then
             header("Sells (" .. tostring(#rows) .. ")")
             for _, row in ipairs(rows) do
-                push({
+                local item = {
                     kind = "list_row",
                     id = "vendor_toggle:" .. tostring(row.item_entry or "?"),
-                    bounds = { x = text_x, y = y, w = content_w, h = ROW_TALL },
+                    bounds = { x = text_x, y = y, w = content_w, h = ROW_H },
                     label = fit(row.name or ("Item " .. tostring(row.item_entry or "?")), content_w),
                     secondary = row.price_label .. "    " .. (row.enabled and "Buy" or "Skip"),
                     selected = row.enabled,
-                })
-                y = y + ROW_TALL + Theme.space.xs
+                }
+                push(item)
+                push_control(item)
+                y = y + ROW_H + Theme.space.xs
             end
         else
             text_item("body", "text_muted", "No inventory data available")
             y = y + ROW_H
         end
 
-        return { items = items }
+        return { items = items, controls = controls }
     end
 
     -- -----------------------------------------------------------------------
@@ -920,8 +1027,15 @@ function PropertiesState.build_plan(view, bounds)
     if view.context_type == "object" then
         local ov = view.object_view
         if not ov or not ov.detail then
-            text_item("body", "text_muted", "Select an object to inspect")
-            return { items = items }
+            empty_state_item({
+                bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
+                id = "object_no_detail",
+                title = glyph("empty") .. "  No Object Data",
+                message = "Select an object in the Database to inspect",
+                action_label = "Open Database",
+                disabled = true,
+            })
+            return { items = items, controls = controls }
         end
 
         -- `ObjectInfo` is `{entry, name, kind, position}` and nothing else. The `respawn` and `skill`
@@ -932,8 +1046,20 @@ function PropertiesState.build_plan(view, bounds)
         local obj = ov.detail
         text_item("title", "text_primary", fit(obj.name or "Object", content_w))
         y = y + Theme.line_height.title + Theme.space.xs
+
+        local kind = obj.kind or "?"
+        local kind_label = glyph(kind:lower()) .. "  " .. kind
+        local badge_w = #kind_label * CHAR_W + Theme.space.xl
+        push({
+            kind = "badge",
+            bounds = { x = text_x, y = y, w = badge_w, h = CONTROL_H },
+            label = kind_label,
+            tone = "info",
+        })
+        y = y + CONTROL_H + Theme.space.xs
+
         text_item("body", "text_secondary", fit(
-            string.format("Entry: %s    Type: %s", tostring(obj.entry or "?"), obj.kind or "?"), content_w))
+            string.format("Entry: %s", tostring(obj.entry or "?")), content_w))
         y = y + Theme.line_height.body + Theme.space.md
 
         local spawns = obj.positions or (obj.position and { obj.position }) or {}
@@ -969,10 +1095,10 @@ function PropertiesState.build_plan(view, bounds)
             end
         else
             text_item("caption", "text_muted", fit("Loot is not served by /object/{entry}", content_w))
-            y = y + SMALL_H
+            y = y + Theme.line_height.caption
         end
 
-        return { items = items }
+        return { items = items, controls = controls }
     end
 
     -- -----------------------------------------------------------------------
@@ -982,31 +1108,38 @@ function PropertiesState.build_plan(view, bounds)
         local nvw = view.node_view
         local node = nvw and nvw.node
         if not node then
-            -- A node id alone is not a node, and saying so beats an empty pane that reads as a node
-            -- with no payload.
-            text_item("body", "text_muted", fit("The graph has not handed this node over", content_w))
-            return { items = items }
+            empty_state_item({
+                bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
+                id = "node_not_loaded",
+                title = glyph("empty") .. "  Node Not Loaded",
+                message = "The graph has not handed this node over",
+                action_label = "Open Graph",
+                disabled = true,
+            })
+            return { items = items, controls = controls }
         end
 
         text_item("title", "text_primary", fit(tostring(node.preview or node.type or "Node"), content_w))
         y = y + Theme.line_height.title + Theme.space.xs
         text_item("caption", "text_muted", fit(
             tostring(node.type or "?") .. "    " .. tostring(node.id or "?"), content_w))
-        y = y + SMALL_H + Theme.space.md
+        y = y + Theme.line_height.caption + Theme.space.md
 
         local fields = PropertiesState.node_fields(node)
         header("Payload (" .. tostring(#fields) .. ")")
         for _, field in ipairs(fields) do
-            push({
+            local item = {
                 kind = "list_row",
                 id = "edit_node_field:" .. field.name,
-                bounds = { x = text_x, y = y, w = content_w, h = ROW_TALL },
+                bounds = { x = text_x, y = y, w = content_w, h = ROW_H },
                 label = field.name,
                 secondary = field.display .. "    " .. field.kind,
                 selected = (nvw.edit and nvw.edit.field == field.name) or false,
                 disabled = not field.editable,
-            })
-            y = y + ROW_TALL + Theme.space.xs
+            }
+            push(item)
+            push_control(item)
+            y = y + ROW_H + Theme.space.xs
         end
         if #fields == 0 then
             text_item("body", "text_muted", fit("This node kind carries no payload", content_w))
@@ -1014,25 +1147,49 @@ function PropertiesState.build_plan(view, bounds)
         end
 
         if nvw.edit then
+            -- Sync the draft from the live text_input model before rendering.
+            PropertiesState.sync_node_edit(self)
+
             y = y + Theme.space.sm
             header("Editing " .. tostring(nvw.edit.field))
-            text_item("body", "text_primary", fit(tostring(nvw.edit.draft or ""), content_w))
-            y = y + ROW_H
+            local input_h = CONTROL_H
+            push({
+                kind = "text_input",
+                bounds = { x = text_x, y = y, w = content_w, h = input_h },
+                model = nvw.edit.input,
+                submit_id = "commit_node_edit",
+                cancel_id = "cancel_node_edit",
+            })
+            y = y + input_h + Theme.space.sm
+
             if nvw.edit.error then
-                text_item("caption", "danger", fit(tostring(nvw.edit.error), content_w))
-                y = y + SMALL_H
+                alert_banner({
+                    bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H * 2 },
+                    token = "danger",
+                    glyph = glyph("error"),
+                    title = "Invalid value",
+                    lines = { tostring(nvw.edit.error) },
+                })
+                y = y + CONTROL_H * 2 + Theme.space.sm
+            else
+                y = y + Theme.space.sm
             end
-            y = y + Theme.space.sm
-            local half = (content_w - Theme.space.sm) * 0.5
-            push({ kind = "button", id = "commit_node_edit",
-                bounds = { x = text_x, y = y, w = half, h = CONTROL_H },
-                label = "Apply", variant = "primary", disabled = nvw.edit.error ~= nil })
-            push({ kind = "button", id = "cancel_node_edit",
-                bounds = { x = text_x + half + Theme.space.sm, y = y, w = half, h = CONTROL_H },
-                label = "Cancel", variant = "ghost" })
+
+            local apply_w = #("Apply") * CHAR_W + Theme.space.xl
+            local cancel_w = #("Cancel") * CHAR_W + Theme.space.xl
+            local apply_cancel_w = math.max(apply_w, cancel_w)
+            local available = (content_w - Theme.space.sm) * 0.5
+            if apply_cancel_w > available then
+                push_button("commit_node_edit", "Apply", "primary", nvw.edit.error ~= nil, text_x, content_w)
+                y = y + CONTROL_H + Theme.space.sm
+                push_button("cancel_node_edit", "Cancel", "ghost", false, text_x, content_w)
+            else
+                push_button("commit_node_edit", "Apply", "primary", nvw.edit.error ~= nil, text_x, apply_w)
+                push_button("cancel_node_edit", "Cancel", "ghost", false, text_x + apply_w + Theme.space.sm, cancel_w)
+            end
         end
 
-        return { items = items }
+        return { items = items, controls = controls }
     end
 
     -- -----------------------------------------------------------------------
@@ -1042,26 +1199,25 @@ function PropertiesState.build_plan(view, bounds)
         local cv = view.condition_view
         header("Condition: " .. (cv and cv.tree and (cv.tree.type or "?") or "None"), Theme.space.md)
 
+        local selected_node
         if cv and cv.tree then
-            -- ROWS, not text lines. `add`/`delete` act on a SELECTED node, and a tree drawn as
-            -- unclickable text is a tree with no selection -- which is why those three buttons had
-            -- nothing they could possibly do.
+            selected_node = resolve_condition(cv.tree, cv.path or "")
             local function render_cond(cond, depth, path)
                 if not cond then return end
-                push({
+                local item = {
                     kind = "list_row",
                     id = "select_condition:" .. (path == "" and "root" or path),
                     bounds = { x = text_x + depth * Theme.space.md, y = y,
                                w = math.max(0, content_w - depth * Theme.space.md), h = CONTROL_H },
                     label = PropertiesState.condition_label(cond),
                     selected = (cv.path or "") == path,
-                })
+                }
+                push(item)
+                push_control(item)
                 y = y + CONTROL_H + Theme.space.xs
                 for i, child in ipairs(cond.conditions or {}) do
                     render_cond(child, depth + 1, (path == "") and tostring(i) or (path .. "." .. i))
                 end
-                -- `not` holds ONE child under a different key; it is still a child and still needs
-                -- a row, or a negated condition renders as a bare "NOT" with nothing under it.
                 if cond.condition then
                     render_cond(cond.condition, depth + 1, (path == "") and "1" or (path .. ".1"))
                 end
@@ -1073,23 +1229,49 @@ function PropertiesState.build_plan(view, bounds)
         end
 
         if cv and cv.error then
-            text_item("caption", "danger", fit(tostring(cv.error), content_w))
-            y = y + SMALL_H
+            alert_banner({
+                bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H * 2 },
+                token = "danger",
+                glyph = glyph("error"),
+                title = "Condition Error",
+                lines = { tostring(cv.error) },
+            })
+            y = y + CONTROL_H * 2 + Theme.space.sm
+        else
+            y = y + Theme.space.md
         end
 
-        y = y + Theme.space.md
-        local half = (content_w - Theme.space.sm) * 0.5
-        push({ kind = "button", id = "add_condition",
-            bounds = { x = text_x, y = y, w = half, h = CONTROL_H }, label = "Add Condition", variant = "secondary" })
-        push({ kind = "button", id = "add_and_group",
-            bounds = { x = text_x + half + Theme.space.sm, y = y, w = half, h = CONTROL_H }, label = "Add Group (AND)", variant = "ghost" })
-        y = y + CONTROL_H + Theme.space.sm
-        push({ kind = "button", id = "add_or_group",
-            bounds = { x = text_x, y = y, w = half, h = CONTROL_H }, label = "Add Group (OR)", variant = "ghost" })
-        push({ kind = "button", id = "delete_condition",
-            bounds = { x = text_x + half + Theme.space.sm, y = y, w = half, h = CONTROL_H }, label = "Delete", variant = "danger" })
+        local tree = cv and cv.tree
+        local add_disabled = tree ~= nil and (selected_node == nil or type(selected_node.conditions) ~= "table")
+        local delete_disabled = tree == nil
 
-        return { items = items }
+        local add_w = #("Add Condition") * CHAR_W + Theme.space.xl
+        local and_w = #("Add Group (AND)") * CHAR_W + Theme.space.xl
+        local or_w = #("Add Group (OR)") * CHAR_W + Theme.space.xl
+        local del_w = #("Delete") * CHAR_W + Theme.space.xl
+
+        local row1_available = (content_w - Theme.space.sm) * 0.5
+        if and_w > row1_available then
+            push_button("add_condition", "Add Condition", "secondary", add_disabled, text_x, content_w)
+            y = y + CONTROL_H + Theme.space.sm
+            push_button("add_and_group", "Add Group (AND)", "ghost", add_disabled, text_x, content_w)
+        else
+            push_button("add_condition", "Add Condition", "secondary", add_disabled, text_x, add_w)
+            push_button("add_and_group", "Add Group (AND)", "ghost", add_disabled, text_x + add_w + Theme.space.sm, and_w)
+        end
+        y = y + CONTROL_H + Theme.space.sm
+
+        local row2_available = (content_w - Theme.space.sm) * 0.5
+        if or_w > row2_available or del_w > row2_available then
+            push_button("add_or_group", "Add Group (OR)", "ghost", add_disabled, text_x, content_w)
+            y = y + CONTROL_H + Theme.space.sm
+            push_button("delete_condition", "Delete", "danger", delete_disabled, text_x, content_w)
+        else
+            push_button("add_or_group", "Add Group (OR)", "ghost", add_disabled, text_x, or_w)
+            push_button("delete_condition", "Delete", "danger", delete_disabled, text_x + or_w + Theme.space.sm, del_w)
+        end
+
+        return { items = items, controls = controls }
     end
 
     -- -----------------------------------------------------------------------
@@ -1126,23 +1308,32 @@ function PropertiesState.build_plan(view, bounds)
         y = y + ROW_H + Theme.space.sm
 
         if iv and iv.error then
-            text_item("caption", "danger", fit(tostring(iv.error), content_w))
-            y = y + SMALL_H
+            alert_banner({
+                bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H * 2 },
+                token = "danger",
+                glyph = glyph("error"),
+                title = "Inventory Error",
+                lines = { tostring(iv.error) },
+            })
+            y = y + CONTROL_H * 2 + Theme.space.sm
+        else
+            y = y + Theme.space.sm
         end
-        y = y + Theme.space.sm
 
         local half = (content_w - Theme.space.sm) * 0.5
-        push({ kind = "button", id = "add_inventory_rule",
-            bounds = { x = text_x, y = y, w = half, h = CONTROL_H }, label = "Add Rule", variant = "primary" })
-        push({ kind = "button", id = "clear_inventory_rules",
-            bounds = { x = text_x + half + Theme.space.sm, y = y, w = half, h = CONTROL_H }, label = "Clear All", variant = "danger" })
+        -- Cap each button at half the width so they do not overlap or run off the edge.
+        local half_w = math.min(half, math.max(BUTTON_MIN_W,
+            #"Add Rule" * CHAR_W + Theme.space.xl))
+        -- The panel has no item picker; an add without an item cannot fire.
+        push_button("add_inventory_rule", "Add Rule", "primary", true, text_x, half_w)
+        push_button("clear_inventory_rules", "Clear All", "danger", #rules == 0, text_x + half + Theme.space.sm, half_w)
 
-        return { items = items }
+        return { items = items, controls = controls }
     end
 
     -- Fallback for unknown types
     text_item("body", "text_muted", fit("Unknown selection type: " .. tostring(view.context_type), content_w))
-    return { items = items }
+    return { items = items, controls = controls }
 end
 
 return PropertiesState

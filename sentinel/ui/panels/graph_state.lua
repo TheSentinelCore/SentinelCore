@@ -3,9 +3,15 @@
 -- Behavior Nodes, and Combat Area Editor (Phase 3, PR-3a/3b/3c).
 --
 -- All decision logic lives here; `graph.lua` only renders whatever `build()` returns.
+--
+-- Design system: shares the Runner panel's vocabulary via `ui/panel_layout.lua`
+-- (spacing, control sizes, empty states, alert banners, accessibility glyphs). Node colours
+-- are theme tokens, not hex literals; node icons are single-byte accessibility glyphs.
 
 local AsyncSlot = require("ui/async_slot")
 local TextInputState = require("ui/text_input_state")
+local Theme = require("ui/theme")
+local PanelLayout = require("ui/panel_layout")
 
 local GraphState = {}
 GraphState.__index = GraphState
@@ -15,78 +21,78 @@ GraphState.__index = GraphState
 -- ============================================================================
 
 local NODE_TYPES = {
-    { type = "questing.Travel",         label = "Travel",        color = "#4A8BFF", icon = "T",
+    -- Node colours are theme tokens, not hex literals. `icon` is a single-byte accessibility glyph;
+    -- it must be unique within the palette so the panel remains readable in greyscale or for a
+    -- colour-blind operator.
+    { type = "questing.Travel",         label = "Travel",        icon = "T",
       token = "info",
       default_intent = { destination = "", x = 0, y = 0, z = 0, tolerance = 5, allow_flight = false, wait_time = 0 } },
-    { type = "questing.AcceptQuest",    label = "AcceptQuest",   color = "#4ADE80", icon = "A",
+    -- Intents use platform entity references (`{ref = "kind:id", label = ""}`) per ADR 09a §1.2,
+    -- because the resolver/task registry expects `quest`/`from`/`to`/`target`/`object` refs, not raw
+    -- numeric ids. `npc_entry` and `quest_id` fields are no longer read by the resolver.
+    { type = "questing.AcceptQuest",    label = "AcceptQuest",   icon = "A",
       token = "success",
-      default_intent = { quest_id = 0, npc_entry = 0, auto_complete_dialog = false } },
-    { type = "questing.Kill",           label = "Kill",          color = "#FA8080", icon = "K",
+      default_intent = { quest = { ref = "quest:0", label = "" },
+                         from = { ref = "npc:0", label = "" }, optional = false } },
+    { type = "questing.Kill",           label = "Kill",          icon = "K",
       token = "danger",
-      default_intent = { creature_entry = 0, count = 1, loot = false, ignore_elites = false } },
-    { type = "questing.TurnInQuest",    label = "TurnInQuest",   color = "#FBBF24", icon = "T",
+      default_intent = { target = { ref = "npc:0", label = "" },
+                         count = 1, loot = false, ignore_elites = false } },
+    -- The resolver registers this as `questing.TurnIn`, not `questing.TurnInQuest`.
+    { type = "questing.TurnIn",         label = "TurnInQuest",   icon = "Q",
       token = "warning",
-      default_intent = { quest_id = 0, npc_entry = 0, choose_reward = 0 } },
-    -- `questing.Loot` EXECUTES (`runtime_action.lua:329` -> `execute_loot`) and was absent from
-    -- this palette, so the Graph had no icon, colour or default intent for a node the runtime
-    -- happily runs -- and `explorer_state.build_quest_subgraph` generates one. A node the editor
-    -- cannot draw is a node nobody can find or fix.
-    --
-    -- The fields are the ones `execute_loot` actually READS: `object_entry` is a GAMEOBJECT it
-    -- interacts with, and `item_id` is what it checks the bags for afterwards. KNOWN GAP: a Loot
-    -- node generated from a `collect` objective carries the ITEM id in `object_entry` and a
-    -- `source_creatures` list the runtime does not read, because the lowering
-    -- (collect + source_creatures -> Kill with loot = true) does not exist in the compiler yet.
-    -- Such a node is drawable and editable here, and is NOT executable until that lands.
-    { type = "questing.Loot",           label = "Loot",          color = "#FCD34D", icon = "L",
+      default_intent = { quest = { ref = "quest:0", label = "" },
+                         to = { ref = "npc:0", label = "" }, choose_reward = 0, optional = false } },
+    -- The resolver registers this as `questing.Collect`. It interacts with a gameobject.
+    { type = "questing.Collect",        label = "Collect",       icon = "L",
       token = "warning",
-      default_intent = { object_entry = 0, item_id = 0, count = 1 } },
-    { type = "questing.Wait",           label = "Wait",          color = "#A6ADBF", icon = "W",
+      default_intent = { object = { ref = "object:0", label = "" }, count = 1 } },
+    { type = "questing.Wait",           label = "Wait",          icon = "W",
       token = "text_muted",
       default_intent = { duration = 5 } },
-    { type = "questing.Vendor",         label = "Vendor",        color = "#A78BFA", icon = "V",
+    { type = "questing.Vendor",         label = "Vendor",        icon = "V",
       token = "accent",
       default_intent = { npc_entry = 0, sell_grey = true, repair = false, min_free_slots = 5 } },
-    { type = "questing.Train",          label = "Train",         color = "#60A5FA", icon = "T",
+    { type = "questing.Train",          label = "Train",         icon = "N",
       token = "info",
       default_intent = { npc_entry = 0, spells = {} } },
-    { type = "questing.Repair",         label = "Repair",        color = "#FB923C", icon = "R",
+    { type = "questing.Repair",         label = "Repair",        icon = "R",
       token = "warning",
       default_intent = { npc_entry = 0 } },
-    { type = "questing.Flight",         label = "Flight",        color = "#2DD4BF", icon = "F",
+    { type = "questing.Flight",         label = "Flight",        icon = "F",
       token = "info",
       default_intent = { npc_entry = 0, destination = "" } },
-    { type = "questing.InteractNpc",    label = "Interact",      color = "#818CF8", icon = "I",
+    { type = "questing.InteractNpc",    label = "Interact",      icon = "I",
       token = "accent",
       default_intent = { npc_entry = 0, gossip = "" } },
-    { type = "questing.UseItem",        label = "UseItem",       color = "#F472B6", icon = "U",
+    { type = "questing.UseItem",        label = "UseItem",       icon = "U",
       token = "accent",
       default_intent = { item = 0, target_entry = 0 } },
-    { type = "questing.Mailbox",        label = "Mailbox",       color = "#94A3B8", icon = "M",
+    { type = "questing.Mailbox",        label = "Mailbox",       icon = "M",
       token = "text_muted",
       default_intent = { npc_entry = 0 } },
-    { type = "questing.Hearth",         label = "Hearth",        color = "#FB7185", icon = "H",
+    { type = "questing.Hearth",         label = "Hearth",        icon = "H",
       token = "danger",
       default_intent = { innkeeper_entry = 0, destination = "" } },
-    { type = "questing.Escort",         label = "Escort",        color = "#F59E0B", icon = "E",
+    { type = "questing.Escort",         label = "Escort",        icon = "E",
       token = "warning",
       default_intent = { npc_entry = 0, timeout = 120 } },
-    { type = "questing.Patrol",         label = "Patrol",        color = "#34D399", icon = "P",
+    { type = "questing.Patrol",         label = "Patrol",        icon = "P",
       token = "success",
       default_intent = { waypoints = {}, loop = false } },
-    { type = "questing.Condition",      label = "Condition",     color = "#A3E635", icon = "C",
+    { type = "questing.Condition",      label = "Condition",     icon = "C",
       token = "success",
       default_intent = { condition_type = "", value = "" } },
-    { type = "questing.Comment",        label = "Comment",       color = "#78716C", icon = "#",
+    { type = "questing.Comment",        label = "Comment",       icon = "#",
       token = "text_muted",
       default_intent = { text = "" } },
-    { type = "questing.Grind",          label = "Grind",         color = "#FA8080", icon = "G",
+    { type = "questing.Grind",          label = "Grind",         icon = "G",
       token = "danger",
       default_intent = { targets = {}, polygon = { x = 0, y = 0, z = 0, radius = 50 }, loot = false } },
-    { type = "questing.Bank",           label = "Bank",          color = "#94A3B8", icon = "B",
+    { type = "questing.Bank",           label = "Bank",          icon = "B",
       token = "text_muted",
       default_intent = { npc_entry = 0 } },
-    { type = "questing.LearnFlightPath", label = "LearnFlightPath", color = "#2DD4BF", icon = "L",
+    { type = "questing.LearnFlightPath", label = "LearnFlightPath", icon = ">",
       token = "info",
       default_intent = { npc_entry = 0 } },
 }
@@ -184,12 +190,6 @@ end
 ---Get all known node types.
 function GraphState.all_node_types()
     return NODE_TYPES
-end
-
----Get the display colour for a node type.
-function GraphState.node_color(type_str)
-    local info = NODE_TYPE_INDEX[type_str]
-    return info and info.color or "#94A3B8"
 end
 
 ---Get the theme token for a node type.
@@ -696,40 +696,59 @@ end
 -- Build plan — produce the draw items for one frame
 -- ============================================================================
 
-local CHAR_W = 7
-local PAD = 12
-local CONTROL_H = 28
-local SECTION_H = 20
-local ROW_H = 18
-local LINE_H = 16
-local SMALL_H = 14
-
-local Theme = require("ui/theme")
-
--- Minimum button width so labels never clip (mirrors RunnerPanelState)
-local BUTTON_MIN_W = Theme.metrics.control_height * 3
+local CHAR_W = PanelLayout.CHAR_W
+local PAD = PanelLayout.PAD
+local CONTROL_H = PanelLayout.CONTROL_H
+local SECTION_H = PanelLayout.SECTION_H
+local ROW_H = PanelLayout.ROW_H
+local LINE_H = Theme.line_height.body
+local SMALL_H = Theme.line_height.caption
+local BUTTON_MIN_W = PanelLayout.BUTTON_MIN_W
 
 local function fit_label(text, width)
-    text = tostring(text or "")
-    local max_chars = math.floor((width or 0) / CHAR_W)
-    if max_chars < 1 then return "" end
-    if #text <= max_chars then return text end
-    if max_chars <= 3 then return text:sub(1, max_chars) end
-    return text:sub(1, max_chars - 3) .. "..."
+    return PanelLayout.fit(text, width)
+end
+
+-- Map node kinds to the shared accessibility glyph vocabulary. Falls back to the
+-- palette icon so every type stays drawable even when no semantic glyph exists.
+local NODE_GLYPH_KEY = {
+    ["questing.Travel"] = "flight",
+    ["questing.Flight"] = "flight",
+    ["questing.LearnFlightPath"] = "flight",
+    ["questing.Kill"] = "kill",
+    ["questing.Grind"] = "kill",
+    ["questing.InteractNpc"] = "interact",
+    ["questing.Collect"] = "loot",
+    ["questing.Patrol"] = "patrol",
+    ["questing.Vendor"] = "vendor",
+}
+local function node_glyph(node_type)
+    local key = NODE_GLYPH_KEY[node_type]
+    if key then return PanelLayout.glyph(key) end
+    local info = NODE_TYPE_INDEX[node_type]
+    return info and info.icon or "?"
 end
 
 local function intent_preview(node_type, intent)
     local info = NODE_TYPE_INDEX[node_type]
     if not info then return "" end
     local label = info.label
+    local function ref_id(ref)
+        if type(ref) == "table" and type(ref.ref) == "string" then
+            return ref.ref:match("[^:]+:(.+)") or "?"
+        end
+        return tostring(ref or "?")
+    end
     if node_type == "questing.Travel" then
         return string.format("%s: %s", label, intent.destination or "")
     elseif node_type == "questing.AcceptQuest" then
-        return string.format("%s: Q#%s", label, tostring(intent.quest_id or 0))
+        return string.format("%s: Q#%s", label, ref_id(intent.quest))
     elseif node_type == "questing.Kill" then
         return string.format("%s: x%s", label, tostring(intent.count or 1))
-    elseif node_type == "questing.TurnInQuest" then
-        return string.format("%s: Q#%s", label, tostring(intent.quest_id or 0))
+    elseif node_type == "questing.TurnIn" then
+        return string.format("%s: Q#%s", label, ref_id(intent.quest))
+    elseif node_type == "questing.Collect" then
+        return string.format("%s: O#%s", label, ref_id(intent.object))
     elseif node_type == "questing.Wait" then
         return string.format("%s: %ss", label, tostring(intent.duration or 5))
     elseif node_type == "questing.Vendor" then
@@ -759,18 +778,22 @@ local function build_intent_fields(node_type, intent)
         table.insert(fields, { key = "allow_flight", label = "Allow Flight", value = intent.allow_flight or false })
         table.insert(fields, { key = "wait_time", label = "Wait Time", value = intent.wait_time or 0 })
     elseif node_type == "questing.AcceptQuest" then
-        table.insert(fields, { key = "quest_id", label = "Quest ID", value = intent.quest_id or 0 })
-        table.insert(fields, { key = "npc_entry", label = "NPC Entry", value = intent.npc_entry or 0 })
-        table.insert(fields, { key = "auto_complete_dialog", label = "Auto Dialog", value = intent.auto_complete_dialog or false })
+        table.insert(fields, { key = "quest", label = "Quest", value = intent.quest })
+        table.insert(fields, { key = "from", label = "From NPC", value = intent.from })
+        table.insert(fields, { key = "optional", label = "Optional", value = intent.optional or false })
     elseif node_type == "questing.Kill" then
-        table.insert(fields, { key = "creature_entry", label = "Creature Entry", value = intent.creature_entry or 0 })
+        table.insert(fields, { key = "target", label = "Target", value = intent.target })
         table.insert(fields, { key = "count", label = "Count", value = intent.count or 1 })
         table.insert(fields, { key = "loot", label = "Loot", value = intent.loot or false })
         table.insert(fields, { key = "ignore_elites", label = "Ignore Elites", value = intent.ignore_elites or false })
-    elseif node_type == "questing.TurnInQuest" then
-        table.insert(fields, { key = "quest_id", label = "Quest ID", value = intent.quest_id or 0 })
-        table.insert(fields, { key = "npc_entry", label = "NPC Entry", value = intent.npc_entry or 0 })
+    elseif node_type == "questing.TurnIn" then
+        table.insert(fields, { key = "quest", label = "Quest", value = intent.quest })
+        table.insert(fields, { key = "to", label = "To NPC", value = intent.to })
         table.insert(fields, { key = "choose_reward", label = "Reward Choice", value = intent.choose_reward or 0 })
+        table.insert(fields, { key = "optional", label = "Optional", value = intent.optional or false })
+    elseif node_type == "questing.Collect" then
+        table.insert(fields, { key = "object", label = "Object", value = intent.object })
+        table.insert(fields, { key = "count", label = "Count", value = intent.count or 1 })
     elseif node_type == "questing.Wait" then
         table.insert(fields, { key = "duration", label = "Duration (s)", value = intent.duration or 5 })
     elseif node_type == "questing.Vendor" then
@@ -829,14 +852,15 @@ end
 ---Build the draw plan items from a view and bounds.
 ---@param view table from build()
 ---@param bounds table { x, y, w, h }
----@return table { items }
+---@return table { items, controls }
 function GraphState.build_plan(view, bounds)
     local items = {}
+    local controls = {}
     local text_x = bounds.x + PAD
     local content_w = math.max(0, bounds.w - PAD * 2)
     local y = bounds.y + PAD
 
-    local function push(item) items[#items + 1] = item end
+    local function push(item) items[#items + 1] = item; return item end
     local function text_item(font, token, str, ox, oy)
         push({
             kind = "text", x = text_x + (ox or 0), y = y + (oy or 0),
@@ -854,64 +878,102 @@ function GraphState.build_plan(view, bounds)
         y = y + SECTION_H + Theme.space.xs
     end
 
+    local function control(item)
+        controls[#controls + 1] = {
+            id = item.id,
+            kind = item.kind,
+            bounds = item.bounds,
+            disabled = item.disabled and true or false,
+        }
+        return item
+    end
+
+    local function alert_banner_bounds(lines)
+        local h = Theme.space.md * 2 + Theme.line_height.heading + #lines * Theme.line_height.caption
+        return { x = text_x, y = y, w = content_w, h = h }
+    end
+
+    local function pending_name(input)
+        if not input then return "" end
+        local typed = input.focused and input.buffer or input.value
+        return (tostring(typed or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+    end
+
     -- ====================================================================
     -- No campaign loaded: the chooser. Create and open both have to work from HERE, with no
     -- hand-edited file anywhere in the loop -- there was no Lua caller for :3031 at all before,
     -- so this was the one screen from which nothing was reachable.
     -- ====================================================================
     if not view.campaign_name or view.campaign_name == "" then
-        push({
+        push(control({
             kind = "text_input", id = "campaign_name",
             bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H },
             model = view.name_input, placeholder = "New campaign name...",
-        })
+            disabled = false,
+        }))
         y = y + CONTROL_H + Theme.space.sm
 
         local campaigns = view.campaigns or {}
         section(string.format("Campaigns (%d)", #campaigns))
         for _, summary in ipairs(campaigns) do
             local name = tostring(summary.name or "")
-            push({
+            push(control({
                 kind = "list_row", id = "open_campaign:" .. name,
-                bounds = { x = text_x, y = y, w = content_w, h = ROW_H + 4 },
+                bounds = { x = text_x, y = y, w = content_w, h = ROW_H },
                 label = string.format("%s  ·  %d node(s)", name, tonumber(summary.node_count) or 0),
-                tone = "info",
-            })
-            y = y + ROW_H + 4
+                tone = "info", disabled = false,
+            }))
+            y = y + ROW_H
         end
         if #campaigns == 0 then
             -- "none yet" and "not asked yet" are different facts and an operator acts differently on
             -- each, so they are never collapsed into one line.
+            local glyph = PanelLayout.glyph(view.campaigns_loaded and "empty" or "loading")
             text_item("caption", "text_muted",
-                view.campaigns_loaded and "No campaigns on the editor yet"
-                                       or "Asking the editor for campaigns...")
+                glyph .. "  " .. (view.campaigns_loaded and "No campaigns on the editor yet"
+                                       or "Asking the editor for campaigns..."))
             y = y + SMALL_H + Theme.space.sm
         end
 
-        push({
-            kind = "empty_state",
+        local empty = PanelLayout.empty_state_plan({
             bounds = { x = bounds.x, y = y, w = bounds.w,
                        h = math.max(1, bounds.y + bounds.h - y - PAD) },
             id = "new_campaign",
-            title = "No Campaign",
+            title = PanelLayout.glyph("empty") .. "  No Campaign",
             message = "Name a campaign above and create it, or open one from the list",
             action_label = "New Campaign",
         })
-        return { items = items }
+        empty[1].disabled = pending_name(view.name_input) == ""
+        push(control(empty[1]))
+        return { items = items, controls = controls }
     end
 
     if view.loading then
-        text_item("body", "text_muted", "Loading campaign data...")
-        return { items = items }
+        local banner = PanelLayout.alert_banner_plan({
+            bounds = alert_banner_bounds({ "Loading campaign data..." }),
+            token = "info",
+            glyph = PanelLayout.glyph("loading"),
+            title = "Loading",
+            lines = { "Loading campaign data..." },
+        })
+        for _, item in ipairs(banner) do push(item) end
+        return { items = items, controls = controls }
     end
 
     if view.error then
-        text_item("body", "danger", "Error: " .. tostring(view.error))
-        return { items = items }
+        local banner = PanelLayout.alert_banner_plan({
+            bounds = alert_banner_bounds({ tostring(view.error) }),
+            token = "danger",
+            glyph = PanelLayout.glyph("error"),
+            title = "Error",
+            lines = { tostring(view.error) },
+        })
+        for _, item in ipairs(banner) do push(item) end
+        return { items = items, controls = controls }
     end
 
     -- ====================================================================
-    -- Toolbar row
+    -- Toolbar: Add Node + type filter chips (the main control/filter bar)
     -- ====================================================================
     local node_types = GraphState.all_node_types()
     local add_label = "Add Node"
@@ -920,16 +982,25 @@ function GraphState.build_plan(view, bounds)
         add_label = add_label .. " (" .. (fi and fi.label or view.filter_type) .. ")"
     end
 
-    -- Add Node button + type chips row. Measured (Runner-panel formula): with a filter active
-    -- the label grows to "Add Node (<type>)" and a fixed 100px clipped it.
     local max_type_chips = math.floor(content_w / (64 + Theme.space.sm))
     local shown_types = 0
 
-    local add_w = math.min(#add_label * CHAR_W + Theme.space.xl, content_w)
-    push({
+    -- Stable width: accommodate the longest type label (typically 10-12 chars),
+    -- but never wider than the pane itself.
+    local add_w = math.min(content_w, math.max(
+        BUTTON_MIN_W,
+        #"Add Node (LearnFlightPath)" * CHAR_W + Theme.space.xl
+    ))
+
+    local toolbar_y = y
+    local toolbar_h = Theme.metrics.toolbar_height
+    local control_y = toolbar_y + (toolbar_h - CONTROL_H) * 0.5
+
+    local toolbar_items = {}
+    toolbar_items[#toolbar_items + 1] = control({
         kind = "button", id = "add_node_toggle",
-        bounds = { x = text_x, y = y, w = add_w, h = CONTROL_H },
-        label = add_label, variant = "primary",
+        bounds = { x = text_x, y = control_y, w = add_w, h = CONTROL_H },
+        label = add_label, variant = "primary", disabled = false,
     })
     local cx = text_x + add_w + Theme.space.sm
 
@@ -938,82 +1009,138 @@ function GraphState.build_plan(view, bounds)
         if shown_types >= max_type_chips then break end
         local w = #nt.label * CHAR_W + Theme.space.lg
         if cx + w > text_x + content_w then break end
-        push({
+        toolbar_items[#toolbar_items + 1] = control({
             kind = "chip", id = "filter_type:" .. nt.type,
-            bounds = { x = cx, y = y, w = w, h = CONTROL_H },
+            bounds = { x = cx, y = control_y, w = w, h = CONTROL_H },
             label = nt.label, selected = view.filter_type == nt.type,
-            tone = nt.token,
+            tone = nt.token, disabled = false,
         })
         cx = cx + w + Theme.space.sm
         shown_types = shown_types + 1
     end
 
-    y = y + CONTROL_H + Theme.space.sm
+    local toolbar_bounds = { x = bounds.x, y = toolbar_y, w = bounds.w, h = toolbar_h }
+    for _, item in ipairs(PanelLayout.toolbar_plan(toolbar_items, toolbar_bounds)) do
+        push(item)
+    end
+    y = y + toolbar_h + Theme.space.sm
 
-    -- Second toolbar row: actions
-    local actions = {}
-    table.insert(actions, { kind = "button", id = "close_campaign", label = "Campaigns",
-        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #"Campaigns" * CHAR_W + Theme.space.xl), h = CONTROL_H } })
-    table.insert(actions, { kind = "button", id = "validate", label = "Validate",
-        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #"Validate" * CHAR_W + Theme.space.xl), h = CONTROL_H } })
-    table.insert(actions, { kind = "button", id = "compile", label = "Compile",
-        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #"Compile" * CHAR_W + Theme.space.xl), h = CONTROL_H } })
-    table.insert(actions, { kind = "spacer", id = "spacer1" })
+    -- ====================================================================
+    -- Save button (full width, above the action toolbar)
+    -- ====================================================================
+    local has_graph = view.graph_id ~= nil
+    local save_w = math.min(content_w, math.max(BUTTON_MIN_W, #"Save Campaign" * CHAR_W + Theme.space.xl))
+    push(control({
+        kind = "button", id = "save_graph", label = "Save Campaign",
+        bounds = { x = text_x, y = control_y, w = save_w, h = CONTROL_H },
+        variant = "primary", disabled = not has_graph,
+    }))
+    y = y + toolbar_h + Theme.space.sm
 
+    -- ====================================================================
+    -- Actions toolbar
+    -- ====================================================================
+    -- Recalculate the centred control row for THIS toolbar; reusing the first
+    -- toolbar's control_y would place these buttons on top of the Add Node row.
+    control_y = y + (toolbar_h - CONTROL_H) * 0.5
+
+    local close_w = math.min(content_w, math.max(BUTTON_MIN_W, #"Campaigns" * CHAR_W + Theme.space.xl))
+    local validate_w = math.min(content_w, math.max(BUTTON_MIN_W, #"Validate" * CHAR_W + Theme.space.xl))
+    local compile_w = math.min(content_w, math.max(BUTTON_MIN_W, #"Compile" * CHAR_W + Theme.space.xl))
     local escort_label = view.escort_mode and "Stop Escort" or "Escort Rec"
-    table.insert(actions, {
+    local escort_w = math.min(content_w, math.max(BUTTON_MIN_W, #escort_label * CHAR_W + Theme.space.lg))
+    local wp_label = view.waypoint_mode and "Stop WP" or "Capture WP"
+    local wp_w = math.min(content_w, math.max(BUTTON_MIN_W, #wp_label * CHAR_W + Theme.space.lg))
+
+    local left_w = close_w + validate_w + compile_w + Theme.space.sm * 2
+    local right_w = escort_w + wp_w + Theme.space.sm
+    local action_items = {}
+
+    -- If the panel is too narrow to hold both groups side-by-side, stack the right group
+    -- underneath so the buttons never overlap or run off the edge.
+    local two_row = left_w + Theme.space.md + right_w > content_w
+    local action_h = toolbar_h
+    if two_row then
+        action_h = toolbar_h * 2 + Theme.space.sm
+    end
+
+    local row1_y = y + (action_h - CONTROL_H) * 0.5
+    local row2_y = row1_y
+    if two_row then
+        row1_y = y + (toolbar_h - CONTROL_H) * 0.5
+        row2_y = y + toolbar_h + Theme.space.sm + (toolbar_h - CONTROL_H) * 0.5
+    end
+
+    action_items[#action_items + 1] = control({
+        kind = "button", id = "close_campaign", label = "Campaigns",
+        bounds = { x = text_x, y = row1_y, w = close_w, h = CONTROL_H },
+        variant = "secondary", disabled = false,
+    })
+    action_items[#action_items + 1] = control({
+        kind = "button", id = "validate", label = "Validate",
+        bounds = { x = text_x + close_w + Theme.space.sm, y = row1_y, w = validate_w, h = CONTROL_H },
+        variant = "secondary", disabled = not has_graph,
+    })
+    action_items[#action_items + 1] = control({
+        kind = "button", id = "compile", label = "Compile",
+        bounds = { x = text_x + close_w + validate_w + Theme.space.sm * 2, y = row1_y, w = compile_w, h = CONTROL_H },
+        variant = "secondary", disabled = not has_graph,
+    })
+
+    local right_x = text_x + content_w - right_w
+    action_items[#action_items + 1] = control({
         kind = "chip", id = "toggle_escort",
         label = escort_label,
-        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #escort_label * CHAR_W + Theme.space.lg), h = CONTROL_H },
+        bounds = { x = right_x, y = row2_y, w = escort_w, h = CONTROL_H },
         tone = view.escort_mode and "warning" or nil,
-        selected = view.escort_mode,
+        selected = view.escort_mode, disabled = false,
     })
-
-    local wp_label = view.waypoint_mode and "Stop WP" or "Capture WP"
-    table.insert(actions, {
+    action_items[#action_items + 1] = control({
         kind = "chip", id = "toggle_waypoint",
         label = wp_label,
-        bounds = { x = 0, y = 0, w = math.max(BUTTON_MIN_W, #wp_label * CHAR_W + Theme.space.lg), h = CONTROL_H },
+        bounds = { x = right_x + escort_w + Theme.space.sm, y = row2_y, w = wp_w, h = CONTROL_H },
         tone = view.waypoint_mode and "info" or nil,
-        selected = view.waypoint_mode,
+        selected = view.waypoint_mode, disabled = false,
     })
 
-    push({
-        kind = "toolbar", id = "graph_toolbar",
-        bounds = { x = text_x, y = y, w = content_w, h = Theme.metrics.toolbar_height },
-        items = actions,
-    })
-    y = y + Theme.metrics.toolbar_height + Theme.space.sm
+    local action_bounds = { x = bounds.x, y = y, w = bounds.w, h = action_h }
+    for _, item in ipairs(PanelLayout.toolbar_plan(action_items, action_bounds)) do
+        push(item)
+    end
+    y = y + action_h + Theme.space.sm
 
     -- Waypoint capture indicator
     if view.waypoint_mode and view.current_position then
         local pos = view.current_position
         local pos_str = string.format("Position: (%.0f, %.0f, %.0f)", pos.x or 0, pos.y or 0, pos.z or 0)
-        text_item("caption", "info", pos_str, 0, 0)
+        text_item("caption", "info", PanelLayout.glyph("info") .. "  " .. pos_str)
         y = y + SMALL_H
 
-        push({
+        push(control({
             kind = "button", id = "commit_waypoint",
-            bounds = { x = text_x, y = y, w = math.max(BUTTON_MIN_W, #"Commit Waypoint" * CHAR_W + Theme.space.xl), h = CONTROL_H },
+            bounds = { x = text_x, y = y, w = math.min(content_w, math.max(BUTTON_MIN_W, #"Commit Waypoint" * CHAR_W + Theme.space.xl)), h = CONTROL_H },
             label = "Commit Waypoint", variant = "primary",
-        })
+            disabled = not view.current_position,
+        }))
         y = y + CONTROL_H + Theme.space.sm
     end
 
     -- Escort recording indicator
     if view.escort_mode then
         text_item("caption", "warning",
+            PanelLayout.glyph("warning") .. "  " ..
             string.format("Recording escort: %d pts captured", view.escort_timeline_count or 0))
         y = y + SMALL_H
 
-        -- Shorter label, measured (Runner-panel formula): "Generate Nodes from Recording"
-        -- needs ~227px and clipped hard at 160.
         local gen_label = "Generate from Recording"
-        push({
+        local gen_w = math.max(BUTTON_MIN_W, #gen_label * CHAR_W + Theme.space.xl)
+        gen_w = math.min(gen_w, content_w)
+        push(control({
             kind = "button", id = "generate_escort_nodes",
-            bounds = { x = text_x, y = y, w = math.min(#gen_label * CHAR_W + Theme.space.xl, content_w), h = CONTROL_H },
+            bounds = { x = text_x, y = y, w = gen_w, h = CONTROL_H },
             label = gen_label, variant = "primary",
-        })
+            disabled = (view.escort_timeline_count or 0) == 0,
+        }))
         y = y + CONTROL_H + Theme.space.sm
     end
 
@@ -1021,27 +1148,30 @@ function GraphState.build_plan(view, bounds)
     -- Validation bar (F19-R1/R3)
     -- ====================================================================
     if view.compile_message then
-        text_item("caption", "info", fit_label(tostring(view.compile_message), content_w))
+        text_item("caption", "info",
+            PanelLayout.glyph("info") .. "  " .. fit_label(tostring(view.compile_message), content_w - 16))
         y = y + SMALL_H + Theme.space.xs
     end
     if view.diagnostics then
         local diagnostics = view.diagnostics
         if #diagnostics == 0 then
-            text_item("caption", "success", "Validation passed")
+            text_item("caption", "success",
+                PanelLayout.glyph("success") .. "  Validation passed")
             y = y + SMALL_H + Theme.space.sm
         else
             section(string.format("Diagnostics (%d)", #diagnostics))
             for index, d in ipairs(diagnostics) do
-                push({
+                push(control({
                     kind = "list_row", id = "diagnostic:" .. tostring(index),
-                    bounds = { x = text_x, y = y, w = content_w, h = ROW_H + 4 },
+                    bounds = { x = text_x, y = y, w = content_w, h = ROW_H },
                     label = fit_label(d.code .. ": " .. d.message, content_w - 8),
                     tone = d.severity == "warning" and "warning" or "danger",
                     -- Selected when it blames the node the operator is already looking at, so the
                     -- link reads both ways.
                     selected = d.node_id ~= nil and view.selected_node == d.node_id,
-                })
-                y = y + ROW_H + 4
+                    disabled = false,
+                }))
+                y = y + ROW_H
             end
             y = y + Theme.space.xs
         end
@@ -1058,7 +1188,7 @@ function GraphState.build_plan(view, bounds)
             local nt = NODE_TYPE_INDEX[node.type]
             local label = nt and nt.label or node.type
             local token = nt and nt.token or "text_muted"
-            local icon = nt and nt.icon or "?"
+            local icon = node_glyph(node.type)
             local preview = node.preview or intent_preview(node.type, node.intent or {})
             local is_selected = view.selected_node == node.id
             local is_expanded = view.expanded and view.expanded[node.id]
@@ -1066,33 +1196,53 @@ function GraphState.build_plan(view, bounds)
             -- Row click to select
             local row_bounds = {
                 x = text_x, y = y,
-                w = content_w, h = ROW_H + 4,
+                w = content_w, h = ROW_H,
             }
-            push({
+            push(control({
                 kind = "list_row", id = "select_node:" .. node.id,
-                bounds = row_bounds, label = icon .. " " .. label .. ": " .. fit_label(preview, content_w - 20),
-                selected = is_selected, tone = token,
-            })
-            y = y + ROW_H + 4
+                bounds = row_bounds,
+                label = icon .. " " .. label .. ": " .. fit_label(preview, content_w - 20),
+                selected = is_selected, tone = token, disabled = false,
+            }))
+            y = y + ROW_H
 
-            -- If selected, add action buttons. Both take the wider label's measure
-            -- ("Collapse", Runner-panel formula): a fixed 70px clipped it.
+            -- If selected, add action buttons. NO TRUNCATION: buttons are wide enough for labels.
+            -- If there isn't enough horizontal space for two side-by-side buttons, stack vertically.
             if is_selected then
                 local expand_label = is_expanded and "Collapse" or "Edit"
-                local btn_w = math.min(#"Collapse" * CHAR_W + Theme.space.xl,
-                    (content_w - Theme.space.sm) * 0.5)
-                push({
-                    kind = "button", id = "toggle_expand:" .. node.id,
-                    bounds = { x = text_x, y = y, w = btn_w, h = CONTROL_H },
-                    label = expand_label,
-                    variant = "secondary",
-                })
-                push({
-                    kind = "button", id = "remove_node:" .. node.id,
-                    bounds = { x = text_x + btn_w + Theme.space.sm, y = y, w = btn_w, h = CONTROL_H },
-                    label = "Delete", variant = "danger",
-                })
-                y = y + CONTROL_H + Theme.space.xs
+                local expand_w = #expand_label * CHAR_W + Theme.space.xl
+                local delete_w = #"Delete" * CHAR_W + Theme.space.xl
+                local btn_w = math.max(expand_w, delete_w)
+                local available = (content_w - Theme.space.sm) * 0.5
+
+                if btn_w > available then
+                    -- Stack vertically: one button per row
+                    push(control({
+                        kind = "button", id = "toggle_expand:" .. node.id,
+                        bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H },
+                        label = expand_label, variant = "secondary", disabled = false,
+                    }))
+                    y = y + CONTROL_H + Theme.space.xs
+                    push(control({
+                        kind = "button", id = "remove_node:" .. node.id,
+                        bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H },
+                        label = "Delete", variant = "danger", disabled = false,
+                    }))
+                    y = y + CONTROL_H + Theme.space.xs
+                else
+                    -- Side by side
+                    push(control({
+                        kind = "button", id = "toggle_expand:" .. node.id,
+                        bounds = { x = text_x, y = y, w = btn_w, h = CONTROL_H },
+                        label = expand_label, variant = "secondary", disabled = false,
+                    }))
+                    push(control({
+                        kind = "button", id = "remove_node:" .. node.id,
+                        bounds = { x = text_x + available + Theme.space.sm, y = y, w = btn_w, h = CONTROL_H },
+                        label = "Delete", variant = "danger", disabled = false,
+                    }))
+                    y = y + CONTROL_H + Theme.space.xs
+                end
             end
 
             -- Expanded properties form
@@ -1120,13 +1270,14 @@ function GraphState.build_plan(view, bounds)
                     if under_edit then
                         -- The field being edited swaps its label row for a real typeable box, so
                         -- "Edit" leads somewhere instead of only announcing an intention.
-                        push({
+                        push(control({
                             kind = "text_input", id = "edit_value",
                             bounds = { x = text_x + Theme.space.md, y = y,
                                        w = math.max(BUTTON_MIN_W * 2, content_w - Theme.space.md), h = CONTROL_H },
                             model = view.edit_input,
                             placeholder = field.label,
-                        })
+                            disabled = false,
+                        }))
                         y = y + CONTROL_H + Theme.space.xs
                     elseif type(field.value) ~= "table" and field.key ~= "" then
                         -- Measured, and hit_min tall centred on the text row: `hit_bounds`
@@ -1134,13 +1285,13 @@ function GraphState.build_plan(view, bounds)
                         -- 18px lie about where the pointer lands.
                         local edit_id = string.format("edit_intent:%s:%s", node.id, field.key)
                         local edit_w = #"Edit" * CHAR_W + Theme.space.xl
-                        push({
+                        push(control({
                             kind = "button", id = edit_id,
                             bounds = { x = text_x + content_w - edit_w,
                                        y = y - SMALL_H + (SMALL_H - Theme.metrics.hit_min) * 0.5,
                                        w = edit_w, h = Theme.metrics.hit_min },
-                            label = "Edit", variant = "ghost",
-                        })
+                            label = "Edit", variant = "ghost", disabled = false,
+                        }))
                     end
                 end
 
@@ -1148,8 +1299,8 @@ function GraphState.build_plan(view, bounds)
                 if node.type == "questing.Grind" then
                     y = y + Theme.space.xs
                     section("Combat Area")
-                    local combat_note = "Set spot coords, safe spot, pull & leash"
-                    text_item("caption", "text_muted", combat_note)
+                    text_item("caption", "text_muted",
+                        PanelLayout.glyph("info") .. "  Set spot coords, safe spot, pull & leash")
                     y = y + SMALL_H
                 end
 
@@ -1157,17 +1308,20 @@ function GraphState.build_plan(view, bounds)
             end
         end
     else
-        push({
-            kind = "empty_state",
+        local empty = PanelLayout.empty_state_plan({
             bounds = { x = bounds.x + Theme.space.sm, y = y,
                       w = bounds.w - Theme.space.sm * 2,
                       h = math.max(1, bounds.y + bounds.h - y - PAD) },
-            title = "No Nodes",
+            id = "add_node_toggle",
+            title = PanelLayout.glyph("empty") .. "  No Nodes",
             message = "Add a behavior node using the toolbar above",
+            action_label = "Add Node",
         })
+        empty[1].disabled = false
+        push(control(empty[1]))
     end
 
-    return { items = items }
+    return { items = items, controls = controls }
 end
 
 -- ============================================================================
@@ -1215,7 +1369,10 @@ function GraphState.reduce(action_id)
         return { kind = "generate_escort_nodes" }
     end
 
-    -- Validate / Compile
+    -- Save / Validate / Compile
+    if action_id == "save_graph" then
+        return { kind = "save_graph" }
+    end
     if action_id == "validate" then
         return { kind = "validate_graph" }
     end

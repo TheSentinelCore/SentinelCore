@@ -4,6 +4,16 @@
 -- Tests cover: state transitions (select, query, filter), build output shape,
 -- command routing, and the structural guards from ADR 09b §2.1.
 
+-- Allow this file to be run directly from the repo root.
+package.path = table.concat({
+    "sentinel/?.lua",
+    "sentinel/?/?.lua",
+    "sentinel/?/?/?.lua",
+    "sentinel/?/?/?/?.lua",
+    "sentinel/?/?/?/?/?.lua",
+    package.path,
+}, ";")
+
 local ExplorerState = require("ui/panels/explorer_state")
 local Explorer = require("ui/panels/explorer")
 local FakeWindow = require("tests/harness/fake_window")
@@ -368,6 +378,120 @@ function M.test_the_plan_draws_a_real_text_input_for_the_search_box()
     error("the search box is still a label in a rectangle")
 end
 
+function M.test_build_plan_returns_a_controls_registry()
+    local state = ExplorerState.new()
+    state.results = sample_results()
+    local plan = ExplorerState.build_plan(state:build(), BOUNDS)
+    T.assert_equal(type(plan.controls), "table", "plan must expose a controls table")
+    T.assert_true(#plan.controls > 0, "interactive controls must be registered")
+    local by_id = {}
+    for _, c in ipairs(plan.controls) do
+        T.assert_not_nil(c.id, "every control must have an id")
+        T.assert_not_nil(c.kind, "every control must have a kind")
+        T.assert_not_nil(c.bounds, "every control must have bounds")
+        by_id[c.id] = c
+    end
+    T.assert_not_nil(by_id.search_input, "search input must be registered")
+    T.assert_not_nil(by_id.clear_search, "clear button must be registered")
+    T.assert_not_nil(by_id.zone_filter, "zone filter chip must be registered")
+end
+
+function M.test_empty_states_are_actionable()
+    local state = ExplorerState.new()
+    local plan = ExplorerState.build_plan(state:build(), BOUNDS)
+    local found = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "empty_state" then
+            T.assert_not_nil(item.id, "empty_state must have an action id")
+            T.assert_not_nil(item.title, "empty_state must have a title")
+            T.assert_not_nil(item.message, "empty_state must have a message")
+            T.assert_not_nil(item.action_label, "empty_state must have an action_label")
+            found = true
+        end
+    end
+    T.assert_true(found, "the plan must contain at least one actionable empty_state")
+end
+
+function M.test_toolbar_has_raised_surface_and_top_border()
+    local state = ExplorerState.new()
+    local plan = ExplorerState.build_plan(state:build(), BOUNDS)
+    local raised, border = false, false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "rect" and item.token == "surface_raised" then
+            raised = true
+        end
+        if item.kind == "rect" and item.token == "border"
+           and item.bounds.h == 1 and item.bounds.y == 0 then
+            border = true
+        end
+    end
+    T.assert_true(raised, "the toolbar must have a surface_raised background")
+    T.assert_true(border, "the toolbar must have a top border divider")
+end
+
+function M.test_clear_button_disabled_when_search_is_empty()
+    local empty_state = ExplorerState.new()
+    local empty_plan = ExplorerState.build_plan(empty_state:build(), BOUNDS)
+    local filled_state = ExplorerState.new({ search_query = "wolf" })
+    local filled_plan = ExplorerState.build_plan(filled_state:build(), BOUNDS)
+
+    local function find_clear(p)
+        for _, item in ipairs(p.items) do
+            if item.kind == "button" and item.id == "clear_search" then
+                return item
+            end
+        end
+        return nil
+    end
+
+    local empty_clear = find_clear(empty_plan)
+    local filled_clear = find_clear(filled_plan)
+    T.assert_not_nil(empty_clear, "clear button must exist")
+    T.assert_not_nil(filled_clear, "clear button must exist")
+    T.assert_true(empty_clear.disabled, "clear must be disabled with an empty query")
+    T.assert_false(filled_clear.disabled, "clear must be enabled once the operator has typed")
+end
+
+function M.test_action_buttons_use_design_system_variants()
+    local state = ExplorerState.new()
+    state.results = sample_results()
+    state:select(783)
+    state.selected_detail = sample_detail()
+    local plan = ExplorerState.build_plan(state:build(), BOUNDS)
+    local add_profile, add_chain
+    for _, item in ipairs(plan.items) do
+        if item.kind == "button" and item.id == "add_to_profile:783" then
+            add_profile = item
+        end
+        if item.kind == "button" and item.id == "add_chain:783" then
+            add_chain = item
+        end
+    end
+    T.assert_not_nil(add_profile, "Add to Profile must be in the plan")
+    T.assert_not_nil(add_chain, "Add Chain must be in the plan")
+    T.assert_equal(add_profile.variant, "primary",
+        "the dominant authoring action is primary")
+    T.assert_equal(add_chain.variant, "secondary",
+        "the secondary action is secondary")
+end
+
+function M.test_objective_rows_use_panel_layout_glyph()
+    local state = ExplorerState.new()
+    state.selected_detail = sample_detail()
+    state.objectives = sample_objectives()
+    local plan = ExplorerState.build_plan(state:build(), BOUNDS)
+    local PanelLayout = require("ui/panel_layout")
+    local found = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "text" and item.text and item.text:find("Wolf", 1, true) then
+            T.assert_true(item.text:find(PanelLayout.glyph("kill"), 1, true) ~= nil,
+                "kill objective rows must use PanelLayout.glyph")
+            found = true
+        end
+    end
+    T.assert_true(found, "objective text must appear in the plan")
+end
+
 -- ============================================================================
 -- 3d. Authoring: quest to campaign nodes
 -- ============================================================================
@@ -511,6 +635,8 @@ function M.test_render_creates_items_and_returns_command()
     T.assert_not_nil(plan, "render must return a plan")
     T.assert_not_nil(plan.items, "plan must have items")
     T.assert_true(#plan.items > 0, "plan must have at least one item")
+    T.assert_not_nil(plan.controls, "plan must expose a controls registry")
+    T.assert_true(#plan.controls > 0, "controls must list every interactive region")
 end
 
 function M.test_render_handles_empty_state_gracefully()
@@ -645,6 +771,32 @@ function M.test_panel_exposes_required_shape()
     T.assert_equal(Explorer.id, "explorer", "the shell keys panels by id")
     T.assert_equal(type(Explorer.title), "string", "the tab needs a label")
     T.assert_equal(type(Explorer.render), "function", "the shell calls render(window, bounds, view)")
+end
+
+-- Run the suite when this file is executed directly from the repo root.
+if arg and arg[0] and arg[0]:match("test_explorer_panel%.lua$") then
+    local SuiteRunner = require("tests/harness/suite_runner")
+    local result = SuiteRunner.run_suite("tests/ui/test_explorer_panel", M)
+    local passed, failed, failures = 0, 0, {}
+    for _, case in ipairs(result.cases) do
+        if case.ok then
+            passed = passed + 1
+            io.write(".")
+        else
+            failed = failed + 1
+            failures[#failures + 1] = string.format(
+                "FAIL tests/ui/test_explorer_panel.%s: %s", case.name, tostring(case.err))
+            io.write("F")
+        end
+    end
+    print(SuiteRunner.format_report({
+        passed = passed, failed = failed,
+        opaque_passed = 0, opaque_failed = 0,
+        opaque_suites = {},
+        hybrid_suites = {},
+        failures = failures,
+    }))
+    if failed > 0 then os.exit(1) end
 end
 
 return M

@@ -59,19 +59,33 @@ local HANDLERS = {
     end,
 
     badge = function(window, item)
-        local mn, mx = v2(item.bounds.x, item.bounds.y),
-            v2(item.bounds.x + item.bounds.w, item.bounds.y + item.bounds.h)
-        window:is_mouse_hovering_rect(mn, mx)
-        window:render_rect_filled(mn, mx, Theme.color.accent(255), Theme.radius.pill)
-        local label = tostring(item.label or "")
-        local tx = item.bounds.x + (item.bounds.w - #label * 7) * 0.5
-        window:render_text(Theme.font.caption,
-            v2(tx, item.bounds.y + (item.bounds.h - Theme.line_height.caption) * 0.5),
-            Theme.color.surface(255), label)
+        Widgets.badge(window, item.bounds, item)
+        return nil
+    end,
+
+    outline = function(window, item)
+        window:render_rect(
+            v2(item.bounds.x, item.bounds.y),
+            v2(item.bounds.x + item.bounds.w, item.bounds.y + item.bounds.h),
+            Theme.color[item.token](item.alpha or Theme.interaction.active.border),
+            item.rounding or Theme.radius.none,
+            item.thickness or Theme.metrics.border_thickness)
     end,
 
     empty_state = function(window, item)
         return Widgets.empty_state(window, item.bounds, item) and item.id or nil
+    end,
+
+    text_input = function(window, item)
+        local result = Widgets.text_input(window, item.bounds, item)
+        if result then
+            if result.kind == "submit" then
+                return item.submit_id
+            elseif result.kind == "cancel" then
+                return item.cancel_id
+            end
+        end
+        return nil
     end,
 }
 

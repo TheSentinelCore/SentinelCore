@@ -45,6 +45,7 @@ async fn main() {
         .route("/spawns/nearby", get(handlers::spawns_nearby))
         .route("/spawns/:type/:entry", get(handlers::get_spawns))
         .route("/zone/:id/spawns", get(handlers::zone_spawns))
+        .route("/spawns/density/:zone", get(handlers::spawn_density))
         .route("/resolve", post(handlers::resolve))
         .route("/validate", post(handlers::validate))
         .route("/travel/estimate", post(handlers::travel_estimate))

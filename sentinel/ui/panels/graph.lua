@@ -31,6 +31,15 @@ local HANDLERS = {
             Theme.color[item.token](item.alpha or 255), item.rounding or Theme.radius.none)
     end,
 
+    outline = function(window, item)
+        window:render_rect(
+            v2(item.bounds.x, item.bounds.y),
+            v2(item.bounds.x + item.bounds.w, item.bounds.y + item.bounds.h),
+            Theme.color[item.token](item.alpha or Theme.interaction.active.border),
+            item.rounding or Theme.radius.none,
+            item.thickness or Theme.metrics.border_thickness)
+    end,
+
     text = function(window, item)
         window:render_text(item.font, v2(item.x, item.y),
             Theme.color[item.token](item.alpha or Theme.interaction.resting.text), item.text)

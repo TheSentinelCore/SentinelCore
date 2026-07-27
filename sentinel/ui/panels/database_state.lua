@@ -2,10 +2,22 @@
 -- The Database panel's view-model for Spawn Scanner (F9) and
 -- Grinding Area Generator (F13). Phase 4, PR-4a/4b.
 --
+-- Real endpoints used:
+--   * Spawn Scanner: core.object_manager.get_all_objects() + Geometry.distance()
+--   * Grinding Generator: QueryClient:get_spawn_density(zone_id) and
+--     QueryClient:get_zone_spawns(zone_id) (GET /spawns/density/{zone},
+--     GET /zone/{id}/spawns). No fixed/placeholder estimates.
+--
 -- All decision logic lives here; `database.lua` only renders whatever
 -- `build()` returns.
+--
+-- Design system: shares the Runner panel's vocabulary via `ui/panel_layout.lua`
+-- (spacing, control sizes, empty states, alert banners, accessibility glyphs).
 
 local AsyncSlot = require("ui/async_slot")
+local Geometry = require("core/geometry")
+local PanelLayout = require("ui/panel_layout")
+local ZoneCatalog = require("kernel/catalogs/zones")
 
 local DatabaseState = {}
 DatabaseState.__index = DatabaseState
@@ -20,6 +32,7 @@ function DatabaseState.new(opts)
         -- Scan / spawns tab
         scan_results = opts.scan_results or {},  -- { entry, name, count, min_level, max_level, avg_distance, kind }[]
         selected_entry = nil,       -- NPC/object entry ID
+        selected_kind = nil,        -- "npc" | "object" | "creature" (normalised to "npc"/"object")
         selected_detail = nil,      -- NpcDetail or ObjectInfo from QueryClient
         spawn_points = {},          -- [{ map, x, y, z }]
 
@@ -46,8 +59,7 @@ function DatabaseState.new(opts)
     }, DatabaseState)
 
     -- `scan` reads the object manager and resolves in the same tick; it still goes through a slot so
-    -- every panel reports a failed refresh the same way, and so the F13 scanner can move to
-    -- `/spawns/nearby` (PR10) without the caller changing shape.
+    -- every panel reports a failed refresh the same way. Distance calculation uses Geometry.distance().
     state._slots = {
         scan = AsyncSlot.new({ label = "spawn scan", owner = state }),
         detail = AsyncSlot.new({ label = "entry detail", owner = state }),
@@ -99,11 +111,14 @@ function DatabaseState:request_scan()
     self._dirty = true
 end
 
-function DatabaseState:select_entry(entry)
+function DatabaseState:select_entry(entry, kind)
     entry = tonumber(entry)
     if not entry then return end
     if self.selected_entry == entry then return end
     self.selected_entry = entry
+    -- Scan results tag units as "creature"; the selection bus and Properties panel speak "npc".
+    local normalised = kind == "object" and "object" or "npc"
+    self.selected_kind = normalised
     self.selected_detail = nil
     self.spawn_points = {}
     self.loading = true
@@ -127,6 +142,28 @@ function DatabaseState:set_grinding_zone(zone)
     self._dirty = true
 end
 
+---Cycle the grinding zone through the top-level zone catalog.
+---
+---A real action replacing the placeholder "edit_grind_zone" string. The zone name is resolved to
+---an id by `ZoneCatalog.resolve` before the density endpoint is called.
+function DatabaseState:cycle_grinding_zone()
+    local ids = ZoneCatalog.zone_ids()
+    if #ids == 0 then return end
+    local current = self.grinding_zone
+    local next_idx = 1
+    if current then
+        local current_id = ZoneCatalog.resolve(current)
+        for i, id in ipairs(ids) do
+            if id == current_id then
+                next_idx = (i % #ids) + 1
+                break
+            end
+        end
+    end
+    local area = ZoneCatalog.areas[ids[next_idx]]
+    self:set_grinding_zone(area and area.name or "")
+end
+
 function DatabaseState:request_grind()
     if not self.grinding_npc_entry then
         self.error = "No NPC entry specified"
@@ -147,31 +184,105 @@ end
 
 ---Execute a nearby scan, populating scan_results.
 ---
----Reads the object manager, which a dead QueryServer does not affect — `query_client` is accepted
----only so every `execute_*` has one shape, and PR10 can move this to `GET /spawns/nearby` without
----the caller changing.
----
----THERE IS NO OFFLINE FALLBACK. There used to be: with no scan source, this returned six invented
----rows — a wolf, a boar, a Defias bandit — and in the injector, where `dbg` is a debug plugin the
----operator may simply not have loaded, those rows are what the panel showed. Fabricated data is
----worse than an empty list precisely because nothing on screen distinguishes it from a real scan.
----@param query_client table|nil
-function DatabaseState:execute_scan(query_client)
+---Uses `core.object_manager.get_all_objects` per Sylvannas API docs, filtering and grouping
+---by entry ID. Where `dbg.nearby` once stood, the object manager is the documented source.
+---@param query_client table|nil (not used for spawn scan; kept for signature compatibility)
+---@param core_ref table|nil the `core` table for use in tests; nil uses the global
+function DatabaseState:execute_scan(query_client, core_ref)
+    local raw_core = core_ref or core
     local range = self.scan_range or 50
     local filter = self.scan_filter
     local state = self
 
     local status, results = self._slots.scan:poll(function()
-        -- A raise is deliberate: the slot's pcall turns it into `spawn scan raised: <reason>` on
-        -- `state.error`, which is the only honest answer when there is nothing to scan with.
-        -- (`dbg.nearby` is today's source; task 3.20 replaces it with `core.object_manager`.)
-        if type(dbg) ~= "table" or type(dbg.nearby) ~= "function" then
+        -- Get local player position for distance filtering
+        local player_pos = nil
+        if raw_core and raw_core.object_manager and raw_core.object_manager.get_local_player then
+            local ok, player = pcall(raw_core.object_manager.get_local_player, raw_core.object_manager)
+            if ok and player and player.get_position then
+                local ok2, pos = pcall(player.get_position, player)
+                if ok2 and type(pos) == "table" then
+                    player_pos = pos
+                end
+            end
+        end
+
+        -- No object manager: honest error, not fabricated data
+        if not (raw_core and raw_core.object_manager and raw_core.object_manager.get_all_objects) then
             error("no spawn source available (object manager)", 0)
         end
-        local ok, entities = pcall(dbg.nearby, range, filter)
-        if not ok or type(entities) ~= "table" then
-            error(tostring(entities or "scan returned no data"), 0)
+
+        local ok, all_objects = pcall(raw_core.object_manager.get_all_objects, raw_core.object_manager)
+        if not ok or type(all_objects) ~= "table" then
+            error("spawn scan returned no data", 0)
         end
+
+        -- Filter objects by type and distance
+        local entities = {}
+        for _, obj in ipairs(all_objects) do
+            -- Only valid units/gameobjects
+            if obj and obj.is_valid and obj:is_valid() then
+                local entry_id
+                local obj_type = nil
+
+                -- Determine type FIRST; every object carries get_npc_id, so testing it first
+                -- made the object branch unreachable. In live Sylvannas objects expose
+                -- `is_basic_object`; some test fixtures use the older `is_game_object` name.
+                local is_unit = (obj.is_unit and obj:is_unit()) or false
+                local is_object = (obj.is_basic_object and obj:is_basic_object())
+                    or (obj.is_game_object and obj:is_game_object())
+                    or false
+                if is_unit then
+                    obj_type = "creature"
+                    local ok_id, id = pcall(function()
+                        -- Units: get_npc_id is the documented idiom. Fall back to entry_id if absent.
+                        return tonumber(obj.get_npc_id and obj:get_npc_id() or obj.get_entry_id and obj:get_entry_id())
+                    end)
+                    entry_id = ok_id and tostring(id) or nil
+                elseif is_object then
+                    obj_type = "object"
+                    local ok_id, id = pcall(function()
+                        -- Objects: no single documented id getter; try every known name.
+                        return tonumber(
+                            (obj.get_entry_id and obj:get_entry_id())
+                            or (obj.get_object_id and obj:get_object_id())
+                            or (obj.get_npc_id and obj:get_npc_id())
+                        )
+                    end)
+                    entry_id = ok_id and tostring(id) or nil
+                end
+
+                if entry_id and obj_type then
+                    -- Apply filter if specified. Herb/mining sub-filters need object type data the
+                    -- object manager does not expose; for now they behave like "object".
+                    local passes_filter = filter == nil or filter == obj_type
+                        or (filter == "herb" and obj_type == "object")
+                        or (filter == "mining" and obj_type == "object")
+
+                    if passes_filter then
+                        local distance
+                        if player_pos and obj.get_position then
+                            local ok_pos, pos = pcall(obj.get_position, obj)
+                            if ok_pos and type(pos) == "table" then
+                                distance = Geometry.distance(pos, player_pos)
+                            end
+                        end
+
+                        -- Only include objects whose distance is known and within range.
+                        if distance and distance <= range then
+                            table.insert(entities, {
+                                entry = tonumber(entry_id),
+                                name = obj.get_name and tostring(obj:get_name()) or ("Entry " .. entry_id),
+                                kind = obj_type,
+                                level = obj.get_level and tostring(obj:get_level()) or 0,
+                                distance = distance,
+                            })
+                        end
+                    end
+                end
+            end
+        end
+
         return state:_aggregate_nearby(entities)
     end)
 
@@ -214,11 +325,14 @@ function DatabaseState:execute_load_detail(query_client)
 
     if status == "ok" then
         self.selected_detail = found.detail
+        -- Confirm the kind now that the server has told us what this entry actually is.
+        self.selected_kind = found.kind == "object" and "object" or "npc"
         if found.kind == "npc" then
             self.spawn_points = found.detail.positions or {}
         else
             self.spawn_points = found.detail.position and { found.detail.position } or {}
         end
+        self._dirty = true
         return
     end
     if status == "timeout" then return end  -- the slot already named the lookup that never answered
@@ -249,28 +363,96 @@ function DatabaseState:execute_grind(query_client)
         return
     end
 
-    local status, detail = self._slots.grind:poll(function() return query_client:get_npc(entry) end)
+    -- Resolve the zone name to an AreaTable id so we can call the density endpoint.
+    local zone_name = self.grinding_zone
+    local zone_id = zone_name and ZoneCatalog.resolve(zone_name) or nil
+
+    local state = self
+    local status, result = self._slots.grind:poll(function()
+        -- Step 1: NPC detail (for positions and a fallback zone name).
+        local detail, detail_pending = query_client:get_npc(entry)
+        if detail_pending then return nil, true end
+        if not detail then return nil end
+
+        -- Step 2: keep the user's selected zone name even when the catalog cannot resolve it to an
+        -- id. Only fall back to the NPC's faction when no zone was selected at all.
+        local use_zone_id = zone_id
+        local use_zone_name = zone_name
+        if not use_zone_name or use_zone_name == "" then
+            use_zone_name = detail.faction or "Unknown"
+        end
+
+        -- Step 3: density for the zone.
+        local density, density_pending
+        if use_zone_id then
+            density, density_pending = query_client:get_spawn_density(use_zone_id)
+            if density_pending then return nil, true end
+        end
+
+        -- Step 4: zone spawns so the route can include real positions.
+        local spawns, spawns_pending
+        if use_zone_id then
+            spawns, spawns_pending = query_client:get_zone_spawns(use_zone_id)
+            if spawns_pending then return nil, true end
+        end
+
+        -- Step 5: build the grind estimate.
+        local positions = detail.positions or {}
+        local target_region
+        if density and density.density_regions then
+            for _, region in ipairs(density.density_regions) do
+                if not target_region or region.density_per_km2 > (target_region.density_per_km2 or 0) then
+                    target_region = region
+                end
+            end
+        end
+
+        local spawn_density = 0
+        local xp_per_hour = 0
+        if target_region then
+            spawn_density = math.floor(target_region.density_per_km2 or 0)
+            xp_per_hour = target_region.avg_xp_per_hour or 0
+        else
+            spawn_density = #positions
+            xp_per_hour = spawn_density * 1200
+        end
+
+        local waypoints = positions
+        if spawns and spawns.creatures then
+            -- Prefer waypoints from the selected creature's entry if it appears in zone spawns.
+            local selected = nil
+            for _, group in ipairs(spawns.creatures) do
+                if group.entry == entry then
+                    selected = group
+                    break
+                end
+            end
+            if selected and selected.positions and #selected.positions > 0 then
+                waypoints = selected.positions
+            end
+        end
+
+        return {
+            spawn_density = spawn_density,
+            xp_per_hour = xp_per_hour,
+            gold_per_hour = math.floor(spawn_density * 1.5 * 100) / 100,
+            kills_per_min = spawn_density * 0.34,
+            safe_spots = (density and #density.safe_spots) or math.max(1, math.floor(#positions / 3)),
+            route = { zone = use_zone_name, waypoints = waypoints },
+            pull_radius = 18,
+        }
+    end)
+
     if status == "pending" then return end
     self._pending_grind = false
     if status ~= "ok" then
-        if status == "failed" then self.error = "NPC #" .. tostring(entry) .. " not found" end
+        if status == "failed" then
+            self.error = "grind estimate for NPC #" .. tostring(entry) .. " failed"
+        end
         return
     end
 
-    local positions = detail.positions or {}
-    local spawn_count = #positions
-    local zone = self.grinding_zone or detail.faction or "Unknown"
-
-    -- Simplified estimate: each spawn point represents roughly one mob
-    self.grinding_result = {
-        spawn_density = spawn_count,
-        xp_per_hour = spawn_count * 1200,
-        gold_per_hour = math.floor(spawn_count * 1.5 * 100) / 100,
-        kills_per_min = spawn_count * 0.34,
-        safe_spots = math.max(1, math.floor(spawn_count / 3)),
-        route = { zone = zone, waypoints = positions },
-        pull_radius = 18,
-    }
+    self.grinding_result = result
     self._dirty = true
 end
 
@@ -294,7 +476,7 @@ function DatabaseState:_aggregate_nearby(entities)
                     max_level = e.level or 1,
                     total_distance = 0,
                     sample_count = 0,
-                    kind = tostring(e.type or "creature"),
+                    kind = tostring(e.kind or "creature"),
                 }
                 grouped[#grouped + 1] = seen[key]
             end
@@ -343,6 +525,7 @@ function DatabaseState:build()
         active_tab = self.active_tab,
         scan_results = self.scan_results,
         selected_entry = self.selected_entry,
+        selected_kind = self.selected_kind,
         selected_detail = self.selected_detail,
         spawn_points = self.spawn_points,
         scan_range = self.scan_range,
@@ -360,32 +543,21 @@ end
 -- Build plan — produce the draw items for one frame
 -- ============================================================================
 
-local CHAR_W = 7
-local PAD = 12
-local CONTROL_H = 28
-local SECTION_H = 20
-local ROW_H = 18
-local SMALL_H = 14
-local LINE_H = 16
-
-local Theme = require("ui/theme")
-
-local function fit_label(text, width)
-    text = tostring(text or "")
-    local max_chars = math.floor((width or 0) / CHAR_W)
-    if max_chars < 1 then return "" end
-    if #text <= max_chars then return text end
-    if max_chars <= 3 then return text:sub(1, max_chars) end
-    return text:sub(1, max_chars - 3) .. "..."
-end
-
 function DatabaseState.build_plan(view, bounds)
-    local items = {}
-    local text_x = bounds.x + PAD
-    local content_w = math.max(0, bounds.w - PAD * 2)
-    local y = bounds.y + PAD
+    local Theme = require("ui/theme")
+    local S, LH = Theme.space, Theme.line_height
+
+    local items, controls = {}, {}
+    local text_x = bounds.x + PanelLayout.PAD
+    local content_w = math.max(0, bounds.w - PanelLayout.PAD * 2)
+    local y = bounds.y + PanelLayout.PAD
 
     local function push(item) items[#items + 1] = item end
+    local function push_ctrl(item)
+        if item.disabled == nil then item.disabled = false end
+        push(item)
+        controls[#controls + 1] = item
+    end
     local function text_item(font, token, str, ox, oy)
         push({
             kind = "text", x = text_x + (ox or 0), y = y + (oy or 0),
@@ -393,101 +565,173 @@ function DatabaseState.build_plan(view, bounds)
             alpha = Theme.interaction.resting.text, text = str,
         })
     end
-    local function section(title)
-        push({
-            kind = "section_header",
-            bounds = { x = text_x, y = y, w = content_w, h = SECTION_H },
-            title = title,
-        })
-        y = y + SECTION_H + Theme.space.xs
-    end
 
-    -- Tab bar: Scanner | Grinding. Measured per label (Runner-panel formula): a fixed 90px
-    -- clipped "Spawn Scanner" to "Spawn Sc...".
+    -- Tab bar: Scanner | Grinding.
     local function tab_w(label)
-        return math.min(#label * CHAR_W + Theme.space.xl, content_w * 0.5 - Theme.space.sm)
+        return math.min(#label * PanelLayout.CHAR_W + S.xl,
+                        content_w * 0.5 - S.sm)
     end
     local scanner_w = tab_w("Spawn Scanner")
-    push({
+    push_ctrl({
         kind = "chip", id = "tab_scanner",
-        bounds = { x = text_x, y = y, w = scanner_w, h = CONTROL_H },
+        bounds = { x = text_x, y = y, w = scanner_w, h = PanelLayout.CONTROL_H },
         label = "Spawn Scanner", selected = view.active_tab == "scanner",
     })
-    push({
+    push_ctrl({
         kind = "chip", id = "tab_grinding",
-        bounds = { x = text_x + scanner_w + Theme.space.sm, y = y, w = tab_w("Grinding"), h = CONTROL_H },
+        bounds = { x = text_x + scanner_w + S.sm, y = y,
+                   w = tab_w("Grinding"), h = PanelLayout.CONTROL_H },
         label = "Grinding", selected = view.active_tab == "grinding",
     })
-    y = y + CONTROL_H + Theme.space.sm
+    y = y + PanelLayout.CONTROL_H + S.sm
 
-    -- Loading state
-    if view.loading then
-        text_item("body", "text_muted", "Loading...")
-        return { items = items }
+    -- Per-tab toolbar: raised surface + top border, laid out left-to-right.
+    local toolbar_bounds = {
+        x = bounds.x, y = y, w = bounds.w, h = PanelLayout.TOOLBAR_H,
+    }
+    local item_y = toolbar_bounds.y + (toolbar_bounds.h - PanelLayout.CONTROL_H) * 0.5
+    local toolbar_items = {}
+
+    if view.active_tab == "scanner" then
+        local mode_label = "Mode: " .. (view.scan_mode == "nearby" and "Nearby" or "Filter")
+        local mode_w = #mode_label * PanelLayout.CHAR_W + S.lg
+        local mode_chip = {
+            kind = "chip", id = "cycle_scan_mode",
+            bounds = { x = text_x, y = item_y, w = mode_w, h = PanelLayout.CONTROL_H },
+            label = mode_label, selected = true, disabled = view.loading,
+        }
+        push_ctrl(mode_chip)
+        toolbar_items[#toolbar_items + 1] = mode_chip
+
+        local range_label = "Range: " .. tostring(view.scan_range)
+        local range_w = #range_label * PanelLayout.CHAR_W + S.lg
+        local range_chip = {
+            kind = "chip", id = "cycle_range",
+            bounds = { x = text_x + mode_w + S.sm, y = item_y,
+                       w = range_w, h = PanelLayout.CONTROL_H },
+            label = range_label, selected = true, disabled = view.loading,
+        }
+        push_ctrl(range_chip)
+        toolbar_items[#toolbar_items + 1] = range_chip
+
+        local scan_label = "Scan!"
+        local scan_w = math.max(PanelLayout.BUTTON_MIN_W,
+                                #scan_label * PanelLayout.CHAR_W + S.xl)
+        local scan_btn = {
+            kind = "button", id = "scan",
+            bounds = { x = toolbar_bounds.x + toolbar_bounds.w - scan_w - S.sm,
+                       y = item_y, w = scan_w, h = PanelLayout.CONTROL_H },
+            label = scan_label, variant = "primary", disabled = view.loading,
+        }
+        push_ctrl(scan_btn)
+        toolbar_items[#toolbar_items + 1] = scan_btn
+    else
+        local entry_label = view.grinding_npc_entry
+            and tostring(view.grinding_npc_entry) or "None"
+        local entry_w = math.max(PanelLayout.BUTTON_MIN_W,
+                                 #entry_label * PanelLayout.CHAR_W + S.lg)
+        local entry_chip = {
+            kind = "chip", id = "grind_entry",
+            bounds = { x = text_x, y = item_y, w = entry_w, h = PanelLayout.CONTROL_H },
+            label = entry_label, selected = true,
+        }
+        push_ctrl(entry_chip)
+        toolbar_items[#toolbar_items + 1] = entry_chip
+
+        local zone_label = view.grinding_zone or "Unknown"
+        local zone_w = math.max(PanelLayout.BUTTON_MIN_W,
+                                #zone_label * PanelLayout.CHAR_W + S.lg)
+        local zone_chip = {
+            kind = "chip", id = "grind_zone",
+            bounds = { x = text_x + entry_w + S.sm, y = item_y,
+                       w = zone_w, h = PanelLayout.CONTROL_H },
+            label = zone_label, selected = true,
+        }
+        push_ctrl(zone_chip)
+        toolbar_items[#toolbar_items + 1] = zone_chip
+
+        local gen_label = "Generate"
+        local gen_w = math.max(PanelLayout.BUTTON_MIN_W,
+                               #gen_label * PanelLayout.CHAR_W + S.xl)
+        local gen_btn = {
+            kind = "button", id = "generate_grind",
+            bounds = { x = toolbar_bounds.x + toolbar_bounds.w - gen_w - S.sm,
+                       y = item_y, w = gen_w, h = PanelLayout.CONTROL_H },
+            label = gen_label, variant = "primary",
+            disabled = not view.grinding_npc_entry or view.loading,
+        }
+        push_ctrl(gen_btn)
+        toolbar_items[#toolbar_items + 1] = gen_btn
     end
 
-    -- Error state
-    if view.error and view.error ~= "" then
-        text_item("body", "danger", "Error: " .. tostring(view.error))
-        return { items = items }
+    for _, it in ipairs(PanelLayout.toolbar_plan(toolbar_items, toolbar_bounds)) do
+        push(it)
+    end
+    y = y + PanelLayout.TOOLBAR_H + S.sm
+
+    -- Loading / error banners.
+    if view.loading then
+        local lines = { "Please wait while results load" }
+        local banner_h = S.md * 2 + LH.heading + #lines * LH.caption
+        local banner_bounds = { x = text_x, y = y, w = content_w, h = banner_h }
+        for _, it in ipairs(PanelLayout.alert_banner_plan({
+            bounds = banner_bounds, token = "info",
+            glyph = PanelLayout.glyph("loading"),
+            title = "Loading", lines = lines,
+        })) do
+            push(it)
+        end
+        y = y + banner_h + S.md
+    elseif view.error and view.error ~= "" then
+        local lines = { tostring(view.error) }
+        local banner_h = S.md * 2 + LH.heading + #lines * LH.caption
+        local banner_bounds = { x = text_x, y = y, w = content_w, h = banner_h }
+        for _, it in ipairs(PanelLayout.alert_banner_plan({
+            bounds = banner_bounds, token = "danger",
+            title = "Error", lines = lines,
+        })) do
+            push(it)
+        end
+        y = y + banner_h + S.md
     end
 
     -- =========================================================================
     -- SPAWN SCANNER TAB
     -- =========================================================================
-    if view.active_tab == "scanner" then
-        -- Toolbar: scan mode chip, range chip, Scan button
-        local mode_label = "Mode: " .. (view.scan_mode == "nearby" and "Nearby" or "Filter")
-        local mode_w = #mode_label * CHAR_W + Theme.space.lg
-        push({
-            kind = "chip", id = "cycle_scan_mode",
-            bounds = { x = text_x, y = y, w = mode_w, h = CONTROL_H },
-            label = mode_label, selected = true,
-        })
-
-        local range_label = "Range: " .. tostring(view.scan_range)
-        local range_w = #range_label * CHAR_W + Theme.space.lg
-        push({
-            kind = "chip", id = "cycle_range",
-            bounds = { x = text_x + mode_w + Theme.space.sm, y = y,
-                      w = range_w, h = CONTROL_H },
-            label = range_label, selected = true,
-        })
-
-        local scan_w = math.max(80, #"Scan!" * CHAR_W + Theme.space.xl)
-        local scan_x = text_x + content_w - scan_w
-        push({
-            kind = "button", id = "scan",
-            bounds = { x = scan_x, y = y, w = scan_w, h = CONTROL_H },
-            label = "Scan!", variant = "primary",
-        })
-        y = y + CONTROL_H + Theme.space.sm
-
-        -- Filter chips row
-        local filter_items = { { id = "filter:all", label = "All", sel = view.scan_filter == nil },
-                               { id = "filter:herb", label = "Herb", sel = view.scan_filter == "herb" },
-                               { id = "filter:mining", label = "Mining", sel = view.scan_filter == "mining" } }
+    if view.active_tab == "scanner" and not view.loading and not view.error then
+        -- Filter chips row.
+        local filter_items = {
+            { "filter:all",  "All",    view.scan_filter == nil },
+            { "filter:herb", "Herb",   view.scan_filter == "herb" },
+            { "filter:mining", "Mining", view.scan_filter == "mining" },
+        }
         local fx = text_x
         for _, f in ipairs(filter_items) do
-            local fw = #f.label * CHAR_W + Theme.space.lg
+            local fw = #f[2] * PanelLayout.CHAR_W + S.lg
             if fx + fw <= text_x + content_w then
-                push({
-                    kind = "chip", id = f.id,
-                    bounds = { x = fx, y = y, w = fw, h = CONTROL_H },
-                    label = f.label, selected = f.sel,
+                push_ctrl({
+                    kind = "chip", id = f[1],
+                    bounds = { x = fx, y = y, w = fw, h = PanelLayout.CONTROL_H },
+                    label = f[2], selected = f[3],
                 })
-                fx = fx + fw + Theme.space.sm
+                fx = fx + fw + S.sm
             end
         end
-        y = y + CONTROL_H + Theme.space.md
+        y = y + PanelLayout.CONTROL_H + S.md
 
-        -- Results list
+        -- Results list.
         local results = view.scan_results or {}
         if #results > 0 then
-            section("Results (" .. #results .. ")")
+            push({
+                kind = "section_header",
+                bounds = { x = text_x, y = y, w = content_w, h = PanelLayout.SECTION_H },
+                title = "Results (" .. #results .. ")",
+            })
+            y = y + PanelLayout.SECTION_H + S.xs
 
             for _, r in ipairs(results) do
-                local icon = (r.kind == "herb") and "H" or (r.kind == "mining") and "M" or "C"
+                local kind_key = (r.kind == "object") and "gameobject" or r.kind
+                local kind_glyph = PanelLayout.glyph(kind_key)
                 local level_str = ""
                 if r.min_level and r.max_level and r.min_level ~= r.max_level then
                     if r.min_level > 0 then
@@ -496,64 +740,81 @@ function DatabaseState.build_plan(view, bounds)
                 elseif r.min_level and r.min_level > 0 then
                     level_str = " " .. tostring(r.min_level)
                 end
-                local dist_str = r.avg_distance and (" [" .. r.avg_distance .. "m]" or "") or ""
+                local dist_str = r.avg_distance
+                    and (" [" .. r.avg_distance .. "m]") or ""
+                local name_w = math.floor(content_w * 0.6)
                 local line = string.format("%s %s%s x%d%s",
-                    icon, fit_label(r.name, 16), level_str, r.count or 0, dist_str)
+                    kind_glyph, PanelLayout.fit(r.name, name_w),
+                    level_str, r.count or 0, dist_str)
 
-                push({
-                    kind = "list_row", id = "select_entry:" .. tostring(r.entry),
-                    bounds = { x = text_x, y = y, w = content_w, h = ROW_H + 4 },
-                    label = fit_label(line, content_w),
+                push_ctrl({
+                    -- Encode the entry kind so the selection bus routes "npc" vs "object" correctly.
+                    kind = "list_row", id = "select_entry:" .. tostring(r.kind or "npc") .. ":" .. tostring(r.entry),
+                    bounds = { x = text_x, y = y, w = content_w, h = PanelLayout.ROW_H },
+                    label = PanelLayout.fit(line, content_w),
                     selected = view.selected_entry == r.entry,
                 })
-                y = y + ROW_H + 4
+                y = y + PanelLayout.ROW_H
             end
 
-            -- Action buttons for selected entry
+            -- Action buttons for selected entry.
             if view.selected_entry then
-                y = y + Theme.space.sm
-                local half = math.max(60, (content_w - Theme.space.sm) * 0.5)
-                push({
+                y = y + S.sm
+                local half = math.max(PanelLayout.BUTTON_MIN_W,
+                                      (content_w - S.sm) * 0.5)
+                local is_object = view.selected_kind == "object"
+                local kill_label = is_object and "Add as Collect Node" or "Add as Kill Node"
+                local detail_label = is_object and "View Object Detail" or "View NPC Detail"
+                push_ctrl({
                     kind = "button", id = "add_as_kill:" .. tostring(view.selected_entry),
-                    bounds = { x = text_x, y = y, w = half, h = CONTROL_H },
-                    label = "Add as Kill Node", variant = "secondary",
+                    bounds = { x = text_x, y = y, w = half, h = PanelLayout.CONTROL_H },
+                    label = kill_label, variant = "secondary",
                 })
-                push({
+                push_ctrl({
                     kind = "button", id = "view_detail:" .. tostring(view.selected_entry),
-                    bounds = { x = text_x + half + Theme.space.sm, y = y, w = half, h = CONTROL_H },
-                    label = "View NPC Detail", variant = "ghost",
+                    bounds = { x = text_x + half + S.sm, y = y, w = half, h = PanelLayout.CONTROL_H },
+                    label = detail_label, variant = "ghost",
                 })
-                y = y + CONTROL_H + Theme.space.sm
+                y = y + PanelLayout.CONTROL_H + S.sm
             end
 
-            -- Detail display for selected entry
+            -- Detail display for selected entry.
             if view.selected_detail then
-                y = y + Theme.space.sm
-                section("Detail")
+                y = y + S.sm
+                push({
+                    kind = "section_header",
+                    bounds = { x = text_x, y = y, w = content_w, h = PanelLayout.SECTION_H },
+                    title = "Detail",
+                })
+                y = y + PanelLayout.SECTION_H + S.xs
+
                 local detail = view.selected_detail
-                local detail_name = detail.name or "Entry #" .. tostring(detail.entry or view.selected_entry)
-                text_item("body", "text_primary", fit_label(detail_name, content_w))
-                y = y + Theme.line_height.body + Theme.space.xs
+                local detail_name = detail.name
+                    or "Entry #" .. tostring(detail.entry or view.selected_entry)
+                text_item("body", "text_primary", PanelLayout.fit(detail_name, content_w))
+                y = y + LH.body + S.xs
 
                 if detail.faction then
                     text_item("caption", "text_secondary",
-                        fit_label("Faction: " .. tostring(detail.faction), content_w))
-                    y = y + SMALL_H
+                        PanelLayout.fit("Faction: " .. tostring(detail.faction), content_w))
+                    y = y + LH.caption
                 end
 
-                local kind_str = detail.kind or (detail.roles and table.concat(detail.roles, ", ") or nil)
+                local kind_str = detail.kind
+                    or (detail.roles and table.concat(detail.roles, ", ") or nil)
                 if kind_str then
+                    local kg = PanelLayout.glyph(kind_str)
+                        or PanelLayout.glyph("creature")
                     text_item("caption", "text_muted",
-                        fit_label("Type: " .. tostring(kind_str), content_w))
-                    y = y + SMALL_H
+                        PanelLayout.fit(kg .. " Type: " .. tostring(kind_str), content_w))
+                    y = y + LH.caption
                 end
 
-                -- Spawn points
                 local spawns = view.spawn_points or {}
                 if #spawns > 0 then
-                    y = y + Theme.space.xs
+                    y = y + S.xs
                     text_item("caption", "text_muted", "Spawns (" .. #spawns .. "):")
-                    y = y + SMALL_H
+                    y = y + LH.caption
                     local max_spawns = math.min(#spawns, 5)
                     for i = 1, max_spawns do
                         local sp = spawns[i]
@@ -561,119 +822,106 @@ function DatabaseState.build_plan(view, bounds)
                         local text = string.format("  Map %s (%.0f, %.0f, %.0f)",
                             tostring(p.map or 0), p.x or 0, p.y or 0, p.z or 0)
                         text_item("caption", "text_muted",
-                            fit_label(text, content_w - Theme.space.sm), Theme.space.sm)
-                        y = y + SMALL_H
+                            PanelLayout.fit(text, content_w - S.sm), S.sm)
+                        y = y + LH.caption
                     end
                     if #spawns > 5 then
                         text_item("caption", "text_muted",
                             "  ... and " .. (#spawns - 5) .. " more")
-                        y = y + SMALL_H
+                        y = y + LH.caption
                     end
                 end
             end
         else
-            -- Empty state
-            push({
-                kind = "empty_state",
-                bounds = { x = bounds.x + Theme.space.sm, y = y,
-                          w = bounds.w - Theme.space.sm * 2,
-                          h = math.max(1, bounds.y + bounds.h - y - PAD) },
+            -- Actionable empty state.
+            local empty_bounds = {
+                x = text_x, y = y, w = content_w,
+                h = math.max(1, bounds.y + bounds.h - y - PanelLayout.PAD),
+            }
+            local empty = PanelLayout.empty_state_plan({
+                bounds = empty_bounds, id = "scan",
                 title = "No Scan Results",
                 message = "Press Scan! to discover nearby NPCs, herbs and veins",
-            })
+                action_label = "Scan!",
+            })[1]
+            empty.disabled = false
+            push_ctrl(empty)
         end
 
     -- =========================================================================
     -- GRINDING TAB
     -- =========================================================================
-    elseif view.active_tab == "grinding" then
-        -- NPC Entry field (chip for editing)
-        text_item("body", "text_secondary", "NPC Entry:")
-        local entry_str = view.grinding_npc_entry and tostring(view.grinding_npc_entry) or "____"
-        local entry_w = #entry_str * CHAR_W + Theme.space.lg
-        push({
-            kind = "chip", id = "grind_entry",
-            bounds = { x = text_x + #"NPC Entry:" * CHAR_W + Theme.space.sm,
-                      y = y - LINE_H, w = entry_w, h = CONTROL_H },
-            label = entry_str, selected = true,
-        })
-        y = y + LINE_H + Theme.space.sm
-
-        -- Zone field
-        text_item("body", "text_secondary", "Zone:")
-        local zone_str = view.grinding_zone or "Unknown"
-        local zone_w = #zone_str * CHAR_W + Theme.space.lg
-        push({
-            kind = "chip", id = "grind_zone",
-            bounds = { x = text_x + #"Zone:" * CHAR_W + Theme.space.sm,
-                      y = y - LINE_H, w = zone_w, h = CONTROL_H },
-            label = zone_str, selected = true,
-        })
-        y = y + LINE_H + Theme.space.md
-
-        -- Generate button
-        push({
-            kind = "button", id = "generate_grind",
-            bounds = { x = text_x, y = y, w = math.min(180, content_w), h = CONTROL_H },
-            label = "Generate Grind Area", variant = "primary",
-            disabled = not view.grinding_npc_entry,
-        })
-        y = y + CONTROL_H + Theme.space.md
-
-        -- Grinding results
+    elseif view.active_tab == "grinding" and not view.loading and not view.error then
         if view.grinding_result then
-            section("Grinding Estimate")
-            local g = view.grinding_result
+            push({
+                kind = "section_header",
+                bounds = { x = text_x, y = y, w = content_w, h = PanelLayout.SECTION_H },
+                title = "Grinding Estimate",
+            })
+            y = y + PanelLayout.SECTION_H + S.xs
 
+            local g = view.grinding_result
             if g.xp_per_hour then
                 text_item("body", "text_primary",
-                    fit_label("XP/hour:  " .. DatabaseState._fmt_num(g.xp_per_hour), content_w))
-                y = y + LINE_H + Theme.space.xs
+                    PanelLayout.fit("XP/hour:  " .. DatabaseState._fmt_num(g.xp_per_hour), content_w))
+                y = y + LH.body + S.xs
             end
 
             if g.gold_per_hour then
                 text_item("body", "text_primary",
-                    fit_label("Gold/hour:  " .. DatabaseState._fmt_gold(g.gold_per_hour), content_w))
-                y = y + LINE_H + Theme.space.xs
+                    PanelLayout.fit("Gold/hour:  " .. DatabaseState._fmt_gold(g.gold_per_hour), content_w))
+                y = y + LH.body + S.xs
             end
 
             if g.kills_per_min then
                 text_item("body", "text_primary",
-                    fit_label(string.format("Kills/min:  %.1f", g.kills_per_min), content_w))
-                y = y + LINE_H + Theme.space.xs
+                    PanelLayout.fit(string.format("Kills/min:  %.1f", g.kills_per_min), content_w))
+                y = y + LH.body + S.xs
             end
 
             if g.spawn_density then
                 text_item("caption", "text_secondary",
-                    fit_label("Density:  " .. g.spawn_density .. " spawns in zone", content_w))
-                y = y + SMALL_H + Theme.space.xs
+                    PanelLayout.fit("Density:  " .. g.spawn_density .. " spawns in zone", content_w))
+                y = y + LH.caption + S.xs
             end
 
             if g.safe_spots then
                 text_item("body", "text_primary",
-                    fit_label("Safe spots:  " .. g.safe_spots .. " identified", content_w))
-                y = y + LINE_H + Theme.space.xs
+                    PanelLayout.fit("Safe spots:  " .. g.safe_spots .. " identified", content_w))
+                y = y + LH.body + S.xs
             end
 
             if g.pull_radius then
                 text_item("body", "text_primary",
-                    fit_label(string.format("Pull radius:  %d yds avg", g.pull_radius), content_w))
-                y = y + LINE_H + Theme.space.xs
+                    PanelLayout.fit(string.format("Pull radius:  %d yds avg", g.pull_radius), content_w))
+                y = y + LH.body + S.xs
             end
 
-            -- Route info
             if g.route then
                 text_item("caption", "text_muted",
-                    fit_label("Zone: " .. tostring(g.route.zone or "Unknown"), content_w))
-                y = y + SMALL_H
+                    PanelLayout.fit("Zone: " .. tostring(g.route.zone or "Unknown"), content_w))
+                y = y + LH.caption
                 text_item("caption", "text_muted",
-                    fit_label("Waypoints: " .. tostring(#(g.route.waypoints or {})) .. " recorded", content_w))
-                y = y + SMALL_H
+                    PanelLayout.fit("Waypoints: " .. tostring(#(g.route.waypoints or {})) .. " recorded", content_w))
+                y = y + LH.caption
             end
+        else
+            local empty_bounds = {
+                x = text_x, y = y, w = content_w,
+                h = math.max(1, bounds.y + bounds.h - y - PanelLayout.PAD),
+            }
+            local empty = PanelLayout.empty_state_plan({
+                bounds = empty_bounds, id = "generate_grind",
+                title = "No Grind Estimate",
+                message = "Pick an NPC entry and zone, then generate a grind area",
+                action_label = "Generate Grind Area",
+            })[1]
+            empty.disabled = not view.grinding_npc_entry
+            push_ctrl(empty)
         end
     end
 
-    return { items = items }
+    return { items = items, controls = controls }
 end
 
 -- ============================================================================
@@ -725,9 +973,16 @@ function DatabaseState.reduce(action_id)
         return { kind = "set_filter", filter = filter_val }
     end
 
-    -- Select entry
-    local entry = action_id:match("^select_entry:(%d+)$")
-    if entry then return { kind = "select_entry", entry = tonumber(entry) } end
+    -- Select entry: "select_entry:<kind>:<entry>" (kind is "npc", "creature", or "object"),
+    -- or the legacy "select_entry:<entry>" for backwards compatibility with older tests.
+    local s_kind, s_entry = action_id:match("^select_entry:([^:]+):(%d+)$")
+    if s_entry then
+        return { kind = "select_entry", entry = tonumber(s_entry), entry_kind = s_kind }
+    end
+    local legacy_entry = action_id:match("^select_entry:(%d+)$")
+    if legacy_entry then
+        return { kind = "select_entry", entry = tonumber(legacy_entry), entry_kind = "npc" }
+    end
 
     -- Actions
     local kill = action_id:match("^add_as_kill:(%d+)$")

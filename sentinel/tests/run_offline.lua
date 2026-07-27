@@ -42,6 +42,7 @@ _G.core = {
         strafe_left_start = function() return true end,
         strafe_left_stop = function() return true end,
         jump = function() return true end,
+        disable_movement = function() end,  -- For input blocking tests
     },
     -- Sylvannas core.quests APIs
     quests = {

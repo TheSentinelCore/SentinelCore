@@ -31,6 +31,14 @@ local function json_decode(str)
     return nil
 end
 
+---URL-encode a query parameter. Spaces become %20; unsafe characters become %XX.
+local function url_encode(str)
+    str = tostring(str or "")
+    return (str:gsub("([^A-Za-z0-9%-_%.~])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end))
+end
+
 -- Negative-cache sentinel: a resolved 404/parse failure returns nil FAST forever after,
 -- instead of re-requesting every tick.
 local NOT_FOUND = "__not_found__"
@@ -203,7 +211,7 @@ function QueryClient:invalidate(prefix)
 end
 
 function QueryClient:search_quests(query)
-    return self:_get("/quests/search?q=" .. tostring(query))
+    return self:_get("/quests/search?q=" .. url_encode(query))
 end
 
 function QueryClient:get_quest(quest_id)
@@ -211,7 +219,7 @@ function QueryClient:get_quest(quest_id)
 end
 
 function QueryClient:search_npcs(query)
-    return self:_get("/npc/search?q=" .. tostring(query))
+    return self:_get("/npc/search?q=" .. url_encode(query))
 end
 
 function QueryClient:get_npc(entry)
@@ -250,6 +258,16 @@ end
 
 function QueryClient:get_quest_objectives(quest_id)
     return self:_get("/quest/" .. tostring(quest_id) .. "/objectives")
+end
+
+---GET /zone/{id}/spawns — real spawn aggregation for a zone.
+function QueryClient:get_zone_spawns(zone_id)
+    return self:_get("/zone/" .. tostring(zone_id) .. "/spawns")
+end
+
+---GET /spawns/density/{zone} — density bands, safe spots, and XP estimates.
+function QueryClient:get_spawn_density(zone_id)
+    return self:_get("/spawns/density/" .. tostring(zone_id))
 end
 
 return QueryClient

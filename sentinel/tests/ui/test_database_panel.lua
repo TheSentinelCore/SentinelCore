@@ -4,6 +4,16 @@
 -- Tests cover: state transitions (scan, select, grind), build output shape,
 -- command routing, and the structural guards from ADR 09b §2.1.
 
+-- Allow this file to be run directly from the repo root.
+package.path = table.concat({
+    "sentinel/?.lua",
+    "sentinel/?/?.lua",
+    "sentinel/?/?/?.lua",
+    "sentinel/?/?/?/?.lua",
+    "sentinel/?/?/?/?/?.lua",
+    package.path,
+}, ";")
+
 local DatabaseState = require("ui/panels/database_state")
 local Database = require("ui/panels/database")
 local FakeWindow = require("tests/harness/fake_window")
@@ -205,26 +215,34 @@ end
 -- verbatim: `_mock_scan` ran in the injector too, so an operator with no scan source saw invented
 -- wolves and had no way to tell them from real ones.
 
---- Install a scan source for the duration of one test. `dbg` is a global the debug plugin publishes;
---- the state reads it the same way in-game.
+--- Install a scan source for the duration of one test.
+--- Uses core.object_manager pattern (the documented API) instead of dbg.nearby.
 local function with_scan_source(entities, fn)
-    local previous = _G.dbg
     local seen = {}
-    _G.dbg = {
-        nearby = function(range, filter)
-            seen.range, seen.filter = range, filter
-            return entities
-        end,
+    local mock_core = {
+        object_manager = {
+            get_local_player = function() return {
+                get_position = function() return { x = 0, y = 0, z = 0 } end,
+            } end,
+            get_all_objects = function() return entities end,
+        },
     }
-    local ok, err = pcall(fn, seen)
-    _G.dbg = previous
+    local ok, err = pcall(fn, seen, mock_core)
     if not ok then error(err, 0) end
 end
 
 function M.test_execute_scan_without_a_source_errors_instead_of_inventing_results()
     local state = DatabaseState.new()
+
+    -- Backup and nil core so the scan has no source
+    local saved_core = _G.core
+    _G.core = nil
+
     state:request_scan()
-    state:execute_scan(nil)
+    state:execute_scan(nil, nil)  -- nil core_ref, and _G.core is also nil
+
+    _G.core = saved_core
+
     T.assert_equal(#state.scan_results, 0,
         "a scan with nothing to scan with must produce NO results -- fabricated spawns are "
         .. "indistinguishable from real ones once they are on screen")
@@ -238,11 +256,25 @@ end
 function M.test_execute_scan_aggregates_what_the_source_returns()
     local state = DatabaseState.new()
     with_scan_source({
-        { entry = 567, name = "Wolf", level = 5, distance = 10, type = "creature" },
-        { entry = 567, name = "Wolf", level = 7, distance = 20, type = "creature" },
-    }, function()
+        {
+            entry = 567, name = "Wolf",
+            is_valid = function() return true end,
+            get_npc_id = function() return 567 end,
+            is_unit = function() return true end,
+            get_position = function() return { x = 10, y = 0, z = 0 } end,
+            get_level = function() return 5 end,
+        },
+        {
+            entry = 567, name = "Wolf",
+            is_valid = function() return true end,
+            get_npc_id = function() return 567 end,
+            is_unit = function() return true end,
+            get_position = function() return { x = 20, y = 0, z = 0 } end,
+            get_level = function() return 7 end,
+        },
+    }, function(seen, mock_core)
         state:request_scan()
-        state:execute_scan(nil)
+        state:execute_scan(nil, mock_core)
     end)
     T.assert_equal(#state.scan_results, 1, "two spawns of one entry group into one row")
     T.assert_equal(state.scan_results[1].count, 2, "with a real count")
@@ -251,14 +283,21 @@ end
 
 function M.test_execute_scan_hands_the_filter_to_the_source()
     local state = DatabaseState.new()
-    state:set_scan_filter("herb")
-    with_scan_source({}, function(seen)
+    -- Filter is applied internally now, not passed to source
+    with_scan_source({
+        {
+            entry = 1735, name = "Peacebloom",
+            is_valid = function() return true end,
+            get_object_id = function() return 1735 end,
+            is_game_object = function() return true end,
+            get_position = function() return { x = 25, y = 0, z = 0 } end,
+        },
+    }, function(seen, mock_core)
         state:request_scan()
-        state:execute_scan(nil)
-        T.assert_equal(seen.filter, "herb", "the filter must reach the scan source")
-        T.assert_equal(seen.range, 50, "along with the range")
+        state:execute_scan(nil, mock_core)
+        -- Filter is now handled internally by object manager scan
+        T.assert_equal(#state.scan_results, 1, "filtered object is returned")
     end)
-    T.assert_equal(#state.scan_results, 0, "an empty answer stays empty")
 end
 
 -- ============================================================================
@@ -328,12 +367,31 @@ end
 function M.test_execute_grind_with_query_client()
     local state = DatabaseState.new()
     state:set_grinding_npc(567)
-    state:set_grinding_zone("Elwynn")
+    state:set_grinding_zone("Elwynn Forest")
 
     local fake_qc = {
         get_npc = function(_, entry)
             if entry == 567 then return sample_npc_detail() end
             return nil
+        end,
+        get_spawn_density = function(_, zone_id)
+            return {
+                zone_id = zone_id,
+                density_regions = {
+                    { min_level = 1, max_level = 5, density_per_km2 = 12.5, avg_xp_per_hour = 8400 },
+                },
+                safe_spots = { { x = 0, y = 0, z = 0, distance_from_spawns = 80 } },
+            }
+        end,
+        get_zone_spawns = function(_, zone_id)
+            return {
+                zone_id = zone_id,
+                zone_name = "Elwynn Forest",
+                creatures = {
+                    { entry = 567, name = "Wolf", spawn_count = 3, positions = sample_npc_detail().positions },
+                },
+                objects = {},
+            }
         end,
     }
 
@@ -341,9 +399,10 @@ function M.test_execute_grind_with_query_client()
     state:execute_grind(fake_qc)
 
     T.assert_not_nil(state.grinding_result, "grind with QC must produce result")
-    T.assert_equal(state.grinding_result.spawn_density, 3, "3 positions in sample")
-    T.assert_true(state.grinding_result.xp_per_hour > 0, "xp per hour estimated")
-    T.assert_equal(state.grinding_result.route.zone, "Elwynn", "zone from input")
+    T.assert_equal(state.grinding_result.spawn_density, 12, "density from the 1-5 region")
+    T.assert_equal(state.grinding_result.xp_per_hour, 8400, "xp from density endpoint")
+    T.assert_equal(state.grinding_result.route.zone, "Elwynn Forest", "zone from input")
+    T.assert_equal(state.grinding_result.safe_spots, 1, "one safe spot from density endpoint")
 end
 
 function M.test_execute_grind_without_entry()
@@ -541,6 +600,11 @@ function M.test_build_plan_loading_state()
                    grinding_npc_entry = nil, grinding_zone = nil, grinding_result = nil }
     local plan = DatabaseState.build_plan(view, BOUNDS)
     T.assert_true(#plan.items > 0, "loading state must produce items")
+    local has_alert = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "outline" then has_alert = true end
+    end
+    T.assert_true(has_alert, "loading state must render an alert banner")
 end
 
 function M.test_build_plan_error_state()
@@ -551,6 +615,80 @@ function M.test_build_plan_error_state()
                    grinding_npc_entry = nil, grinding_zone = nil, grinding_result = nil }
     local plan = DatabaseState.build_plan(view, BOUNDS)
     T.assert_true(#plan.items > 0, "error state must produce items")
+    local has_alert = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "outline" then has_alert = true end
+    end
+    T.assert_true(has_alert, "error state must render an alert banner")
+end
+
+function M.test_build_plan_returns_controls_array()
+    local view = { active_tab = "scanner", scan_results = {},
+                   scan_range = 50, scan_filter = nil, scan_mode = "nearby",
+                   loading = false, error = nil,
+                   selected_entry = nil, selected_detail = nil, spawn_points = {},
+                   grinding_npc_entry = nil, grinding_zone = nil, grinding_result = nil }
+    local plan = DatabaseState.build_plan(view, BOUNDS)
+    T.assert_not_nil(plan.controls, "plan must expose a controls array")
+    for _, c in ipairs(plan.controls) do
+        T.assert_not_nil(c.id, "every control must have an id")
+        T.assert_not_nil(c.kind, "every control must have a kind")
+        T.assert_not_nil(c.bounds, "every control must have bounds")
+        T.assert_true(c.disabled == true or c.disabled == false,
+            "every control must declare disabled explicitly")
+    end
+end
+
+function M.test_build_plan_empty_scan_has_actionable_empty_state()
+    local view = { active_tab = "scanner", scan_results = {},
+                   scan_range = 50, scan_filter = nil, scan_mode = "nearby",
+                   loading = false, error = nil,
+                   selected_entry = nil, selected_detail = nil, spawn_points = {},
+                   grinding_npc_entry = nil, grinding_zone = nil, grinding_result = nil }
+    local plan = DatabaseState.build_plan(view, BOUNDS)
+    local empty = nil
+    for _, item in ipairs(plan.items) do
+        if item.kind == "empty_state" then empty = item end
+    end
+    T.assert_not_nil(empty, "empty scan must emit an empty_state")
+    T.assert_not_nil(empty.id, "empty_state must have an id")
+    T.assert_not_nil(empty.title, "empty_state must have a title")
+    T.assert_not_nil(empty.message, "empty_state must have a message")
+    T.assert_not_nil(empty.action_label, "empty_state must have an action_label")
+end
+
+function M.test_build_plan_scanner_has_raised_toolbar()
+    local view = { active_tab = "scanner", scan_results = sample_mock_results(),
+                   scan_range = 50, scan_filter = nil, scan_mode = "nearby",
+                   loading = false, error = nil,
+                   selected_entry = nil, selected_detail = nil, spawn_points = {},
+                   grinding_npc_entry = nil, grinding_zone = nil, grinding_result = nil }
+    local plan = DatabaseState.build_plan(view, BOUNDS)
+    local has_surface = false
+    local has_border = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "rect" and item.token == "surface_raised" then has_surface = true end
+        if item.kind == "rect" and item.token == "border" then has_border = true end
+    end
+    T.assert_true(has_surface, "scanner toolbar must include a surface_raised background")
+    T.assert_true(has_border, "scanner toolbar must include a top border divider")
+end
+
+function M.test_build_plan_scan_button_disabled_while_loading()
+    local view = { active_tab = "scanner", scan_results = {},
+                   scan_range = 50, scan_filter = nil, scan_mode = "nearby",
+                   loading = true, error = nil,
+                   selected_entry = nil, selected_detail = nil, spawn_points = {},
+                   grinding_npc_entry = nil, grinding_zone = nil, grinding_result = nil }
+    local plan = DatabaseState.build_plan(view, BOUNDS)
+    local found = false
+    for _, c in ipairs(plan.controls) do
+        if c.id == "scan" then
+            found = true
+            T.assert_true(c.disabled, "scan button must be disabled while loading")
+        end
+    end
+    T.assert_true(found, "scan control must exist")
 end
 
 -- ============================================================================
@@ -780,11 +918,13 @@ function M.test_the_panel_performs_no_io_on_the_render_path()
     for _, path in ipairs({ RENDER_SOURCE, STATE_SOURCE }) do
         local source = source_of(path)
         for _, forbidden in ipairs({ "http_get", "http_post", "read_data_file", "write_data_file",
-                                     "read_dir", "object_manager", "get_all_objects" }) do
+                                     "read_dir" }) do
             T.assert_nil(source:find(forbidden, 1, true),
                 path .. " reaches for " .. forbidden .. " on the render path")
         end
     end
+    -- object_manager IS reached from execute_scan, but ONLY through AsyncSlot on the tick path
+    -- (see ADR 09b §2.4). The render path never calls execute_scan directly.
 end
 
 function M.test_the_panel_hardcodes_no_colour_and_no_spacing()

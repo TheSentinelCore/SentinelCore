@@ -73,6 +73,10 @@ skill-obvervations
 # Generated questing goldens (regenerate via import-guides against a live QueryServer)
 SentinelQuesting/.questing/projects/*.json
 !SentinelQuesting/.questing/projects/coverage_report.json
+SentinelQuesting/.questing/campaigns/
+SentinelQuesting/.questing/profiles/
+SentinelQuesting/.questing/projects_old_duplicated/
+SentinelQuesting/.questing/chain.json
 
 # SQLite WAL/SHM side files (QueryServer runtime)
 tbcmangos.sqlite

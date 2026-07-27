@@ -378,3 +378,38 @@ pub struct ZoneSpawns {
     #[serde(default)]
     pub objects: Vec<ZoneObject>,
 }
+
+/// One level-banded density region inside a zone.
+///
+/// The `density_per_km2` figure is computed from the committed spawn→zone index and an area
+/// estimate derived from the spread of matching creature spawns. It is a planning aid, not a
+/// guarantee of in-game spawn density.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DensityRegion {
+    pub min_level: u8,
+    pub max_level: u8,
+    pub density_per_km2: f32,
+    pub avg_xp_per_hour: u32,
+}
+
+/// A coordinate the density endpoint identifies as low-density relative to nearby spawns.
+///
+/// `distance_from_spawns` is the horizontal distance in yards from this point to the nearest
+/// creature spawn considered by the density calculation.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SafeSpot {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub distance_from_spawns: f32,
+}
+
+/// `GET /spawns/density/{zone}` response.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SpawnDensityResponse {
+    pub zone_id: u32,
+    #[serde(default)]
+    pub density_regions: Vec<DensityRegion>,
+    #[serde(default)]
+    pub safe_spots: Vec<SafeSpot>,
+}

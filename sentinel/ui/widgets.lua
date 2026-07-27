@@ -108,6 +108,28 @@ local function centred_y(bounds, role)
     return bounds.y + (bounds.h - Theme.line_height[role]) * 0.5
 end
 
+---Exact text size when the window supports measurement, otherwise the legacy approximation.
+---The Sylvannas API exposes `window:get_text_size(str)` (ui-custom.md §Get Text Size); using it
+---inside a render callback fixes button labels that looked off-centre on the live font.
+---
+---`get_text_size` returns a `vec2` userdata, not a Lua table, so we read `.x`/`.y` through the
+---metatable rather than rejecting non-tables.
+local function measure_text(window, text)
+    text = tostring(text or "")
+    if type(window.get_text_size) == "function" then
+        local ok, size = pcall(window.get_text_size, window, text)
+        if ok and size ~= nil and tonumber(size.x) then
+            return tonumber(size.x), tonumber(size.y)
+        end
+    end
+    return #text * APPROX_CHAR_WIDTH, Theme.line_height.body
+end
+
+local function measure_text_width(window, text)
+    local w, _ = measure_text(window, text)
+    return w
+end
+
 ---The semantic token a `tone` maps to, defaulting to the neutral copy colour.
 local TONE_TOKENS = {
     neutral = "text_secondary", accent = "accent",
@@ -155,8 +177,10 @@ function Widgets.button(window, bounds, opts)
         rounding = Theme.radius.md,
     })
 
-    local label = fit(opts.label, bounds.w - Theme.space.md * 2)
-    local text_x = bounds.x + (bounds.w - #label * APPROX_CHAR_WIDTH) * 0.5
+    -- NO TRUNCATION: the caller must provide sufficient width for the label
+    local label = tostring(opts.label or "")
+    local text_w = measure_text_width(window, label)
+    local text_x = bounds.x + (bounds.w - text_w) * 0.5
     window:render_text(Theme.font.body, v2(text_x, centred_y(bounds, "body")),
         Theme.color[variant.text_token](Theme.interaction[state].text), label)
 
@@ -182,7 +206,8 @@ function Widgets.icon_button(window, bounds, opts)
     })
 
     local glyph = tostring(opts.glyph or "")
-    local x = bounds.x + (bounds.w - #glyph * APPROX_CHAR_WIDTH) * 0.5
+    local glyph_w = measure_text_width(window, glyph)
+    local x = bounds.x + (bounds.w - glyph_w) * 0.5
     window:render_text(Theme.font.icon, v2(x, centred_y(bounds, "body")),
         Theme.color[tone_token(opts.tone, "text_primary")](Theme.interaction[state].text), glyph)
 
@@ -319,8 +344,9 @@ function Widgets.chip(window, bounds, opts)
         rounding = Theme.radius.pill,
     })
 
-    local label = fit(opts.label, bounds.w - Theme.space.md * 2)
-    local x = bounds.x + (bounds.w - #label * APPROX_CHAR_WIDTH) * 0.5
+    local label = tostring(opts.label or "")
+    local label_w = measure_text_width(window, label)
+    local x = bounds.x + (bounds.w - label_w) * 0.5
     window:render_text(Theme.font.caption, v2(x, centred_y(bounds, "caption")),
         Theme.color[tone_token(opts.tone, selected and "text_primary" or "text_secondary")](
             Theme.interaction[state].text),
@@ -752,17 +778,35 @@ function Widgets.text_input(window, bounds, opts)
 
     if clicked then
         model:focus()
+        -- Disable game movement while typing in a custom text field.
+        -- Uses documented API: core.input.disable_movement(is_lock)
+        if type(core) == "table" and type(core.input) == "table"
+           and type(core.input.disable_movement) == "function" then
+            pcall(core.input.disable_movement, true)
+        end
+        -- Block input capture so keystrokes don't reach the game.
+        -- This is the Sylvannas method for preventing WASD/keyboard passthrough
+        -- when a custom text field has focus (see AstroUI.lua:2397).
+        if type(window) == "table" and type(window.block_input_capture) == "function" then
+            pcall(window.block_input_capture, window)
+        end
     elseif model.focused and mouse_clicked_anywhere(window) then
         -- Click-outside blurs (AstroUI.lua:2460-2472). Without it focus was sticky: the guarded
         -- `block_input_capture` below then fired on every frame forever, and WASD stayed dead
         -- until Enter or Escape. `blur` also restores the committed value, so the field never
         -- shows a half-typed string the panel is not acting on.
         model:blur()
+        -- Re-enable game movement when focus leaves the text field.
+        if type(core) == "table" and type(core.input) == "table"
+           and type(core.input.disable_movement) == "function" then
+            pcall(core.input.disable_movement, false)
+        end
     end
     if not model.focused then return nil, state end
 
-    -- Undocumented, so guarded. See the header above.
-    if type(window.block_input_capture) == "function" then
+    -- Block input capture so keystrokes don't reach the game.
+    -- This is called every frame while focused (see AstroUI.lua:2402) to maintain the block.
+    if type(window) == "table" and type(window.block_input_capture) == "function" then
         pcall(window.block_input_capture, window)
     end
 

@@ -406,9 +406,10 @@ function IdePanels.new_explorer(opts)
     return self
 end
 
----Write generated nodes to the open campaign.
+---Write generated nodes (and optional edges) to the open campaign.
 ---@return boolean ok, string reason
-function ExplorerBinding:_commit_nodes(nodes, what)
+function ExplorerBinding:_commit_nodes(nodes, edges, what)
+    edges = edges or {}
     local state = self._state
     if #nodes == 0 then
         state.error = what .. " produced no nodes"
@@ -429,7 +430,7 @@ function ExplorerBinding:_commit_nodes(nodes, what)
 
     -- Contained: a client that raises must surface as a failed write, not take the whole dispatch
     -- down with it. `called` is pcall's own verdict; `wrote` is the client's.
-    local called, wrote, why = pcall(editor.add_nodes, editor, campaign, nodes)
+    local called, wrote, why = pcall(editor.add_nodes, editor, campaign, nodes, edges)
     if not called then
         state.error = what .. " failed: " .. tostring(wrote)
         return false, state.error
@@ -442,7 +443,11 @@ function ExplorerBinding:_commit_nodes(nodes, what)
     end
 
     state.error = nil
-    return true, string.format("%s: %d node(s) added to '%s'", what, #nodes, campaign)
+    local msg = string.format("%s: %d node(s) added to '%s'", what, #nodes, campaign)
+    if #edges > 0 then
+        msg = msg .. " (" .. #edges .. " edge(s))"
+    end
+    return true, msg
 end
 
 ---Access the panel state, exposed so tests can inspect it.
@@ -517,6 +522,9 @@ function ExplorerBinding:spec()
             local state = binding._state
             if command.kind == "select_quest" then
                 state:select(command.id)
+                -- Quest detail is shown in Explorer's split pane, but the selection bus still
+                -- carries the quest id so other consumers (validation, stats, the inspector shell)
+                -- can follow the cursor.
                 publish_selection(ctx, Explorer.id, "quest", command.id)
                 return true
             elseif command.kind == "clear_search" then
@@ -575,9 +583,9 @@ function ExplorerBinding:spec()
                         .. tostring(command.quest_id) .. " have not loaded yet"
                     return false, state.error
                 end
-                local nodes, skipped = ExplorerState.build_quest_subgraph(
+                local nodes, edges, skipped = ExplorerState.build_quest_subgraph(
                     command.quest_id, state.selected_detail, state.objectives)
-                local ok_write, reason = binding:_commit_nodes(nodes, "add to profile")
+                local ok_write, reason = binding:_commit_nodes(nodes, edges, "add to profile")
                 if ok_write and #skipped > 0 then
                     return true, reason .. "; skipped unknown objective kind(s): "
                         .. table.concat(skipped, ", ")
@@ -589,8 +597,8 @@ function ExplorerBinding:spec()
                         .. tostring(command.quest_id) .. " has not loaded yet"
                     return false, state.error
                 end
-                return binding:_commit_nodes(
-                    ExplorerState.build_chain_subgraph(state.chain_data), "add chain")
+                local chain_nodes, chain_edges = ExplorerState.build_chain_subgraph(state.chain_data)
+                return binding:_commit_nodes(chain_nodes, chain_edges, "add chain")
             end
             return false, "unknown explorer command '" .. tostring(command.kind) .. "'"
         end,
@@ -658,7 +666,8 @@ function PropertiesBinding:_save_node_field(field_name, value, error_field)
     intent[field_name] = value
 
     local node_type = (state.node_detail and state.node_detail.type) or "unknown"
-    local node_update = { id = node_id, type = node_type, intent = intent }
+    local node_update = { id = node_id, type = node_type, intent = intent,
+        context = state.node_detail and state.node_detail.context or nil }
 
     local called, wrote, refused = pcall(editor.update_node, editor, campaign, node_id, node_update)
     if not called then
@@ -756,12 +765,12 @@ function PropertiesBinding:spec()
             elseif command.kind == "begin_node_edit" then
                 return state:begin_node_edit(command.field)
             elseif command.kind == "commit_node_edit" then
-                -- The change is applied to the node in hand and REPORTED. Writing it back through
-                -- `PUT /editor/campaigns/{name}/nodes/{id}` is the editor client's job (PR7); this
-                -- binding has no client to write with and does not pretend otherwise.
-                local applied, err = state:commit_node_edit()
+                local applied, err, change = state:commit_node_edit()
                 if not applied then return false, err end
-                return true
+                -- Persist the changed field through the editor client.
+                local ok_write, reason = binding:_save_node_field(change.field, change.value)
+                if not ok_write then return false, reason end
+                return true, "updated " .. change.field
             elseif command.kind == "cancel_node_edit" then
                 state:cancel_node_edit()
                 return true
@@ -902,6 +911,108 @@ function GraphBinding:_write_node(node_type)
     return true, "added " .. info.label .. " to '" .. campaign .. "'"
 end
 
+---Remove a node from the open campaign through the editor.
+---
+---The local state is NOT patched. `DELETE /editor/campaigns/{name}/nodes/{id}` is unreachable from
+---in-game Lua (only GET/POST exist), so this uses the POST alias `/nodes/{id}/remove`.
+---@return boolean handled, string reason
+function GraphBinding:_remove_node(node_id)
+    local state = self._state
+    node_id = tostring(node_id or "")
+    if node_id == "" then
+        state.error = "no node was selected for removal"
+        return true, state.error
+    end
+
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: the node has nowhere to be removed from"
+        return true, state.error
+    end
+
+    local called, wrote, why = pcall(ec.delete_node, ec, campaign, node_id, state.graph_id)
+    if not called then
+        state.error = "remove node failed: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "remove node was refused: " .. tostring(why or "no reason given")
+        return true, state.error
+    end
+
+    state.error = nil
+    state:invalidate_validation()
+    state._slots.campaign:reset()
+    self._reload = true
+    state._dirty = true
+    return true, "removed node from '" .. campaign .. "'"
+end
+
+---Commit the captured waypoint position as a Travel node in the campaign.
+---
+---Like escort recording, the node is written through the editor and the graph is re-read, so the
+---waypoint is editable with the server's UUID instead of a local placeholder id.
+---@return boolean handled, string reason
+function GraphBinding:_commit_waypoint()
+    local state = self._state
+    local pos = state.current_position
+    if not pos then
+        state.error = "no position has been captured"
+        return true, state.error
+    end
+
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: the waypoint has nowhere to go"
+        return true, state.error
+    end
+
+    local dest = string.format("(%.0f, %.0f, %.0f)", pos.x or 0, pos.y or 0, pos.z or 0)
+    local node = {
+        id = "wp_" .. dest,
+        type = "questing.Travel",
+        preview = dest,
+        intent = {
+            destination = dest,
+            x = pos.x or 0,
+            y = pos.y or 0,
+            z = pos.z or 0,
+            tolerance = 5,
+            allow_flight = false,
+            wait_time = 0,
+        },
+    }
+
+    local called, wrote, why = pcall(ec.add_nodes, ec, campaign, { node })
+    if not called then
+        state.error = "commit waypoint failed: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "commit waypoint was refused: " .. tostring(why or "no reason given")
+        return true, state.error
+    end
+
+    state.current_position = nil
+    state.error = nil
+    state:invalidate_validation()
+    self._revalidate = true
+    state._slots.campaign:reset()
+    self._reload = true
+    state._dirty = true
+    return true, "committed waypoint to '" .. campaign .. "'"
+end
+
 ---The player's position from the object manager, or nil. Nil-safe through two pcalls: a raising
 ---object manager is still just no position.
 function GraphBinding:_player_position()
@@ -1029,6 +1140,40 @@ function GraphBinding:_commit_intent()
     self._reload = true
     state._dirty = true
     return true, "wrote " .. editing.field .. " to '" .. campaign .. "'"
+end
+
+---Persist the current graph to the editor and then ask for validation.
+---
+---Save is a synchronous POST; validation is armed for the next tick so the verdict reflects the
+---graph that was just written, not the one in the panel's cache.
+---@return boolean handled, string reason
+function GraphBinding:_save_graph()
+    local state = self._state
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: there is nothing to save"
+        return true, state.error
+    end
+
+    local called, wrote, why = pcall(ec.save_graph, ec, campaign, state.nodes, state.edges)
+    if not called then
+        state.error = "save failed: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "save was refused: " .. tostring(why or "no reason given")
+        return true, state.error
+    end
+
+    state.error = nil
+    state.compile_message = "Campaign saved"
+    -- F19-R1: every save re-validates.
+    return self:_ask_editor("validate")
 end
 
 ---Start a validate or compile. Both are POSTs whose ANSWER is the point, so the dispatch only
@@ -1236,13 +1381,14 @@ function GraphBinding:spec()
                 state:toggle_expand_node(command.node_id)
                 return true
             elseif command.kind == "remove_node" then
-                state:remove_node(command.node_id)
-                return true
+                return binding:_remove_node(command.node_id)
             elseif command.kind == "show_add_node_menu" then
-                -- For v1 the template is a Kill node. It is WRITTEN, not inserted locally: a node
-                -- that appears because the panel assumed the write worked looks exactly like a node
-                -- the editor stored, and that is how the last cycle shipped phantom authoring.
-                return binding:_write_node("questing.Kill")
+                -- Use the active type filter when one is selected, otherwise default to Kill.
+                -- The node is WRITTEN, not inserted locally: a node that appears because the panel
+                -- assumed the write worked looks exactly like a node the editor stored, and that is
+                -- how the last cycle shipped phantom authoring.
+                local node_type = state.filter_type or "questing.Kill"
+                return binding:_write_node(node_type)
             elseif command.kind == "edit_intent" then
                 if not state:begin_edit(command.node_id, command.field) then
                     state.error = "cannot edit " .. tostring(command.field) ..
@@ -1259,8 +1405,7 @@ function GraphBinding:spec()
                 state:toggle_waypoint_mode()
                 return true
             elseif command.kind == "commit_waypoint" then
-                state:commit_waypoint()
-                return true
+                return binding:_commit_waypoint()
             elseif command.kind == "toggle_escort" then
                 -- One switch, two objects: the recorder owns the samples, the state owns what the
                 -- panel paints. They were previously started independently and drifted apart.
@@ -1278,6 +1423,8 @@ function GraphBinding:spec()
             elseif command.kind == "set_filter" then
                 state:set_filter(command.node_type)
                 return true
+            elseif command.kind == "save_graph" then
+                return binding:_save_graph()
             elseif command.kind == "validate_graph" then
                 return binding:_ask_editor("validate")
             elseif command.kind == "compile_graph" then
@@ -1319,12 +1466,13 @@ end
 ---Access the panel state, exposed so tests can inspect it.
 function DatabaseBinding:state() return self._state end
 
----Add a Kill node for one NPC entry into the open campaign.
+---Add a Kill/Collect node for one scanned entry into the open campaign.
 ---
----Mirrors ExplorerBinding:_commit_nodes but for a single NPC entry rather than a subgraph.
----@param entry number the NPC creature_template.entry
+---Mirrors ExplorerBinding:_commit_nodes but for a single NPC/object entry rather than a subgraph.
+---@param entry number the creature_template.entry or gameobject_entry
+---@param kind string|nil "npc" or "object"; nil reads from the current selection
 ---@return boolean ok, string|nil reason
-function DatabaseBinding:_add_kill_node(entry)
+function DatabaseBinding:_add_kill_node(entry, kind)
     local state = self._state
     local editor = self._editor_client
     if not editor or type(editor.add_nodes) ~= "function" then
@@ -1338,11 +1486,22 @@ function DatabaseBinding:_add_kill_node(entry)
         return false, state.error
     end
 
-    local node = {
-        type = "questing.Kill",
-        id = nil,  -- let the editor mint a UUID
-        intent = { creature_entry = tonumber(entry) or 0, count = 1 },
-    }
+    kind = kind or state.selected_kind or "npc"
+    local ref_kind = kind == "object" and "object" or "npc"
+    local node
+    if kind == "object" then
+        node = {
+            type = "questing.Collect",
+            id = nil,
+            intent = { object = { ref = ref_kind .. ":" .. tostring(entry), label = "" }, count = 1 },
+        }
+    else
+        node = {
+            type = "questing.Kill",
+            id = nil,
+            intent = { target = { ref = ref_kind .. ":" .. tostring(entry), label = "" }, count = 1, loot = false, ignore_elites = false },
+        }
+    end
 
     local called, wrote, refused = pcall(editor.add_nodes, editor, campaign, { node })
     if not called then
@@ -1387,10 +1546,10 @@ function DatabaseBinding:spec()
                 mark_query_client_unavailable(state)
             end
 
-            -- Execute pending scan
-            if state._pending_scan then
-                state:execute_scan(qc)
-            end
+-- Execute pending scan (uses core.object_manager, not QueryServer)
+             if state._pending_scan then
+                 state:execute_scan(nil, core)  -- nil query_client, pass core table
+             end
 
             -- Load detail for selected entry
             if state._pending_detail then
@@ -1428,25 +1587,35 @@ function DatabaseBinding:spec()
                 state:request_scan()
                 return true
             elseif command.kind == "select_entry" then
-                state:select_entry(command.entry)
-                publish_selection(ctx, Database.id, "npc", command.entry)
+                -- Row click carries the scanned kind; otherwise fall back to whatever is already selected.
+                local kind = command.entry_kind or state.selected_kind or "npc"
+                state:select_entry(command.entry, kind)
+                publish_selection(ctx, Database.id, state.selected_kind or "npc", command.entry)
                 return true
             elseif command.kind == "view_detail" then
                 -- "View NPC Detail" IS the spec's "Open in NPC Inspector": both land on the same
                 -- selection, and the second one exists only because a row click and a button click
                 -- arrive as different action ids.
-                state:select_entry(command.entry)
-                publish_selection(ctx, Database.id, "npc", command.entry)
+                state:select_entry(command.entry, state.selected_kind)
+                publish_selection(ctx, Database.id, state.selected_kind or "npc", command.entry)
                 return true
             elseif command.kind == "add_as_kill" then
-                return binding:_add_kill_node(command.entry)
+                return binding:_add_kill_node(command.entry, state.selected_kind)
             elseif command.kind == "generate_grind" then
                 state:request_grind()
                 return true
             elseif command.kind == "edit_grind_entry" then
-                return true, "edit_grind_entry (open editor placeholder)"
+                -- The scan results are the real source of NPC entries; clicking the chip adopts the
+                -- currently selected entry into the grinder.
+                if state.selected_entry then
+                    state:set_grinding_npc(state.selected_entry)
+                    return true, "set grind target to NPC #" .. tostring(state.selected_entry)
+                end
+                state.error = "select an entry in the scanner first"
+                return true, state.error
             elseif command.kind == "edit_grind_zone" then
-                return true, "edit_grind_zone (open editor placeholder)"
+                state:cycle_grinding_zone()
+                return true, "grind zone: " .. tostring(state.grinding_zone or "—")
             end
             return false, "unknown database command '" .. tostring(command.kind) .. "'"
         end,
@@ -1489,9 +1658,13 @@ function IdePanels.install(shell, deps)
         local plan = ValidationStatus.build_plan(view, bounds)
         local activated = ValidationStatus.render(window, plan)
         if activated then
-            local _, check_id = activated:match("^validation_expand:(.+)$")
+            local check_id = activated:match("^validation_expand:(.+)$")
             if check_id then
                 validation:toggle_expand(check_id)
+            end
+            local diag_idx = activated:match("^diagnostic_expand:(%d+)$")
+            if diag_idx then
+                validation:toggle_expand_diagnostic(tonumber(diag_idx))
             end
         end
     end)
@@ -1577,7 +1750,11 @@ function IdePanels.install(shell, deps)
             travel:request_estimate()
             return true
         end
-        return explorer_dispatch(command, ctx)
+        local ok, reason = explorer_dispatch(command, ctx)
+        if ok and graph and (command.kind == "add_to_profile" or command.kind == "add_chain") then
+            graph._reload = true
+        end
+        return ok, reason
     end
 
     -- The travel editor's own tick. Wrapped rather than folded into the Explorer binding because
@@ -1600,7 +1777,16 @@ function IdePanels.install(shell, deps)
         campaign = deps.campaign or function() return graph and graph:campaign_name() or nil end,
     }, { __index = deps })
     local properties = IdePanels.new_properties(properties_deps)
-    local ok3, reason3 = shell:register_panel(properties:spec())
+    local properties_spec = properties:spec()
+    local properties_dispatch = properties_spec.dispatch
+    properties_spec.dispatch = function(command, ctx)
+        local ok, reason = properties_dispatch(command, ctx)
+        if ok and command.kind == "commit_node_edit" and graph then
+            graph._reload = true
+        end
+        return ok, reason
+    end
+    local ok3, reason3 = shell:register_panel(properties_spec)
     if not ok3 then return nil, reason3 end
 
     -- The other end of the selection channel. Subscribed exactly once, here, because this is the
@@ -1617,7 +1803,6 @@ function IdePanels.install(shell, deps)
     -- The bus stays content-free (it carries `{kind, id}`), and the node itself arrives through this
     -- separate door. Forward-declared because the subscriber closes over the Graph binding that is
     -- registered a few lines below it.
-    local graph
     shell:on_selection(function(event)
         properties:state():set_context({
             selection_type = event.kind,
@@ -1662,6 +1847,11 @@ function IdePanels.install(shell, deps)
         local changed = state._dirty
         if graph_tick then graph_tick() end
         if not changed then return end
+        -- F19: the authoritative validation verdict lives in GraphState.diagnostics once a
+        -- validate has completed. Feed it to the footer bar so the operator sees real feedback.
+        if state.diagnostics ~= nil then
+            validation:set_diagnostics(state.diagnostics)
+        end
         stats:compute({ name = state.campaign_name, nodes = state.nodes, edges = state.edges })
         travel:load_from_campaign(state.campaign_name, state.nodes, state.edges)
     end

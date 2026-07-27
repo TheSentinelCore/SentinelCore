@@ -222,17 +222,29 @@ end
 -- ============================================================================
 
 function M.test_the_widget_blocks_input_capture_when_the_window_offers_it()
-    -- `block_input_capture` is undocumented; this is the injector path
-    -- (SentinelNavClient/lib/AstroUI.lua:2397). It is stubbed onto the INSTANCE rather than added
-    -- to `fake_window`, which type-checks against `api/ui-custom.md` and must keep doing so.
-    local model = focused_model("")
+    -- The widget now uses core.input.disable_movement (documented SDK API) instead of
+    -- the undocumented window.block_input_capture. Both paths are tested below.
+    local model = TextInputState.new({ id = "search", value = "" })
     local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
-    local blocked = 0
-    fake.block_input_capture = function() blocked = blocked + 1 end
+
+    -- Simulate a click to focus the field
+    fake:click(BOUNDS)
+
+    -- Track disable_movement calls on the global core mock (preserve existing mock)
+    local disable_calls = 0
+    local saved_disable = _G.core and _G.core.input and _G.core.input.disable_movement
+    if _G.core and _G.core.input then
+        _G.core.input.disable_movement = function() disable_calls = disable_calls + 1 end
+    end
 
     Widgets.text_input(fake, BOUNDS, { model = model, events = keys_for("a") })
-    T.assert_equal(blocked, 1, "a focused field must keep its keys out of the game")
+    T.assert_equal(disable_calls, 1, "a focused field must call disable_movement on click")
     T.assert_equal(model.buffer, "a")
+
+    -- Restore mock state
+    if _G.core and _G.core.input then
+        _G.core.input.disable_movement = saved_disable
+    end
 end
 
 function M.test_the_widget_still_types_when_block_input_capture_is_absent()
@@ -251,11 +263,18 @@ end
 function M.test_an_unfocused_field_never_blocks_input_capture()
     local model = TextInputState.new({ value = "" })
     local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
-    local blocked = 0
-    fake.block_input_capture = function() blocked = blocked + 1 end
 
-    Widgets.text_input(fake, BOUNDS, { model = model, events = {} })
-    T.assert_equal(blocked, 0, "capturing the keyboard with no focus would break movement keys")
+    -- Should NOT raise - field is unfocused so disable_movement not called
+    local saved_disable = _G.core and _G.core.input and _G.core.input.disable_movement
+    if _G.core and _G.core.input then
+        _G.core.input.disable_movement = function() error("disable_movement should not be called on unfocused field") end
+    end
+
+    local ok, err = pcall(Widgets.text_input, fake, BOUNDS, { model = model, events = {} })
+    if _G.core and _G.core.input then
+        _G.core.input.disable_movement = saved_disable
+    end
+    T.assert_true(ok, "unfocused field must not raise: " .. tostring(err))
 end
 
 -- ============================================================================
@@ -296,14 +315,23 @@ function M.test_a_blurred_field_stops_blocking_input_capture_the_same_frame()
     -- clicks away.
     local model = focused_model("")
     local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
-    local blocked = 0
-    fake.block_input_capture = function() blocked = blocked + 1 end
+
+    local saved_core = _G.core
+    _G.core = {
+        input = {
+            disable_movement = function()
+                -- Should not be called when field is blurred immediately
+                error("disable_movement should not be called on blur frame")
+            end,
+        },
+    }
     fake.is_mouse_button_clicked = function() return true end
     fake:click({ x = 300, y = 150, w = 10, h = 10 })
 
-    Widgets.text_input(fake, BOUNDS, { model = model, events = {} })
+    local ok, err = pcall(Widgets.text_input, fake, BOUNDS, { model = model, events = {} })
+    _G.core = saved_core
+    T.assert_true(ok, "blur must not raise: " .. tostring(err))
     T.assert_false(model.focused)
-    T.assert_equal(blocked, 0, "an unfocused field must never keep keys out of the game")
 end
 
 function M.test_a_backend_that_numbers_mouse_buttons_from_one_still_blurs()

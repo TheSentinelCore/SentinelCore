@@ -756,6 +756,11 @@ pub fn mount(router: Router<crate::server::AppState>) -> Router<crate::server::A
                 .post(handle_update_node)
                 .delete(handle_remove_node),
         )
+        // Delete is also exposed as POST because the Sylvannas SDK has no DELETE verb.
+        .route(
+            "/editor/campaigns/{name}/nodes/{node_id}/remove",
+            post(handle_remove_node),
+        )
         // Edge mutations
         .route("/editor/campaigns/{name}/edges", post(handle_add_edge))
         .route(
@@ -858,5 +863,52 @@ mod tests {
         // would bury the real diagnostics under every node an author has not finished yet.
         let campaign = campaign_with(vec![Node::new("questing.TurnInQuest", Intent::new())]);
         assert!(validate_campaign(&campaign).is_empty());
+    }
+
+    #[tokio::test]
+    async fn post_remove_node_alias_deletes_node_and_persists() {
+        // The Sylvannas SDK only exposes GET and POST, so the editor exposes a POST alias at
+        // /editor/campaigns/{name}/nodes/{node_id}/remove. This test proves that alias actually
+        // removes the node, updates the in-memory session, and writes the campaign back to disk.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = crate::server::AppState::new(tmp.path().to_path_buf(), tmp.path().to_path_buf());
+
+        let node = quest_node("questing.AcceptQuest", 42);
+        let node_id = node.id;
+        let campaign = campaign_with(vec![node]);
+        let graph_id = campaign.graphs[0].id;
+
+        // Seed both the filesystem and the in-memory store so the handler can load a session.
+        crate::campaign_store::CampaignApi::save(&state.campaigns_dir, &campaign).unwrap();
+        {
+            let mut store = state.campaign_store.write().await;
+            store.insert(
+                "stw".to_string(),
+                CampaignSession {
+                    campaign,
+                    history: CampaignHistory::new(),
+                },
+            );
+        }
+
+        let response = handle_remove_node(
+            State(state.clone()),
+            Path(("stw".to_string(), node_id.to_string())),
+            Json(GraphIdParam { graph_id }),
+        )
+        .await;
+
+        assert!(response.is_ok(), "remove should succeed");
+
+        // In-memory session must reflect the removal immediately.
+        {
+            let store = state.campaign_store.read().await;
+            let session = store.get("stw").unwrap();
+            assert!(session.campaign.graphs[0].nodes.is_empty());
+        }
+
+        // And the on-disk copy must be updated (the Graph panel reloads from disk on refresh).
+        let saved = crate::campaign_store::CampaignApi::load(&state.campaigns_dir, "stw").unwrap();
+        assert!(saved.graphs[0].nodes.is_empty());
     }
 }

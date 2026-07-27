@@ -4,9 +4,13 @@
 -- The panel presents a two-pane layout: a searchable quest list on the left and a
 -- detail view (info, chain, objectives, actions) on the right. All state lives here;
 -- `explorer.lua` only renders whatever `build()` returns.
+--
+-- Design system: shares the Runner panel's vocabulary via `ui/panel_layout.lua`
+-- (spacing, control sizes, empty states, alert banners, accessibility glyphs).
 
 local AsyncSlot = require("ui/async_slot")
 local TextInputState = require("ui/text_input_state")
+local PanelLayout = require("ui/panel_layout")
 
 local ExplorerState = {}
 ExplorerState.__index = ExplorerState
@@ -221,19 +225,71 @@ end
 -- what the objective is counted in, and `source_creatures` rides along on the node so the compiler
 -- can lower it to a Kill-with-loot without a second lookup. Both are authoring nodes a human
 -- reviews before compiling (F3-R4/R6), not runtime actions.
+-- Platform entity reference helper. The resolver reads `{ "ref": "kind:id", "label": "" }`
+-- (ADR 09a §1.2); authoring ids and labels live in `context`, not `intent`.
+local function entity_ref(kind, id, label)
+    id = tonumber(id) or 0
+    return { ref = kind .. ":" .. tostring(id), label = tostring(label or "") }
+end
+
 local OBJECTIVE_NODES = {
     kill = function(ob)
-        return "questing.Kill",
-            { creature_entry = ob.entry, count = ob.count or 1, loot = false, ignore_elites = false }
+        return { {
+            id_suffix = "obj" .. tostring(ob.index or ""),
+            type = "questing.Kill",
+            preview = (ob.name or "Kill") .. " x" .. tostring(ob.count or 1),
+            intent = {
+                target = entity_ref("npc", ob.entry, ob.name),
+                count = ob.count or 1,
+                loot = false,
+                ignore_elites = false,
+            },
+        } }
     end,
     collect = function(ob)
-        return "questing.Loot",
-            { item_id = ob.entry, object_entry = ob.entry, count = ob.count or 1,
-              source_creatures = ob.source_creatures or {} }
+        -- A collect objective counts an ITEM, usually dropped by creatures. The resolver has no
+        -- "kill creature for item" task, so we emit one Kill node per known source creature with
+        -- loot=true. If no sources are known, the objective is skipped rather than pointing the
+        -- resolver at a non-existent object.
+        --
+        -- `source_creatures` arrives from the server as a plain array of entry ids; tests may pass
+        -- richer `{ entry, name }` tables. Both shapes are accepted.
+        local sources = ob.source_creatures or {}
+        if type(sources) ~= "table" or #sources == 0 then
+            return nil, "collect objective has no source creatures"
+        end
+        local out = {}
+        for i, src in ipairs(sources) do
+            local entry, name
+            if type(src) == "table" then
+                entry, name = src.entry, src.name
+            else
+                entry, name = tonumber(src), nil
+            end
+            out[#out + 1] = {
+                id_suffix = "obj" .. tostring(ob.index or "") .. "_s" .. i,
+                type = "questing.Kill",
+                preview = (ob.name or "Collect") .. " x" .. tostring(ob.count or 1) .. " (src " .. i .. ")",
+                intent = {
+                    target = entity_ref("npc", entry, name),
+                    count = ob.count or 1,
+                    loot = true,
+                    ignore_elites = false,
+                },
+            }
+        end
+        return out
     end,
     interact = function(ob)
-        return "questing.Loot",
-            { object_entry = ob.entry, item_id = 0, count = ob.count or 1, source_creatures = {} }
+        return { {
+            id_suffix = "obj" .. tostring(ob.index or ""),
+            type = "questing.Collect",
+            preview = (ob.name or "Interact") .. " x" .. tostring(ob.count or 1),
+            intent = {
+                object = entity_ref("object", ob.entry, ob.name),
+                count = ob.count or 1,
+            },
+        } }
     end,
 }
 
@@ -245,40 +301,63 @@ local OBJECTIVE_NODES = {
 ---@param quest_id number
 ---@param detail table|nil the QuestDetail, for giver/finisher entries
 ---@param objectives table|nil the QuestObjectivesResponse
----@return table nodes, table skipped the objective kinds that had no mapping
+---@return table nodes, table edges, table skipped the objective kinds that had no mapping
 function ExplorerState.build_quest_subgraph(quest_id, detail, objectives)
     quest_id = tonumber(quest_id) or 0
     detail = detail or {}
-    local nodes, skipped = {}, {}
+    local nodes, edges, skipped = {}, {}, {}
     local stem = "q" .. tostring(quest_id) .. "_"
 
+    local accept_id = stem .. "accept"
     nodes[#nodes + 1] = {
-        id = stem .. "accept", type = "questing.AcceptQuest",
+        id = accept_id, type = "questing.AcceptQuest",
         preview = "AcceptQuest " .. tostring(quest_id),
-        intent = { quest_id = quest_id, npc_entry = detail.giver_entry or 0,
-                   auto_complete_dialog = false },
+        intent = {
+            quest = entity_ref("quest", quest_id, detail.title),
+            from = entity_ref("npc", detail.giver_entry or 0),
+            optional = false,
+        },
     }
 
+    local prev_id = accept_id
     for _, ob in ipairs((objectives or {}).objectives or {}) do
         local build = OBJECTIVE_NODES[tostring(ob.kind or "")]
         if build then
-            local node_type, intent = build(ob)
-            nodes[#nodes + 1] = {
-                id = stem .. "obj" .. tostring(ob.index or #nodes),
-                type = node_type, intent = intent,
-                preview = (ob.name or node_type) .. " x" .. tostring(ob.count or 1),
-            }
+            local built, why = build(ob)
+            if built then
+                for _, desc in ipairs(built) do
+                    local node_id = stem .. desc.id_suffix
+                    nodes[#nodes + 1] = {
+                        id = node_id,
+                        type = desc.type,
+                        intent = desc.intent,
+                        preview = desc.preview,
+                    }
+                    edges[#edges + 1] = { from = prev_id, to = node_id }
+                    prev_id = node_id
+                end
+            else
+                skipped[#skipped + 1] = tostring(ob.kind) .. " (" .. tostring(why) .. ")"
+            end
         else
             skipped[#skipped + 1] = tostring(ob.kind)
         end
     end
 
+    local turnin_id = stem .. "turnin"
     nodes[#nodes + 1] = {
-        id = stem .. "turnin", type = "questing.TurnInQuest",
+        id = turnin_id, type = "questing.TurnIn",
         preview = "TurnInQuest " .. tostring(quest_id),
-        intent = { quest_id = quest_id, npc_entry = detail.finisher_entry or 0, choose_reward = 0 },
+        intent = {
+            quest = entity_ref("quest", quest_id, detail.title),
+            to = entity_ref("npc", detail.finisher_entry or 0),
+            choose_reward = 0,
+            optional = false,
+        },
     }
-    return nodes, skipped
+    edges[#edges + 1] = { from = prev_id, to = turnin_id }
+
+    return nodes, edges, skipped
 end
 
 ---Accept/turn-in pairs for every quest in a chain, in prerequisite → follow-up order.
@@ -287,44 +366,53 @@ end
 ---and one fetch per chain member is a request storm the panel would have to hold pending. The
 ---human fills the middles in, which is what F3-R4's "reviewable before commit" is for.
 ---@param chain table|nil the chain response
----@return table nodes
+---@return table nodes, table edges
 function ExplorerState.build_chain_subgraph(chain)
     chain = chain or {}
-    local nodes = {}
+    local nodes, edges = {}, {}
 
+    local prev_id
     local function pair_for(quest_id, title)
         quest_id = tonumber(quest_id)
         if not quest_id then return end
         local stem = "q" .. tostring(quest_id) .. "_"
+        local accept_id = stem .. "accept"
+        local turnin_id = stem .. "turnin"
         nodes[#nodes + 1] = {
-            id = stem .. "accept", type = "questing.AcceptQuest",
+            id = accept_id, type = "questing.AcceptQuest",
             preview = "AcceptQuest " .. (title or tostring(quest_id)),
-            intent = { quest_id = quest_id, npc_entry = 0, auto_complete_dialog = false },
+            intent = {
+                quest = entity_ref("quest", quest_id, title),
+                from = entity_ref("npc", 0),
+                optional = false,
+            },
         }
         nodes[#nodes + 1] = {
-            id = stem .. "turnin", type = "questing.TurnInQuest",
+            id = turnin_id, type = "questing.TurnIn",
             preview = "TurnInQuest " .. (title or tostring(quest_id)),
-            intent = { quest_id = quest_id, npc_entry = 0, choose_reward = 0 },
+            intent = {
+                quest = entity_ref("quest", quest_id, title),
+                to = entity_ref("npc", 0),
+                choose_reward = 0,
+                optional = false,
+            },
         }
+        if prev_id then
+            edges[#edges + 1] = { from = prev_id, to = accept_id }
+        end
+        edges[#edges + 1] = { from = accept_id, to = turnin_id }
+        prev_id = turnin_id
     end
 
     for _, pre in ipairs(chain.prerequisites or {}) do pair_for(pre.quest_id, pre.title) end
     pair_for(chain.quest_id, chain.title)
     for _, fu in ipairs(chain.follow_ups or {}) do pair_for(fu.quest_id, fu.title) end
-    return nodes
+    return nodes, edges
 end
 
 -- ============================================================================
 -- Build plan — produce the draw items for one frame
 -- ============================================================================
-
--- Layout constants mirroring widget conventions
-local CHAR_W = 7
-local PAD = 12
-local CONTROL_H = 28
-local SECTION_H = 16 + 4
-local ROW_H = 14 + 4
-local SMALL_H = 12 + 4
 
 ---The caption line under a result: level, zone and faction from one `QuestSummary`.
 ---
@@ -346,99 +434,108 @@ function ExplorerState.result_meta(result)
         shown(result.level), shown(result.zone), shown(result.faction))
 end
 
----Build the draw plan items from a view and bounds.
+---Build the draw plan items and control registry from a view and bounds.
 ---@param view table from build()
 ---@param bounds table { x, y, w, h }
----@return table { items }
+---@return table { items, controls }
 --
 -- NOTE: This function is NOT in explorer.lua because that module is subject to structural
 -- audits (ADR 09b §2.1) forbidding `if`, `elseif`, and `while` — all decision logic must
 -- live here in the view-model.
 function ExplorerState.build_plan(view, bounds)
     local Theme = require("ui/theme")
-    local items = {}
-    local text_x = bounds.x + PAD
-    local content_w = math.max(0, bounds.w - PAD * 2)
-    local y = bounds.y + PAD
+    local items, controls = {}, {}
 
     local function push(item) items[#items + 1] = item end
-    local function text_item(font, token, str, ox, oy)
-        push({
-            kind = "text", x = text_x + (ox or 0), y = y + (oy or 0),
-            font = Theme.font[font], token = token,
-            alpha = Theme.interaction.resting.text, text = str,
-        })
-    end
+    local function register(item) controls[#controls + 1] = item end
 
-    local function fit(text, width)
-        text = tostring(text or "")
-        local max_chars = math.floor((width or 0) / CHAR_W)
-        if max_chars < 1 then return "" end
-        if #text <= max_chars then return text end
-        if max_chars <= 3 then return text:sub(1, max_chars) end
-        return text:sub(1, max_chars - 3) .. "..."
-    end
+    local text_x = bounds.x + PanelLayout.PAD
+    local content_w = math.max(0, bounds.w - PanelLayout.PAD * 2)
+    local y = bounds.y + PanelLayout.PAD
 
-    local function centred_y(bounds_inner, role)
-        return bounds_inner.y + (bounds_inner.h - Theme.line_height[role]) * 0.5
+    local CAPTION_LINE = Theme.line_height.caption + Theme.space.xs
+    local BODY_LINE = Theme.line_height.body + Theme.space.xs
+
+    local function alert_height(lines)
+        return Theme.space.md * 2 + Theme.line_height.heading + (#lines * Theme.line_height.caption)
     end
 
     -- ---- 1. Toolbar: search + clear + filter chips -------------------------
-    local search_w = content_w * 0.6
+    local toolbar_h = PanelLayout.PAD + PanelLayout.CONTROL_H + Theme.space.sm
+        + PanelLayout.CONTROL_H + Theme.space.md
+    local toolbar_bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = toolbar_h }
 
-    -- A real editable field, not a label in a rounded rect. The rect it replaced looked identical
-    -- and could not be typed into, which is how the search bar shipped inert.
-    push({
+    push({ kind = "rect", bounds = toolbar_bounds, token = "surface_raised",
+           alpha = 255, rounding = Theme.radius.none })
+    push({ kind = "rect",
+           bounds = { x = toolbar_bounds.x, y = toolbar_bounds.y,
+                      w = toolbar_bounds.w, h = Theme.metrics.divider },
+           token = "border", alpha = 255, rounding = Theme.radius.none })
+
+    local search_w = content_w * 0.6
+    local search_item = {
         kind = "text_input", id = "search_input",
-        bounds = { x = text_x, y = y, w = search_w, h = CONTROL_H },
+        bounds = { x = text_x, y = y, w = search_w, h = PanelLayout.CONTROL_H },
         model = view.search_input, placeholder = "Search quests...",
-    })
+        disabled = false,
+    }
+    push(search_item)
+    register(search_item)
 
     local clear_x = text_x + search_w + Theme.space.sm
-    local clear_w = math.max(70, math.min(80, content_w - search_w - Theme.space.sm))
-    push({
+    local clear_w = math.max(PanelLayout.BUTTON_MIN_W, #"Clear" * PanelLayout.CHAR_W + Theme.space.xl)
+    local clear_item = {
         kind = "button", id = "clear_search",
-        bounds = { x = clear_x, y = y, w = clear_w, h = CONTROL_H },
-        label = "Clear", variant = "ghost", disabled = view.search_query == "",
-    })
+        bounds = { x = clear_x, y = y, w = clear_w, h = PanelLayout.CONTROL_H },
+        label = "Clear", variant = "ghost",
+        disabled = view.search_query == "",
+    }
+    push(clear_item)
+    register(clear_item)
 
-    y = y + CONTROL_H + Theme.space.sm
+    y = y + PanelLayout.CONTROL_H + Theme.space.sm
 
     -- Filter row
     local zone_label = view.zone_filter and ("Zone: " .. view.zone_filter) or "All Zones"
-    local zone_w = #zone_label * CHAR_W + Theme.space.xl
-    push({
+    local zone_w = #zone_label * PanelLayout.CHAR_W + Theme.space.xl
+    local zone_item = {
         kind = "chip", id = "zone_filter",
-        bounds = { x = text_x, y = y, w = zone_w, h = CONTROL_H },
+        bounds = { x = text_x, y = y, w = zone_w, h = PanelLayout.CONTROL_H },
         label = zone_label, selected = view.zone_filter ~= nil,
-    })
+        disabled = false,
+    }
+    push(zone_item)
+    register(zone_item)
 
     local lvl_label = "Levels"
     if view.level_min then
         lvl_label = lvl_label .. " " .. tostring(view.level_min)
         if view.level_max then lvl_label = lvl_label .. "-" .. tostring(view.level_max) end
     end
-    local lvl_w = #lvl_label * CHAR_W + Theme.space.xl
-    push({
+    local lvl_w = #lvl_label * PanelLayout.CHAR_W + Theme.space.xl
+    local lvl_item = {
         kind = "chip", id = "level_filter",
-        bounds = { x = text_x + zone_w + Theme.space.sm, y = y, w = lvl_w, h = CONTROL_H },
+        bounds = { x = text_x + zone_w + Theme.space.sm, y = y, w = lvl_w, h = PanelLayout.CONTROL_H },
         label = lvl_label, selected = view.level_min ~= nil,
-    })
+        disabled = false,
+    }
+    push(lvl_item)
+    register(lvl_item)
 
-    y = y + CONTROL_H + Theme.space.md
+    y = y + PanelLayout.CONTROL_H + Theme.space.md
 
     -- ---- 2. Split pane: list (left) | detail (right) -----------------------
     local divider_x = bounds.x + math.floor(bounds.w * 0.55)
-    local list_w = divider_x - bounds.x - PAD
+    local list_w = divider_x - bounds.x - PanelLayout.PAD
     local detail_x = divider_x + Theme.space.sm
-    local detail_w = bounds.x + bounds.w - detail_x - PAD
-    local list_bottom = bounds.y + bounds.h - PAD
+    local detail_w = bounds.x + bounds.w - detail_x - PanelLayout.PAD
+    local list_bottom = bounds.y + bounds.h - PanelLayout.PAD
 
-    -- Divider line
+    -- Vertical divider
     push({
         kind = "rect",
         bounds = { x = divider_x - 1, y = y, w = 2, h = math.max(1, list_bottom - y) },
-        token = "border",
+        token = "border", alpha = 255, rounding = Theme.radius.none,
     })
 
     -- ---- 2a. Left: quest list ------------------------------------------------
@@ -446,47 +543,82 @@ function ExplorerState.build_plan(view, bounds)
     if #visible > 0 then
         local row_y = y
         for _, result in ipairs(visible) do
-            if row_y + ROW_H + 2 > list_bottom then break end
+            if row_y + PanelLayout.ROW_H > list_bottom then break end
             local row_bounds = { x = bounds.x + Theme.space.sm, y = row_y,
-                                w = list_w - Theme.space.sm, h = ROW_H + 4 }
-            push({
+                                w = list_w - Theme.space.sm, h = PanelLayout.ROW_H }
+            local row_item = {
                 kind = "list_row", id = "select_quest:" .. tostring(result.id),
                 bounds = row_bounds, label = result.title or "",
                 secondary = ExplorerState.result_meta(result),
                 selected = view.selected_id == result.id,
-            })
-            row_y = row_y + ROW_H + 2
+                disabled = false,
+            }
+            push(row_item)
+            register(row_item)
+            row_y = row_y + PanelLayout.ROW_H
         end
+    elseif view.loading then
+        for _, item in ipairs(PanelLayout.alert_banner_plan({
+            bounds = { x = bounds.x + Theme.space.sm, y = y,
+                       w = list_w, h = alert_height({}) },
+            token = "info", glyph = PanelLayout.glyph("loading"),
+            title = "Searching...", lines = {},
+        })) do push(item) end
     else
-        local title = view.loading and "Searching..." or "Explore quests"
-        local message = view.loading and "Loading quest data..."
-            or "Use the search bar above to find quests"
-        push({
+        local empty_list_item = {
             kind = "empty_state",
-            bounds = { x = bounds.x + Theme.space.sm, y = y, w = list_w, h = math.max(1, list_bottom - y) },
-            title = title, message = message,
-        })
+            bounds = { x = bounds.x + Theme.space.sm, y = y,
+                       w = list_w, h = math.max(1, list_bottom - y) },
+            id = "zone_filter",
+            title = "Explore quests",
+            message = "Use the search bar above to find quests",
+            action_label = "Filter by zone",
+            disabled = false,
+        }
+        push(empty_list_item)
+        register(empty_list_item)
     end
 
     -- ---- 2b. Right: detail panel --------------------------------------------
+    local dy = y
+
+    local function detail_text(font, token, str, ox, oy)
+        push({
+            kind = "text", x = detail_x + (ox or 0), y = dy + (oy or 0),
+            font = Theme.font[font], token = token,
+            alpha = Theme.interaction.resting.text, text = PanelLayout.fit(str, detail_w - (ox or 0)),
+        })
+    end
+
+    if view.error and view.error ~= "" then
+        local error_lines = { tostring(view.error) }
+        local error_h = alert_height(error_lines)
+        for _, item in ipairs(PanelLayout.alert_banner_plan({
+            bounds = { x = detail_x, y = dy, w = detail_w, h = error_h },
+            token = "danger", glyph = PanelLayout.glyph("error"),
+            title = "Error", lines = error_lines,
+        })) do push(item) end
+        dy = dy + error_h + Theme.space.sm
+    end
+
     if view.selected_detail then
-        local dy = y
         local dw = detail_w
 
-        -- Quest header
-        text_item("title", "text_primary", fit(view.selected_detail.title or "Quest", dw))
+        detail_text("title", "text_primary",
+            PanelLayout.fit(view.selected_detail.title or "Quest", dw), 0, 0)
         dy = dy + Theme.line_height.title + Theme.space.xs
 
         local info = string.format("Level: %s  Min Level: %s",
             tostring(view.selected_detail.level or "?"),
             tostring(view.selected_detail.min_level or "?"))
-        text_item("body", "text_secondary", fit(info, dw), 0, dy - y)
+        detail_text("body", "text_secondary", PanelLayout.fit(info, dw), 0, 0)
         dy = dy + Theme.line_height.body + Theme.space.sm
 
         if view.selected_detail.giver_entry then
-            text_item("caption", "text_muted",
-                fit("Giver: NPC #" .. tostring(view.selected_detail.giver_entry), dw), 0, dy - y)
-            dy = dy + SMALL_H
+            detail_text("caption", "text_muted",
+                PanelLayout.fit("Giver: NPC #" .. tostring(view.selected_detail.giver_entry), dw),
+                0, 0)
+            dy = dy + CAPTION_LINE
         end
 
         dy = dy + Theme.space.sm
@@ -496,27 +628,31 @@ function ExplorerState.build_plan(view, bounds)
         if chain then
             push({
                 kind = "section_header",
-                bounds = { x = detail_x, y = dy, w = dw, h = SECTION_H },
+                bounds = { x = detail_x, y = dy, w = dw, h = PanelLayout.SECTION_H },
                 title = "Chain (" .. tostring(chain.chain_depth) .. " deep)",
             })
-            dy = dy + SECTION_H + Theme.space.xs
+            dy = dy + PanelLayout.SECTION_H + Theme.space.xs
 
             if #chain.prerequisites > 0 then
-                text_item("caption", "text_muted", fit("Prerequisites:", dw), 0, dy - y)
-                dy = dy + SMALL_H
+                detail_text("caption", "text_muted",
+                    PanelLayout.fit("Prerequisites:", dw), 0, 0)
+                dy = dy + CAPTION_LINE
                 for _, pre in ipairs(chain.prerequisites) do
-                    text_item("body", "text_secondary",
-                        fit("  " .. (pre.title or ""), dw - Theme.space.md), Theme.space.md, dy - y)
-                    dy = dy + ROW_H
+                    detail_text("body", "text_secondary",
+                        PanelLayout.fit("  " .. (pre.title or ""), dw - Theme.space.md),
+                        Theme.space.md, 0)
+                    dy = dy + BODY_LINE
                 end
             end
             if #chain.follow_ups > 0 then
-                text_item("caption", "text_muted", fit("Follow-ups:", dw), 0, dy - y)
-                dy = dy + SMALL_H
+                detail_text("caption", "text_muted",
+                    PanelLayout.fit("Follow-ups:", dw), 0, 0)
+                dy = dy + CAPTION_LINE
                 for _, fu in ipairs(chain.follow_ups) do
-                    text_item("body", "text_secondary",
-                        fit("  " .. (fu.title or ""), dw - Theme.space.md), Theme.space.md, dy - y)
-                    dy = dy + ROW_H
+                    detail_text("body", "text_secondary",
+                        PanelLayout.fit("  " .. (fu.title or ""), dw - Theme.space.md),
+                        Theme.space.md, 0)
+                    dy = dy + BODY_LINE
                 end
             end
             dy = dy + Theme.space.sm
@@ -527,64 +663,80 @@ function ExplorerState.build_plan(view, bounds)
         if obs then
             push({
                 kind = "section_header",
-                bounds = { x = detail_x, y = dy, w = dw, h = SECTION_H },
+                bounds = { x = detail_x, y = dy, w = dw, h = PanelLayout.SECTION_H },
                 title = "Objectives",
             })
-            dy = dy + SECTION_H + Theme.space.xs
+            dy = dy + PanelLayout.SECTION_H + Theme.space.xs
             for _, ob in ipairs(obs.items or {}) do
-                local glyph = (ob.kind == "kill") and "K" or (ob.kind == "collect") and "C" or "I"
+                local glyph = PanelLayout.glyph(ob.kind)
                 local label = string.format(" %s  %s (%d)", glyph, ob.name or "", ob.count or 0)
-                text_item("body", "text_primary",
-                    fit(label, dw - Theme.space.sm), Theme.space.sm, dy - y)
-                dy = dy + ROW_H
+                detail_text("body", "text_primary",
+                    PanelLayout.fit(label, dw - Theme.space.sm), Theme.space.sm, 0)
+                dy = dy + BODY_LINE
             end
             dy = dy + Theme.space.sm
         end
 
         -- Actions section
-        dy = math.max(dy, list_bottom - CONTROL_H * 2 - Theme.space.md * 2)
-        if dy + SECTION_H + Theme.space.sm + CONTROL_H <= list_bottom then
+        dy = math.max(dy, list_bottom - PanelLayout.CONTROL_H * 2 - Theme.space.md * 2)
+        if dy + PanelLayout.SECTION_H + Theme.space.sm + PanelLayout.CONTROL_H <= list_bottom then
             push({
                 kind = "section_header",
-                bounds = { x = detail_x, y = dy, w = dw, h = SECTION_H },
+                bounds = { x = detail_x, y = dy, w = dw, h = PanelLayout.SECTION_H },
                 title = "Actions",
             })
-            dy = dy + SECTION_H + Theme.space.sm
+            dy = dy + PanelLayout.SECTION_H + Theme.space.sm
 
             local half_w = (dw - Theme.space.sm) * 0.5
-            push({
+            -- Cap at half the available width so the two side-by-side buttons never overlap.
+            local btn_w = math.min(half_w, math.max(PanelLayout.BUTTON_MIN_W,
+                #"Add to Profile" * PanelLayout.CHAR_W + Theme.space.xl))
+            local add_profile_item = {
                 kind = "button", id = "add_to_profile:" .. tostring(view.selected_id),
-                bounds = { x = detail_x, y = dy, w = half_w, h = CONTROL_H },
+                bounds = { x = detail_x, y = dy, w = btn_w, h = PanelLayout.CONTROL_H },
                 label = "Add to Profile", variant = "primary",
-            })
-            push({
+                disabled = false,
+            }
+            push(add_profile_item)
+            register(add_profile_item)
+
+            local add_chain_item = {
                 kind = "button", id = "add_chain:" .. tostring(view.selected_id),
-                bounds = { x = detail_x + half_w + Theme.space.sm, y = dy, w = half_w, h = CONTROL_H },
+                bounds = { x = detail_x + btn_w + Theme.space.sm, y = dy,
+                           w = btn_w, h = PanelLayout.CONTROL_H },
                 label = "Add Chain", variant = "secondary",
-            })
+                disabled = false,
+            }
+            push(add_chain_item)
+            register(add_chain_item)
         end
     elseif view.loading then
-        text_item("body", "text_muted",
-            fit("Loading...", detail_w), 0,
-            centred_y({ y = y, h = math.max(1, list_bottom - y) }, "body") - y)
-    elseif view.selected_id and not view.selected_detail then
-        text_item("body", "text_muted",
-            fit("Loading quest details...", detail_w), 0,
-            centred_y({ y = y, h = math.max(1, list_bottom - y) }, "body") - y)
+        for _, item in ipairs(PanelLayout.alert_banner_plan({
+            bounds = { x = detail_x, y = dy, w = detail_w, h = alert_height({}) },
+            token = "info", glyph = PanelLayout.glyph("loading"),
+            title = "Loading...", lines = {},
+        })) do push(item) end
+    elseif view.selected_id then
+        for _, item in ipairs(PanelLayout.alert_banner_plan({
+            bounds = { x = detail_x, y = dy, w = detail_w, h = alert_height({}) },
+            token = "info", glyph = PanelLayout.glyph("loading"),
+            title = "Loading quest details...", lines = {},
+        })) do push(item) end
     else
-        text_item("body", "text_muted",
-            fit("Select a quest to view details", detail_w), 0,
-            centred_y({ y = y, h = math.max(1, list_bottom - y) }, "body") - y)
+        local empty_detail_item = {
+            kind = "empty_state",
+            bounds = { x = detail_x, y = dy, w = detail_w, h = math.max(1, list_bottom - dy) },
+            id = "select_quest",
+            title = "No quest selected",
+            message = "Select a quest from the list to view details",
+            action_label = "Select a quest",
+            disabled = true,
+        }
+        push(empty_detail_item)
+        register(empty_detail_item)
     end
 
-    -- Error overlay
-    if view.error and view.error ~= "" then
-        text_item("body", "danger",
-            fit("Error: " .. tostring(view.error), content_w), 0,
-            centred_y({ y = bounds.y, h = bounds.h }, "body") - bounds.y - PAD)
-    end
-
-    return { items = items }
+    return { items = items, controls = controls }
 end
 
 -- ============================================================================

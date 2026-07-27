@@ -398,6 +398,25 @@ pub async fn zone_spawns(
     }
 }
 
+/// `GET /spawns/density/{zone}` — level-banded density and safe spots for a zone.
+///
+/// The spatial values are estimates: this snapshot has no `spawns_creature.zone_id` column, so
+/// positions come from every spawn of the entries known to spawn in the zone. See `crate::db::
+/// spawn_density` for the exact derivation and the documented substitute fields.
+pub async fn spawn_density(
+    Extension(db): Extension<Db>,
+    Path(zone): Path<u32>,
+) -> Result<AxumJson<SpawnDensityResponse>, (StatusCode, Json<serde_json::Value>)> {
+    match db.spawn_density(zone) {
+        Ok(Some(density)) => Ok(AxumJson(density)),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Zone not found: {}", zone) })),
+        )),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })))),
+    }
+}
+
 /// Yards. A grind radius is a walking radius; beyond this the response stops being a plan and
 /// starts being the whole continent.
 const MAX_NEARBY_RADIUS: f32 = 2000.0;
@@ -912,5 +931,45 @@ mod tests {
             .expect_err("an unspawned entry is a 404, not a panic");
         assert_eq!(err.0, StatusCode::NOT_FOUND);
         assert!(err.1 .0.get("error").is_some());
+    }
+
+    #[tokio::test]
+    async fn spawn_density_for_unknown_zone_is_a_not_found() {
+        let err = spawn_density(Extension(open()), Path(99_999_999))
+            .await
+            .expect_err("an unknown zone is a 404");
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn spawn_density_for_elwynn_returns_level_bands() {
+        let resp = spawn_density(Extension(open()), Path(12))
+            .await
+            .expect("Elwynn Forest is a real zone")
+            .0;
+        assert_eq!(resp.zone_id, 12);
+        assert!(
+            !resp.density_regions.is_empty(),
+            "Elwynn must have at least one density region"
+        );
+        // Hogger (level 11 rare) lives in Elwynn and should land in the 11-15 band.
+        let band = resp
+            .density_regions
+            .iter()
+            .find(|b| b.min_level <= 11 && b.max_level >= 11)
+            .expect("Elwynn's 11-15 band should exist");
+        assert!(band.density_per_km2 > 0.0, "density must be positive");
+        assert!(band.avg_xp_per_hour > 0, "xp estimate must be positive");
+    }
+
+    #[tokio::test]
+    async fn spawn_density_safe_spots_are_far_from_spawns() {
+        let resp = spawn_density(Extension(open()), Path(12))
+            .await
+            .expect("Elwynn Forest is a real zone")
+            .0;
+        for spot in &resp.safe_spots {
+            assert!(spot.distance_from_spawns >= 50.0, "safe spot must be at least 50 yards from spawns");
+        }
     }
 }

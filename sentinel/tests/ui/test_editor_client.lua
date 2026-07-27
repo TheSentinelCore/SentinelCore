@@ -347,6 +347,23 @@ function M.test_update_node_posts_because_the_sdk_has_no_put()
     end)
 end
 
+function M.test_delete_node_uses_the_post_alias_because_the_sdk_has_no_delete()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        Mock.set_http_response("/editor/campaigns/stw", campaign("stw", GRAPH_ID, {}))
+        local ec = EditorClient:new("127.0.0.1", 3031)
+        ec:load_campaign("stw")
+
+        local node_id = "33333333-3333-4333-8333-333333333333"
+        local ok, why = ec:delete_node("stw", node_id, GRAPH_ID)
+        T.assert_true(ok, "the delete must reach the wire: " .. tostring(why))
+        T.assert_true(Mock.http.posts[1].url:find("/nodes/" .. node_id .. "/remove", 1, true) ~= nil,
+            "uses the POST alias, got " .. Mock.http.posts[1].url)
+        local body = post_body(1)
+        T.assert_equal(body.graph_id, GRAPH_ID, "names the graph the node lives in")
+    end)
+end
+
 -- ---------------------------------------------------------------------------
 -- The editor refusing, and the editor being down
 -- ---------------------------------------------------------------------------
@@ -452,6 +469,26 @@ function M.test_compile_returns_the_editors_result_object()
         local result = ec:compile("stw")
         T.assert_not_nil(result, "the compile answered")
         T.assert_equal(result.node_count, 4, "carrying the counts the editor computed")
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- QueryClient URL-encoding
+-- ---------------------------------------------------------------------------
+
+function M.test_query_client_url_encodes_search_parameters()
+    local QueryClient = require("shared/query_client")
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        Mock.set_http_response("/quests/search?q=A%20Threat%20Within", { {
+            id = 783, title = "A Threat Within", level = 1,
+        } })
+        local qc = QueryClient:new("127.0.0.1", 3030)
+        local result = qc:search_quests("A Threat Within")
+        T.assert_not_nil(result, "search with spaces must resolve")
+        T.assert_equal(#Mock.http.requests, 1, "one GET issued")
+        T.assert_true(Mock.http.requests[1]:find("q=A%%20Threat%%20Within") ~= nil,
+            "spaces are URL-encoded: " .. tostring(Mock.http.requests[1]))
     end)
 end
 

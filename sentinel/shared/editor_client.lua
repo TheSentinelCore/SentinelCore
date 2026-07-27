@@ -335,14 +335,17 @@ function EditorClient.to_platform_node(node)
     }
 end
 
---- Add nodes to a campaign's first graph, minting that graph when the campaign has none.
+--- Add nodes (and optionally edges) to a campaign's first graph.
 ---
 --- A freshly created campaign has ZERO graphs (`Campaign::new`), and `POST .../nodes` 400s with
---- "Graph not found" against one. That is the whole reason this method reads before it writes.
+--- "Graph not found" against one. When `edges` is supplied and there is no graph yet, the whole
+--- subgraph is written in one `save_graph` call. When a graph already exists, edges are ignored for
+--- now -- wiring them would require a round-trip to map authoring ids to server UUIDs.
 ---@param name string campaign name
 ---@param nodes table array of `{ type, intent, id?, preview? }`
+---@param edges table|nil array of `{ from = authoring_id, to = authoring_id }`
 ---@return boolean ok, string|nil reason
-function EditorClient:add_nodes(name, nodes)
+function EditorClient:add_nodes(name, nodes, edges)
     name = tostring(name or "")
     if name == "" then return false, "add nodes failed: no campaign was named" end
     if type(nodes) ~= "table" or #nodes == 0 then
@@ -350,21 +353,36 @@ function EditorClient:add_nodes(name, nodes)
     end
 
     local platform = {}
+    local authoring_to_uuid = {}
     for i, node in ipairs(nodes) do
         local converted, why = EditorClient.to_platform_node(node)
         if not converted then
             return false, "add nodes failed: node " .. i .. " " .. tostring(why)
         end
         platform[#platform + 1] = converted
+        if node.id then
+            authoring_to_uuid[tostring(node.id)] = converted.id
+        end
     end
 
     local graph_id, blocked = self:graph_id_for(name)
     if blocked then return false, "add nodes failed: " .. blocked end
 
     if not graph_id or graph_id == "" then
-        -- No graph yet: one request that both creates the graph and carries the nodes, rather than
-        -- a create followed by N adds that would each need the id the first one has not returned.
-        return self:save_graph(name, platform, {})
+        -- No graph yet: one request that both creates the graph and carries the nodes AND edges.
+        local platform_edges = {}
+        for _, e in ipairs(edges or {}) do
+            local from_uuid = authoring_to_uuid[tostring(e.from)]
+            local to_uuid = authoring_to_uuid[tostring(e.to)]
+            if from_uuid and to_uuid then
+                platform_edges[#platform_edges + 1] = {
+                    id = EditorClient.uuid4(),
+                    from = from_uuid,
+                    to = to_uuid,
+                }
+            end
+        end
+        return self:save_graph(name, platform, platform_edges)
     end
 
     local what = string.format("add %d node(s) to '%s'", #platform, name)
@@ -433,6 +451,33 @@ function EditorClient:update_node(name, node_id, node, graph_id)
             context = node.context,
         },
     })
+end
+
+--- Remove one node.
+---
+--- Uses the POST alias because the Sylvannas SDK has no DELETE verb.
+---@param name string campaign
+---@param node_id string the server's UUID for the node
+---@param graph_id string the graph the node lives in
+function EditorClient:delete_node(name, node_id, graph_id)
+    name = tostring(name or "")
+    node_id = tostring(node_id or "")
+    if name == "" or node_id == "" then
+        return false, "delete node failed: the campaign and node must both be named"
+    end
+    graph_id = tostring(graph_id or "")
+    if graph_id == "" then
+        local resolved, blocked = self:graph_id_for(name)
+        if blocked then return false, "delete node failed: " .. blocked end
+        if not resolved or resolved == "" then
+            return false, "delete node failed: campaign '" .. name .. "' has no graph"
+        end
+        graph_id = resolved
+    end
+
+    return self:_mutate("delete node " .. node_id,
+        ROOT .. "/" .. name .. "/nodes/" .. node_id .. "/remove",
+        { graph_id = graph_id })
 end
 
 -- ---------------------------------------------------------------------------

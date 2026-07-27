@@ -1188,6 +1188,200 @@ let exists = self.query_map::<bool, _>(
         }))
     }
 
+    /// Density map for a zone.
+    ///
+    /// The committed spawn→zone index only carries entry→count, not GUIDs or positions, so the
+    /// spatial parts of this response are *estimates* derived from every spawn of the entries that
+    /// appear in the zone. This over-approximates a little (an entry may spawn in multiple zones),
+    /// but it is the best spatial signal available without loading 381 MB of terrain tiles per
+    /// request.
+    ///
+    /// `Ok(None)` means the zone id is not in the zone catalog.
+    pub fn spawn_density(&self, zone: u32) -> Result<Option<SpawnDensityResponse>, String> {
+        if !zone_exists(zone) {
+            return Ok(None);
+        }
+
+        let index = spawn_zones::index();
+        let creature_counts = match index.creatures.get(&zone) {
+            Some(c) if !c.is_empty() => c,
+            _ => {
+                return Ok(Some(SpawnDensityResponse {
+                    zone_id: zone,
+                    density_regions: Vec::new(),
+                    safe_spots: Vec::new(),
+                }));
+            }
+        };
+
+        // Pull template facts (levels, XP) for every entry that spawns in the zone.
+        let template_sql = format!(
+            "SELECT Entry, Name, MinLevel, MaxLevel, Rank, Expansion, ExperienceMultiplier \
+             FROM creature_template WHERE Entry IN ({})",
+            id_list(creature_counts.keys().copied())
+        );
+        #[derive(Debug, Clone)]
+        struct Template {
+            entry: u32,
+            min_level: i64,
+            max_level: i64,
+            rank: i64,
+            expansion: i64,
+            xp_mult: f64,
+        }
+        let templates: Vec<Template> = self.query_map::<_, _>(&template_sql, [], |row| {
+            Ok(Template {
+                entry: row.get::<_, i64>(0)? as u32,
+                min_level: row.get(2)?,
+                max_level: row.get(3)?,
+                rank: row.get(4)?,
+                expansion: row.get(5)?,
+                xp_mult: row.get(6)?,
+            })
+        })?;
+
+        // Pull every spawn of those entries. This is the substitute for `spawns_creature.zone_id`,
+        // which is absent from this snapshot.
+        let spawn_sql = format!(
+            "SELECT id, position_x, position_y, position_z FROM creature WHERE id IN ({})",
+            id_list(creature_counts.keys().copied())
+        );
+        #[derive(Debug, Clone, Copy)]
+        struct SpawnPos {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
+        let positions: Vec<SpawnPos> = self.query_map::<_, _>(&spawn_sql, [], |row| {
+            Ok(SpawnPos {
+                x: row.get::<_, f64>(1)? as f32,
+                y: row.get::<_, f64>(2)? as f32,
+                z: row.get::<_, f64>(3)? as f32,
+            })
+        })?;
+
+        // No positions means no spatial estimate is possible; still return level bands with a
+        // default area so the client gets a non-empty contract.
+        if positions.is_empty() {
+            let mut regions: Vec<DensityRegion> = Vec::new();
+            for t in &templates {
+                let level = average_level(t.min_level, t.max_level);
+                let xp = xp_reward(level, t.rank, t.expansion, t.xp_mult);
+                let count = creature_counts.get(&t.entry).copied().unwrap_or(0);
+                regions.push(DensityRegion {
+                    min_level: level,
+                    max_level: level,
+                    density_per_km2: count as f32,
+                    avg_xp_per_hour: xp * count * 30,
+                });
+            }
+            regions.sort_by(|a, b| a.min_level.cmp(&b.min_level).then(a.max_level.cmp(&b.max_level)));
+            return Ok(Some(SpawnDensityResponse {
+                zone_id: zone,
+                density_regions: regions,
+                safe_spots: Vec::new(),
+            }));
+        }
+
+        // Bounding box (horizontal only; z is ignored for area).
+        let (min_x, max_x, min_y, max_y) = positions.iter().fold(
+            (f32::MAX, f32::MIN, f32::MAX, f32::MIN),
+            |(min_x, max_x, min_y, max_y), p| {
+                (min_x.min(p.x), max_x.max(p.x), min_y.min(p.y), max_y.max(p.y))
+            },
+        );
+        let width = (max_x - min_x).max(1.0);
+        let height = (max_y - min_y).max(1.0);
+        let area_km2 = (width * height) / 1_000_000.0;
+
+        // 5-level bands. Assign each template to a band by its average level.
+        #[derive(Debug, Clone, Default)]
+        struct Band {
+            min_level: u8,
+            max_level: u8,
+            spawn_count: u32,
+            total_xp_per_kill: u64,
+        }
+        let mut bands: std::collections::HashMap<u8, Band> = std::collections::HashMap::new();
+        for t in &templates {
+            let level = average_level(t.min_level, t.max_level);
+            let band_min = (level / 5) * 5 + 1;
+            let band_max = band_min + 4;
+            let count = creature_counts.get(&t.entry).copied().unwrap_or(0);
+            let xp = u64::from(xp_reward(level, t.rank, t.expansion, t.xp_mult));
+            let band = bands.entry(band_min).or_insert_with(|| Band {
+                min_level: band_min,
+                max_level: band_max,
+                ..Default::default()
+            });
+            band.spawn_count += count;
+            band.total_xp_per_kill += xp * u64::from(count);
+        }
+
+        let mut density_regions: Vec<DensityRegion> = bands
+            .into_values()
+            .map(|band| {
+                let avg_xp_per_kill = if band.spawn_count == 0 {
+                    0
+                } else {
+                    (band.total_xp_per_kill / u64::from(band.spawn_count)) as u32
+                };
+                // 30 kills/hour is a rough sustained rate for open-world grinding.
+                let avg_xp_per_hour = avg_xp_per_kill * 30;
+                DensityRegion {
+                    min_level: band.min_level,
+                    max_level: band.max_level,
+                    density_per_km2: band.spawn_count as f32 / area_km2,
+                    avg_xp_per_hour,
+                }
+            })
+            .collect();
+        density_regions.sort_by(|a, b| a.min_level.cmp(&b.min_level));
+
+        // Safe spots: sample a grid over the bounding box and keep cells with the fewest spawns.
+        let grid_cells: u32 = 4;
+        let cell_w = width / grid_cells as f32;
+        let cell_h = height / grid_cells as f32;
+        let mut best_spots: Vec<SafeSpot> = Vec::new();
+        for gx in 0..grid_cells {
+            for gy in 0..grid_cells {
+                let cx = min_x + cell_w * (gx as f32 + 0.5);
+                let cy = min_y + cell_h * (gy as f32 + 0.5);
+                let mut nearest = f32::MAX;
+                let mut nearest_z = 0.0f32;
+                for p in &positions {
+                    let dx = p.x - cx;
+                    let dy = p.y - cy;
+                    let d = (dx * dx + dy * dy).sqrt();
+                    if d < nearest {
+                        nearest = d;
+                        nearest_z = p.z;
+                    }
+                }
+                if nearest > 50.0 {
+                    best_spots.push(SafeSpot {
+                        x: cx,
+                        y: cy,
+                        z: nearest_z,
+                        distance_from_spawns: nearest,
+                    });
+                }
+            }
+        }
+        best_spots.sort_by(|a, b| {
+            b.distance_from_spawns
+                .partial_cmp(&a.distance_from_spawns)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        best_spots.truncate(8);
+
+        Ok(Some(SpawnDensityResponse {
+            zone_id: zone,
+            density_regions,
+            safe_spots: best_spots,
+        }))
+    }
+
     /// Federated fuzzy search across npc / quest / item / object / area, ranked exact > prefix >
     /// substring. Backs the IDE's Smart Search, where one term is expected to surface every kind
     /// of entity at once.

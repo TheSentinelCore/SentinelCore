@@ -32,10 +32,16 @@ StatsDashboard.__index = StatsDashboard
 --  * FLIGHTS counts `questing.Flight` nodes — hops TAKEN. `LearnFlightPath` buys a node and takes
 --    no flight, so it is not one.
 
----Distinct-entry accumulator: `add(set, value)` ignores nil, 0 and anything non-numeric, because a
+---Distinct-entry accumulator. `value` may be a raw number OR an entity ref table
+---`{ ref = "kind:id", label = "" }`. Anything nil, 0, or referring to id 0 is ignored, because a
 ---`default_intent` field left at 0 is an unfilled form and not an entity.
 local function add_entry(set, value)
-    local id = tonumber(value)
+    local id
+    if type(value) == "table" and type(value.ref) == "string" then
+        id = tonumber(value.ref:match("[^:]+:(.+)$"))
+    else
+        id = tonumber(value)
+    end
     if not id or id == 0 then return set end
     set[id] = true
     return set
@@ -127,7 +133,7 @@ function StatsDashboard:compute(campaign_plan)
 
         if nt == "questing.Kill" then
             total_kills = total_kills + (node.intent and node.intent.count or 1)
-        elseif nt == "questing.AcceptQuest" or nt == "questing.TurnInQuest" then
+        elseif nt == "questing.AcceptQuest" or nt == "questing.TurnIn" then
             total_quests = total_quests + 1
         end
 
@@ -141,25 +147,27 @@ function StatsDashboard:compute(campaign_plan)
             end
         end
 
-        add_entry(quest_ids, intent.quest_id)
-        add_entry(npc_entries, intent.npc_entry)
+        -- Entity refs are the canonical way to name quests / NPCs / objects (ADR 09a §1.2).
+        add_entry(quest_ids, intent.quest)
+        add_entry(npc_entries, intent.from)
+        add_entry(npc_entries, intent.to)
+        add_entry(npc_entries, intent.target)
         add_entry(npc_entries, intent.innkeeper_entry)
-        add_entry(object_entries, intent.target_entry)
-        add_entry(object_entries, intent.object_entry)
-        if nt == "questing.Vendor" then add_entry(vendor_entries, intent.npc_entry) end
+        add_entry(object_entries, intent.object)
+        if nt == "questing.Vendor" then add_entry(vendor_entries, intent.target) end
         if nt == "questing.Flight" then flight_count = flight_count + 1 end
     end
 
     -- Type breakdown for display
     local type_order = {
         "questing.Travel", "questing.Kill", "questing.AcceptQuest",
-        "questing.TurnInQuest", "questing.Wait", "questing.Vendor",
+        "questing.TurnIn", "questing.Wait", "questing.Vendor",
     }
     local type_labels = {
         ["questing.Travel"] = "Travel",
         ["questing.Kill"] = "Kill",
         ["questing.AcceptQuest"] = "AcceptQ",
-        ["questing.TurnInQuest"] = "TurnInQ",
+        ["questing.TurnIn"] = "TurnInQ",
         ["questing.Wait"] = "Wait",
         ["questing.Vendor"] = "Vendor",
     }

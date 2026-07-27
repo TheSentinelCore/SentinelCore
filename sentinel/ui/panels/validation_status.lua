@@ -41,9 +41,11 @@ function ValidationStatus.new()
 
     return setmetatable({
         checks = checks,
+        diagnostics = nil,   -- editor diagnostics from POST /editor/campaigns/{name}/validate
         active = false,      -- toggle visibility
         summary = "",        -- e.g. "4/6 checks pass"
         expanded_check = nil, -- id of check showing detail dropdown
+        expanded_diagnostic = nil, -- index of expanded diagnostic
         _dirty = true,
     }, ValidationStatus)
 end
@@ -160,16 +162,16 @@ function ValidationStatus:_run_check(check_id, campaign_plan)
 
     elseif check_id == "quests_complete" then
         if #nodes == 0 then return "warn", "No nodes to check" end
-        -- Check that the quest chain terminates in TurnInQuest nodes
+        -- Check that the quest chain terminates in TurnIn nodes
         local has_turnin = false
         local has_accept = false
         for _, node in ipairs(nodes) do
-            if node.type == "questing.TurnInQuest" then has_turnin = true end
+            if node.type == "questing.TurnIn" then has_turnin = true end
             if node.type == "questing.AcceptQuest" then has_accept = true end
         end
         if not has_accept then return "warn", "No AcceptQuest nodes found" end
-        if not has_turnin then return "warn", "No TurnInQuest nodes found — chain may not terminate" end
-        return "pass", "Quest chain terminates in TurnInQuest nodes"
+        if not has_turnin then return "warn", "No TurnIn nodes found — chain may not terminate" end
+        return "pass", "Quest chain terminates in TurnIn nodes"
     end
 
     return "pending", ""
@@ -232,6 +234,39 @@ function ValidationStatus:reset()
     end
     self.summary = ""
     self.expanded_check = nil
+    self.diagnostics = nil
+    self.expanded_diagnostic = nil
+    self._dirty = true
+end
+
+---Consume the editor's diagnostics.
+---
+---`GraphState.diagnostics` is the output of `POST /editor/campaigns/{name}/validate`. The bar
+---displays them as the authoritative validation result and keeps its own structural checks as a
+---fallback when the editor has not been asked yet.
+---@param diagnostics table|nil
+function ValidationStatus:set_diagnostics(diagnostics)
+    local out = {}
+    for _, d in ipairs(type(diagnostics) == "table" and diagnostics or {}) do
+        out[#out + 1] = {
+            severity = tostring(d.severity or "error"),
+            code = tostring(d.code or "UNKNOWN"),
+            message = tostring(d.message or ""),
+            node_id = d.node_id and tostring(d.node_id) or nil,
+        }
+    end
+    self.diagnostics = out
+    self.expanded_diagnostic = nil
+    self._dirty = true
+end
+
+---Toggle expanded detail for a diagnostic.
+function ValidationStatus:toggle_expand_diagnostic(index)
+    if self.expanded_diagnostic == index then
+        self.expanded_diagnostic = nil
+    else
+        self.expanded_diagnostic = index
+    end
     self._dirty = true
 end
 
@@ -251,11 +286,21 @@ function ValidationStatus:build()
         })
     end
 
+    local diag_list = {}
+    for _, d in ipairs(self.diagnostics or {}) do
+        table.insert(diag_list, d)
+    end
+
     return {
         active = self.active,
         checks = check_list,
+        diagnostics = diag_list,
+        diagnostic_summary = #diag_list > 0
+            and string.format("%d editor diagnostic(s)", #diag_list)
+            or nil,
         summary = self.summary,
         expanded_check = self.expanded_check,
+        expanded_diagnostic = self.expanded_diagnostic,
     }
 end
 
@@ -340,6 +385,51 @@ function ValidationStatus.build_plan(view, bounds)
         end
     end
 
+    -- Editor diagnostics from POST /editor/campaigns/{name}/validate
+    if view.diagnostic_summary then
+        cx = cx + Theme.space.sm
+        table.insert(items, {
+            kind = "text", x = cx, y = y + (bounds.h - 16) * 0.5,
+            font = Theme.font.body, token = "text_muted",
+            alpha = Theme.interaction.resting.text,
+            text = view.diagnostic_summary,
+        })
+        cx = cx + #view.diagnostic_summary * CHAR_W + Theme.space.md
+
+        for idx, diag in ipairs(view.diagnostics or {}) do
+            local token = (diag.severity == "error" or diag.severity == "fail") and "danger"
+                          or (diag.severity == "warning" or diag.severity == "warn") and "warning"
+                          or "info"
+            local glyph = token == "danger" and "✗" or token == "warning" and "!" or "i"
+            local label = diag.code
+            local pill_w = 20 + #label * CHAR_W + Theme.space.md
+            table.insert(items, {
+                kind = "validation_diagnostic",
+                id = "diagnostic_expand:" .. tostring(idx),
+                bounds = { x = cx, y = y, w = pill_w, h = bounds.h },
+                glyph = glyph,
+                label = label,
+                token = token,
+                detail = diag.message,
+                node_id = diag.node_id,
+                expanded = (view.expanded_diagnostic == idx),
+            })
+            cx = cx + pill_w + Theme.space.xs
+        end
+
+        if view.expanded_diagnostic then
+            local diag = view.diagnostics[view.expanded_diagnostic]
+            if diag and diag.message ~= "" then
+                table.insert(items, {
+                    kind = "validation_detail",
+                    x = text_x,
+                    y = y + bounds.h,
+                    text = diag.message,
+                })
+            end
+        end
+    end
+
     return { items = items }
 end
 
@@ -411,6 +501,29 @@ local HANDLERS = {
         window:render_text(Theme.font.caption,
             v2(item.x, item.y + 2),
             Theme.color.text_muted(255), item.text)
+        return nil
+    end,
+
+    validation_diagnostic = function(window, item)
+        local mn = v2(item.bounds.x, item.bounds.y)
+        local mx = v2(item.bounds.x + item.bounds.w, item.bounds.y + item.bounds.h)
+        local hovered = window:is_mouse_hovering_rect(mn, mx)
+        local clicked = hovered and window:is_rect_clicked(mn, mx)
+
+        if hovered then
+            window:render_rect_filled(mn, mx, Theme.color.accent_soft(120), Theme.radius.sm)
+        end
+
+        window:render_text(Theme.font.body,
+            v2(item.bounds.x + 4, centred_y(item.bounds, 16)),
+            Theme.color[item.token](255), item.glyph)
+
+        local label = tostring(item.label or "")
+        window:render_text(Theme.font.caption,
+            v2(item.bounds.x + 20, centred_y(item.bounds, 13)),
+            Theme.color[hovered and "text_primary" or "text_secondary"](255), label)
+
+        if clicked then return item.id end
         return nil
     end,
 }

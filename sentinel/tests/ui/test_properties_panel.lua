@@ -256,6 +256,15 @@ function M.test_build_with_inventory_context()
     T.assert_equal(#view.inventory_view.rules, 2)
 end
 
+function M.test_build_with_quest_context()
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "explorer", selection_type = "quest", selection_id = 783 })
+    state.loading = false
+    local view = state:build()
+
+    T.assert_equal(view.context_type, "quest")
+end
+
 function M.test_build_context_type_is_string_or_nil()
     local state = PropertiesState.new()
     T.assert_true(state:build().context_type == nil, "nil when no context")
@@ -378,6 +387,19 @@ function M.test_render_with_object_detail()
     local fake = FakeWindow.new({ size = { x = BOUNDS.w, y = BOUNDS.h } })
     local ok, err = pcall(Properties.render, fake, BOUNDS, view)
     T.assert_true(ok, "render with object detail must not throw: " .. tostring(err))
+end
+
+function M.test_render_with_quest_context()
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "explorer", selection_type = "quest", selection_id = 783 })
+    state.loading = false
+    local view = state:build()
+    local fake = FakeWindow.new({ size = { x = BOUNDS.w, y = BOUNDS.h } })
+    local ok, err = pcall(Properties.render, fake, BOUNDS, view)
+    T.assert_true(ok, "render with quest context must not throw: " .. tostring(err))
+    -- Must render the friendly hint, not the unknown-type fallback.
+    T.assert_true(fake:drew_text("Quest Selected"),
+        "quest context should show the Explorer hint")
 end
 
 function M.test_render_with_condition_tree()
@@ -579,6 +601,95 @@ function M.test_build_plan_for_no_detail()
     local view = { context_type = "npc", npc_view = nil, loading = false }
     local plan = PropertiesState.build_plan(view, BOUNDS)
     T.assert_true(#plan.items > 0, "npc with no detail must produce items (text)")
+end
+
+function M.test_build_plan_exposes_controls_for_every_interactive_item()
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "explorer", selection_type = "npc", selection_id = 823 })
+    state.npc_detail = sample_npc_detail()
+    state.loading = false
+    local plan = PropertiesState.build_plan(state:build(), BOUNDS)
+    T.assert_not_nil(plan.controls, "plan must expose a controls array")
+    local ids = {}
+    for _, c in ipairs(plan.controls) do
+        T.assert_not_nil(c.id, "every control has an id")
+        T.assert_not_nil(c.kind, "every control has a kind")
+        T.assert_not_nil(c.bounds, "every control has bounds")
+        ids[c.id] = true
+    end
+    T.assert_true(ids["npc_tab_info"], "tab chips are controls")
+    T.assert_true(ids["npc_tab_loot"], "tab chips are controls")
+end
+
+function M.test_build_plan_empty_context_is_actionable_empty_state()
+    local view = { context_type = nil, loading = false, error = nil }
+    local plan = PropertiesState.build_plan(view, BOUNDS)
+    local found = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "empty_state" then
+            found = true
+            T.assert_equal(item.id, "no_selection")
+            T.assert_not_nil(item.title)
+            T.assert_not_nil(item.message)
+            T.assert_equal(item.action_label, "Open Database")
+            T.assert_true(item.disabled, "action disabled when nothing can be selected")
+        end
+    end
+    T.assert_true(found, "empty context must emit an empty_state item")
+    T.assert_not_nil(plan.controls, "plan must expose controls")
+end
+
+function M.test_build_plan_error_emits_alert_banner()
+    local view = { context_type = nil, loading = false, error = "server down" }
+    local plan = PropertiesState.build_plan(view, BOUNDS)
+    local has_outline = false
+    local has_text = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "outline" then has_outline = true end
+        if item.kind == "text" and item.text:find("server down", 1, true) then has_text = true end
+    end
+    T.assert_true(has_outline, "error state renders an alert banner outline")
+    T.assert_true(has_text, "error message reaches the banner")
+end
+
+function M.test_build_plan_vendor_rows_are_controls()
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "explorer", selection_type = "vendor", selection_id = 8234 })
+    state.vendor_info = sample_vendor_info()
+    state.loading = false
+    local plan = PropertiesState.build_plan(state:build(), BOUNDS)
+    local ids = {}
+    for _, c in ipairs(plan.controls) do ids[c.id] = c end
+    T.assert_not_nil(ids["vendor_toggle:123"], "vendor rows are interactive controls")
+    T.assert_equal(ids["vendor_toggle:123"].kind, "list_row")
+end
+
+function M.test_build_plan_condition_buttons_disable_when_action_cannot_fire()
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "editor", selection_type = "condition", selection_id = 1 })
+    state.condition_tree = sample_condition_tree()
+    state.loading = false
+    local plan = PropertiesState.build_plan(state:build(), BOUNDS)
+    local by_id = {}
+    for _, c in ipairs(plan.controls) do by_id[c.id] = c end
+    T.assert_not_nil(by_id["add_condition"], "add_condition is a control")
+    T.assert_false(by_id["add_condition"].disabled, "adding into the root group is enabled")
+    T.assert_not_nil(by_id["delete_condition"], "delete_condition is a control")
+    T.assert_false(by_id["delete_condition"].disabled, "deleting the root is enabled")
+end
+
+function M.test_build_plan_inventory_buttons_disable_when_action_cannot_fire()
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "editor", selection_type = "inventory", selection_id = 1 })
+    state.inventory_rules = { { entry = 12345, name = "Wool Cloth", action = "sell" } }
+    state.inventory_default = { sell_grey = true, ignore_white = true }
+    state.loading = false
+    local plan = PropertiesState.build_plan(state:build(), BOUNDS)
+    local by_id = {}
+    for _, c in ipairs(plan.controls) do by_id[c.id] = c end
+    T.assert_not_nil(by_id["add_inventory_rule"], "add_inventory_rule is a control")
+    T.assert_true(by_id["add_inventory_rule"].disabled, "add disabled without an item picker")
+    T.assert_false(by_id["clear_inventory_rules"].disabled, "clear enabled when rules exist")
 end
 
 -- ============================================================================

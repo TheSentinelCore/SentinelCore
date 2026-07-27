@@ -4,6 +4,30 @@
 -- Tests cover: state transitions (campaign, nodes, edges, waypoint, escort), build output
 -- shape, command routing, EscortRecorder lifecycle, and the structural guards from ADR 09b §2.1.
 
+-- When run directly (not via run_offline.lua), provide the same path and minimal mocks the
+-- suite runner normally sets up.
+if arg and arg[0] and arg[0]:find("test_graph_panel%.lua$") then
+    package.path = table.concat({
+        "sentinel/?.lua",
+        "sentinel/?/?.lua",
+        "sentinel/?/?/?.lua",
+        "sentinel/?/?/?/?.lua",
+        "sentinel/?/?/?/?/?.lua",
+        package.path,
+    }, ";")
+
+    _G.core = _G.core or {
+        input = { disable_movement = function() end },
+        time = os.clock,
+        geometry = { distance = function(p1, p2)
+            if not p1 or not p2 then return math.huge end
+            return math.sqrt((p2.x - p1.x)^2 + (p2.y - p1.y)^2 + (p2.z - p1.z)^2)
+        end },
+        read_data_file = function() return nil, "mock" end,
+        write_data_file = function() return true end,
+    }
+end
+
 local GraphState = require("ui/panels/graph_state")
 local Graph = require("ui/panels/graph")
 local EscortRecorder = require("ui/panels/escort_recorder")
@@ -69,10 +93,12 @@ function M.test_node_type_info_returns_valid_types()
     T.assert_true(found_travel, "must include questing.Travel")
 end
 
-function M.test_node_type_color_returns_string()
-    local color = GraphState.node_color("questing.Travel")
-    T.assert_true(type(color) == "string", "color must be a hex string")
-    T.assert_true(color:sub(1, 1) == "#", "color must start with #")
+function M.test_node_type_token_returns_theme_token()
+    local token = GraphState.node_token("questing.Travel")
+    T.assert_equal(type(token), "string", "token must be a string")
+    T.assert_true(token == "info" or token == "success" or token == "warning"
+        or token == "danger" or token == "accent" or token == "text_muted",
+        "token must be a known theme token: " .. tostring(token))
 end
 
 function M.test_node_type_info_returns_nil_for_unknown()
@@ -366,6 +392,7 @@ function M.test_build_plan_with_no_campaign()
     local plan = GraphState.build_plan(view, BOUNDS)
     T.assert_not_nil(plan, "plan must exist")
     T.assert_not_nil(plan.items, "plan must have items")
+    T.assert_not_nil(plan.controls, "plan must expose a controls array")
     T.assert_true(#plan.items > 0, "empty state must produce items")
     -- Should contain an empty_state item
     local has_empty = false
@@ -373,6 +400,14 @@ function M.test_build_plan_with_no_campaign()
         if item.kind == "empty_state" then has_empty = true end
     end
     T.assert_true(has_empty, "no-campaign state must include empty_state item")
+    -- The chooser's interactive pieces are registered as controls.
+    local has_name_input, has_new_campaign = false, false
+    for _, c in ipairs(plan.controls) do
+        if c.id == "campaign_name" then has_name_input = true end
+        if c.id == "new_campaign" then has_new_campaign = true end
+    end
+    T.assert_true(has_name_input, "campaign name input is a control")
+    T.assert_true(has_new_campaign, "new-campaign empty-state action is a control")
 end
 
 function M.test_build_plan_with_loading_state()
@@ -382,6 +417,16 @@ function M.test_build_plan_with_loading_state()
     local plan = GraphState.build_plan(view, BOUNDS)
     T.assert_not_nil(plan)
     T.assert_true(#plan.items > 0, "loading state must produce items")
+    -- Loading is now an alert banner: filled surface, outline, marker, heading text.
+    local has_surface, has_outline, has_text = false, false, false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "rect" and item.token == "surface_overlay" then has_surface = true end
+        if item.kind == "outline" then has_outline = true end
+        if item.kind == "text" and tostring(item.text):find("Loading") then has_text = true end
+    end
+    T.assert_true(has_surface, "loading state must draw a filled alert surface")
+    T.assert_true(has_outline, "loading state must draw an alert outline")
+    T.assert_true(has_text, "loading state must draw a heading")
 end
 
 function M.test_build_plan_with_nodes()
@@ -472,6 +517,67 @@ function M.test_build_plan_with_expanded_node_shows_fields()
         end
     end
     T.assert_true(has_edit, "expanded node must show edit buttons for intent fields")
+end
+
+function M.test_build_plan_exposes_controls_for_every_interactive_item()
+    local state = GraphState.new()
+    state.campaign_name = "test"
+    state.loading = false
+    state.nodes = sample_nodes()
+    state:select_node("n2")
+    state.expanded["n2"] = true
+    local view = state:build()
+    local plan = GraphState.build_plan(view, BOUNDS)
+
+    T.assert_not_nil(plan.controls, "plan must expose controls array")
+    local ids = {}
+    for _, c in ipairs(plan.controls) do
+        T.assert_not_nil(c.id, "every control must have an id")
+        T.assert_not_nil(c.kind, "every control must have a kind")
+        T.assert_not_nil(c.bounds, "every control must have bounds")
+        ids[c.id] = true
+    end
+    T.assert_true(ids["add_node_toggle"], "Add Node is a control")
+    T.assert_true(ids["select_node:n2"], "node rows are controls")
+    T.assert_true(ids["toggle_expand:n2"], "expand button is a control")
+    T.assert_true(ids["remove_node:n2"], "delete button is a control")
+end
+
+function M.test_build_plan_toolbar_has_raised_surface_and_top_border()
+    local state = GraphState.new()
+    state.campaign_name = "test"
+    state.loading = false
+    local view = state:build()
+    local plan = GraphState.build_plan(view, BOUNDS)
+
+    local has_raised, has_border = false, false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "rect" and item.token == "surface_raised" and item.bounds.h == 44 then
+            has_raised = true
+        end
+        if item.kind == "rect" and item.token == "border" and item.bounds.h == 1 then
+            has_border = true
+        end
+    end
+    T.assert_true(has_raised, "main toolbar must have a raised surface background")
+    T.assert_true(has_border, "main toolbar must have a top border divider")
+end
+
+function M.test_build_plan_buttons_are_disabled_when_action_cannot_fire()
+    local state = GraphState.new()
+    state.campaign_name = "test"
+    state.loading = false
+    -- No graph_id, so validate/compile cannot fire.
+    local view = state:build()
+    local plan = GraphState.build_plan(view, BOUNDS)
+
+    local validate_disabled, compile_disabled
+    for _, c in ipairs(plan.controls) do
+        if c.id == "validate" then validate_disabled = c.disabled end
+        if c.id == "compile" then compile_disabled = c.disabled end
+    end
+    T.assert_true(validate_disabled, "validate is disabled without a graph id")
+    T.assert_true(compile_disabled, "compile is disabled without a graph id")
 end
 
 -- ====================================================================
@@ -1002,6 +1108,48 @@ function M.test_node_type_info_fills_all_types()
             nt.type .. " must have default_intent table")
         T.assert_true(next(nt.default_intent) ~= nil,
             nt.type .. " must have at least one default field")
+    end
+end
+
+-- Standalone execution: when this file is run directly (`luajit sentinel/tests/ui/test_graph_panel.lua`),
+-- wire up the same offline environment the suite runner provides and execute just this suite.
+if arg and arg[0] and arg[0]:find("test_graph_panel%.lua$") then
+    package.path = table.concat({
+        "sentinel/?.lua",
+        "sentinel/?/?.lua",
+        "sentinel/?/?/?.lua",
+        "sentinel/?/?/?/?.lua",
+        "sentinel/?/?/?/?/?.lua",
+        package.path,
+    }, ";")
+
+    -- Minimal Sylvannas surface so the panel and its dependencies load without the injector.
+    _G.core = _G.core or {
+        input = { disable_movement = function() end },
+        time = os.clock,
+        geometry = { distance = function(p1, p2)
+            if not p1 or not p2 then return math.huge end
+            return math.sqrt((p2.x - p1.x)^2 + (p2.y - p1.y)^2 + (p2.z - p1.z)^2)
+        end },
+        read_data_file = function() return nil, "mock" end,
+        write_data_file = function() return true end,
+    }
+
+    local SuiteRunner = require("tests/harness/suite_runner")
+    local result = SuiteRunner.run_suite("tests/ui/test_graph_panel", M)
+    local passed, failed = 0, 0
+    for _, case in ipairs(result.cases) do
+        if case.ok then passed = passed + 1; io.write(".")
+        else failed = failed + 1; io.write("F") end
+    end
+    print(string.format("\n%d passed, %d failed", passed, failed))
+    if failed > 0 then
+        for _, case in ipairs(result.cases) do
+            if not case.ok then
+                print(string.format("FAIL %s: %s", case.name, tostring(case.err)))
+            end
+        end
+        os.exit(1)
     end
 end
 
