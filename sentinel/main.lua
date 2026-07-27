@@ -280,9 +280,21 @@ local IdePanels = require("ui/ide_panels")
 local QueryClient = require("shared/query_client")
 local _ide_query_client = QueryClient:new("127.0.0.1", 3030)
 
+-- And ONE EditorClient for the campaign editor at :3031. PR1 deliberately left this line out
+-- rather than pass a `deps.editor_client` that resolved to nil, because a nil-valued dependency is
+-- exactly the silent contract this change exists to remove; `shared/editor_client.lua` did not
+-- exist yet. It does now, so the line lands here, where the host already owns service topology.
+--
+-- A separate client from the one above, not a second port on the same one: the QueryServer serves
+-- static game data that can be cached forever, while the editor's campaigns change because this
+-- client changes them, and the two must not share a cache.
+local EditorClient = require("shared/editor_client")
+local _ide_editor_client = EditorClient:new("127.0.0.1", 3031)
+
 local _ide_bindings = IdePanels.install(_ide_shell, {
     questing = function() return host_verbs.questing() end,
     query_client = _ide_query_client,
+    editor_client = _ide_editor_client,
 })
 if not _ide_bindings then
     log_error("IDE runner panel failed to register; the IDE will open with an empty switcher")

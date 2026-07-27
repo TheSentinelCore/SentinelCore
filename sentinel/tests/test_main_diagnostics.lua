@@ -339,6 +339,23 @@ function M.test_main_installs_the_ide_panels_with_a_live_query_client()
             T.assert_equal(type(qc[verb]), "function",
                 "the client main.lua supplies must answer " .. verb)
         end
+
+        -- PR1 deliberately left this half out rather than pass a dep that resolved to nil, because
+        -- `shared/editor_client.lua` did not exist yet and a nil-valued dependency is the silent
+        -- contract this change removes. It exists now, so the omission is the defect again.
+        local ec = captured.editor_client
+        T.assert_not_nil(ec,
+            "main.lua must pass an editor_client; without one the Graph panel cannot create, open, "
+            .. "validate or compile anything, which is where the last cycle left it")
+        T.assert_equal(type(ec), "table", "a client TABLE, same contract as the query client")
+        T.assert_true(ec ~= qc,
+            "and a SEPARATE client: the QueryServer serves static game data that caches forever, "
+            .. "while the editor's campaigns change because this client changes them")
+        for _, verb in ipairs({ "list_campaigns", "create_campaign", "load_campaign", "save_graph",
+                                "add_nodes", "update_node", "validate", "compile" }) do
+            T.assert_equal(type(ec[verb]), "function",
+                "the editor client main.lua supplies must answer " .. verb)
+        end
     end)
 end
 

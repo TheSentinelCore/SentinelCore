@@ -213,8 +213,10 @@ function M.test_create_then_list_then_open_round_trip()
         -- WHEN the client creates it.
         Mock.set_http_response("/editor/campaigns", { name = "stw", id = "z", updated_at = "",
                                                       node_count = 0, edge_count = 0 }, 201)
-        local ok, why = ec:create_campaign("stw")
-        T.assert_true(ok, "the create must reach the wire: " .. tostring(why))
+        local summary = ec:create_campaign("stw")
+        T.assert_not_nil(summary, "the create must answer, not just leave: the open that follows it "
+            .. "would otherwise race the editor and cache the 404")
+        T.assert_equal(summary.name, "stw", "and the answer is the new CampaignSummary")
         T.assert_equal(Mock.http.posts[1].url, "http://127.0.0.1:3031/editor/campaigns",
             "POST /editor/campaigns -- the name rides in the BODY, which is the route that exists")
         T.assert_equal(post_body(1).name, "stw", "and the body names the campaign")

@@ -14,12 +14,14 @@
 --- (docs/SylvannasAPI/dev/api/core.md:872,932), and BOTH are asynchronous. Nothing here can answer
 --- "the server accepted this" in the frame the request is issued, so the client does not pretend to:
 ---
----   POLLED (`list_campaigns`, `load_campaign`, `validate`, `compile`)
+---   POLLED (`list_campaigns`, `load_campaign`, `create_campaign`, `validate`, `compile`)
 ---     Answer exactly what `QueryClient:_get` answers -- `data` | `(nil, true)` pending |
 ---     `(nil, nil)` resolved-to-nothing -- so a caller can drive them straight through
----     `ui/async_slot.lua` with no adapter.
+---     `ui/async_slot.lua` with no adapter. `create_campaign` is here rather than below because
+---     its answer is what the caller needs next: opening a campaign before the editor finished
+---     creating it reads as a 404, and a 404 is cached.
 ---
----   DISPATCHED (`create_campaign`, `add_nodes`, `update_node`, `save_graph`)
+---   DISPATCHED (`add_nodes`, `update_node`, `save_graph`)
 ---     Answer `true` when the request left, or `(false, reason)` when it could not be built or sent
 ---     AT ALL. A refusal from a live editor arrives ticks later and is queued; the caller drains it
 ---     with `take_error()` on a tick and shows it. A mutation NEVER reports the server's verdict
@@ -48,34 +50,59 @@ local ROOT = "/editor/campaigns"
 -- Ids
 -- ---------------------------------------------------------------------------
 
-local _seeded = false
+local HEX = "0123456789abcdef"
 
---- A v4 UUID string.
+-- A PRIVATE LCG, not `math.random`, for the two reasons `modules/questing/recorder.lua` already
+-- writes down and this file has to obey for the same stack:
+--   1. LuaJIT's global generator is unseeded, so every session would mint the SAME id sequence and
+--      two campaigns authored on two days would collide on ids that must never be reused.
+--   2. Seeding the global generator to fix (1) silently changes the draws every other module and
+--      every offline suite gets -- a very wide blast radius for an id helper.
+-- Uniqueness and opacity are all these ids need; they are not secrets.
+local rng_state = nil
+
+local function next_draw(modulo)
+    if not rng_state then
+        local seconds = 0
+        if type(core) == "table" and type(core.time) == "function" then
+            local ok, t = pcall(core.time)
+            if ok then seconds = tonumber(t) or 0 end
+        end
+        if seconds == 0 and type(os) == "table" and os.time then seconds = os.time() end
+        rng_state = (math.floor(seconds * 1000) % 2147483647) + 1
+    end
+    rng_state = (1103515245 * rng_state + 12345) % 2147483648
+    -- Middle bits: an LCG's low bits cycle with a very short period.
+    return (math.floor(rng_state / 65536) % modulo) + 1
+end
+
+local function hex_digits(count)
+    local out = {}
+    for i = 1, count do
+        local pick = next_draw(16)
+        out[i] = HEX:sub(pick, pick)
+    end
+    return table.concat(out)
+end
+
+--- A v4-shaped UUID string.
 ---
 --- `platform::Node.id`, `Graph.id` and `Edge.id` are `Uuid`, not strings, so a node carrying the
 --- Explorer's authoring id ("q1234_accept") is rejected by serde with a 400 the operator would read
 --- as "the editor is broken". The authoring id is not thrown away -- it rides along in the node's
 --- `context`, the field the platform model keeps precisely for provenance it must not interpret.
 function EditorClient.uuid4()
-    if not _seeded then
-        _seeded = true
-        local seed = 0
-        if type(core) == "table" and type(core.time) == "function" then
-            local ok, t = pcall(core.time)
-            if ok then seed = tonumber(t) or 0 end
-        end
-        if seed == 0 then seed = tonumber(tostring(os.time())) or 1 end
-        math.randomseed(seed)
-    end
-    local function hex(n)
-        local out = {}
-        for _ = 1, n do out[#out + 1] = string.format("%x", math.random(0, 15)) end
-        return table.concat(out)
-    end
-    -- Version 4, variant 10xx -- the bits `Uuid::parse_str` will not complain about and every other
-    -- tool in the stack expects to see.
-    return string.format("%s-%s-4%s-%s%s-%s",
-        hex(8), hex(4), hex(3), string.format("%x", math.random(8, 11)), hex(3), hex(12))
+    -- One draw used for both bounds: two independent draws produce a slice of the wrong length
+    -- (or an empty one), which silently emits a malformed uuid nobody validates downstream.
+    local variant_index = next_draw(4)
+    local variant = ("89ab"):sub(variant_index, variant_index)
+    return table.concat({
+        hex_digits(8), "-",
+        hex_digits(4), "-",
+        "4" .. hex_digits(3), "-",
+        variant .. hex_digits(3), "-",
+        hex_digits(12),
+    })
 end
 
 -- ---------------------------------------------------------------------------
@@ -162,8 +189,11 @@ end
 ---
 --- `QueryClient:_get` cannot be reused here: it caches by path, and a POST's answer depends on the
 --- body it carried. This keeps its own one-slot-per-key state instead.
+---@param invalidates string|nil a cache prefix to drop once the answer is known, for the asks that
+---       also CHANGE something (create). Dropped on resolution rather than on dispatch so a poll
+---       that is already in flight is not abandoned for an answer that has not arrived.
 ---@return any data, boolean|nil pending
-function EditorClient:_ask(key, path, payload)
+function EditorClient:_ask(key, path, payload, invalidates)
     local slot = self._posts[key]
     if slot and slot.done then
         return slot.value
@@ -190,6 +220,7 @@ function EditorClient:_ask(key, path, payload)
             slot.value = nil
             return
         end
+        if invalidates then client._qc:invalidate(invalidates) end
         if type(response) ~= "string" or response == "" then
             -- A 2xx with no body is a real answer: "nothing to report".
             slot.value = {}
@@ -253,14 +284,29 @@ end
 -- Writes
 -- ---------------------------------------------------------------------------
 
---- `POST /editor/campaigns` with `{name}`.
+--- `POST /editor/campaigns` with `{name}` -> the new `CampaignSummary`.
 ---
 --- NOTE the shape: the spec described `POST /editor/campaigns/{name}`, but the mounted route takes
 --- the name in the BODY (`campaign_handlers.rs::mount`). This client speaks the route that exists.
+---
+--- POLLED rather than dispatched, unlike the other writes, because its answer is the thing the
+--- caller needs next: opening the campaign before the editor has finished creating it reads as a
+--- 404, and a 404 is cached. Waiting for the 201 removes the race instead of racing it.
+---@return table|nil summary, boolean|nil pending
 function EditorClient:create_campaign(name)
     name = tostring(name or "")
-    if name == "" then return false, "create campaign failed: a campaign needs a name" end
-    return self:_mutate("create campaign '" .. name .. "'", ROOT, { name = name })
+    if name == "" then return nil end
+    return self:_ask(EditorClient.create_key(name), ROOT, { name = name }, ROOT)
+end
+
+---The `_ask` key `create_campaign` stores its answer under.
+function EditorClient.create_key(name)
+    return "create campaign '" .. tostring(name or "") .. "'"
+end
+
+---Drop a create's remembered answer, so a caller never has to know the key's spelling.
+function EditorClient:forget_create(name)
+    self:forget(EditorClient.create_key(name))
 end
 
 --- Convert one authoring node descriptor into the platform `Node` the editor deserializes.
