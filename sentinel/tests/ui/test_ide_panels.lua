@@ -18,6 +18,7 @@ local Shell = require("ui/shell")
 local IdePanels = require("ui/ide_panels")
 local RunnerPanelState = require("ui/panels/runner_panel_state")
 local RunnerState = require("modules/questing/runner_state")
+local GraphState = require("ui/panels/graph_state")
 local FakeWindow = require("tests/harness/fake_window")
 local T = require("tests/test_util")
 
@@ -1156,6 +1157,146 @@ function M.test_an_editor_refusal_that_arrives_late_still_reaches_the_panel()
     T.assert_true(tostring(state.error):find("409", 1, true) ~= nil,
         "a mutation can only report that its request LEFT, so the server's verdict has to surface "
         .. "on a later tick or it never surfaces at all: " .. tostring(state.error))
+end
+
+-- ---- Validate / compile (spec: Validate and Compile as Invoked from Graph) --
+
+local TURNIN_ID = "bbbbbbbb-0000-4000-8000-000000000009"
+
+--- The campaign the spec's scenario names: TurnInQuest(9) with no AcceptQuest(9).
+local function unmatched_turnin_campaign()
+    return editor_campaign_doc("stw", "graph-1", {
+        { id = TURNIN_ID, type = "questing.TurnInQuest", intent = { quest_id = 9 } },
+    })
+end
+
+local function validating_graph(diagnostics, compile_answer)
+    local editor = fake_editor({ campaign = unmatched_turnin_campaign() })
+    editor.validated, editor.compiled, editor.forgotten_keys = 0, 0, {}
+    function editor.validate(_, name)
+        editor.validated = editor.validated + 1
+        editor.validated_name = name
+        return diagnostics
+    end
+    function editor.compile(_, name)
+        editor.compiled = editor.compiled + 1
+        return compile_answer
+    end
+    function editor.forget(_, key) editor.forgotten_keys[#editor.forgotten_keys + 1] = key end
+
+    local binding, spec, state = graph_with(editor)
+    spec.dispatch({ kind = "open_campaign", name = "stw" }, nil)
+    spec.on_tick()
+    return binding, spec, state, editor
+end
+
+function M.test_validate_surfaces_the_diagnostic_and_clicking_it_selects_the_node()
+    -- SPEC: TurnInQuest(9) with no AcceptQuest(9) shows MISSING_ACCEPT naming the node, and
+    -- clicking it selects that node. Both verbs used to answer "(not yet implemented)".
+    local _, spec, state, editor = validating_graph({
+        { severity = "error", code = "MISSING_ACCEPT",
+          message = "TurnInQuest(9) has no AcceptQuest(9) in graph 'main'", node_id = TURNIN_ID },
+    })
+
+    spec.dispatch({ kind = "validate_graph" }, nil)
+    spec.on_tick()
+    T.assert_equal(editor.validated, 1, "POST .../validate went out")
+    T.assert_equal(editor.validated_name, "stw", "for the open campaign")
+    T.assert_equal(#state.diagnostics, 1, "and its answer is on the state")
+    T.assert_equal(state.diagnostics[1].code, "MISSING_ACCEPT", "with the code")
+
+    -- It renders as a row an operator can hit.
+    local plan = GraphState.build_plan(state:build(), { x = 0, y = 0, w = 900, h = 600 })
+    local row = nil
+    for _, item in ipairs(plan.items) do
+        if item.id == "diagnostic:1" then row = item end
+    end
+    T.assert_not_nil(row, "the diagnostic must be in the validation bar, not only on the state")
+    T.assert_true(row.label:find("MISSING_ACCEPT", 1, true) ~= nil, row.label)
+
+    local command = GraphState.reduce("diagnostic:1")
+    T.assert_equal(command.kind, "select_diagnostic", "clicking it is a command")
+    spec.dispatch(command, nil)
+    T.assert_equal(state.selected_node, TURNIN_ID,
+        "which selects the node the editor blamed -- a diagnostic that names a node and does not "
+        .. "go to it is a label, not a link")
+end
+
+function M.test_a_clean_validate_is_a_different_answer_from_never_having_validated()
+    local _, spec, state = validating_graph({})
+    T.assert_nil(state.diagnostics, "nothing has been validated yet")
+
+    spec.dispatch({ kind = "validate_graph" }, nil)
+    spec.on_tick()
+    T.assert_not_nil(state.diagnostics, "now it has")
+    T.assert_equal(#state.diagnostics, 0, "and the editor found nothing wrong")
+
+    local plan = GraphState.build_plan(state:build(), { x = 0, y = 0, w = 900, h = 600 })
+    local said = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "text" and tostring(item.text):find("Validation passed", 1, true) then
+            said = true
+        end
+    end
+    T.assert_true(said, "and it says so, rather than looking identical to not having asked")
+end
+
+function M.test_validating_twice_asks_twice()
+    local _, spec, _, editor = validating_graph({})
+
+    spec.dispatch({ kind = "validate_graph" }, nil)
+    spec.on_tick()
+    spec.dispatch({ kind = "validate_graph" }, nil)
+    spec.on_tick()
+    T.assert_equal(editor.validated, 2,
+        "validate is an ACTION: after an edit, the second click must reach the server rather than "
+        .. "replay the verdict from before it")
+    T.assert_true(#editor.forgotten_keys >= 2, "which means the remembered answer is dropped first")
+end
+
+function M.test_compile_reports_what_the_editor_actually_said()
+    local _, spec, state, editor = validating_graph({}, {
+        campaign_name = "stw", node_count = 1,
+        message = "Campaign compile — full pipeline available in a later phase",
+    })
+
+    spec.dispatch({ kind = "compile_graph" }, nil)
+    spec.on_tick()
+    T.assert_equal(editor.compiled, 1, "POST .../compile went out")
+    T.assert_true(tostring(state.compile_message):find("later phase", 1, true) ~= nil,
+        "and the panel repeats the editor's own words rather than claiming a build happened: "
+        .. tostring(state.compile_message))
+end
+
+function M.test_a_write_clears_the_previous_verdict_and_re_validates()
+    -- F19-R1: validate runs on every save. The old verdict must go FIRST -- a clean bill left over
+    -- a graph that has changed since is worse than no verdict, because it is believed.
+    local _, spec, state, editor = validating_graph({
+        { severity = "error", code = "MISSING_ACCEPT", message = "x", node_id = TURNIN_ID },
+    })
+    spec.dispatch({ kind = "validate_graph" }, nil)
+    spec.on_tick()
+    T.assert_equal(#state.diagnostics, 1, "a verdict is on screen")
+
+    spec.dispatch({ kind = "show_add_node_menu" }, nil)
+    T.assert_nil(state.diagnostics, "the write drops it immediately")
+
+    spec.on_tick()   -- the graph comes back
+    spec.on_tick()   -- and the re-validate armed by the write resolves
+    T.assert_equal(editor.validated, 2, "the save re-validated without being asked")
+end
+
+function M.test_validate_with_no_campaign_open_is_refused_not_sent()
+    local editor = fake_editor({ campaigns = {} })
+    editor.validated = 0
+    function editor.validate() editor.validated = editor.validated + 1 return {} end
+    local _, spec, state = graph_with(editor)
+
+    spec.dispatch({ kind = "validate_graph" }, nil)
+    spec.on_tick()
+    T.assert_equal(editor.validated, 0, "there is nothing to validate")
+    T.assert_true(tostring(state.error):find("nothing to validate", 1, true) ~= nil,
+        tostring(state.error))
 end
 
 function M.test_no_authoring_command_still_answers_not_yet_implemented()

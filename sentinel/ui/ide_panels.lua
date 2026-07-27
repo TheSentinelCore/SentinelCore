@@ -765,10 +765,71 @@ function GraphBinding:_write_node(node_type)
     end
 
     state.error = nil
+    -- Yesterday's clean bill over a graph that has changed since is worse than no verdict at all,
+    -- because it is believed.
+    state:invalidate_validation()
+    -- F19-R1: every save re-validates. Armed rather than run, because the graph has to come back
+    -- from the editor first -- validating the copy the write just replaced answers about the wrong
+    -- document.
+    self._revalidate = true
     -- The graph on screen is the editor's, so re-read it rather than patching the local copy.
     state._slots.campaign:reset()
     state._dirty = true
     return true, "added " .. info.label .. " to '" .. campaign .. "'"
+end
+
+---Start a validate or compile. Both are POSTs whose ANSWER is the point, so the dispatch only
+---ARMS them and the tick collects the answer through a slot.
+---@param which string "validate" | "compile"
+---@return boolean handled, string reason
+function GraphBinding:_ask_editor(which)
+    local state = self._state
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: there is nothing to " .. which
+        return true, state.error
+    end
+
+    -- `forget` first, always. Validate and compile are ACTIONS, and a remembered answer would
+    -- replay the verdict from before the edit that prompted the second click.
+    if type(ec.forget) == "function" then ec:forget(which .. " '" .. campaign .. "'") end
+    state._slots[which]:reset()
+    self._asking = which
+    state.error = nil
+    state._dirty = true
+    return true, which .. " '" .. campaign .. "'"
+end
+
+---Poll a validate or compile that a dispatch armed. TICK CONTEXT.
+---@return boolean handled whether this owned the tick
+function GraphBinding:_poll_ask(ec)
+    local which = self._asking
+    if not which then return false end
+    local state = self._state
+    local campaign = self:campaign_name()
+    if not campaign then
+        self._asking = nil
+        return false
+    end
+
+    local status, answer = state._slots[which]:poll(function() return ec[which](ec, campaign) end)
+    if status == "pending" then return true end
+    self._asking = nil
+    if status ~= "ok" then return true end
+
+    if which == "validate" then
+        state:set_diagnostics(answer)
+    else
+        -- The editor's compile is still a summary rather than a profile, so the panel reports what
+        -- it actually said instead of claiming a build happened.
+        state.compile_message = tostring((answer or {}).message or "compiled")
+    end
+    return true
 end
 
 ---Surface refusals the editor sent AFTER the write that caused them had already returned.
@@ -851,12 +912,20 @@ function GraphBinding:spec()
                 return
             end
 
+            if binding:_poll_ask(ec) then return end
+
             if state.campaign_name and state.campaign_name ~= "" then
                 local name = state.campaign_name
                 local status, loaded = state._slots.campaign:poll(function()
                     return ec:load_campaign(name)
                 end)
-                if status == "ok" then state:apply_campaign(loaded) end
+                if status == "ok" then
+                    state:apply_campaign(loaded)
+                    if binding._revalidate then
+                        binding._revalidate = nil
+                        binding:_ask_editor("validate")
+                    end
+                end
                 return
             end
 
@@ -940,9 +1009,16 @@ function GraphBinding:spec()
                 state:set_filter(command.node_type)
                 return true
             elseif command.kind == "validate_graph" then
-                return true, "validate_graph (not yet implemented)"
+                return binding:_ask_editor("validate")
             elseif command.kind == "compile_graph" then
-                return true, "compile_graph (not yet implemented)"
+                return binding:_ask_editor("compile")
+            elseif command.kind == "select_diagnostic" then
+                -- A diagnostic that blames no node is still readable; it just does not navigate.
+                local node_id = state:diagnostic_node(command.index)
+                if not node_id then return true, "that diagnostic names no node" end
+                state:select_node(node_id)
+                publish_selection(ctx, Graph.id, "node", node_id)
+                return true, "selected " .. node_id
             end
             return false, "unknown graph command '" .. tostring(command.kind) .. "'"
         end,

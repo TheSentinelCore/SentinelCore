@@ -124,6 +124,11 @@ function GraphState.new(opts)
         -- Filters
         filter_type = nil,
 
+        -- Validation (F19). `nil` and `{}` are different answers: nothing has been validated yet
+        -- versus the editor found nothing wrong, and an operator acts differently on each.
+        diagnostics = nil,
+        compile_message = nil,
+
         -- Loading / error
         loading = false,
         error = nil,
@@ -143,6 +148,8 @@ function GraphState.new(opts)
         list = AsyncSlot.new({ label = "campaign list", owner = state }),
         campaign = AsyncSlot.new({ label = "campaign", owner = state }),
         create = AsyncSlot.new({ label = "create campaign", owner = state }),
+        validate = AsyncSlot.new({ label = "validate", owner = state }),
+        compile = AsyncSlot.new({ label = "compile", owner = state }),
     }
     return state
 end
@@ -189,6 +196,8 @@ function GraphState:set_campaign(name)
     self.expanded = {}
     self.error = nil
     self.loading = true
+    -- A verdict about the campaign being left behind says nothing about the one being opened.
+    self:invalidate_validation()
     -- The fetch already in flight is for the PREVIOUS campaign; its tick count would otherwise
     -- expire the one this open is about to start.
     if self._slots then self._slots.campaign:reset() end
@@ -250,6 +259,39 @@ function GraphState:apply_campaign(campaign)
     self.selected_edge = nil
     self.loading = false
     return true
+end
+
+---The editor's answer to `POST .../validate`.
+---
+---Called BY the tick, so it does not re-arm `_dirty` for the same reason `apply_campaign` does not.
+function GraphState:set_diagnostics(list)
+    local out = {}
+    for _, d in ipairs(type(list) == "table" and list or {}) do
+        out[#out + 1] = {
+            severity = tostring(d.severity or "error"),
+            code = tostring(d.code or "UNKNOWN"),
+            message = tostring(d.message or ""),
+            -- Absent rather than empty-string: a diagnostic that blames no node must not produce a
+            -- control that navigates nowhere.
+            node_id = d.node_id and tostring(d.node_id) or nil,
+        }
+    end
+    self.diagnostics = out
+end
+
+---The node a diagnostic blames, or nil when it blames none.
+function GraphState:diagnostic_node(index)
+    local d = (self.diagnostics or {})[tonumber(index) or 0]
+    return d and d.node_id or nil
+end
+
+---A validate or compile answer no longer describes the graph on screen.
+---
+---Called by every mutation: showing yesterday's clean bill over a graph that has changed since is
+---worse than showing nothing, because it is believed.
+function GraphState:invalidate_validation()
+    self.diagnostics = nil
+    self.compile_message = nil
 end
 
 ---Close the open campaign and go back to the chooser.
@@ -541,6 +583,8 @@ function GraphState:build()
         campaigns = self.campaigns or {},
         campaigns_loaded = self.campaigns_loaded,
         name_input = self.name_input,
+        diagnostics = self.diagnostics,
+        compile_message = self.compile_message,
         nodes = visible_nodes,
         all_nodes = self.nodes,
         edges = edge_refs,
@@ -877,6 +921,36 @@ function GraphState.build_plan(view, bounds)
     end
 
     -- ====================================================================
+    -- Validation bar (F19-R1/R3)
+    -- ====================================================================
+    if view.compile_message then
+        text_item("caption", "info", fit_label(tostring(view.compile_message), content_w))
+        y = y + SMALL_H + Theme.space.xs
+    end
+    if view.diagnostics then
+        local diagnostics = view.diagnostics
+        if #diagnostics == 0 then
+            text_item("caption", "success", "Validation passed")
+            y = y + SMALL_H + Theme.space.sm
+        else
+            section(string.format("Diagnostics (%d)", #diagnostics))
+            for index, d in ipairs(diagnostics) do
+                push({
+                    kind = "list_row", id = "diagnostic:" .. tostring(index),
+                    bounds = { x = text_x, y = y, w = content_w, h = ROW_H + 4 },
+                    label = fit_label(d.code .. ": " .. d.message, content_w - 8),
+                    tone = d.severity == "warning" and "warning" or "danger",
+                    -- Selected when it blames the node the operator is already looking at, so the
+                    -- link reads both ways.
+                    selected = d.node_id ~= nil and view.selected_node == d.node_id,
+                })
+                y = y + ROW_H + 4
+            end
+            y = y + Theme.space.xs
+        end
+    end
+
+    -- ====================================================================
     -- Node list
     -- ====================================================================
     local nodes = view.nodes or {}
@@ -1028,6 +1102,12 @@ function GraphState.reduce(action_id)
     end
     if action_id == "compile" then
         return { kind = "compile_graph" }
+    end
+
+    -- A diagnostic navigates to the node it blames (F19-R3).
+    local diagnostic_match = action_id:match("^diagnostic:(%d+)$")
+    if diagnostic_match then
+        return { kind = "select_diagnostic", index = tonumber(diagnostic_match) }
     end
 
     -- Filter type
