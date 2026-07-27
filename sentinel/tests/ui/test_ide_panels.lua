@@ -589,6 +589,113 @@ function M.test_an_explorer_selection_reaches_the_client_on_the_next_tick()
     T.assert_equal(call.arg, 1234, "and it must carry the id that was selected")
 end
 
+-- ---------------------------------------------------------------------------
+-- Async pending re-arm (spec: Async Pending Re-Arm)
+-- ---------------------------------------------------------------------------
+--
+-- The regression: `on_tick` cleared `_dirty` (and the database's `_pending_*`) at the TOP, before
+-- the fetch had answered. In the injector the first answer is always `(nil, true)` -- pending -- so
+-- the tick that would have collected the real answer never ran and the panel froze on its idle
+-- view. Offline the mocks resolved in the same call, so every suite stayed green.
+--
+-- Each test below is that exact shape: tick 1 answers pending, tick 2 answers data.
+
+--- A QueryClient stand-in that answers `(nil, true)` for the first `pending_for` calls of each verb
+--- and the fixture afterwards -- the live `_get` contract, per path.
+local function pending_query_client(rows, pending_for)
+    pending_for = pending_for or 1
+    local qc = { calls = {}, _seen = {} }
+    local function answer(name, key)
+        local slot = name .. ":" .. tostring(key)
+        qc.calls[#qc.calls + 1] = { name = name, arg = key }
+        qc._seen[slot] = (qc._seen[slot] or 0) + 1
+        if qc._seen[slot] <= pending_for then return nil, true end
+        return rows[name]
+    end
+    function qc.get_quest(_, id) return answer("get_quest", id) end
+    function qc.get_quest_chain(_, id) return answer("get_quest_chain", id) end
+    function qc.get_quest_objectives(_, id) return answer("get_quest_objectives", id) end
+    function qc.search_quests(_, q) return answer("search_quests", q) end
+    function qc.get_npc(_, entry) return answer("get_npc", entry) end
+    function qc.get_vendor(_, entry) return answer("get_vendor", entry) end
+    function qc.get_object(_, entry) return answer("get_object", entry) end
+    return qc
+end
+
+local function installed_with(qc)
+    local fake = FakeWindow.new()
+    local shell = Shell.new({ window = fake, elements = nil })
+    local bindings = IdePanels.install(shell, {
+        questing = function() return nil end,
+        query_client = qc,
+    })
+    shell:show()
+    return shell, bindings, fake
+end
+
+function M.test_the_explorer_polls_a_pending_quest_lookup_instead_of_freezing_on_it()
+    local qc = pending_query_client({ get_quest = { id = 1234, title = "The Missing Diplomat" } })
+    local shell, bindings = installed_with(qc)
+    shell:activate("explorer")
+    shell:on_tick()
+
+    local state = bindings.explorer:state()
+    bindings.explorer:spec().dispatch({ kind = "select_quest", id = 1234 })
+
+    shell:on_tick()
+    T.assert_nil(state.selected_detail, "tick 1 answered pending, so there is nothing to show yet")
+    T.assert_true(state._dirty,
+        "and the flag must be RE-ARMED -- cleared here, the answer is never collected and the "
+        .. "panel shows its idle view forever")
+    T.assert_true(state.loading, "the panel says it is waiting")
+    T.assert_nil(state.error, "a request in flight is not a failed request")
+
+    shell:on_tick()
+    T.assert_not_nil(state.selected_detail, "tick 2 must store the answer")
+    T.assert_equal(state.selected_detail.title, "The Missing Diplomat", "the one that was asked for")
+end
+
+function M.test_the_properties_inspector_polls_a_pending_npc_lookup()
+    local qc = pending_query_client({ get_npc = { entry = 567, name = "Hogger" } })
+    local shell, bindings = installed_with(qc)
+    shell:activate("properties")
+
+    local state = bindings.properties:state()
+    state:set_context({ selection_type = "npc", selection_id = 567 })
+
+    shell:on_tick()
+    T.assert_nil(state.npc_detail, "tick 1 is pending")
+    T.assert_true(state._dirty, "so the inspector must re-arm rather than clear")
+    T.assert_true(state.loading, "and keep saying it is waiting")
+
+    shell:on_tick()
+    T.assert_not_nil(state.npc_detail, "tick 2 stores the NPC")
+    T.assert_equal(state.npc_detail.name, "Hogger", "with the row the server answered")
+    T.assert_false(state.loading, "and stops waiting once it has it")
+end
+
+function M.test_the_database_detail_polls_instead_of_reporting_not_found()
+    -- `Entry N not found` is reserved for a lookup that RESOLVED to nothing. Reaching it while the
+    -- request is still in flight tells the operator their entry does not exist when it does.
+    local qc = pending_query_client({ get_npc = { entry = 567, name = "Wolf", positions = {} } })
+    local shell, bindings = installed_with(qc)
+    shell:activate("database")
+
+    local state = bindings.database:state()
+    bindings.database:spec().dispatch({ kind = "select_entry", entry = 567 })
+
+    shell:on_tick()
+    T.assert_nil(state.selected_detail, "tick 1 is pending")
+    T.assert_nil(state.error, "and a pending fetch must never read as 'not found'")
+    T.assert_true(state._pending_detail, "the pending flag survives the tick that answered nothing")
+    T.assert_true(state._dirty, "and the slot re-armed the panel for the next tick")
+
+    shell:on_tick()
+    T.assert_not_nil(state.selected_detail, "tick 2 stores the detail")
+    T.assert_equal(state.selected_detail.name, "Wolf", "the entry that was selected")
+    T.assert_false(state._pending_detail, "and only NOW does the flag clear")
+end
+
 function M.test_a_properties_selection_reaches_the_client_on_the_next_tick()
     local qc = fake_query_client()
     local shell = Shell.new({ window = FakeWindow.new(), elements = nil })

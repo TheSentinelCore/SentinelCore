@@ -371,29 +371,28 @@ function ExplorerBinding:spec()
                 return
             end
 
-            -- Only fire queries when there's an active selection or search
+            -- Only fire queries when there's an active selection or search. Each fetch goes through
+            -- its own slot: a pending answer re-arms `_dirty` (see `ui/async_slot.lua`), so the tick
+            -- that collects the answer actually runs.
+            local slots = state._slots
             if state.selected_id then
-                local detail = qc:get_quest(state.selected_id)
-                if detail then
-                    state.selected_detail = detail
-                end
+                local id = state.selected_id
+                local ok_detail, detail = slots.detail:poll(function() return qc:get_quest(id) end)
+                if ok_detail == "ok" then state.selected_detail = detail end
 
-                local chain = qc:get_quest_chain(state.selected_id)
-                if chain then
-                    state.chain_data = chain
-                end
+                local ok_chain, chain = slots.chain:poll(function() return qc:get_quest_chain(id) end)
+                if ok_chain == "ok" then state.chain_data = chain end
 
-                local objectives = qc:get_quest_objectives(state.selected_id)
-                if objectives then
-                    state.objectives = objectives
-                end
+                local ok_obj, objectives =
+                    slots.objectives:poll(function() return qc:get_quest_objectives(id) end)
+                if ok_obj == "ok" then state.objectives = objectives end
             end
 
             if state.search_query ~= "" and #state.results == 0 then
-                local results = qc:search_quests(state.search_query)
-                if results then
-                    state.results = results
-                end
+                local query = state.search_query
+                local ok_search, results =
+                    slots.search:poll(function() return qc:search_quests(query) end)
+                if ok_search == "ok" then state.results = results end
             end
         end,
         dispatch = function(command)
@@ -496,14 +495,16 @@ function PropertiesBinding:spec()
 
             local ctype = ctx.selection_type
             local sid = ctx.selection_id
+            -- One slot, because the inspector holds one context at a time. It owns `loading` too:
+            -- pending keeps it true and re-arms `_dirty`, resolution clears it.
+            local slot = state._slots.detail
 
             if ctype == "npc" and sid then
-                local detail = qc:get_npc(sid)
-                if detail then state.npc_detail = detail end
-                state.loading = false
+                local status, detail = slot:poll(function() return qc:get_npc(sid) end)
+                if status == "ok" then state.npc_detail = detail end
             elseif ctype == "vendor" and sid then
-                local info = qc:get_vendor(sid)
-                if info then
+                local status, info = slot:poll(function() return qc:get_vendor(sid) end)
+                if status == "ok" then
                     state.vendor_info = info
                     state.vendor_items = {}
                     for _, item in ipairs(info.sells or {}) do
@@ -517,10 +518,12 @@ function PropertiesBinding:spec()
                         }
                     end
                 end
-                state.loading = false
             elseif ctype == "object" and sid then
-                local obj = qc:get_object(sid)
-                if obj then state.object_info = obj end
+                local status, obj = slot:poll(function() return qc:get_object(sid) end)
+                if status == "ok" then state.object_info = obj end
+            else
+                -- A context nothing fetches for (node, condition, inventory): there is no request in
+                -- flight, so the spinner must not be left on from `set_context`.
                 state.loading = false
             end
         end,

@@ -5,6 +5,8 @@
 -- detail view (info, chain, objectives, actions) on the right. All state lives here;
 -- `explorer.lua` only renders whatever `build()` returns.
 
+local AsyncSlot = require("ui/async_slot")
+
 local ExplorerState = {}
 ExplorerState.__index = ExplorerState
 
@@ -14,7 +16,7 @@ ExplorerState.__index = ExplorerState
 
 function ExplorerState.new(opts)
     opts = opts or {}
-    return setmetatable({
+    local state = setmetatable({
         search_query = opts.search_query or "",
         results = opts.results or {},          -- { id, title, level, min_level }[]
         selected_id = nil,     -- selected quest ID
@@ -30,6 +32,16 @@ function ExplorerState.new(opts)
         _query_debounce = nil,  -- timer handle
         _cache = {},            -- simple quest detail cache
     }, ExplorerState)
+
+    -- One slot per in-flight request. They are independent because they resolve independently:
+    -- the chain may still be pending long after the detail landed.
+    state._slots = {
+        detail = AsyncSlot.new({ label = "quest detail", owner = state }),
+        chain = AsyncSlot.new({ label = "quest chain", owner = state }),
+        objectives = AsyncSlot.new({ label = "quest objectives", owner = state }),
+        search = AsyncSlot.new({ label = "quest search", owner = state }),
+    }
+    return state
 end
 
 -- ============================================================================
@@ -52,6 +64,11 @@ function ExplorerState:select(id)
     self.chain_data = nil
     self.objectives = nil
     self.error = nil
+    -- The three requests already in flight are for the PREVIOUS quest. Abandoning them here keeps
+    -- their tick count from expiring the fetches this selection is about to start.
+    self._slots.detail:reset()
+    self._slots.chain:reset()
+    self._slots.objectives:reset()
     self._dirty = true
 end
 

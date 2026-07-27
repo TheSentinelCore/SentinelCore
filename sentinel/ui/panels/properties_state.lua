@@ -9,6 +9,8 @@
 -- Decision logic (branches, layout arithmetic) lives in `build_plan`, which is in this
 -- file — the one module tests CAN reach.
 
+local AsyncSlot = require("ui/async_slot")
+
 local PropertiesState = {}
 PropertiesState.__index = PropertiesState
 
@@ -18,7 +20,7 @@ PropertiesState.__index = PropertiesState
 
 function PropertiesState.new(opts)
     opts = opts or {}
-    return setmetatable({
+    local state = setmetatable({
         -- Current selection context (set by shell or other panels via dispatch)
         context = nil,  -- { panel_id, selection_type, selection_id }
 
@@ -45,6 +47,11 @@ function PropertiesState.new(opts)
         error = nil,
         _dirty = true,
     }, PropertiesState)
+
+    -- The inspector shows one context at a time, so one slot covers the npc/vendor/object fetches:
+    -- they can never be in flight together, and `set_context` abandons whichever was.
+    state._slots = { detail = AsyncSlot.new({ label = "inspector detail", owner = state }) }
+    return state
 end
 
 -- ============================================================================
@@ -64,6 +71,7 @@ function PropertiesState:set_context(ctx)
         self.inventory_default = nil
         self.loading = false
         self.error = nil
+        self._slots.detail:reset()
         self._dirty = true
         return
     end
@@ -85,6 +93,8 @@ function PropertiesState:set_context(ctx)
     self.inventory_default = nil
     self.error = nil
     self.npc_tab = "info"
+    -- Whatever is in flight belongs to the selection being replaced.
+    self._slots.detail:reset()
     self.loading = true
     self._dirty = true
 end

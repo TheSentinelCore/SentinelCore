@@ -5,6 +5,8 @@
 -- All decision logic lives here; `database.lua` only renders whatever
 -- `build()` returns.
 
+local AsyncSlot = require("ui/async_slot")
+
 local DatabaseState = {}
 DatabaseState.__index = DatabaseState
 
@@ -14,7 +16,7 @@ DatabaseState.__index = DatabaseState
 
 function DatabaseState.new(opts)
     opts = opts or {}
-    return setmetatable({
+    local state = setmetatable({
         -- Scan / spawns tab
         scan_results = opts.scan_results or {},  -- { entry, name, count, min_level, max_level, avg_distance, kind }[]
         selected_entry = nil,       -- NPC/object entry ID
@@ -42,6 +44,16 @@ function DatabaseState.new(opts)
         error = nil,
         _dirty = true,
     }, DatabaseState)
+
+    -- `scan` reads the object manager and resolves in the same tick; it still goes through a slot so
+    -- every panel reports a failed refresh the same way, and so the F13 scanner can move to
+    -- `/spawns/nearby` (PR10) without the caller changing shape.
+    state._slots = {
+        scan = AsyncSlot.new({ label = "spawn scan", owner = state }),
+        detail = AsyncSlot.new({ label = "entry detail", owner = state }),
+        grind = AsyncSlot.new({ label = "grind estimate", owner = state }),
+    }
+    return state
 end
 
 -- ============================================================================
@@ -82,6 +94,7 @@ function DatabaseState:request_scan()
     self.spawn_points = {}
     self.loading = true
     self.error = nil
+    self._slots.scan:reset()
     self._pending_scan = true
     self._dirty = true
 end
@@ -94,6 +107,8 @@ function DatabaseState:select_entry(entry)
     self.selected_detail = nil
     self.spawn_points = {}
     self.loading = true
+    -- Whatever is in flight is the previous entry's detail.
+    self._slots.detail:reset()
     self._pending_detail = true
     self._dirty = true
 end
@@ -121,6 +136,7 @@ function DatabaseState:request_grind()
     self.grinding_result = nil
     self.loading = true
     self.error = nil
+    self._slots.grind:reset()
     self._pending_grind = true
     self._dirty = true
 end
@@ -133,54 +149,73 @@ end
 ---In-game: delegates to dbg.nearby. Offline: uses mock data.
 ---@param query_client table|nil
 function DatabaseState:execute_scan(query_client)
-    self.loading = false
-    self._pending_scan = false
-
     local range = self.scan_range or 50
     local filter = self.scan_filter
+    local state = self
 
-    -- In-game path: use dbg.nearby()
-    if type(dbg) == "table" and type(dbg.nearby) == "function" then
-        local ok, entities = pcall(dbg.nearby, range, filter)
-        if ok and type(entities) == "table" then
-            self.scan_results = self:_aggregate_nearby(entities)
-        else
-            self.error = tostring(entities or "Scan returned no data")
+    local status, results = self._slots.scan:poll(function()
+        -- In-game path: the object manager, which a dead QueryServer does not affect. A raise here
+        -- is deliberate: the slot's pcall turns it into `spawn scan raised: <reason>`, which keeps
+        -- the reason the old code put straight into `error`.
+        if type(dbg) == "table" and type(dbg.nearby) == "function" then
+            local ok, entities = pcall(dbg.nearby, range, filter)
+            if ok and type(entities) == "table" then return state:_aggregate_nearby(entities) end
+            error(tostring(entities or "Scan returned no data"), 0)
         end
-        return
-    end
+        -- Offline path: mock scan data for testing
+        return state:_mock_scan(range, filter)
+    end)
 
-    -- Offline path: mock scan data for testing
-    self.scan_results = self:_mock_scan(range, filter)
-    self._dirty = true
+    -- The flag stays ARMED while pending. The slot has already re-armed `_dirty`, so the next tick
+    -- calls back in; clearing here is the exact bug this change removes.
+    if status == "pending" then return end
+    self._pending_scan = false
+    if status == "ok" then
+        self.scan_results = results
+        self._dirty = true
+    end
 end
 
 ---Load detail for the selected entry via QueryClient.
 ---@param query_client table|nil
 function DatabaseState:execute_load_detail(query_client)
-    self.loading = false
+    local entry = self.selected_entry
+    if not entry or not query_client then
+        -- Nothing to poll. The binding reports the absent client; this only stops the flag spinning.
+        self.loading = false
+        self._pending_detail = false
+        return
+    end
+
+    local status, found = self._slots.detail:poll(function()
+        -- Two endpoints, one slot: an entry is an NPC or an object, and the object lookup is only
+        -- worth issuing once the NPC lookup has actually RESOLVED to nothing.
+        local npc, npc_pending = query_client:get_npc(entry)
+        if npc then return { kind = "npc", detail = npc } end
+        if npc_pending then return nil, true end
+
+        local object, object_pending = query_client:get_object(entry)
+        if object then return { kind = "object", detail = object } end
+        if object_pending then return nil, true end
+        return nil
+    end)
+
+    if status == "pending" then return end
     self._pending_detail = false
 
-    local entry = self.selected_entry
-    if not entry then return end
-
-    -- No query client available — leave nil for offline tests
-    if not query_client then return end
-
-    local detail = query_client:get_npc(entry)
-    if detail then
-        self.selected_detail = detail
-        self.spawn_points = detail.positions or {}
+    if status == "ok" then
+        self.selected_detail = found.detail
+        if found.kind == "npc" then
+            self.spawn_points = found.detail.positions or {}
+        else
+            self.spawn_points = found.detail.position and { found.detail.position } or {}
+        end
         return
     end
+    if status == "timeout" then return end  -- the slot already named the lookup that never answered
 
-    local object = query_client:get_object(entry)
-    if object then
-        self.selected_detail = object
-        self.spawn_points = object.position and { object.position } or {}
-        return
-    end
-
+    -- Reserved for a lookup that FINISHED and came back empty. A fetch still in flight must never
+    -- reach this line: "not found" on a pending request is the freeze the operator sees.
     self.error = "Entry " .. tostring(entry) .. " not found"
     self._dirty = true
 end
@@ -188,23 +223,26 @@ end
 ---Execute grinding area generation via QueryClient.
 ---@param query_client table|nil
 function DatabaseState:execute_grind(query_client)
-    self.loading = false
-    self._pending_grind = false
-
     local entry = self.grinding_npc_entry
     if not entry then
+        self.loading = false
+        self._pending_grind = false
         self.error = "No NPC entry specified"
         return
     end
 
     if not query_client then
+        self.loading = false
+        self._pending_grind = false
         self.grinding_result = self:_mock_grind_result(entry, self.grinding_zone or "Unknown")
         return
     end
 
-    local detail = query_client:get_npc(entry)
-    if not detail then
-        self.error = "NPC #" .. tostring(entry) .. " not found"
+    local status, detail = self._slots.grind:poll(function() return query_client:get_npc(entry) end)
+    if status == "pending" then return end
+    self._pending_grind = false
+    if status ~= "ok" then
+        if status == "failed" then self.error = "NPC #" .. tostring(entry) .. " not found" end
         return
     end
 
