@@ -1,7 +1,7 @@
 # Apply Progress: questing-ide-remediation
 
 **Mode**: Standard (strict_tdd false) | **Store**: hybrid | **Delivery**: force-chained, `stacked-to-main`
-**Scope so far**: Phase 0 + PR1 (batch 1) + PR2 (batch 2) + PR3 (batch 3, Lua/UI track). PR4/PR5 are the concurrent Rust track (`apply-progress-pr4.md` / `-pr5.md`); PR6–PR12 not started.
+**Scope so far**: Phase 0 + PR1 (batch 1) + PR2 (batch 2) + PR3 (batch 3) + PR6 (batch 4, Lua/UI track). PR4/PR5 are the concurrent Rust track (`apply-progress-pr4.md` / `-pr5.md`); PR7–PR12 not started.
 **Base**: `99bb8d7` (pre-existing HEAD before any of this work)
 
 ## Completed
@@ -91,6 +91,66 @@ cannot latch the bus shut for the rest of the session.
 **The position**: `_poll_player_position()` on the tick, both ctxs carry it, nil-safe through two
 pcalls.
 
+### PR6 — `text_input` widget + Explorer search/authoring — COMPLETE except 3.2 (6/7)
+
+Branch `qir/pr6-text-input-explorer` off `qir/pr3-selection-bus`, four commits.
+
+| Task | Status |
+|---|---|
+| 3.1 | Done — split into `ui/text_input_state.lua` (view-model) + `widgets.lua::text_input` (projection) |
+| 3.2 | **NOT DONE — blocked on the injector.** Both undocumented calls are reached behind a type check; both paths asserted offline; live confirmation still owed |
+| 3.3 | Done — 34 cases across two suites |
+| 3.4 | Done — debounce + `result_meta`; `faction` is absent from `QuestSummary` and renders "—" (see Issues) |
+| 3.5 | Done |
+| 3.6 | Done — five distinct failure reports, all returning false |
+| 3.7 | Done |
+
+**The widget**: Sylvannas has no text entry. ADR 09b §1 lists `text_input`, `ui-custom.md` does not,
+and `widgets.lua::element_value` was already probing for an accessor that is never there — so the
+Explorer's search box has been an untypeable rectangle since it was drawn. It now reads the keyboard
+itself. Every decision that implies lives in `text_input_state`; the widget draws and forwards.
+
+**The undocumented half**: `window:block_input_capture()` and `core.input.is_key_down(16)` are
+reached through `type(...) == "function"` plus `pcall`. Absent, the field still types, the keys also
+reach the game, and shift reads as not held — the focus-gated fallback the design names. Offline that
+IS the default, because `fake_window` was deliberately not given `block_input_capture`; the injector
+path is stubbed onto one window instance in the single test that needs it.
+
+**The search**: the tick reads the buffer BEFORE the dirty gate, because typing happens in a render
+callback that cannot schedule anything. The gate is the debounce, not `#results == 0` — the old
+condition let a panel run exactly one search for its whole life.
+
+**The authoring**: `add_to_profile`/`add_chain` build the subgraph in the view-model and write it
+through `editor_client:add_nodes`. Both previously returned **ok** next to "(not yet implemented)".
+
+## Work Unit Evidence — PR6
+
+| Evidence | Value |
+|---|---|
+| Focused test command / result | `luajit sentinel/tests/run_offline.lua` from repo root — **1958 passed, 0 failed**, 21 opaque suites 21 ok / 0 failed. Pre-PR6 baseline was 1892/0; +66 = 34 text-input cases + 21 Explorer view-model cases + 11 binding cases. |
+| Per-commit verification | Each of the four commits was staged and run in isolation before committing: `2c2654f` 1908/0, `ac6758a` 1926/0, `95a501b` 1946/0, `aa817f8` 1958/0. |
+| Mutation check 1 (Escape) | Making Escape keep the edited buffer instead of restoring the committed value turns **1 case red** (1925/1): `test_escape_cancels_and_restores_the_prior_value`. The spec's second scenario is held by a test. |
+| Mutation check 2 (debounce) | Replacing `search_due`'s elapsed-time comparison with `return true` turns **2 cases red** (1944/2): `test_the_debounce_holds_the_query_for_300ms` and `test_each_keystroke_restarts_the_debounce`. |
+| Runtime harness | **Not run — and task 3.2 stays open because of it.** Requires the injector: click the search box, type, confirm characters appear and do NOT reach the game (block_input_capture), confirm shift capitalises (is_key_down), confirm Escape restores. No offline test can close this; the fallback path is what offline exercises. |
+| Rollback boundary | Revert `aa817f8` to drop the wiring while keeping the view-model; revert `95a501b` to drop the Explorer half entirely; revert `ac6758a`+`2c2654f` to drop the widget. `ide_panels.lua` is touched only by the last commit. |
+| Review budget | `2c2654f` = **428**, `ac6758a` = **373**, `95a501b` = **432**, `aa817f8` = **357**. Two commits are 7-8% over the 400 budget; both are one new module plus its suite, split as the work landed rather than after the fact. Flagged, not absorbed. |
+
+## Files Changed (PR6)
+
+| File | Action | What |
+|---|---|---|
+| `sentinel/ui/text_input_state.lua` | Created | Buffer, caret, `apply_key`/`apply_keys`, `collect(input)`, `view()` |
+| `sentinel/ui/widgets.lua` | Modified | `Widgets.text_input` — the only widget with no stock element behind it |
+| `sentinel/ui/panels/explorer_state.lua` | Modified | `search_input`, `sync_search_input`, `search_due`/`mark_search_served`, `result_meta`, `build_quest_subgraph`, `build_chain_subgraph`; the search rect replaced by a `text_input` plan item |
+| `sentinel/ui/panels/explorer.lua` | Modified | `text_input` draw handler — the one widget answering with a table, mapped to `<id>_submit`/`<id>_cancel` |
+| `sentinel/ui/ide_panels.lua` | Modified | Explorer binding takes `editor_client`/`campaign`/`now`; `_commit_nodes`; buffer sync before the dirty gate; debounced search; both authoring commands |
+| `sentinel/tests/ui/test_text_input.lua` | Created | 21 view-model cases |
+| `sentinel/tests/ui/test_text_input_widget.lua` | Created | 13 widget cases, both undocumented paths |
+| `sentinel/tests/ui/test_explorer_panel.lua` | Modified | +21 cases: debounce, meta line, subgraph builders, new reduce ids |
+| `sentinel/tests/ui/test_ide_panels.lua` | Modified | +11 cases: search seam, five authoring failure modes, placeholder audit |
+| `sentinel/tests/ui/test_offline_loadable.lua` | Modified | `ui/text_input_state` added to the isolation list |
+| `sentinel/tests/run_offline.lua` | Modified | Both new suites registered after `test_widgets` |
+
 ## Work Unit Evidence — PR3
 
 | Evidence | Value |
@@ -175,6 +235,11 @@ pcalls.
 11. **PR3: an extra guard the task did not ask for — `publish_selection` refuses a render frame.** Panels are supposed to return a command and let the tick dispatch it, but nothing enforced that for the new channel, and a subscriber runs `set_context`, which abandons an in-flight fetch. Without the guard the bus would be a fresh way to reintroduce exactly the render-side side effect this cycle exists to remove. It is held by a test that also proves the guard does not latch shut.
 12. **PR3: `window:begin` is now pcall'd and re-raised.** Required by the guard above: `main.lua` pcalls the whole shell render, so a frame that threw would have left `_in_render` true and disabled the selection bus for the rest of the session. The error is re-raised, not swallowed — `main.lua` still reports it.
 13. **PR3: `view_detail` publishes too.** Task 1.9 names `select_entry`/"Open in NPC Inspector". There is no button by that name; the Database's "View NPC Detail" button is it. Both action ids land on the same selection.
+14. **PR6: the widget was split into two files.** Task 3.1 names only `widgets.lua`. Everything the control DECIDES — which key inserts, what Escape restores, where the caret is — would then live inside a render callback, which ADR 09b §2.1 and this repo's own panel convention both forbid precisely because no offline test can reach it. `ui/text_input_state.lua` holds the decisions; `widgets.lua` holds the projection and keeps the "a widget remembers nothing" contract in its own header.
+15. **PR6: the debounce is expressed in SECONDS.** Tasks say 300ms. `ide_panels.lua::default_clock` reads `core.time()` and every existing interval in that file (`VIEW_INTERVAL_S`, `PROFILE_INTERVAL_S`) is in seconds. `SEARCH_DEBOUNCE_S = 0.30` is the same 300ms in the unit the clock actually answers in; mixing units here is how a 300ms wait becomes a 300s one.
+16. **PR6: `search_due` stays true for the whole in-flight fetch.** The obvious reading of "debounce then fire" closes the gate when the request goes out. That would starve `AsyncSlot`'s pending re-arm of the tick that collects the answer — PR2's freeze, reintroduced through a new door. The gate is cleared by `mark_search_served` on resolution instead.
+17. **PR6: a `collect` objective lowers to `questing.Loot`, not `questing.Kill`.** The spec's scenario names `Loot(789,5)` for an objective whose item drops from creature 567. The node carries `source_creatures` so the compiler can lower it to a Kill-with-loot without a second lookup. These are authoring nodes a human reviews before compiling (F3-R4/R6), not runtime actions — but see Issues: `questing.Loot` is missing from the Graph palette.
+18. **PR6: the Explorer binding takes a `campaign` resolver.** Task 3.6 says "POST via editor client" and names no campaign. The campaign is owned by the Graph panel and changes underneath the Explorer, so it is resolved per call rather than captured. With none open the write is refused by name — there is genuinely nowhere to put the nodes until PR7 lands the lifecycle.
 
 ## Issues Found
 
@@ -188,16 +253,23 @@ pcalls.
 - **PR3: `PropertiesState:set_context` is now reachable for kinds it cannot fetch.** The bus publishes `kind="quest"` and `kind="node"`, and the Properties tick has no branch for either — they fall to the `else` that clears `loading` (added in PR2). The inspector therefore switches context and renders its no-data view rather than spinning. Correct for now; task 3.16 (PR9) is where node/condition/inventory views arrive, and quest is not one of the five spec'd views at all. Flagged so PR9 does not assume the bus only ever sends fetchable kinds.
 - **PR3: the two position supply paths are held independently.** Mutating the render ctx leaves the tick-ctx test green and vice versa. That is deliberate — PR11's `travel_add_waypoint` reads the DISPATCH side — but it means neither test alone proves the field is wired.
 
+- **PR6: `QuestSummary` has no `faction` field.** Task 3.4 requires result rows to render "name/level/zone/faction". Verified against `git show qir/pr4-rust-types:SentinelQuesting/query-types/src/lib.rs`: `QuestSummary` is `{ id, title, level, min_level, zone }`, and `QuestDetail` has no faction either — the field lives on `NpcSummary`/`NpcDetail`. The row READS `result.faction` and renders "—" when absent, so it lights up the moment the server carries it, but the requirement is not satisfiable from the Lua side. **Rust-track follow-up**: `quest_template.RequiredRaces` is the source, and the field would need `#[serde(default)]` like the others.
+- **PR6: `questing.Loot` is missing from the Graph palette.** `runtime_action.lua:329` dispatches `Loot` to `execute_loot`, and the compiler emits it, but `graph_state.lua::NODE_TYPES` lists 19 types and Loot is not among them. `add_to_profile` therefore generates a node the Graph panel cannot draw an icon or a default intent for. Not fixed here — NODE_TYPES is the Graph panel's, and touching it from PR6 would put a Graph change in an Explorer slice. **PR7/PR8 follow-up.**
+- **PR6: the `Loot` intent shape is a compiler contract, not a runtime one.** `execute_loot` reads `{ object_entry, item_id }` and treats `object_entry` as a gameobject. A `collect` node carries the ITEM in both fields plus `source_creatures`, which is correct for authoring and wrong if compiled verbatim. The lowering (collect + source_creatures → Kill with `loot = true`) does not exist yet. Flagged loudly because a node that looks executable and is not is exactly this change's recurring defect.
+- **PR6: two commits are over the 400-line budget.** 428 and 432, against 400. Each is one new module plus the suite that holds it; a module with no tests and tests with no module are both worse review units than an 8% overage. The split was made as the work landed, per PR3's lesson, not retrofitted.
+
 ## Remaining
 
-Phase 2 (PR4, PR5 — concurrent Rust track), Phase 3 (PR6–PR10), Phase 4 (PR11, PR12). The Lua/UI track stopped at PR3 by instruction.
+Phase 2 (PR4, PR5 — concurrent Rust track), Phase 3 (PR7–PR10), Phase 4 (PR11, PR12), plus the
+in-game confirmation owed by task 3.2. The Lua/UI track stopped at PR6 by instruction.
 
 ## Chain State
 
 - `master` → `b20c2f0` (baseline) then `6bb1f69` (SDD artifacts)
 - `qir/pr1-query-client-wiring` → `e2e8b4f`, `8bf2fbe`
 - `qir/pr2-async-slot` → `20a5915`, `beb17e1`, `dcfccfe`, branched off `qir/pr1-query-client-wiring` per `stacked-to-main`
-- `qir/pr3-selection-bus` → `9c80e41`, `dab7e98` (+ this docs commit), branched off `qir/pr2-async-slot`
+- `qir/pr3-selection-bus` → `9c80e41`, `dab7e98`, `eeb47b3`, branched off `qir/pr2-async-slot`
+- `qir/pr6-text-input-explorer` → `2c2654f`, `ac6758a`, `95a501b`, `aa817f8` (+ this docs commit), branched off `qir/pr3-selection-bus`. PR6 precedes PR7 in the chain but follows PR3 on the branch, because PR4/PR5 are Rust-only and share no file with the Lua track.
 - Concurrent Rust track in an isolated worktree: `qir/pr4-rust-types`, `qir/pr5-zone-catalog`. No file overlap with the Lua track.
 - Nothing pushed. No PR opened.
 - PR6 branches from `qir/pr3-selection-bus`.
