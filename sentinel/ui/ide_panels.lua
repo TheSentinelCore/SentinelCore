@@ -71,6 +71,27 @@ end
 IdePanels.QUERY_SERVER_UNAVAILABLE = QUERY_SERVER_UNAVAILABLE
 
 -- ============================================================================
+-- The selection channel (spec: Cross-Panel Selection Bus)
+-- ============================================================================
+--
+-- Selecting anything used to change nothing outside the panel it happened in — the inspector held a
+-- context nobody ever set, so it stayed on whatever it was last given. The shell now carries a
+-- content-free channel; this file is the one that knows what a `kind` means, because it is the only
+-- file allowed to know both the shell and the panels (ADR 09b §6).
+--
+-- Published from `dispatch`, never from `render`. `dispatch` is called by `Shell:_dispatch_pending`
+-- in TICK context, and `Shell:publish_selection` refuses a render frame outright.
+
+---@param ctx table|nil the tick context the shell hands to `dispatch`
+local function publish_selection(ctx, panel_id, kind, id)
+    -- nil ctx is the normal case in a unit test that calls `dispatch` directly, and a panel that
+    -- required a shell to select would be a panel no test could drive.
+    local shell = ctx and ctx.shell
+    if type(shell) ~= "table" or type(shell.publish_selection) ~= "function" then return end
+    shell:publish_selection({ panel_id = panel_id, kind = kind, id = id })
+end
+
+-- ============================================================================
 -- Refresh cadence (ADR 09b §2.4)
 -- ============================================================================
 
@@ -395,10 +416,11 @@ function ExplorerBinding:spec()
                 if ok_search == "ok" then state.results = results end
             end
         end,
-        dispatch = function(command)
+        dispatch = function(command, ctx)
             local state = binding._state
             if command.kind == "select_quest" then
                 state:select(command.id)
+                publish_selection(ctx, Explorer.id, "quest", command.id)
                 return true
             elseif command.kind == "clear_search" then
                 state:set_query("")
@@ -627,12 +649,13 @@ function GraphBinding:spec()
                 -- In a real deployment, this would refresh from /editor/campaigns/{name}
             end
         end,
-        dispatch = function(command)
+        dispatch = function(command, ctx)
             local state = binding._state
             local recorder = binding._recorder
 
             if command.kind == "select_node" then
                 state:select_node(command.node_id)
+                publish_selection(ctx, Graph.id, "node", command.node_id)
                 return true
             elseif command.kind == "toggle_expand" then
                 state:toggle_expand_node(command.node_id)
@@ -740,7 +763,7 @@ function DatabaseBinding:spec()
                 state:execute_grind(qc)
             end
         end,
-        dispatch = function(command)
+        dispatch = function(command, ctx)
             local state = binding._state
             if command.kind == "set_tab" then
                 state:set_tab(command.tab)
@@ -767,9 +790,14 @@ function DatabaseBinding:spec()
                 return true
             elseif command.kind == "select_entry" then
                 state:select_entry(command.entry)
+                publish_selection(ctx, Database.id, "npc", command.entry)
                 return true
             elseif command.kind == "view_detail" then
+                -- "View NPC Detail" IS the spec's "Open in NPC Inspector": both land on the same
+                -- selection, and the second one exists only because a row click and a button click
+                -- arrive as different action ids.
                 state:select_entry(command.entry)
+                publish_selection(ctx, Database.id, "npc", command.entry)
                 return true
             elseif command.kind == "add_as_kill" then
                 return true, "add_as_kill: " .. tostring(command.entry) .. " (not yet implemented)"
@@ -906,6 +934,22 @@ function IdePanels.install(shell, deps)
     local properties = IdePanels.new_properties(deps)
     local ok3, reason3 = shell:register_panel(properties:spec())
     if not ok3 then return nil, reason3 end
+
+    -- The other end of the selection channel. Subscribed exactly once, here, because this is the
+    -- only file that may know both that a shell has a channel and that Properties is the inspector.
+    --
+    -- FOCUS-FOLLOW: a selection made ELSEWHERE brings the inspector to the front, because the whole
+    -- point of selecting an NPC in the Database is to look at it — leaving the operator to find the
+    -- Properties tab themselves is the same dead end as not routing the selection at all. A
+    -- selection made INSIDE Properties does not re-activate it: the panel is already in front, and
+    -- an activate() from its own dispatch would fight a tab the operator just switched away from.
+    shell:on_selection(function(event)
+        properties:state():set_context({
+            selection_type = event.kind,
+            selection_id = event.id,
+        })
+        if event.panel_id ~= Properties.id then shell:activate(Properties.id) end
+    end)
 
     local graph = IdePanels.new_graph(deps)
     local ok4, reason4 = shell:register_panel(graph:spec())

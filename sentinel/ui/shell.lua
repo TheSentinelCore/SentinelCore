@@ -208,6 +208,9 @@ function Shell.new(opts)
     self._pending = {}
     self._last_dispatch = nil
     self._validation_render = nil  -- set by ide_panels for the validation footer bar
+    -- Read on the TICK and handed to panels as `ctx.player_position`. See `_poll_player_position`.
+    self._player_position = nil
+    self._in_render = false
 
     -- Restore BEFORE any panel registers. `ShellState` holds the restored choice until the panel
     -- that owns it exists, which is the only ordering that honours a persisted tab.
@@ -258,6 +261,32 @@ end
 
 ---Access the validation bar render function, if any.
 function Shell:validation_bar() return self._validation_render end
+
+-- ============================================================================
+-- The selection channel (spec: Cross-Panel Selection Bus)
+-- ============================================================================
+-- Forwarded to `shell_state`, exactly like every other verb above, EXCEPT for the render guard —
+-- which cannot live in the view-model, because the view-model has no idea when a frame is being
+-- painted. See `publish_selection` below.
+
+function Shell:on_selection(fn) return self._state:on_selection(fn) end
+function Shell:selection() return self._state:selection() end
+function Shell:last_selection_error() return self._state:last_selection_error() end
+
+---Publish `{ panel_id, kind, id }` to every subscriber. TICK CONTEXT ONLY.
+---
+---Refused during render on purpose. A subscriber does real work — the Properties inspector's
+---`set_context` abandons an in-flight fetch and re-arms the panel — and a panel that published
+---mid-frame would be running that work inside `register_on_render_window_callback`, which is the
+---one thing this whole shell is arranged to prevent. Panels ANSWER a click with a command; the
+---command is dispatched on the next tick, and THAT is where a selection is published from.
+---@return boolean ok, string|nil reason
+function Shell:publish_selection(selection)
+    if self._in_render then
+        return false, "a selection may not be published from a render frame"
+    end
+    return self._state:publish_selection(selection)
+end
 
 -- ============================================================================
 -- Tick context — the ONLY place anything is constructed
@@ -327,6 +356,32 @@ function Shell:_poll_combat()
     self._state:set_in_combat(in_combat)
 end
 
+---Read the player's position for this tick (spec: Shell Supplies Player Position).
+---
+---TICK CONTEXT, for the same reason `_poll_combat` is: this is an object-manager read, and §2.4
+---forbids one per frame. The spec asks for `ctx.player_position` "each frame" — it gets it, from a
+---reading refreshed on the tick that precedes the frame. The alternative, reading the SDK inside
+---`register_on_render_window_callback`, is the rule at the top of this file.
+---
+---nil is a legitimate answer, not a failure: the player is out of world during a loading screen and
+---between injections, and a panel that treated a missing reading as `{0,0,0}` would capture a
+---waypoint in the middle of the map. Every consumer must tolerate nil (spec, F6-R2).
+function Shell:_poll_player_position()
+    local position = nil
+    if type(core) == "table" and type(core.object_manager) == "table"
+        and type(core.object_manager.get_local_player) == "function" then
+        local ok, player = pcall(core.object_manager.get_local_player)
+        if ok and player and type(player.get_position) == "function" then
+            local ok2, pos = pcall(player.get_position, player)
+            if ok2 and type(pos) == "table" then position = pos end
+        end
+    end
+    self._player_position = position
+end
+
+---The position handed to panels this frame, or nil.
+function Shell:player_position() return self._player_position end
+
 function Shell:_apply_visibility()
     if not self._window or type(self._window.set_visibility) ~= "function" then return end
     local visible = self._state:is_visible()
@@ -363,7 +418,9 @@ function Shell:_tick_context()
     -- No `split` here on purpose: pane geometry is produced by a widget mid-frame and does not
     -- exist outside one. Handing over a stale rect would let a panel lay something out against the
     -- previous frame's divider.
-    return { shell = self, state = self._state }
+    -- `player_position` IS here: `dispatch` runs in this context, and the commands that capture a
+    -- position (waypoint commit, travel waypoint, escort) are dispatched, never rendered.
+    return { shell = self, state = self._state, player_position = self._player_position }
 end
 
 ---Hand every queued command to the panel that produced it. Tick context, never render.
@@ -411,9 +468,16 @@ function Shell:last_panel_error() return self._last_panel_error end
 ---Driven from `register_on_update_callback`. Everything with a construction, an SDK read, or a
 ---write to a persisted element happens here, so the render callback stays paint-only.
 function Shell:on_tick()
+    -- A tick always follows a frame, so this is where a guard left latched by a render that threw
+    -- inside the injector's own call stack recovers.
+    self._in_render = false
     self:ensure_frames_created()
     self:_poll_input()
     self:_poll_combat()
+    -- BEFORE dispatch, so a command that captures a position gets this tick's reading rather than
+    -- the previous one. A waypoint dropped one tick behind the player is a waypoint in the wrong
+    -- place, and nothing on screen would say so.
+    self:_poll_player_position()
     -- Commands land BEFORE the refresh, so a control's effect is visible in the very next frame
     -- rather than one refresh interval later. A Stop that left the panel reading RUNNING for a
     -- quarter of a second is indistinguishable from a Stop that did nothing.
@@ -528,7 +592,11 @@ function Shell:_draw_body(window, vm, bounds)
     local spec = vm.panel
     if not spec then return end
 
-    local ctx = { shell = self, state = self._state }
+    -- `player_position` is the reading `_poll_player_position` took on the tick that preceded this
+    -- frame, and it may be nil. The Graph panel already reaches for `ctx.player_position` to capture
+    -- a waypoint and to feed the escort recorder; until now the field was never set by anybody, so
+    -- both branches were dead and `travel_add_waypoint` answered "requires player position" forever.
+    local ctx = { shell = self, state = self._state, player_position = self._player_position }
     local body = bounds
 
     if spec.split then
@@ -586,7 +654,13 @@ function Shell:_on_render_window()
         h = size.y - strip.h - Theme.space.md * 2 - validation_h,
     }
 
-    window:begin(
+    -- Raised for exactly as long as a frame is being painted, so `publish_selection` can refuse a
+    -- panel that tries to drive the selection channel from inside the render callback. `main.lua`
+    -- pcalls this whole render, so a frame that throws must not leave the flag latched — it is
+    -- cleared through `pcall` here AND at the top of `on_tick`, because a guard that can jam shut
+    -- would silently disable the selection bus for the rest of the session.
+    self._in_render = true
+    local painted, paint_err = pcall(window.begin, window,
         (Enums and Enums.window_enums.window_resizing_flags.RESIZE_BOTH_AXIS) or 0,
         true,
         Theme.elevation.base.fill(),
@@ -608,6 +682,10 @@ function Shell:_on_render_window()
             end
         end
     )
+    self._in_render = false
+    -- Re-raised rather than swallowed: `main.lua` already reports a failed shell render, and a frame
+    -- that died silently here is the class of bug the fake-window type checks exist to catch.
+    if not painted then error(paint_err, 0) end
 
     -- Sylvannas draws the close cross itself, so the only signal that the operator used it is
     -- `is_being_shown` going false. Without this the model and the window disagree and the
