@@ -4,6 +4,9 @@
 --
 -- All decision logic lives here; `graph.lua` only renders whatever `build()` returns.
 
+local AsyncSlot = require("ui/async_slot")
+local TextInputState = require("ui/text_input_state")
+
 local GraphState = {}
 GraphState.__index = GraphState
 
@@ -85,9 +88,17 @@ end
 
 function GraphState.new(opts)
     opts = opts or {}
-    return setmetatable({
+    local state = setmetatable({
         campaign_name = nil,
         graph_name = nil,
+        -- The editor's id for the graph a write lands in. A campaign can hold several; this panel
+        -- edits the first, and every mutation has to name it because the editor addresses nodes by
+        -- `(campaign, graph_id, node_id)` and answers "Graph not found" without it.
+        graph_id = nil,
+
+        -- The campaign chooser, which is all there IS before a campaign is open.
+        campaigns = {},        -- CampaignSummary[] from GET /editor/campaigns
+        campaigns_loaded = false,
 
         -- Campaign data
         nodes = {},     -- { id, type, intent, resolved, context }[]
@@ -118,6 +129,21 @@ function GraphState.new(opts)
         error = nil,
         _dirty = true,
     }, GraphState)
+
+    -- The name a new campaign is created under. On the state, not in the widget, for the reason
+    -- every buffer in this tree is: a buffer owned by a render callback is a buffer no offline test
+    -- can read (ADR 09b §2.1).
+    state.name_input = TextInputState.new({ id = "graph_campaign_name", value = "", max_length = 64 })
+
+    -- Graph was the one data binding PR2 did NOT route through a slot, because its `_dirty` branch
+    -- was a comment reading "in a real deployment this would refresh from /editor/campaigns/{name}"
+    -- and a slot with nothing behind it is dead code no test can hold honest. There is a client
+    -- behind it now.
+    state._slots = {
+        list = AsyncSlot.new({ label = "campaign list", owner = state }),
+        campaign = AsyncSlot.new({ label = "campaign", owner = state }),
+    }
+    return state
 end
 
 -- ============================================================================
@@ -154,6 +180,7 @@ function GraphState:set_campaign(name)
     name = tostring(name or "")
     if self.campaign_name == name then return end
     self.campaign_name = name
+    self.graph_id = nil
     self.nodes = {}
     self.edges = {}
     self.selected_node = nil
@@ -161,7 +188,90 @@ function GraphState:set_campaign(name)
     self.expanded = {}
     self.error = nil
     self.loading = true
+    -- The fetch already in flight is for the PREVIOUS campaign; its tick count would otherwise
+    -- expire the one this open is about to start.
+    if self._slots then self._slots.campaign:reset() end
     self._dirty = true
+end
+
+---The campaign list came back from `GET /editor/campaigns`.
+function GraphState:set_campaigns(list)
+    self.campaigns = type(list) == "table" and list or {}
+    self.campaigns_loaded = true
+    self._dirty = true
+end
+
+---Take the editor's `Campaign` document and become it.
+---
+---The panel renders the SERVER's graph, never a locally guessed one: a node that appears because
+---the client optimistically inserted it is indistinguishable on screen from a node the editor
+---actually stored, and that is how the previous cycle shipped phantom writes.
+---@param campaign table the decoded `Campaign` JSON
+---@return boolean applied
+function GraphState:apply_campaign(campaign)
+    if type(campaign) ~= "table" then return false end
+    self.campaign_name = tostring(campaign.name or self.campaign_name or "")
+
+    -- `graphs` may legitimately be empty: `Campaign::new` mints a campaign with no graph at all,
+    -- which is exactly the state a just-created campaign is in.
+    local graph = (type(campaign.graphs) == "table") and campaign.graphs[1] or nil
+    self.graph_id = graph and tostring(graph.id or "") or nil
+    self.graph_name = graph and tostring(graph.name or "") or nil
+
+    local nodes = {}
+    for _, node in ipairs((graph or {}).nodes or {}) do
+        nodes[#nodes + 1] = {
+            -- Server ids are UUID strings. `tostring` rather than a bare read because every id this
+            -- panel puts in a control id is concatenated, and a number there would silently produce
+            -- an id no `reduce` pattern matches.
+            id = tostring(node.id or ""),
+            type = tostring(node.type or ""),
+            intent = type(node.intent) == "table" and node.intent or {},
+            resolved = node.resolved,
+            context = node.context,
+        }
+    end
+    local edges = {}
+    for _, edge in ipairs((graph or {}).edges or {}) do
+        edges[#edges + 1] = {
+            id = tostring(edge.id or ""), from = tostring(edge.from or ""),
+            to = tostring(edge.to or ""), guard = edge.guard and tostring(edge.guard) or nil,
+        }
+    end
+
+    self.nodes = nodes
+    self.edges = edges
+    self.expanded = {}
+    self.selected_node = nil
+    self.selected_edge = nil
+    self.loading = false
+    self._dirty = true
+    return true
+end
+
+---Close the open campaign and go back to the chooser.
+function GraphState:close_campaign()
+    self.campaign_name = nil
+    self.graph_id = nil
+    self.graph_name = nil
+    self.nodes = {}
+    self.edges = {}
+    self.expanded = {}
+    self.selected_node = nil
+    self.selected_edge = nil
+    self.loading = false
+    -- The campaign list is stale the moment a create lands, so make the chooser re-ask for it.
+    self.campaigns_loaded = false
+    if self._slots then self._slots.campaign:reset() end
+    self._dirty = true
+end
+
+---The name typed into the chooser's field, trimmed. Empty when there is nothing to create.
+function GraphState:pending_campaign_name()
+    local input = self.name_input
+    if not input then return "" end
+    local typed = input.focused and input.buffer or input.value
+    return (tostring(typed or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
 function GraphState:select_node(id)
@@ -424,6 +534,10 @@ function GraphState:build()
     return {
         campaign_name = self.campaign_name,
         graph_name = self.graph_name,
+        graph_id = self.graph_id,
+        campaigns = self.campaigns or {},
+        campaigns_loaded = self.campaigns_loaded,
+        name_input = self.name_input,
         nodes = visible_nodes,
         all_nodes = self.nodes,
         edges = edge_refs,
@@ -601,14 +715,47 @@ function GraphState.build_plan(view, bounds)
     end
 
     -- ====================================================================
-    -- No campaign loaded
+    -- No campaign loaded: the chooser. Create and open both have to work from HERE, with no
+    -- hand-edited file anywhere in the loop -- there was no Lua caller for :3031 at all before,
+    -- so this was the one screen from which nothing was reachable.
     -- ====================================================================
     if not view.campaign_name or view.campaign_name == "" then
         push({
+            kind = "text_input", id = "campaign_name",
+            bounds = { x = text_x, y = y, w = content_w, h = CONTROL_H },
+            model = view.name_input, placeholder = "New campaign name...",
+        })
+        y = y + CONTROL_H + Theme.space.sm
+
+        local campaigns = view.campaigns or {}
+        section(string.format("Campaigns (%d)", #campaigns))
+        for _, summary in ipairs(campaigns) do
+            local name = tostring(summary.name or "")
+            push({
+                kind = "list_row", id = "open_campaign:" .. name,
+                bounds = { x = text_x, y = y, w = content_w, h = ROW_H + 4 },
+                label = string.format("%s  ·  %d node(s)", name, tonumber(summary.node_count) or 0),
+                tone = "info",
+            })
+            y = y + ROW_H + 4
+        end
+        if #campaigns == 0 then
+            -- "none yet" and "not asked yet" are different facts and an operator acts differently on
+            -- each, so they are never collapsed into one line.
+            text_item("caption", "text_muted",
+                view.campaigns_loaded and "No campaigns on the editor yet"
+                                       or "Asking the editor for campaigns...")
+            y = y + SMALL_H + Theme.space.sm
+        end
+
+        push({
             kind = "empty_state",
-            bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
+            bounds = { x = bounds.x, y = y, w = bounds.w,
+                       h = math.max(1, bounds.y + bounds.h - y - PAD) },
+            id = "new_campaign",
             title = "No Campaign",
-            message = "Open a campaign to edit its behavior graph",
+            message = "Name a campaign above and create it, or open one from the list",
+            action_label = "New Campaign",
         })
         return { items = items }
     end
@@ -669,6 +816,7 @@ function GraphState.build_plan(view, bounds)
 
     -- Second toolbar row: actions
     local actions = {}
+    table.insert(actions, { kind = "button", id = "close_campaign", label = "Campaigns", width = 90 })
     table.insert(actions, { kind = "button", id = "validate", label = "Validate", width = 80 })
     table.insert(actions, { kind = "button", id = "compile", label = "Compile", width = 80 })
     table.insert(actions, { kind = "spacer", id = "spacer1" })
@@ -832,6 +980,23 @@ end
 
 function GraphState.reduce(action_id)
     if action_id == nil then return nil end
+
+    -- Campaign lifecycle. The typed name is NOT threaded through the id: it is already on
+    -- `state.name_input`, and putting a user-typed string into a control id would make `reduce`
+    -- responsible for splitting it back out of one.
+    if action_id == "new_campaign" or action_id == "campaign_name_submit" then
+        return { kind = "create_campaign" }
+    end
+    if action_id == "campaign_name_cancel" then
+        return { kind = "cancel_campaign_name" }
+    end
+    if action_id == "close_campaign" then
+        return { kind = "close_campaign" }
+    end
+    local open_match = action_id:match("^open_campaign:(.+)$")
+    if open_match then
+        return { kind = "open_campaign", name = open_match }
+    end
 
     -- Add node toggle
     if action_id == "add_node_toggle" then

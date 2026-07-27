@@ -817,6 +817,166 @@ function M.test_panel_exposes_required_shape()
     T.assert_equal(type(Graph.render), "function", "the shell calls render(window, bounds, view)")
 end
 
+-- ====================================================================
+-- 14. Campaign lifecycle (spec: Graph Campaign Lifecycle)
+-- ====================================================================
+
+--- The editor's `Campaign` document, as `GET /editor/campaigns/{name}` serializes it.
+local function editor_campaign(name, graph_id, nodes)
+    return {
+        schema_version = 1, id = "11111111-1111-4111-8111-111111111111", name = name,
+        imports = {}, variables = {}, conditions = {},
+        graphs = { { id = graph_id, name = "main",
+                     entry_node = "00000000-0000-0000-0000-000000000000",
+                     nodes = nodes or {}, edges = {} } },
+    }
+end
+
+function M.test_the_chooser_offers_a_new_campaign_action_and_a_name_to_type()
+    local state = GraphState.new()
+    local plan = GraphState.build_plan(state:build(), BOUNDS)
+
+    local input, empty = nil, nil
+    for _, item in ipairs(plan.items) do
+        if item.kind == "text_input" then input = item end
+        if item.kind == "empty_state" then empty = item end
+    end
+
+    T.assert_not_nil(input, "the chooser needs a field to name a campaign in")
+    T.assert_equal(input.model, state.name_input,
+        "and it must carry the STATE's buffer, or nothing offline can read what was typed")
+    T.assert_not_nil(empty, "the empty state is still what an operator sees first")
+    T.assert_equal(empty.action_label, "New Campaign",
+        "with the action the spec names -- create had to work from HERE, and there was no Lua "
+        .. "caller for :3031 at all")
+    T.assert_equal(empty.id, "new_campaign", "and an id reduce can turn into a command")
+end
+
+function M.test_the_chooser_distinguishes_no_campaigns_from_not_asked_yet()
+    local state = GraphState.new()
+    local function caption()
+        local plan = GraphState.build_plan(state:build(), BOUNDS)
+        for _, item in ipairs(plan.items) do
+            if item.kind == "text" and tostring(item.text):find("campaign", 1, true) then
+                return item.text
+            end
+        end
+        return nil
+    end
+
+    T.assert_true(tostring(caption()):find("Asking", 1, true) ~= nil,
+        "before the list lands the panel says it is asking, got " .. tostring(caption()))
+    state:set_campaigns({})
+    T.assert_true(tostring(caption()):find("No campaigns", 1, true) ~= nil,
+        "an editor with nothing on it is a different fact and an operator acts differently on it")
+end
+
+function M.test_each_listed_campaign_is_openable()
+    local state = GraphState.new()
+    state:set_campaigns({
+        { name = "a", node_count = 0 },
+        { name = "b", node_count = 3 },
+    })
+    local plan = GraphState.build_plan(state:build(), BOUNDS)
+
+    local rows = {}
+    for _, item in ipairs(plan.items) do
+        if item.kind == "list_row" then rows[#rows + 1] = item end
+    end
+    T.assert_equal(#rows, 2, "one row per campaign")
+    T.assert_equal(rows[2].id, "open_campaign:b", "keyed by name")
+    T.assert_true(rows[2].label:find("3 node", 1, true) ~= nil,
+        "showing CampaignSummary's node_count, got " .. rows[2].label)
+
+    local cmd = GraphState.reduce("open_campaign:b")
+    T.assert_equal(cmd.kind, "open_campaign", "clicking one opens it")
+    T.assert_equal(cmd.name, "b", "naming the campaign")
+end
+
+function M.test_the_empty_state_action_and_enter_both_create()
+    T.assert_equal(GraphState.reduce("new_campaign").kind, "create_campaign",
+        "the empty-state button creates")
+    T.assert_equal(GraphState.reduce("campaign_name_submit").kind, "create_campaign",
+        "and so does Enter in the name field -- typing a name then pressing Enter is the shape "
+        .. "every other field in this IDE already has")
+    T.assert_equal(GraphState.reduce("campaign_name_cancel").kind, "cancel_campaign_name",
+        "Escape is a different command, not a create with an empty name")
+end
+
+function M.test_apply_campaign_becomes_the_editors_graph()
+    local state = GraphState.new()
+    state:set_campaign("stw")
+    T.assert_true(state.loading, "an open is a fetch, and the panel says so until it lands")
+
+    local applied = state:apply_campaign(editor_campaign("stw", "graph-1", {
+        { id = "aaaaaaaa-0000-4000-8000-000000000001", type = "questing.AcceptQuest",
+          intent = { quest_id = 1234 } },
+        { id = "aaaaaaaa-0000-4000-8000-000000000002", type = "questing.Kill",
+          intent = { creature_entry = 567, count = 10 } },
+    }))
+    T.assert_true(applied, "the campaign was applied")
+    T.assert_equal(state.graph_id, "graph-1",
+        "the graph id is kept: every mutation has to name it or the editor answers 'Graph not found'")
+    T.assert_equal(#state.nodes, 2, "both of the editor's nodes are here")
+    T.assert_equal(state.nodes[2].type, "questing.Kill", "with their types")
+    T.assert_equal(state.nodes[1].id, "aaaaaaaa-0000-4000-8000-000000000001",
+        "and the SERVER's ids, because a locally minted id addresses nothing")
+    T.assert_false(state.loading, "the fetch is over")
+end
+
+function M.test_a_freshly_created_campaign_applies_with_no_graph_at_all()
+    local state = GraphState.new()
+    local fresh = editor_campaign("stw", "graph-1", {})
+    fresh.graphs = {}
+
+    T.assert_true(state:apply_campaign(fresh), "Campaign::new gives a campaign zero graphs")
+    T.assert_equal(state.campaign_name, "stw", "it is still a campaign that is open")
+    T.assert_nil(state.graph_id, "there is simply no graph to write into yet")
+    T.assert_equal(#state.nodes, 0, "and no nodes")
+    T.assert_false(state.loading, "and it is not still loading -- that is the whole answer")
+end
+
+function M.test_closing_a_campaign_returns_to_a_chooser_that_will_re_ask()
+    local state = GraphState.new()
+    state:apply_campaign(editor_campaign("stw", "graph-1",
+        { { id = "n1", type = "questing.Kill", intent = { creature_entry = 1 } } }))
+    state:set_campaigns({ { name = "stw", node_count = 1 } })
+
+    state:close_campaign()
+    T.assert_nil(state.campaign_name, "no campaign is open")
+    T.assert_equal(#state.nodes, 0, "and the previous campaign's nodes are gone with it")
+    T.assert_false(state.campaigns_loaded,
+        "the list is stale the moment a create lands, so the chooser must ask again")
+    T.assert_equal(GraphState.reduce("close_campaign").kind, "close_campaign",
+        "and the toolbar can get back there")
+end
+
+function M.test_the_pending_name_is_trimmed_and_read_from_the_live_buffer()
+    local state = GraphState.new()
+    T.assert_equal(state:pending_campaign_name(), "", "nothing typed yet")
+
+    state.name_input:set_value("  stw  ")
+    T.assert_equal(state:pending_campaign_name(), "stw", "the committed value, trimmed")
+
+    state.name_input:focus()
+    state.name_input.buffer = "stw2"
+    T.assert_equal(state:pending_campaign_name(), "stw2",
+        "while focused the BUFFER is the truth, or a create would use the pre-edit name")
+end
+
+function M.test_opening_a_second_campaign_abandons_the_first_ones_fetch()
+    local state = GraphState.new()
+    state:set_campaign("a")
+    state._slots.campaign.status = "pending"
+    state._slots.campaign.ticks = 40
+
+    state:set_campaign("b")
+    T.assert_equal(state._slots.campaign.status, "idle",
+        "the in-flight fetch is for a campaign nobody is looking at now")
+    T.assert_equal(state._slots.campaign.ticks, 0,
+        "and its tick count must not expire the fetch this open is about to start")
+end
+
 function M.test_node_type_info_fills_all_types()
     -- Verify every node type has default_intent fields
     local types = GraphState.all_node_types()
