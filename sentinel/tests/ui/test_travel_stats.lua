@@ -504,7 +504,115 @@ function M.test_an_unchanged_route_is_not_re_requested_every_tick()
 end
 
 -- ============================================================================
--- 6. Structural guards
+-- 6. The estimate on screen
+-- ============================================================================
+
+function M.test_the_plan_shows_one_row_per_server_segment_and_their_total()
+    local te = route_with_waypoints(3, 0)
+    te.estimate = { route_id = "r1", segments = ROUTE_OK.segments, total_s = ROUTE_OK.total_s }
+    local plan = TravelEditorState.build_plan(te:build(), BOUNDS)
+
+    local text = {}
+    for _, item in ipairs(plan.items) do
+        if item.kind == "text" then text[#text + 1] = item.text end
+    end
+    local joined = table.concat(text, "\n")
+    T.assert_true(joined:find("20s", 1, true) ~= nil, "the walk leg's time: " .. joined)
+    T.assert_true(joined:find("1m 40s", 1, true) ~= nil, "the taxi leg's time: " .. joined)
+    T.assert_true(joined:find("Total  2m 00s", 1, true) ~= nil, "and their total: " .. joined)
+    T.assert_true(joined:find("taxi", 1, true) ~= nil, "each row names its own kind")
+end
+
+function M.test_no_estimate_paints_no_numbers_at_all()
+    local te = route_with_waypoints(3, 0)
+    local plan = TravelEditorState.build_plan(te:build(), BOUNDS)
+    for _, item in ipairs(plan.items) do
+        if item.kind == "text" then
+            T.assert_nil(item.text:find("Total", 1, true),
+                "a total with nothing behind it is the defect this change removes")
+        end
+    end
+end
+
+function M.test_a_refusal_is_painted_not_only_stored()
+    local te = route_with_waypoints(2, 0)
+    te.activated = true
+    te.error = "travel estimate unavailable: no query server"
+    local plan = TravelEditorState.build_plan(te:build(), BOUNDS)
+    local found = false
+    for _, item in ipairs(plan.items) do
+        if item.kind == "text" and item.text:find("no query server", 1, true) then found = true end
+    end
+    T.assert_true(found, "the panel must show what it refused")
+end
+
+function M.test_every_control_the_plan_emits_reduces_to_a_command()
+    -- Two Properties controls shipped unreachable by construction: `reduce` understood ids that
+    -- `build_plan` never pushed. Asserting `#items > 0` would not have caught either.
+    local te = route_with_waypoints(3, 0)
+    te.activated = true
+    te.editing_waypoints = true
+    te.estimate = { route_id = "r1", segments = ROUTE_OK.segments, total_s = 120 }
+    local plan = TravelEditorState.build_plan(te:build(), BOUNDS)
+
+    local ids = 0
+    for _, item in ipairs(plan.items) do
+        if item.id then
+            ids = ids + 1
+            T.assert_not_nil(TravelEditorState.reduce(item.id),
+                "control '" .. item.id .. "' is painted and reduces to nothing")
+        end
+    end
+    T.assert_true(ids >= 5, "the editor must actually paint its controls, saw " .. ids)
+end
+
+function M.test_the_estimate_button_is_one_of_them()
+    local te = route_with_waypoints(3, 0)
+    te.activated = true
+    te.editing_waypoints = true
+    local plan = TravelEditorState.build_plan(te:build(), BOUNDS)
+    local seen = false
+    for _, item in ipairs(plan.items) do
+        if item.id == "travel_estimate" then seen = true end
+    end
+    T.assert_true(seen, "there must be a control that asks for the estimate")
+    T.assert_equal(TravelEditorState.reduce("travel_estimate").kind, "travel_estimate")
+end
+
+-- ============================================================================
+-- 7. The estimate through the INSTALLED shell
+-- ============================================================================
+
+function M.test_the_installed_estimate_button_reaches_the_query_server()
+    with_http(function()
+        Mock.set_http_response("/travel/route", ROUTE_OK)
+        local shell, bindings = installed_shell({
+            questing = function() return nil end,
+            query_client = QueryClient:new(),
+        })
+        local travel = bindings.travel
+        travel:toggle()
+        travel.campaign_name = "c"
+        travel.routes = { { id = "r1", from_label = "Travel", to_label = "Travel", waypoints = {
+            { x = 0, y = 0, z = 0, map = 0, movement = "walk" },
+            { x = 140, y = 0, z = 0, map = 0, movement = "walk" },
+        } } }
+        travel:select_route("r1")
+
+        shell:activate("explorer")
+        shell:_queue_command("explorer", { kind = "travel_estimate" })
+        shell:on_tick()
+        T.assert_equal(#Mock.http.posts, 1, "the tick after the click must post the route")
+
+        Mock.http_advance(2)
+        shell:on_tick()
+        T.assert_not_nil(travel.estimate, "and the tick after that must collect the answer")
+        T.assert_equal(travel.estimate.total_s, 120)
+    end)
+end
+
+-- ============================================================================
+-- 8. Structural guards
 -- ============================================================================
 
 function M.test_the_capture_never_reads_the_object_manager_from_the_state()

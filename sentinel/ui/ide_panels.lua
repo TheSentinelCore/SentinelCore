@@ -39,6 +39,7 @@ local TravelEditorState = require("ui/panels/travel_editor_state")
 local TravelEditor = require("ui/panels/travel_editor")
 local ValidationStatus = require("ui/panels/validation_status")
 local StatsDashboard = require("ui/panels/stats_dashboard")
+local RaceFaction = require("shared/race_faction")
 
 local IdePanels = {}
 
@@ -133,6 +134,22 @@ local function current_map_id()
     local ok, id = pcall(core.get_map_id)
     if not ok then return nil end
     return tonumber(id)
+end
+
+---The character's faction, or nil when it cannot be read.
+---
+---There is no faction API (ADR 07 §9 item 17); RACE is readable and determines it by a ten-entry
+---constant, which `shared/race_faction.lua` owns. The travel estimate needs it because a handful of
+---flight destinations exist once per side, and `TaxiNodes.resolve` refuses such a pair rather than
+---picking one. nil here means the refusal stands — it does not mean "Alliance".
+local function player_faction()
+    if type(core) ~= "table" or type(core.object_manager) ~= "table"
+        or type(core.object_manager.get_local_player) ~= "function" then return nil end
+    local ok, player = pcall(core.object_manager.get_local_player)
+    if not (ok and player and type(player.get_race_id) == "function") then return nil end
+    local read, race = pcall(player.get_race_id, player)
+    if not read then return nil end
+    return RaceFaction.resolve(race)
 end
 
 -- ============================================================================
@@ -1037,8 +1054,21 @@ function IdePanels.install(shell, deps)
             -- this frame (ADR 09b §2.4 forbids an object-manager read inside a render callback), and
             -- the map id is read here for the same reason.
             return travel:add_waypoint(ctx and ctx.player_position, current_map_id())
+        elseif command.kind == "travel_estimate" then
+            -- Arms the request; the POST itself happens on the next tick, alongside every other
+            -- fetch this panel owns, so one code path owns the pending/re-arm contract.
+            travel:request_estimate()
+            return true
         end
         return explorer_dispatch(command, ctx)
+    end
+
+    -- The travel editor's own tick. Wrapped rather than folded into the Explorer binding because
+    -- the editor is a sub-panel this file composes in, and the binding must not learn about it.
+    local explorer_tick = explorer_spec.on_tick
+    explorer_spec.on_tick = function()
+        if explorer_tick then explorer_tick() end
+        travel:poll_estimate(deps and deps.query_client, player_faction())
     end
     local ok2, reason2 = shell:register_panel(explorer_spec)
     if not ok2 then return nil, reason2 end

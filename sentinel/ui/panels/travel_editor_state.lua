@@ -634,6 +634,61 @@ local function fit_label(text, width)
     return text:sub(1, max_chars - 3) .. "..."
 end
 
+---Format a whole number of seconds the way an operator reads a route: `4m 05s`, or `18s`.
+local function duration_label(seconds)
+    seconds = math.floor(tonumber(seconds) or 0)
+    if seconds < 60 then return string.format("%ds", seconds) end
+    return string.format("%dm %02ds", math.floor(seconds / 60), seconds % 60)
+end
+
+---How tall the estimate block is, so the caller can advance past it.
+local function estimate_height(view)
+    local estimate = view.estimate
+    if not estimate then return 0 end
+    return SECTION_H + Theme.space.xs + ROW_H * (#(estimate.segments or {}) + 1)
+end
+
+---The estimate block: one row per segment the SERVER reported, then its total.
+---
+---Rendered only from `view.estimate`, which is only ever set from a 200. There is no "estimating..."
+---row with a number in it and no fallback total, because a placeholder number in a column of real
+---ones is the defect this whole change exists to remove.
+local function estimate_items(view, text_x, content_w, y)
+    local estimate = view.estimate
+    if not estimate then return {} end
+
+    local items = {
+        {
+            kind = "section_header",
+            bounds = { x = text_x, y = y, w = content_w, h = SECTION_H },
+            title = "Route Estimate",
+        },
+    }
+    y = y + SECTION_H + Theme.space.xs
+
+    for i, segment in ipairs(estimate.segments or {}) do
+        local distance = segment.distance_m
+            and string.format("%.0f yds", segment.distance_m) or "—"
+        items[#items + 1] = {
+            kind = "text", x = text_x + Theme.space.md, y = y,
+            font = Theme.font.body, token = "text_secondary",
+            alpha = Theme.interaction.resting.text,
+            text = string.format("  %d. %-6s %-12s %s",
+                i, tostring(segment.type or "walk"), distance,
+                duration_label(segment.estimated_s)),
+        }
+        y = y + ROW_H
+    end
+
+    items[#items + 1] = {
+        kind = "text", x = text_x + Theme.space.md, y = y,
+        font = Theme.font.body, token = "text_primary",
+        alpha = Theme.interaction.resting.text,
+        text = string.format("  Total  %s", duration_label(estimate.total_s)),
+    }
+    return items
+end
+
 ---Build the draw plan items for the travel editor sub-panel.
 ---@param view table from build()
 ---@param bounds table { x, y, w, h }  — the area assigned to the editor within the parent panel
@@ -685,6 +740,13 @@ function TravelEditorState.build_plan(view, bounds)
         label = toggle_label, variant = view.activated and "primary" or "secondary",
     })
     y = y + CONTROL_H + Theme.space.sm
+
+    -- Whatever was last refused, in the operator's line of sight. A capture that failed silently is
+    -- what this panel shipped with.
+    if view.error then
+        text_item(fit_label(view.error, content_w), "danger")
+        y = y + ROW_H
+    end
 
     -- If not activated, stop here
     if not view.activated then
@@ -768,13 +830,27 @@ function TravelEditorState.build_plan(view, bounds)
                     end
 
                     -- Add waypoint at current position button
+                    local action_w = math.min(160, content_w - Theme.space.md)
                     push({
                         kind = "button", id = "travel_add_waypoint",
                         bounds = { x = text_x + Theme.space.md, y = y,
-                                  w = math.min(160, content_w - Theme.space.md), h = CONTROL_H },
+                                  w = action_w, h = CONTROL_H },
                         label = "Capture Position", variant = "primary",
                     })
+                    push({
+                        kind = "button", id = "travel_estimate",
+                        bounds = { x = text_x + Theme.space.md + action_w + Theme.space.sm, y = y,
+                                  w = action_w, h = CONTROL_H },
+                        label = view.loading and "Estimating..." or "Estimate Route",
+                        variant = "secondary",
+                    })
                     y = y + CONTROL_H + Theme.space.sm
+
+                    -- The server's answer, and nothing that was not in it.
+                    for _, item in ipairs(estimate_items(view, text_x, content_w, y)) do
+                        push(item)
+                    end
+                    y = y + estimate_height(view)
                 end
 
                 y = y + Theme.space.xs
@@ -807,6 +883,9 @@ function TravelEditorState.reduce(action_id)
     end
     if action_id == "travel_add_waypoint" then
         return { kind = "travel_add_waypoint" }
+    end
+    if action_id == "travel_estimate" then
+        return { kind = "travel_estimate" }
     end
 
     -- Route selection
