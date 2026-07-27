@@ -641,6 +641,64 @@ function M.test_a_non_function_dispatcher_is_refused_at_registration()
 end
 
 -- ---------------------------------------------------------------------------
+-- Keyboard events: collected once per tick, consumed by exactly one frame
+-- ---------------------------------------------------------------------------
+-- `_poll_input` collects the tick's rising-edge key events into `_input_events`, and the next
+-- frame hands them to the active panel as `ctx.input_events`. The render rate can outrun the
+-- tick, so the frame must CONSUME them: a second frame painted before the next tick has to see
+-- an empty list, or one keypress types twice — the "type t, get tt" bug at the shell layer.
+
+function M.test_keyboard_events_reach_the_frame_after_the_tick_that_collected_them()
+    local TextInputState = require("ui/text_input_state")
+    TextInputState.reset_collect_state()
+    local runner = recording_panel("runner")
+    local shell = open_shell({ runner })
+
+    local saved = _G.core
+    local t_down = true
+    _G.core = { input = {
+        is_key_pressed = function(vk) return t_down and vk == string.byte("T") end,
+        is_key_down = function() return false end,
+    } }
+    local ok, err = pcall(function()
+        shell:on_tick()
+        T.assert_equal(#shell._input_events, 1, "the tick collects the keypress once")
+
+        shell:_on_render_window()
+        T.assert_not_nil(runner.ctx.input_events, "the frame is handed the tick's events")
+        T.assert_equal(#runner.ctx.input_events, 1)
+        T.assert_equal(runner.ctx.input_events[1].vk, string.byte("T"))
+
+        shell:_on_render_window()
+        T.assert_equal(#runner.ctx.input_events, 0,
+            "a second frame before the next tick must not apply one keypress twice")
+    end)
+    _G.core = saved
+    TextInputState.reset_collect_state()
+    if not ok then error(err, 0) end
+end
+
+function M.test_keyboard_events_are_refreshed_by_the_next_tick_not_accumulated()
+    local TextInputState = require("ui/text_input_state")
+    TextInputState.reset_collect_state()
+    local shell = open_shell({ recording_panel("runner") })
+
+    local saved = _G.core
+    _G.core = { input = {
+        is_key_pressed = function() return false end,
+        is_key_down = function() return false end,
+    } }
+    local ok, err = pcall(function()
+        shell._input_events = { { vk = 84, shift = false } }  -- stale, never rendered
+        shell:on_tick()
+        T.assert_equal(#shell._input_events, 0,
+            "the tick OVERWRITES the buffer; an unrendered keypress must not linger")
+    end)
+    _G.core = saved
+    if not ok then error(err, 0) end
+end
+
+-- ---------------------------------------------------------------------------
 -- The Sylvannas construction rule (ADR 09b §2.2)
 -- ---------------------------------------------------------------------------
 

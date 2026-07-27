@@ -681,6 +681,18 @@ end)
 -- focus-gated fallback the design names, and it is the reason this widget must be confirmed live
 -- (tasks.md 3.2) before the undocumented half is trusted.
 
+-- `window:is_mouse_button_clicked(0|1)` is as undocumented as `block_input_capture` below; the
+-- only in-workspace evidence either exists is `SentinelNavClient/lib/AstroUI.lua:472-478` (some
+-- backends number buttons from 0, some from 1, so both are asked). Guarded identically: where the
+-- method is absent, focus stays sticky — the pre-fix behaviour — rather than the frame raising.
+local function mouse_clicked_anywhere(window)
+    if type(window.is_mouse_button_clicked) ~= "function" then return false end
+    local ok, hit = pcall(window.is_mouse_button_clicked, window, 0)
+    if ok and hit then return true end
+    local ok2, hit2 = pcall(window.is_mouse_button_clicked, window, 1)
+    return (ok2 and hit2) and true or false
+end
+
 ---@param opts table { model, placeholder, label, disabled, events, input }
 ---@return table|nil result `{ kind = "submit"|"cancel", value }` from the model
 ---@return string state
@@ -726,7 +738,15 @@ function Widgets.text_input(window, bounds, opts)
 
     if opts.disabled then return nil, state end
 
-    if clicked then model:focus() end
+    if clicked then
+        model:focus()
+    elseif model.focused and mouse_clicked_anywhere(window) then
+        -- Click-outside blurs (AstroUI.lua:2460-2472). Without it focus was sticky: the guarded
+        -- `block_input_capture` below then fired on every frame forever, and WASD stayed dead
+        -- until Enter or Escape. `blur` also restores the committed value, so the field never
+        -- shows a half-typed string the panel is not acting on.
+        model:blur()
+    end
     if not model.focused then return nil, state end
 
     -- Undocumented, so guarded. See the header above.

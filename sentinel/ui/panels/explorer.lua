@@ -64,8 +64,10 @@ local HANDLERS = {
     -- The only widget that answers with a TABLE rather than a boolean, because Enter and Escape are
     -- different commands. The typed value is not threaded through the id: it is already on the
     -- model the item carries, so `reduce` never has to split a user-typed string.
-    text_input = function(window, item)
-        local result = Widgets.text_input(window, item.bounds, item)
+    text_input = function(window, item, ctx)
+        local opts = { events = ctx and ctx.input_events }
+        for k, v in pairs(item) do opts[k] = v end
+        local result = Widgets.text_input(window, item.bounds, opts)
         return result and (item.id .. "_" .. result.kind) or nil
     end,
 
@@ -102,7 +104,7 @@ Explorer.order = 2
 ---stopped painting at the first activation would blank the rest of the panel for exactly the one
 ---frame in which the operator pressed something.
 ---@return table|nil command { kind, ... }
-function Explorer.render(window, bounds, view)
+function Explorer.render(window, bounds, view, ctx)
     local plan = ExplorerState.build_plan(view, bounds)
     local items = plan.items
     local fired = nil
@@ -110,7 +112,7 @@ function Explorer.render(window, bounds, view)
     for i = 1, #items do
         local item = items[i]
         local handler = HANDLERS[item.kind]
-        local activated = handler(window, item)
+        local activated = handler(window, item, ctx)
         fired = fired or activated
     end
 

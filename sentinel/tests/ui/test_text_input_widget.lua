@@ -49,6 +49,7 @@ end
 -- ============================================================================
 
 function M.test_collect_turns_pressed_keys_into_events()
+    TextInputState.reset_collect_state()
     local pressed = { [string.byte("W")] = true, [VK.ENTER] = true }
     local events = TextInputState.collect({
         is_key_pressed = function(vk) return pressed[vk] == true end,
@@ -60,9 +61,39 @@ function M.test_collect_turns_pressed_keys_into_events()
     end
 end
 
+-- `is_key_pressed` is LEVEL (docs: "currently being pressed"). A short tap lasts several
+-- frames; without rising-edge tracking each frame re-applies the same key — the live bug
+-- where typing "t" produced "tttttt". AstroUI has the same poll shape; the IDE must not.
+function M.test_collect_emits_a_held_key_only_on_the_rising_edge()
+    TextInputState.reset_collect_state()
+    local held = true
+    local input = {
+        is_key_pressed = function(vk) return held and vk == string.byte("T") end,
+        is_key_down = function() return false end,
+    }
+
+    local first = TextInputState.collect(input)
+    T.assert_equal(#first, 1, "the frame the key goes down must emit once")
+    T.assert_equal(first[1].vk, string.byte("T"))
+
+    -- Six more frames while the key stays down — the live tap footprint.
+    for frame = 1, 6 do
+        local again = TextInputState.collect(input)
+        T.assert_equal(#again, 0,
+            "frame " .. frame .. " of a held key must not re-emit (no 6x typing)")
+    end
+
+    held = false
+    TextInputState.collect(input)  -- release
+    held = true
+    local retyped = TextInputState.collect(input)
+    T.assert_equal(#retyped, 1, "a new press after release must type again")
+end
+
 function M.test_collect_degrades_when_is_key_down_is_absent()
     -- `is_key_down` is UNDOCUMENTED. Without it the field must still type in lower case rather
     -- than raise inside a render callback.
+    TextInputState.reset_collect_state()
     local events = TextInputState.collect({
         is_key_pressed = function(vk) return vk == string.byte("A") end,
     })
@@ -71,6 +102,7 @@ function M.test_collect_degrades_when_is_key_down_is_absent()
 end
 
 function M.test_collect_survives_a_raising_input_api()
+    TextInputState.reset_collect_state()
     local events = TextInputState.collect({
         is_key_pressed = function() error("no keyboard") end,
         is_key_down = function() error("no keyboard") end,
@@ -79,6 +111,7 @@ function M.test_collect_survives_a_raising_input_api()
 end
 
 function M.test_collect_with_no_input_namespace_is_empty()
+    TextInputState.reset_collect_state()
     T.assert_equal(#TextInputState.collect(nil), 0)
     T.assert_equal(#TextInputState.collect({}), 0, "no is_key_pressed means no keyboard")
 end
@@ -169,6 +202,7 @@ function M.test_an_unfocused_widget_ignores_injected_keys()
 end
 
 function M.test_the_widget_polls_the_injected_input_namespace_when_no_events_are_given()
+    TextInputState.reset_collect_state()
     local model = focused_model("")
     local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
     local asked = {}
@@ -222,6 +256,80 @@ function M.test_an_unfocused_field_never_blocks_input_capture()
 
     Widgets.text_input(fake, BOUNDS, { model = model, events = {} })
     T.assert_equal(blocked, 0, "capturing the keyboard with no focus would break movement keys")
+end
+
+-- ============================================================================
+-- 3b. Click outside to blur
+-- ============================================================================
+-- Sticky focus was the live bug: once clicked, the field kept focus forever, so the guarded
+-- `block_input_capture` fired on every frame and WASD stayed dead until Enter/Escape. The widget
+-- now blurs when the click lands anywhere NOT on the field (the pattern at
+-- `SentinelNavClient/lib/AstroUI.lua:2460-2472`), through the equally undocumented
+-- `is_mouse_button_clicked` — stubbed onto the window INSTANCE, exactly like
+-- `block_input_capture`, because `fake_window` carries only the documented surface.
+
+function M.test_a_click_outside_the_focused_field_blurs_it()
+    local model = focused_model("wolf")
+    local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
+    fake.is_mouse_button_clicked = function(_, button) return button == 0 end
+    fake:click({ x = 300, y = 150, w = 10, h = 10 })  -- anywhere NOT on the field
+
+    Widgets.text_input(fake, BOUNDS, { model = model, events = keys_for("x") })
+    T.assert_false(model.focused, "a click anywhere else must release the field")
+    T.assert_equal(model.buffer, "wolf",
+        "the half-typed key on the blur frame must not leak into the buffer")
+end
+
+function M.test_a_click_on_the_field_itself_does_not_blur()
+    local model = TextInputState.new({ value = "" })
+    local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
+    fake.is_mouse_button_clicked = function() return true end
+    fake:click(BOUNDS)
+
+    Widgets.text_input(fake, BOUNDS, { model = model, events = {} })
+    T.assert_true(model.focused, "clicking the field focuses it, raw click probe live or not")
+end
+
+function M.test_a_blurred_field_stops_blocking_input_capture_the_same_frame()
+    -- The WASD half of the fix: focus released by the click must also release the keyboard on
+    -- that very frame, or movement keys stay dead one frame longer every time the operator
+    -- clicks away.
+    local model = focused_model("")
+    local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
+    local blocked = 0
+    fake.block_input_capture = function() blocked = blocked + 1 end
+    fake.is_mouse_button_clicked = function() return true end
+    fake:click({ x = 300, y = 150, w = 10, h = 10 })
+
+    Widgets.text_input(fake, BOUNDS, { model = model, events = {} })
+    T.assert_false(model.focused)
+    T.assert_equal(blocked, 0, "an unfocused field must never keep keys out of the game")
+end
+
+function M.test_a_backend_that_numbers_mouse_buttons_from_one_still_blurs()
+    -- AstroUI asks about buttons 0 AND 1 because backends disagree on the first index
+    -- (`SentinelNavClient/lib/AstroUI.lua:472-478`). The widget must ask both.
+    local model = focused_model("")
+    local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
+    fake.is_mouse_button_clicked = function(_, button) return button == 1 end
+    fake:click({ x = 300, y = 150, w = 10, h = 10 })
+
+    Widgets.text_input(fake, BOUNDS, { model = model, events = {} })
+    T.assert_false(model.focused, "a 1-based backend must blur too")
+end
+
+function M.test_focus_stays_sticky_when_the_raw_click_probe_is_absent()
+    -- `is_mouse_button_clicked` is undocumented. Where it does not exist, the pre-fix behaviour
+    -- is the CORRECT fallback: sticky focus beats a render path that raises.
+    local model = focused_model("")
+    local fake = FakeWindow.new({ size = { x = 400, y = 200 } })
+    T.assert_nil(rawget(fake, "is_mouse_button_clicked"),
+        "fake_window must not grow an undocumented method to make this pass")
+    fake:click({ x = 300, y = 150, w = 10, h = 10 })
+
+    local ok, err = pcall(Widgets.text_input, fake, BOUNDS, { model = model, events = {} })
+    T.assert_true(ok, "an absent is_mouse_button_clicked must not raise: " .. tostring(err))
+    T.assert_true(model.focused, "focus degrades to sticky, never to a dead frame")
 end
 
 -- ============================================================================

@@ -455,9 +455,9 @@ function ExplorerBinding:spec()
         id = Explorer.id,
         title = Explorer.title,
         order = Explorer.order,
-        render = function(window, bounds, _ctx)
+        render = function(window, bounds, ctx)
             local view = binding._state:build()
-            return Explorer.render(window, bounds, view)
+            return Explorer.render(window, bounds, view, ctx)
         end,
         on_tick = function()
             local state = binding._state
@@ -681,9 +681,9 @@ function PropertiesBinding:spec()
         id = Properties.id,
         title = Properties.title,
         order = Properties.order,
-        render = function(window, bounds, _ctx)
+        render = function(window, bounds, ctx)
             local view = binding._state:build()
-            return Properties.render(window, bounds, view)
+            return Properties.render(window, bounds, view, ctx)
         end,
         on_tick = function()
             local state = binding._state
@@ -1113,7 +1113,7 @@ function GraphBinding:spec()
             end
 
             local view = state:build()
-            return Graph.render(window, bounds, view)
+            return Graph.render(window, bounds, view, ctx)
         end,
         on_tick = function(ctx)
             local state = binding._state
@@ -1365,9 +1365,9 @@ function DatabaseBinding:spec()
         id = Database.id,
         title = Database.title,
         order = Database.order,
-        render = function(window, bounds, _ctx)
+        render = function(window, bounds, ctx)
             local view = binding._state:build()
-            return Database.render(window, bounds, view)
+            return Database.render(window, bounds, view, ctx)
         end,
         on_tick = function()
             local state = binding._state

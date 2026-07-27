@@ -395,7 +395,7 @@ function ExplorerState.build_plan(view, bounds)
     })
 
     local clear_x = text_x + search_w + Theme.space.sm
-    local clear_w = math.min(60, content_w - search_w - Theme.space.sm)
+    local clear_w = math.max(70, math.min(80, content_w - search_w - Theme.space.sm))
     push({
         kind = "button", id = "clear_search",
         bounds = { x = clear_x, y = y, w = clear_w, h = CONTROL_H },

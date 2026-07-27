@@ -214,18 +214,37 @@ do
 end
 TextInputState.POLLED_KEYS = POLLED_KEYS
 
----Turn one frame of `core.input` into the same event list the offline tests hand to `apply_key`.
+-- `core.input.is_key_pressed` is LEVEL ("currently being pressed"), not edge. Polling it every
+-- frame while a key is held re-emits the same vk for every frame of the tap — that is the live
+-- "type t, get tttttt" bug. Rising-edge memory lives here so every caller (widget fallback,
+-- shell tick) shares one definition of "a key event".
+local _prev_down = {}
+
+---Clear the rising-edge memory. Tests call this between cases; production never needs to.
+function TextInputState.reset_collect_state()
+    _prev_down = {}
+end
+
+---Turn one frame of `core.input` into rising-edge events for `apply_key`.
 ---
 ---`input` is passed in rather than read from `_G.core` so this stays a pure function of its
----argument and a test can drive it with a table. `is_key_down` is UNDOCUMENTED -- proven only by
----`SentinelNavClient/lib/AstroUI.lua:2403` -- so a missing one degrades to "shift is not held"
----(lower case still types) instead of raising and taking the whole frame down with it.
+---argument (plus the edge memory above) and a test can drive it with a table. `is_key_down` is
+---UNDOCUMENTED -- proven only by `SentinelNavClient/lib/AstroUI.lua:2403` -- so a missing one
+---degrades to "shift is not held" (lower case still types) instead of raising and taking the
+---whole frame down with it.
+---
+---Only keys that transitioned from up → down since the previous `collect` are emitted. Held keys
+---are silent until release and press again.
 ---@param input table|nil the `core.input` namespace
 ---@return table events list of `{ vk, shift }`
 function TextInputState.collect(input)
     local events = {}
-    if type(input) ~= "table" then return events end
-    if type(input.is_key_pressed) ~= "function" then return events end
+    local now_down = {}
+    if type(input) ~= "table" or type(input.is_key_pressed) ~= "function" then
+        -- No keyboard this frame: treat everything as released so the next real press edges.
+        _prev_down = now_down
+        return events
+    end
 
     local shift = false
     if type(input.is_key_down) == "function" then
@@ -235,8 +254,14 @@ function TextInputState.collect(input)
 
     for _, vk in ipairs(POLLED_KEYS) do
         local ok, pressed = pcall(input.is_key_pressed, vk)
-        if ok and pressed then events[#events + 1] = { vk = vk, shift = shift } end
+        if ok and pressed then
+            now_down[vk] = true
+            if not _prev_down[vk] then
+                events[#events + 1] = { vk = vk, shift = shift }
+            end
+        end
     end
+    _prev_down = now_down
     return events
 end
 

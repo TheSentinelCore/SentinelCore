@@ -321,6 +321,16 @@ end
 local VK_ESCAPE = 0x1B
 
 function Shell:_poll_input()
+    local TextInputState = require("ui/text_input_state")
+
+    -- Collect keyboard events ONCE per tick for all text_input widgets.
+    -- This replaces the per-widget collect() in the render path (which ran 6×/frame).
+    if type(core) == "table" and type(core.input) == "table" then
+        self._input_events = TextInputState.collect(core.input)
+    else
+        self._input_events = {}
+    end
+
     local pressed = false
     if type(core) == "table" and type(core.input) == "table"
         and type(core.input.is_key_pressed) == "function" then
@@ -596,7 +606,7 @@ function Shell:_draw_body(window, vm, bounds)
     -- frame, and it may be nil. The Graph panel already reaches for `ctx.player_position` to capture
     -- a waypoint and to feed the escort recorder; until now the field was never set by anybody, so
     -- both branches were dead and `travel_add_waypoint` answered "requires player position" forever.
-    local ctx = { shell = self, state = self._state, player_position = self._player_position }
+    local ctx = { shell = self, state = self._state, player_position = self._player_position, input_events = self._input_events }
     local body = bounds
 
     if spec.split then
@@ -683,6 +693,10 @@ function Shell:_on_render_window()
         end
     )
     self._in_render = false
+    -- The keyboard events are CONSUMED by the frame above: the render rate can outrun the tick,
+    -- and a second frame painted before the next `_poll_input` must not apply one keypress twice.
+    -- Cleared on the throw path too — a half-painted frame may already have fed them to a widget.
+    self._input_events = {}
     -- Re-raised rather than swallowed: `main.lua` already reports a failed shell render, and a frame
     -- that died silently here is the class of bug the fake-window type checks exist to catch.
     if not painted then error(paint_err, 0) end
