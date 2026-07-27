@@ -687,13 +687,17 @@ end
 local GraphBinding = {}
 GraphBinding.__index = GraphBinding
 
----@param opts table|nil { }
+---@param opts table|nil { editor_client = table|nil } an EditorClient instance, not a resolver
 function IdePanels.new_graph(opts)
     opts = opts or {}
     local self = setmetatable({}, GraphBinding)
     self._state = GraphState.new()
     self._recorder = EscortRecorder.new()
-    self._campaign_name = nil
+    -- The :3031 campaign client. This binding took NO options at all before -- the Rust CRUD had
+    -- zero Lua callers (obs #225) and every campaign verb on this panel was a placeholder string.
+    self._editor_client = opts.editor_client
+    -- The name of a campaign whose CREATE is in flight. Nil the rest of the time.
+    self._creating = nil
     return self
 end
 
@@ -702,6 +706,81 @@ function GraphBinding:state() return self._state end
 
 ---Access the recorder, exposed for test inspection.
 function GraphBinding:recorder() return self._recorder end
+
+---The campaign this panel currently has open, or nil. The Explorer's authoring commands resolve
+---their target campaign through this, since the Graph owns it and it changes under them.
+function GraphBinding:campaign_name()
+    local name = self._state.campaign_name
+    if type(name) == "string" and name ~= "" then return name end
+    return nil
+end
+
+---The editor client, or nil plus the message the panel should be showing instead.
+function GraphBinding:_editor()
+    local ec = self._editor_client
+    if not ec then
+        return nil, "campaign editor unavailable: no client for the editor at :3031"
+    end
+    return ec
+end
+
+---Write one node of `node_type` into the open campaign, and re-read the graph from the editor.
+---
+---Nothing is inserted locally. On failure the panel gains an error and gains NO node, which is the
+---requirement in one line: editor down means `state.error`, never a phantom.
+---@return boolean handled, string reason
+function GraphBinding:_write_node(node_type)
+    local state = self._state
+    local info = GraphState.node_type_info(node_type)
+    if not info then
+        state.error = "unknown node type '" .. tostring(node_type) .. "'"
+        return true, state.error
+    end
+
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: a new node has nowhere to go"
+        return true, state.error
+    end
+
+    local intent = {}
+    for k, v in pairs(info.default_intent or {}) do intent[k] = v end
+
+    -- Contained: a client that raises must read as a failed write, not take the dispatch down.
+    local called, wrote, why = pcall(ec.add_nodes, ec, campaign, {
+        { id = "new_" .. info.label, type = node_type, preview = info.label, intent = intent },
+    })
+    if not called then
+        state.error = "add " .. info.label .. " failed: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "add " .. info.label .. " was refused: " .. tostring(why or "no reason given")
+        return true, state.error
+    end
+
+    state.error = nil
+    -- The graph on screen is the editor's, so re-read it rather than patching the local copy.
+    state._slots.campaign:reset()
+    state._dirty = true
+    return true, "added " .. info.label .. " to '" .. campaign .. "'"
+end
+
+---Surface refusals the editor sent AFTER the write that caused them had already returned.
+---
+---A mutation can only report that its request LEFT. Everything the server said about it arrives
+---here, on a later tick, and this is the only place it becomes visible.
+function GraphBinding:_drain_editor_errors()
+    local ec = self._editor_client
+    if not ec or type(ec.take_error) ~= "function" then return end
+    local err = ec:take_error()
+    if err then self._state.error = err end
+end
 
 ---The panel spec the shell registers.
 function GraphBinding:spec()
@@ -742,17 +821,88 @@ function GraphBinding:spec()
                 recorder:tick(ctx)
             end
 
-            -- Respond to dirty state
-            if state._dirty then
-                state._dirty = false
-                -- In a real deployment, this would refresh from /editor/campaigns/{name}
+            -- Anything the editor refused since the last tick, whatever issued it.
+            binding:_drain_editor_errors()
+
+            if not state._dirty then return end
+            state._dirty = false
+
+            local ec = binding._editor_client
+            if not ec then
+                state.error = "campaign editor unavailable: no client for the editor at :3031"
+                state.loading = false
+                return
+            end
+
+            -- A create in flight owns the tick: the campaign it names cannot be opened until the
+            -- editor has answered, and asking early caches a 404.
+            if binding._creating then
+                local name = binding._creating
+                local status, summary = state._slots.create:poll(function()
+                    return ec:create_campaign(name)
+                end)
+                if status == "ok" then
+                    binding._creating = nil
+                    if type(ec.forget_create) == "function" then ec:forget_create(name) end
+                    state:set_campaign(tostring((summary or {}).name or name))
+                elseif status ~= "pending" then
+                    binding._creating = nil
+                end
+                return
+            end
+
+            if state.campaign_name and state.campaign_name ~= "" then
+                local name = state.campaign_name
+                local status, loaded = state._slots.campaign:poll(function()
+                    return ec:load_campaign(name)
+                end)
+                if status == "ok" then state:apply_campaign(loaded) end
+                return
+            end
+
+            if not state.campaigns_loaded then
+                local status, list = state._slots.list:poll(function() return ec:list_campaigns() end)
+                if status == "ok" then state:set_campaigns(list) end
             end
         end,
         dispatch = function(command, ctx)
             local state = binding._state
             local recorder = binding._recorder
 
-            if command.kind == "select_node" then
+            if command.kind == "create_campaign" then
+                local name = state:pending_campaign_name()
+                if name == "" then
+                    state.error = "name the campaign before creating it"
+                    return true, state.error
+                end
+                local ec, unavailable = binding:_editor()
+                if not ec then
+                    state.error = unavailable
+                    return true, unavailable
+                end
+                -- The create is only STARTED here. The panel opens the campaign when the editor
+                -- answers, on a later tick -- not on the assumption that it will.
+                binding._creating = name
+                state.name_input:set_value("")
+                state._slots.create:reset()
+                state.error = nil
+                state._dirty = true
+                return true, "creating campaign '" .. name .. "'"
+            elseif command.kind == "cancel_campaign_name" then
+                state.name_input:set_value("")
+                return true
+            elseif command.kind == "open_campaign" then
+                local ec, unavailable = binding:_editor()
+                if not ec then
+                    state.error = unavailable
+                    return true, unavailable
+                end
+                state:set_campaign(command.name)
+                return true, "opening campaign '" .. tostring(command.name) .. "'"
+            elseif command.kind == "close_campaign" then
+                state:close_campaign()
+                return true
+            elseif command.kind == "select_node" then
                 state:select_node(command.node_id)
                 publish_selection(ctx, Graph.id, "node", command.node_id)
                 return true
@@ -763,10 +913,10 @@ function GraphBinding:spec()
                 state:remove_node(command.node_id)
                 return true
             elseif command.kind == "show_add_node_menu" then
-                -- For v1, add a Kill node as a default template
-                state:add_node("questing.Kill")
-                state._dirty = true
-                return true
+                -- For v1 the template is a Kill node. It is WRITTEN, not inserted locally: a node
+                -- that appears because the panel assumed the write worked looks exactly like a node
+                -- the editor stored, and that is how the last cycle shipped phantom authoring.
+                return binding:_write_node("questing.Kill")
             elseif command.kind == "edit_intent" then
                 -- Placeholder: would prompt for a new value via the editor crate
                 return true, "edit_intent " .. tostring(command.node_id) .. ":" .. tostring(command.field) .. " (open editor)"
@@ -985,7 +1135,14 @@ function IdePanels.install(shell, deps)
     -- ====================================================================
     -- Explorer panel — wrap render/dispatch to include travel editor
     -- ====================================================================
-    local explorer = IdePanels.new_explorer(deps)
+    -- Forward-declared on purpose. The Explorer's authoring commands write into whatever campaign
+    -- the GRAPH panel has open, and that is why `campaign` is a resolver rather than a value: it
+    -- changes under the Explorer every time the operator opens a different campaign.
+    local graph
+    local explorer_deps = setmetatable({
+        campaign = deps.campaign or function() return graph and graph:campaign_name() or nil end,
+    }, { __index = deps })
+    local explorer = IdePanels.new_explorer(explorer_deps)
     local explorer_spec = explorer:spec()
     local explorer_render = explorer_spec.render
     local explorer_dispatch = explorer_spec.dispatch
@@ -1050,7 +1207,7 @@ function IdePanels.install(shell, deps)
         if event.panel_id ~= Properties.id then shell:activate(Properties.id) end
     end)
 
-    local graph = IdePanels.new_graph(deps)
+    graph = IdePanels.new_graph(deps)
     local ok4, reason4 = shell:register_panel(graph:spec())
     if not ok4 then return nil, reason4 end
 

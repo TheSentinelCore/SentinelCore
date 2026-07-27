@@ -142,6 +142,7 @@ function GraphState.new(opts)
     state._slots = {
         list = AsyncSlot.new({ label = "campaign list", owner = state }),
         campaign = AsyncSlot.new({ label = "campaign", owner = state }),
+        create = AsyncSlot.new({ label = "create campaign", owner = state }),
     }
     return state
 end
@@ -195,10 +196,13 @@ function GraphState:set_campaign(name)
 end
 
 ---The campaign list came back from `GET /editor/campaigns`.
+---
+---Deliberately does NOT re-arm `_dirty`, and neither does `apply_campaign`. Both are called BY the
+---tick with the answer already in hand; setting the tick's own gate from inside it would make the
+---panel re-poll its own cached data on every frame forever.
 function GraphState:set_campaigns(list)
     self.campaigns = type(list) == "table" and list or {}
     self.campaigns_loaded = true
-    self._dirty = true
 end
 
 ---Take the editor's `Campaign` document and become it.
@@ -245,7 +249,6 @@ function GraphState:apply_campaign(campaign)
     self.selected_node = nil
     self.selected_edge = nil
     self.loading = false
-    self._dirty = true
     return true
 end
 

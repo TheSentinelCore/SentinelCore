@@ -944,6 +944,220 @@ function M.test_an_editor_that_raises_is_a_failed_write_not_a_dead_tick()
     T.assert_true(tostring(reason):find("connection reset", 1, true) ~= nil, tostring(reason))
 end
 
+-- ---- Graph campaign lifecycle (spec: Graph Campaign Lifecycle) ------------
+
+--- An editor client that answers from a script, records every call, and can be made to say no.
+---@param opts table { campaigns, campaign, create_answer, add_result }
+local function fake_editor(opts)
+    opts = opts or {}
+    local editor = { calls = {}, writes = {}, errors = {}, forgotten = {} }
+    local function record(name, arg)
+        editor.calls[#editor.calls + 1] = { name = name, arg = arg }
+    end
+    function editor.list_campaigns() record("list_campaigns") return opts.campaigns end
+    function editor.load_campaign(_, name) record("load_campaign", name) return opts.campaign end
+    function editor.create_campaign(_, name)
+        record("create_campaign", name)
+        if opts.create_answer == nil then return nil, true end
+        return opts.create_answer
+    end
+    function editor.add_nodes(_, campaign, nodes)
+        editor.writes[#editor.writes + 1] = { campaign = campaign, nodes = nodes }
+        if opts.add_result ~= nil then return opts.add_result, opts.add_reason end
+        return true
+    end
+    function editor.take_error() return table.remove(editor.errors, 1) end
+    function editor.forget_create(_, name) editor.forgotten[#editor.forgotten + 1] = name end
+    return editor
+end
+
+local function editor_campaign_doc(name, graph_id, nodes)
+    return {
+        schema_version = 1, id = "11111111-1111-4111-8111-111111111111", name = name,
+        imports = {}, variables = {}, conditions = {},
+        graphs = { { id = graph_id, name = "main",
+                     entry_node = "00000000-0000-0000-0000-000000000000",
+                     nodes = nodes or {}, edges = {} } },
+    }
+end
+
+local function graph_with(editor)
+    local binding = IdePanels.new_graph({ editor_client = editor })
+    return binding, binding:spec(), binding:state()
+end
+
+function M.test_the_graph_tick_asks_the_editor_for_its_campaign_list()
+    local editor = fake_editor({ campaigns = { { name = "a", node_count = 0 } } })
+    local _, spec, state = graph_with(editor)
+
+    spec.on_tick()
+    T.assert_equal(editor.calls[1].name, "list_campaigns",
+        "the chooser has to be populated from the editor, not from nothing")
+    T.assert_equal(#state.campaigns, 1, "and the answer lands on the state")
+
+    spec.on_tick()
+    T.assert_equal(#editor.calls, 1,
+        "and it is asked ONCE -- a tick that re-armed itself on its own answer would re-list "
+        .. "every frame for the life of the session")
+end
+
+function M.test_create_list_open_round_trip()
+    -- SPEC: create "stw" from the empty state, then the panel shows an editable graph for it.
+    local editor = fake_editor({
+        campaigns = {},
+        create_answer = { name = "stw", id = "z", node_count = 0, edge_count = 0 },
+        campaign = editor_campaign_doc("stw", "graph-1", {
+            { id = "aaaaaaaa-0000-4000-8000-000000000001", type = "questing.Kill",
+              intent = { creature_entry = 567 } },
+        }),
+    })
+    local _, spec, state = graph_with(editor)
+    state.name_input:set_value("stw")
+
+    local ok, reason = spec.dispatch({ kind = "create_campaign" }, nil)
+    T.assert_true(ok, "the create is accepted: " .. tostring(reason))
+    T.assert_equal(state:pending_campaign_name(), "",
+        "and the field is cleared, so a second click cannot re-create the same campaign")
+
+    spec.on_tick()   -- the create resolves
+    T.assert_equal(editor.calls[1].name, "create_campaign", "POST /editor/campaigns went out")
+    T.assert_equal(editor.calls[1].arg, "stw", "naming the campaign")
+    T.assert_equal(state.campaign_name, "stw", "which the panel then opens")
+
+    spec.on_tick()   -- the open resolves
+    T.assert_equal(editor.calls[2].name, "load_campaign", "by reading it back from the editor")
+    T.assert_equal(#state.nodes, 1, "and the graph on screen is the one the editor returned")
+    T.assert_equal(state.graph_id, "graph-1", "with the graph id every later write must name")
+end
+
+function M.test_a_create_still_in_flight_does_not_open_anything()
+    local editor = fake_editor({ campaigns = {} })   -- create_answer nil: pending forever
+    local _, spec, state = graph_with(editor)
+    state.name_input:set_value("stw")
+    spec.dispatch({ kind = "create_campaign" }, nil)
+
+    spec.on_tick()
+    T.assert_nil(state.campaign_name,
+        "opening before the editor answered would ask for a campaign that does not exist yet, "
+        .. "and QueryClient caches the 404 that comes back")
+    T.assert_true(state.loading, "the panel says it is waiting")
+    T.assert_true(state._dirty, "and the slot re-armed the tick that will collect the answer")
+end
+
+function M.test_creating_without_a_name_is_refused_and_never_reaches_the_editor()
+    local editor = fake_editor({ campaigns = {} })
+    local _, spec, state = graph_with(editor)
+
+    spec.dispatch({ kind = "create_campaign" }, nil)
+    spec.on_tick()
+    for _, call in ipairs(editor.calls) do
+        T.assert_true(call.name ~= "create_campaign", "an unnamed campaign is not created")
+    end
+    T.assert_true(tostring(state.error):find("name the campaign", 1, true) ~= nil,
+        "and the panel says why, got " .. tostring(state.error))
+end
+
+function M.test_opening_a_campaign_reads_it_from_the_editor()
+    local editor = fake_editor({
+        campaigns = { { name = "b", node_count = 3 } },
+        campaign = editor_campaign_doc("b", "graph-b", {
+            { id = "n1", type = "questing.Travel", intent = { destination = "Goldshire" } },
+            { id = "n2", type = "questing.Kill", intent = { creature_entry = 567 } },
+        }),
+    })
+    local _, spec, state = graph_with(editor)
+
+    spec.dispatch({ kind = "open_campaign", name = "b" }, nil)
+    spec.on_tick()
+    T.assert_equal(state.campaign_name, "b", "b is open")
+    T.assert_equal(#state.nodes, 2, "showing b's nodes and edges")
+    T.assert_equal(state.nodes[1].id, "n1", "with the editor's ids")
+end
+
+function M.test_with_no_editor_client_the_panel_says_so_and_fetches_nothing()
+    local _, spec, state = graph_with(nil)
+
+    spec.on_tick()
+    T.assert_true(tostring(state.error):find("editor unavailable", 1, true) ~= nil,
+        "an absent client is a state the panel PAINTS, never a silent idle: " .. tostring(state.error))
+    T.assert_false(state.loading, "and it is not pretending to load")
+end
+
+-- ---- The guard: editor down means an error, never a phantom node ----------
+
+function M.test_a_refused_node_write_leaves_an_error_and_no_node()
+    local editor = fake_editor({
+        campaign = editor_campaign_doc("stw", "graph-1", {}),
+        add_result = false, add_reason = "campaign is locked",
+    })
+    local _, spec, state = graph_with(editor)
+    state:apply_campaign(editor_campaign_doc("stw", "graph-1", {}))
+
+    local ok, reason = spec.dispatch({ kind = "show_add_node_menu" }, nil)
+    T.assert_true(ok, "the command was handled")
+    T.assert_true(tostring(reason):find("campaign is locked", 1, true) ~= nil,
+        "and the editor's refusal is the reason, got " .. tostring(reason))
+    T.assert_equal(state.error, reason, "which the panel paints")
+    T.assert_equal(#state.nodes, 0,
+        "AND NO NODE APPEARS. A node inserted locally on a failed write is indistinguishable on "
+        .. "screen from one the editor stored -- that is the defect, not the error message")
+end
+
+function M.test_an_editor_that_raises_on_a_node_write_is_a_failed_write()
+    local editor = fake_editor({ campaign = editor_campaign_doc("stw", "graph-1", {}) })
+    function editor.add_nodes() error("connection reset") end
+    local _, spec, state = graph_with(editor)
+    state:apply_campaign(editor_campaign_doc("stw", "graph-1", {}))
+
+    spec.dispatch({ kind = "show_add_node_menu" }, nil)
+    T.assert_true(tostring(state.error):find("connection reset", 1, true) ~= nil,
+        tostring(state.error))
+    T.assert_equal(#state.nodes, 0, "and still no node")
+end
+
+function M.test_adding_a_node_with_no_campaign_open_writes_nowhere()
+    local editor = fake_editor({ campaigns = {} })
+    local _, spec, state = graph_with(editor)
+
+    spec.dispatch({ kind = "show_add_node_menu" }, nil)
+    T.assert_equal(#editor.writes, 0, "there is nowhere to write it")
+    T.assert_true(tostring(state.error):find("no campaign is open", 1, true) ~= nil,
+        tostring(state.error))
+    T.assert_equal(#state.nodes, 0, "and no floating node is invented to hold the intent")
+end
+
+function M.test_an_accepted_node_write_re_reads_the_graph_instead_of_patching_it()
+    local editor = fake_editor({ campaign = editor_campaign_doc("stw", "graph-1", {
+        { id = "n1", type = "questing.Kill", intent = { creature_entry = 0, count = 1 } },
+    }) })
+    local _, spec, state = graph_with(editor)
+    state:apply_campaign(editor_campaign_doc("stw", "graph-1", {}))
+    T.assert_equal(#state.nodes, 0, "nothing on screen yet")
+
+    local ok = spec.dispatch({ kind = "show_add_node_menu" }, nil)
+    T.assert_true(ok)
+    T.assert_equal(#editor.writes, 1, "one write")
+    T.assert_equal(editor.writes[1].nodes[1].type, "questing.Kill", "of the template node")
+    T.assert_equal(#state.nodes, 0, "and the panel has NOT drawn it yet")
+
+    spec.on_tick()
+    T.assert_equal(#state.nodes, 1,
+        "it appears only once the editor's own graph comes back, so what is on screen is what was "
+        .. "stored")
+end
+
+function M.test_an_editor_refusal_that_arrives_late_still_reaches_the_panel()
+    local editor = fake_editor({ campaigns = {} })
+    local _, spec, state = graph_with(editor)
+
+    -- A write dispatched some ticks ago; the editor's answer has only just landed.
+    editor.errors[1] = "add 1 node(s) to 'stw' failed: HTTP 409: campaign is locked"
+    spec.on_tick()
+    T.assert_true(tostring(state.error):find("409", 1, true) ~= nil,
+        "a mutation can only report that its request LEFT, so the server's verdict has to surface "
+        .. "on a later tick or it never surfaces at all: " .. tostring(state.error))
+end
+
 function M.test_no_authoring_command_still_answers_not_yet_implemented()
     -- The placeholder strings from obs #225, gone from this panel for good.
     local handle = assert(io.open("sentinel/ui/ide_panels.lua", "r"))
