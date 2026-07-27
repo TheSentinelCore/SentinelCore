@@ -17,6 +17,13 @@ Chained PRs recommended: Yes
 Chain strategy: stacked-to-main
 400-line budget risk: High
 
+**Granted exceptions** (maintainer decision, 2026-07-26):
+- `size:exception` for PR5 — 1,595 authored lines across 4 commits on 2 stacked branches.
+  `a66e20e` (603) is one generator + one derivation + its test, with no meaningful split.
+  `eb37b83` (792) interleaves three endpoints in `db.rs`/`handlers.rs`; re-slicing risked a
+  non-compiling intermediate. Generated catalog data excluded from authored counts.
+- PR2 was split retroactively into `qir/pr2a-async-slot` (435) and `qir/pr2b-panel-rearm` (307).
+
 Std = `luajit sentinel/tests/run_offline.lua` (run from repo root). Every task below names its PR slice; budget is per PR, not per phase.
 
 ### Suggested Work Units
