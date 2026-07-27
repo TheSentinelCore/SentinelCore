@@ -146,7 +146,15 @@ end
 -- ============================================================================
 
 ---Execute a nearby scan, populating scan_results.
----In-game: delegates to dbg.nearby. Offline: uses mock data.
+---
+---Reads the object manager, which a dead QueryServer does not affect — `query_client` is accepted
+---only so every `execute_*` has one shape, and PR10 can move this to `GET /spawns/nearby` without
+---the caller changing.
+---
+---THERE IS NO OFFLINE FALLBACK. There used to be: with no scan source, this returned six invented
+---rows — a wolf, a boar, a Defias bandit — and in the injector, where `dbg` is a debug plugin the
+---operator may simply not have loaded, those rows are what the panel showed. Fabricated data is
+---worse than an empty list precisely because nothing on screen distinguishes it from a real scan.
 ---@param query_client table|nil
 function DatabaseState:execute_scan(query_client)
     local range = self.scan_range or 50
@@ -154,16 +162,17 @@ function DatabaseState:execute_scan(query_client)
     local state = self
 
     local status, results = self._slots.scan:poll(function()
-        -- In-game path: the object manager, which a dead QueryServer does not affect. A raise here
-        -- is deliberate: the slot's pcall turns it into `spawn scan raised: <reason>`, which keeps
-        -- the reason the old code put straight into `error`.
-        if type(dbg) == "table" and type(dbg.nearby) == "function" then
-            local ok, entities = pcall(dbg.nearby, range, filter)
-            if ok and type(entities) == "table" then return state:_aggregate_nearby(entities) end
-            error(tostring(entities or "Scan returned no data"), 0)
+        -- A raise is deliberate: the slot's pcall turns it into `spawn scan raised: <reason>` on
+        -- `state.error`, which is the only honest answer when there is nothing to scan with.
+        -- (`dbg.nearby` is today's source; task 3.20 replaces it with `core.object_manager`.)
+        if type(dbg) ~= "table" or type(dbg.nearby) ~= "function" then
+            error("no spawn source available (object manager)", 0)
         end
-        -- Offline path: mock scan data for testing
-        return state:_mock_scan(range, filter)
+        local ok, entities = pcall(dbg.nearby, range, filter)
+        if not ok or type(entities) ~= "table" then
+            error(tostring(entities or "scan returned no data"), 0)
+        end
+        return state:_aggregate_nearby(entities)
     end)
 
     -- The flag stays ARMED while pending. The slot has already re-armed `_dirty`, so the next tick
@@ -234,7 +243,9 @@ function DatabaseState:execute_grind(query_client)
     if not query_client then
         self.loading = false
         self._pending_grind = false
-        self.grinding_result = self:_mock_grind_result(entry, self.grinding_zone or "Unknown")
+        -- Was: a fixed 12,450 XP/hour over an empty route. A grind estimate is a number the operator
+        -- makes a decision on, and an invented one is a route they walk for an hour to find out.
+        self.error = "grind estimate unavailable: no query server"
         return
     end
 
@@ -318,42 +329,10 @@ function DatabaseState:_aggregate_nearby(entities)
     return results
 end
 
----Generate mock scan data for offline testing.
----@return table scan results
-function DatabaseState:_mock_scan(range, filter)
-    local all = {
-        { entry = 567, name = "Wolf",            count = 6, min_level = 5, max_level = 7, avg_distance = 12, kind = "creature" },
-        { entry = 568, name = "Boar",            count = 4, min_level = 4, max_level = 6, avg_distance = 18, kind = "creature" },
-        { entry = 569, name = "Defias Bandit",   count = 3, min_level = 7, max_level = 9, avg_distance = 22, kind = "creature" },
-        { entry = 1735, name = "Peacebloom",     count = 5, min_level = 0, max_level = 0, avg_distance = 25, kind = "herb" },
-        { entry = 1736, name = "Silverleaf",     count = 3, min_level = 0, max_level = 0, avg_distance = 28, kind = "herb" },
-        { entry = 1737, name = "Copper Vein",    count = 2, min_level = 0, max_level = 0, avg_distance = 30, kind = "mining" },
-    }
-
-    if filter then
-        local filtered = {}
-        for _, r in ipairs(all) do
-            if r.kind == filter then
-                table.insert(filtered, r)
-            end
-        end
-        return filtered
-    end
-    return all
-end
-
----Generate mock grinding result for offline testing.
-function DatabaseState:_mock_grind_result(entry, zone)
-    return {
-        spawn_density = 24,
-        xp_per_hour = 12450,
-        gold_per_hour = 3.45,
-        kills_per_min = 8.2,
-        safe_spots = 3,
-        route = { zone = zone, waypoints = {} },
-        pull_radius = 18,
-    }
-end
+-- `_mock_scan` and `_mock_grind_result` used to live here (spec: No Mock Data in Production Paths).
+-- They are gone rather than moved behind a flag: a fixture reachable from `execute_*` is a fixture
+-- that reaches the injector, and both of these did. Test fixtures now live in the tests that use
+-- them, where nothing installed can call them.
 
 -- ============================================================================
 -- Build — produce the flat view the render layer draws
