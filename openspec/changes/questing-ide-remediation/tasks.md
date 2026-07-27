@@ -66,10 +66,10 @@ Std = `luajit sentinel/tests/run_offline.lua` (run from repo root). Every task b
 
 ## Phase 2: Rust Contracts + Zone Data Pipeline [PR4–PR5]
 
-- [ ] 2.1 [PR4] `SentinelQuesting/query-types/src/lib.rs`: add `QuestSummary.zone: String`; `NpcDetail` += `level: u8, classification: String, loot: Vec<LootEntry>, quests: Vec<NpcQuestRef>`; `VendorInfo.sells: Vec<VendorItem>` (replaces `Vec<u32>`) — all new fields `#[serde(default)]`
-- [ ] 2.2 [PR4] `SentinelQueryServer/src/db.rs`: extend `get_npc` (MinLevel/MaxLevel/Rank, loot via `creature_loot_template ⋈ item_template`, quests via `creature_questrelation`+`creature_involvedrelation` ⋈ `quest_template`); extend `get_vendor` (`npc_vendor ⋈ item_template`, `ExtendedCost≠0` → price 0); extend `search_quests` (`ZoneOrSort` → new `zone_names.rs` static TBC area map)
-- [ ] 2.3 [PR4] Update ripple call sites for new required struct fields: `compiler/tests/{kernel_combat_policy,kernel_worked_example}.rs`, `importer/src/project_builder.rs`, `importer/tests/{mapper,importer}.rs`, `queryclient/tests/queryclient.rs`, `queryclient/src/memory.rs`
-- [ ] 2.4 [PR4] Test: `cargo test` green in `SentinelQueryServer/` and `SentinelQuesting/` (both workspaces, run from inside each)
+- [x] 2.1 [PR4] `SentinelQuesting/query-types/src/lib.rs`: add `QuestSummary.zone: String`; `NpcDetail` += `level: u8, classification: String, loot: Vec<LootEntry>, quests: Vec<NpcQuestRef>`; `VendorInfo.sells: Vec<VendorItem>` (replaces `Vec<u32>`) — all new fields `#[serde(default)]`
+- [x] 2.2 [PR4] `SentinelQueryServer/src/db.rs`: extend `get_npc` (MinLevel/MaxLevel/Rank, loot via `creature_loot_template ⋈ item_template`, quests via `creature_questrelation`+`creature_involvedrelation` ⋈ `quest_template`); extend `get_vendor` (`npc_vendor ⋈ item_template`, `ExtendedCost≠0` → price 0); extend `search_quests` (`ZoneOrSort` → new `zone_names.rs` static TBC area map)
+- [x] 2.3 [PR4] Update ripple call sites for new required struct fields: `compiler/tests/{kernel_combat_policy,kernel_worked_example}.rs`, `importer/src/project_builder.rs`, `importer/tests/{mapper,importer}.rs`, `queryclient/tests/queryclient.rs`, `queryclient/src/memory.rs`
+- [x] 2.4 [PR4] Test: `cargo test` green in `SentinelQueryServer/` and `SentinelQuesting/` (both workspaces, run from inside each)
 - [ ] 2.5 [PR5] Create `sentinel/tools/regen_zone_catalog.py` mirroring `regen_taxi_paths_catalog.py`: parse `Emulators/Mangos - Classic TBC/extracted/dbc/AreaTable.dbc` for zone names/hierarchy, parse `maps/*.map` area-ID grids to compute zoneId for all 109,352 creature spawns
 - [ ] 2.6 [PR5] Commit generated catalogs: `sentinel/kernel/catalogs/zones.json`, `zones.lua`, spawn-zone index
 - [ ] 2.7 [PR5] Test mirroring `sentinel/tests/kernel/test_taxi_paths.lua` pattern: catalog regen produces non-empty, structurally valid zone + spawn-zone catalogs
