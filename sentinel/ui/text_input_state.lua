@@ -196,6 +196,51 @@ function TextInputState:apply_keys(events)
 end
 
 -- ============================================================================
+-- Reading the live keyboard
+-- ============================================================================
+
+---Every vk the widget has to ask about, derived from the two tables above rather than written out
+---a third time, so the poller cannot drift away from what `apply_key` understands.
+local POLLED_KEYS = {}
+do
+    local seen = { [TextInputState.VK.SHIFT] = true }  -- a modifier, read with is_key_down
+    for _, vk in pairs(TextInputState.VK) do
+        if not seen[vk] then seen[vk] = true; POLLED_KEYS[#POLLED_KEYS + 1] = vk end
+    end
+    for vk in pairs(CHAR_MAP) do
+        if not seen[vk] then seen[vk] = true; POLLED_KEYS[#POLLED_KEYS + 1] = vk end
+    end
+    table.sort(POLLED_KEYS)
+end
+TextInputState.POLLED_KEYS = POLLED_KEYS
+
+---Turn one frame of `core.input` into the same event list the offline tests hand to `apply_key`.
+---
+---`input` is passed in rather than read from `_G.core` so this stays a pure function of its
+---argument and a test can drive it with a table. `is_key_down` is UNDOCUMENTED -- proven only by
+---`SentinelNavClient/lib/AstroUI.lua:2403` -- so a missing one degrades to "shift is not held"
+---(lower case still types) instead of raising and taking the whole frame down with it.
+---@param input table|nil the `core.input` namespace
+---@return table events list of `{ vk, shift }`
+function TextInputState.collect(input)
+    local events = {}
+    if type(input) ~= "table" then return events end
+    if type(input.is_key_pressed) ~= "function" then return events end
+
+    local shift = false
+    if type(input.is_key_down) == "function" then
+        local ok, down = pcall(input.is_key_down, TextInputState.VK.SHIFT)
+        shift = (ok and down) and true or false
+    end
+
+    for _, vk in ipairs(POLLED_KEYS) do
+        local ok, pressed = pcall(input.is_key_pressed, vk)
+        if ok and pressed then events[#events + 1] = { vk = vk, shift = shift } end
+    end
+    return events
+end
+
+-- ============================================================================
 -- Projection
 -- ============================================================================
 
