@@ -539,6 +539,10 @@ local test_modules = {
     -- that makes an in-flight request observable offline. Registered BEFORE the panels: a panel
     -- that freezes on a pending fetch must fail as a slot bug here first, not as four panel bugs.
     "tests/ui/test_async_slot",
+    -- The :3031 campaign transport the Graph and Explorer authoring commands write through.
+    -- Registered next to the slot suite because it answers the same pending contract and is the
+    -- other half of "a write that was never issued must not read as a write that succeeded".
+    "tests/ui/test_editor_client",
     -- ADR 09b U5: the Runner panel. Registered after the widget suites because it is built
     -- entirely out of them -- a widget regression must fail as a widget bug, not as this panel's.
     "tests/ui/test_runner_panel",

@@ -172,6 +172,36 @@ function QueryClient:post(path, body, on_complete)
     return "dispatched"
 end
 
+--- Drop every cached path beginning with `prefix`, and abandon the in-flight requests under it.
+---
+--- `_get` is a path-keyed cache with a negative-cache sentinel, which is exactly right for the
+--- QueryServer's static game data and exactly WRONG for the editor at :3031, whose graphs change
+--- because this client changed them. Without this, a campaign fetched once would keep answering the
+--- pre-write graph for the life of the session, and a campaign that did not exist yet would keep
+--- answering NOT_FOUND after being created.
+---
+--- Dropping the in-flight marker matters as much as dropping the cache: a read that was already in
+--- the air when the write landed will resolve into the cache with pre-write data, so the next
+--- `_get` must be free to issue a fresh request rather than wait on that one.
+---@param prefix string|nil a path prefix; nil or "" clears everything
+---@return number cleared how many cached paths were dropped
+function QueryClient:invalidate(prefix)
+    prefix = tostring(prefix or "")
+    local cleared = 0
+    for path in pairs(self._cache or {}) do
+        if prefix == "" or path:sub(1, #prefix) == prefix then
+            self._cache[path] = nil
+            cleared = cleared + 1
+        end
+    end
+    for path in pairs(self._inflight or {}) do
+        if prefix == "" or path:sub(1, #prefix) == prefix then
+            self._inflight[path] = nil
+        end
+    end
+    return cleared
+end
+
 function QueryClient:search_quests(query)
     return self:_get("/quests/search?q=" .. tostring(query))
 end
