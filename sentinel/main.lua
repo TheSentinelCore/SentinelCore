@@ -263,8 +263,26 @@ end
 -- `toggle_ide` deliberately opens the IDE without `ensure_initialized` — so "the questing module"
 -- has to be looked up per refresh, and answering nil has to be normal rather than an error.
 local IdePanels = require("ui/ide_panels")
+
+-- ONE QueryClient for the whole IDE, built here because the host owns service topology and the
+-- panels must not. Every data panel shares this instance on purpose: QueryClient is request-and-
+-- cache, so a single path-keyed cache and in-flight table means Explorer and Properties asking for
+-- `/npc/567` in the same frame produce one request, not two.
+--
+-- A TABLE, NOT A RESOLVER. `questing` above is a function because `reload()` tears the app down and
+-- stands a new one up, so "the questing module" has to be looked up per refresh. QueryClient has no
+-- such lifecycle -- it is a plain HTTP client with no reference into the app graph, so re-deriving
+-- it per tick would only throw away its cache. The binding docs in ide_panels.lua say `table|nil`
+-- for exactly this reason.
+--
+-- Constructing it costs nothing and touches no SDK surface: `QueryClient:new` only fills a table.
+-- The first `core.http_get` happens on the first fetch, from a tick callback, never from render.
+local QueryClient = require("shared/query_client")
+local _ide_query_client = QueryClient:new("127.0.0.1", 3030)
+
 local _ide_bindings = IdePanels.install(_ide_shell, {
     questing = function() return host_verbs.questing() end,
+    query_client = _ide_query_client,
 })
 if not _ide_bindings then
     log_error("IDE runner panel failed to register; the IDE will open with an empty switcher")

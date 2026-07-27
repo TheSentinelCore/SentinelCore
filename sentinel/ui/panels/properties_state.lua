@@ -132,7 +132,11 @@ end
 
 function PropertiesState:build()
     if not self.context then
-        return { context_type = nil, loading = false, error = nil }
+        -- The error is carried through even with nothing selected. It used to be hard-coded nil
+        -- here, which meant the inspector could only ever report a failure AFTER something had been
+        -- selected -- so "the query server is down" was unsayable in the exact state an operator
+        -- opens the panel in.
+        return { context_type = nil, loading = self.loading or false, error = self.error }
     end
 
     local ctype = self.context.selection_type
@@ -225,11 +229,15 @@ function PropertiesState.build_plan(view, bounds)
     -- No context
     -- -----------------------------------------------------------------------
     if view.context_type == nil then
+        -- An error outranks the invitation to select something: telling an operator to pick an NPC
+        -- when the panel could not fetch one either way is an instruction that cannot be followed.
         push({
             kind = "empty_state",
             bounds = { x = bounds.x, y = bounds.y, w = bounds.w, h = bounds.h },
-            title = "No Selection",
-            message = "Select an NPC, vendor, object or node to inspect",
+            title = view.error and "Unavailable" or "No Selection",
+            message = view.error
+                and ("Error: " .. tostring(view.error))
+                or "Select an NPC, vendor, object or node to inspect",
         })
         return { items = items }
     end

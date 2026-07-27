@@ -465,4 +465,146 @@ function M.test_the_panel_keeps_drawing_when_the_module_disappears_mid_session()
     T.assert_nil(binding:model().view, "and the stale snapshot must be dropped, not kept")
 end
 
+-- ---------------------------------------------------------------------------
+-- The QueryClient seam (spec: QueryClient Wiring at Install)
+-- ---------------------------------------------------------------------------
+--
+-- The same class of defect as the Runner seam above, one layer down. `main.lua` registered the
+-- panels and never passed a client, so every data binding answered its own `if not qc then return`
+-- and drew an idle view. Both halves were green: the panels' suites supplied a client, and
+-- `main.lua` has no suite. Only a test that installs the way the host installs can see it.
+
+--- A QueryClient stand-in that records every call and resolves nothing.
+---
+--- A TABLE, not a resolver returning one. That is the whole contract under test: the doc comments
+--- promised `function():table|nil` while every call site already wrote `qc:get_quest(id)`, so a host
+--- that believed the docs would have passed something no binding could call.
+local function fake_query_client()
+    local qc = { calls = {} }
+    local function record(name, arg)
+        qc.calls[#qc.calls + 1] = { name = name, arg = arg }
+        return nil
+    end
+    function qc.get_quest(_, id) return record("get_quest", id) end
+    function qc.get_quest_chain(_, id) return record("get_quest_chain", id) end
+    function qc.get_quest_objectives(_, id) return record("get_quest_objectives", id) end
+    function qc.search_quests(_, q) return record("search_quests", q) end
+    function qc.get_npc(_, entry) return record("get_npc", entry) end
+    function qc.get_vendor(_, entry) return record("get_vendor", entry) end
+    function qc.get_object(_, entry) return record("get_object", entry) end
+    return qc
+end
+
+local function qc_called(qc, name)
+    for _, entry in ipairs(qc.calls) do
+        if entry.name == name then return entry end
+    end
+    return nil
+end
+
+--- Every panel that talks to the QueryServer. The Graph panel is absent on purpose: it is backed by
+--- the editor crate on :3031, not the query server, and gets its client in a later slice.
+local DATA_PANELS = { "explorer", "properties", "database" }
+
+function M.test_installing_without_a_query_client_says_so_instead_of_idling()
+    local shell = Shell.new({ window = FakeWindow.new(), elements = nil })
+    local bindings, reason = IdePanels.install(shell, { questing = function() return nil end })
+    T.assert_not_nil(bindings, "install must succeed: " .. tostring(reason))
+    shell:show()
+
+    for _, id in ipairs(DATA_PANELS) do
+        local state = bindings[id]:state()
+        T.assert_nil(state.error, id .. " must start with a clean error field")
+
+        shell:activate(id)
+        shell:on_tick()
+
+        T.assert_equal(state.error, IdePanels.QUERY_SERVER_UNAVAILABLE,
+            id .. " must name the missing query server rather than draw an empty panel; an idle "
+            .. "view is indistinguishable from a panel with nothing to show")
+        T.assert_true(state.loading ~= true,
+            id .. " must not be left spinning on a fetch that was never issued")
+    end
+end
+
+function M.test_the_unavailable_state_reaches_the_rendered_view()
+    -- `state.error` is only worth setting if the panel actually paints it. Asserting the field and
+    -- not the frame is how the last cycle shipped panels that "handled" failures invisibly.
+    local fake = FakeWindow.new()
+    local shell = Shell.new({ window = fake, elements = nil })
+    local bindings = IdePanels.install(shell, { questing = function() return nil end })
+    shell:show()
+
+    for _, id in ipairs(DATA_PANELS) do
+        shell:activate(id)
+        shell:on_tick()
+        fake:reset()
+        shell:_on_render_window()
+        T.assert_true(fake:drew_text("query server unavailable"),
+            id .. " must paint the unavailable message, not merely record it on the state")
+    end
+end
+
+function M.test_installing_with_a_query_client_hands_every_binding_that_exact_table()
+    local qc = fake_query_client()
+    local shell = Shell.new({ window = FakeWindow.new(), elements = nil })
+    local bindings, reason = IdePanels.install(shell, {
+        questing = function() return nil end,
+        query_client = qc,
+    })
+    T.assert_not_nil(bindings, "install must succeed: " .. tostring(reason))
+
+    for _, id in ipairs(DATA_PANELS) do
+        T.assert_true(bindings[id]._query_client == qc,
+            id .. " must hold the very table install was given, not a copy or a wrapper")
+        T.assert_nil(bindings[id]:state().error,
+            id .. " must not report the server unavailable when a client was supplied")
+    end
+end
+
+function M.test_an_explorer_selection_reaches_the_client_on_the_next_tick()
+    -- The end-to-end claim of this slice: selecting in a panel becomes a real request. It must
+    -- happen on the TICK and not in the frame -- Sylvannas forbids the reverse, and the previous
+    -- cockpit died of exactly that.
+    local qc = fake_query_client()
+    local fake = FakeWindow.new()
+    local shell = Shell.new({ window = fake, elements = nil })
+    local bindings = IdePanels.install(shell, {
+        questing = function() return nil end,
+        query_client = qc,
+    })
+    shell:show()
+    shell:activate("explorer")
+    shell:on_tick()
+
+    local before = #qc.calls
+    bindings.explorer:spec().dispatch({ kind = "select_quest", id = 1234 })
+    shell:_on_render_window()
+    T.assert_equal(#qc.calls, before,
+        "no request may be issued from inside a render callback")
+
+    shell:on_tick()
+    local call = qc_called(qc, "get_quest")
+    T.assert_not_nil(call, "the selection must reach get_quest on the following tick")
+    T.assert_equal(call.arg, 1234, "and it must carry the id that was selected")
+end
+
+function M.test_a_properties_selection_reaches_the_client_on_the_next_tick()
+    local qc = fake_query_client()
+    local shell = Shell.new({ window = FakeWindow.new(), elements = nil })
+    local bindings = IdePanels.install(shell, {
+        questing = function() return nil end,
+        query_client = qc,
+    })
+    shell:show()
+    shell:activate("properties")
+
+    bindings.properties:state():set_context({ selection_type = "npc", selection_id = 567 })
+    shell:on_tick()
+
+    local call = qc_called(qc, "get_npc")
+    T.assert_not_nil(call, "an NPC context must reach get_npc")
+    T.assert_equal(call.arg, 567, "and it must carry the selected entry")
+end
+
 return M

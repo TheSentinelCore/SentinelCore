@@ -43,6 +43,34 @@ local StatsDashboard = require("ui/panels/stats_dashboard")
 local IdePanels = {}
 
 -- ============================================================================
+-- Absent query client (spec: QueryClient Wiring at Install)
+-- ============================================================================
+--
+-- Every data binding used to answer a missing client with a bare `return`. That is the failure this
+-- change exists to remove: the panel kept rendering its idle view, so an operator with no
+-- QueryServer running saw a panel that looked merely empty rather than one that was disconnected,
+-- and there was nothing on screen to distinguish "no results" from "nobody asked".
+--
+-- The states already carry an `error` field that every `build_plan` projects, so saying so costs one
+-- assignment and no new render branch. `_dirty` is deliberately NOT re-armed: render reads
+-- `state.error` fresh each frame, so the message stays on screen without spending a tick per frame.
+--
+-- Kept SHORT deliberately. The Explorer's error row runs the string through `fit(text, content_w)`,
+-- so a sentence of explanation would be truncated to an ellipsis at the width that matters most --
+-- a narrow panel. The explanation belongs in this comment; the panel gets the fact.
+local QUERY_SERVER_UNAVAILABLE = "query server unavailable"
+
+---Record the absent client on a panel state. Idempotent: re-running a tick rewrites the same string.
+---@param state table a panel state carrying `error` / `loading`
+local function mark_query_client_unavailable(state)
+    state.loading = false
+    state.error = QUERY_SERVER_UNAVAILABLE
+end
+
+---Exposed so tests assert against the real string instead of a copy that can drift out of step.
+IdePanels.QUERY_SERVER_UNAVAILABLE = QUERY_SERVER_UNAVAILABLE
+
+-- ============================================================================
 -- Refresh cadence (ADR 09b §2.4)
 -- ============================================================================
 
@@ -309,7 +337,7 @@ end
 local ExplorerBinding = {}
 ExplorerBinding.__index = ExplorerBinding
 
----@param opts table|nil { query_client = function():table|nil }
+---@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
 function IdePanels.new_explorer(opts)
     opts = opts or {}
     local self = setmetatable({}, ExplorerBinding)
@@ -338,7 +366,10 @@ function ExplorerBinding:spec()
             state._dirty = false
 
             local qc = binding._query_client
-            if not qc then return end
+            if not qc then
+                mark_query_client_unavailable(state)
+                return
+            end
 
             -- Only fire queries when there's an active selection or search
             if state.selected_id then
@@ -423,7 +454,7 @@ end
 local PropertiesBinding = {}
 PropertiesBinding.__index = PropertiesBinding
 
----@param opts table|nil { query_client = function():table|nil }
+---@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
 function IdePanels.new_properties(opts)
     opts = opts or {}
     local self = setmetatable({}, PropertiesBinding)
@@ -451,11 +482,17 @@ function PropertiesBinding:spec()
             if not state._dirty then return end
             state._dirty = false
 
+            -- The client check comes BEFORE the context check on purpose. Having no QueryServer is
+            -- a fact about the panel, not about the current selection: an inspector that waits for
+            -- a selection to admit it can never fetch anything is the silent idle this change kills.
+            local qc = binding._query_client
+            if not qc then
+                mark_query_client_unavailable(state)
+                return
+            end
+
             local ctx = state.context
             if not ctx then return end
-
-            local qc = binding._query_client
-            if not qc then return end
 
             local ctype = ctx.selection_type
             local sid = ctx.selection_id
@@ -644,7 +681,7 @@ end
 local DatabaseBinding = {}
 DatabaseBinding.__index = DatabaseBinding
 
----@param opts table|nil { query_client = function():table|nil }
+---@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
 function IdePanels.new_database(opts)
     opts = opts or {}
     local self = setmetatable({}, DatabaseBinding)
@@ -673,6 +710,17 @@ function DatabaseBinding:spec()
             state._dirty = false
 
             local qc = binding._query_client
+            if not qc then
+                -- Detail and grind are server-backed; drop them here rather than letting the state
+                -- reach its own nil-client branches, which currently answer with fabricated data.
+                -- (That fabrication is removed wholesale in the mock-data sweep; this gate means the
+                -- installed panel cannot reach it in the meantime.) The scan is NOT dropped: it
+                -- reads the object manager, a different source that a dead QueryServer does not
+                -- affect.
+                state._pending_detail = false
+                state._pending_grind = false
+                mark_query_client_unavailable(state)
+            end
 
             -- Execute pending scan
             if state._pending_scan then
