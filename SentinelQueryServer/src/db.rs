@@ -528,6 +528,20 @@ impl Db {
             .collect())
     }
 
+    /// Every distinct **positive** `quest_template.ZoneOrSort` in the snapshot, ascending.
+    ///
+    /// Exists for the zone-catalog coverage test: it is the exact set of ids `search_quests` will
+    /// ask [`crate::zone_names::zone_name`] about, so a catalog that cannot name one of them
+    /// renders a blank zone in the quest search panel and nothing else notices.
+    pub fn distinct_quest_zones(&self) -> Result<Vec<i64>, String> {
+        self.query_map::<i64, _>(
+            "SELECT DISTINCT ZoneOrSort FROM quest_template WHERE ZoneOrSort > 0 \
+             ORDER BY ZoneOrSort ASC",
+            [],
+            |row| row.get(0),
+        )
+    }
+
     pub fn search_quests(&self, query: &str) -> Result<Vec<QuestSummary>, String> {
         let db = self.0.lock().unwrap();
         let like = format!("%{}%", query);
