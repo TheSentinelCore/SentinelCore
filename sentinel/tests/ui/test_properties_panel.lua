@@ -17,26 +17,46 @@ local BOUNDS = { x = 0, y = 0, w = 400, h = 600 }
 -- Fixtures
 -- ============================================================================
 
+-- SERVER-SHAPED, and that is load-bearing. Every fixture below uses the field names serde emits
+-- from SentinelQuesting/query-types -- `drop_chance` not `chance`, `quest_id` not `id`,
+-- `item_entry` not `entry`, lower-case `classification`. The previous fixtures used the panel's
+-- invented names, so the suite proved the panel could read its own test data and nothing else.
 local function sample_npc_detail()
     return {
         entry = 823,
         name = "Deputy Willem",
         level = 45,
         faction = "Stormwind",
-        classification = "Elite",
+        classification = "rare elite",
         roles = { "QuestGiver", "Vendor" },
         quests = {
-            { id = 783, title = "The Missing Diplomat" },
-            { id = 2158, title = "A Bundle of Trouble" },
+            { quest_id = 783,  title = "The Missing Diplomat", role = "starter" },
+            { quest_id = 2158, title = "A Bundle of Trouble",   role = "finisher" },
         },
         loot = {
-            { item = 1234, name = "Silver Ring", chance = 15.5 },
-            { item = 5678, name = "Gold Coin", chance = 45.0 },
+            { item = 1234, name = "Silver Ring", drop_chance = 15.5 },
+            { item = 5678, name = "Gold Coin",   drop_chance = 45.0 },
+            { item = 9012, name = "Worn Cloak",  drop_chance = 0.4 },
         },
         positions = {
             { map = 0, x = -8932, y = -137, z = 82 },
         },
     }
+end
+
+local function render_view(view)
+    local fake = FakeWindow.new({ size = { x = BOUNDS.w, y = BOUNDS.h } })
+    Properties.render(fake, BOUNDS, view)
+    return fake
+end
+
+local function npc_view(detail, tab)
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "database", selection_type = "npc", selection_id = detail.entry })
+    state.npc_detail = detail
+    if tab then state:set_npc_tab(tab) end
+    state.loading = false
+    return state:build()
 end
 
 local function sample_vendor_info()
@@ -582,6 +602,98 @@ function M.test_npc_tab_spawns_shows_spawns()
     state.loading = false
     local view = state:build()
     T.assert_equal(view.npc_view.tab, "spawns", "tab must be spawns")
+end
+
+-- ============================================================================
+-- 10. NPC Inspector on the SERVER's shape
+-- ============================================================================
+-- Every case here asserts against the PAINTED frame, not against `state.*`. A panel that stores a
+-- field it never draws is exactly the failure this change exists to remove, and only `drew_text`
+-- can tell the two apart.
+
+function M.test_level_label_marks_the_spawn_floor()
+    -- `NpcDetail.level` is creature_template.MinLevel. Rendering it bare as "Level 45" against a
+    -- 45-48 spawn states a fact about the pull that the server never sent.
+    T.assert_equal(PropertiesState.level_label(45), "Level 45 (min)")
+    T.assert_nil(PropertiesState.level_label(nil), "no level on the wire must render nothing")
+end
+
+function M.test_rare_elite_is_one_classification_and_does_not_decompose()
+    T.assert_equal(PropertiesState.classification_label("rare elite"), "Rare Elite")
+    T.assert_equal(PropertiesState.classification_label("rare"), "Rare")
+    T.assert_equal(PropertiesState.classification_label("elite"), "Elite")
+    T.assert_equal(PropertiesState.classification_label("boss"), "Boss")
+    T.assert_equal(PropertiesState.classification_label("normal"), "Normal")
+    T.assert_equal(PropertiesState.classification_label("warchief"), "warchief",
+        "an unknown rank must pass through, never fold into Normal")
+    T.assert_nil(PropertiesState.classification_label(nil))
+end
+
+function M.test_npc_info_tab_paints_level_and_classification()
+    local fake = render_view(npc_view(sample_npc_detail(), "info"))
+    T.assert_true(fake:drew_text("Deputy Willem"), "the NPC name must reach the frame")
+    T.assert_true(fake:drew_text("Level 45 (min)"), "the level must reach the frame")
+    T.assert_true(fake:drew_text("Rare Elite"), "the classification must reach the frame")
+end
+
+function M.test_loot_groups_into_drop_chance_buckets()
+    local buckets = PropertiesState.loot_buckets(sample_npc_detail().loot)
+    T.assert_equal(#buckets, 3, "45%, 15.5% and 0.4% are three different buckets")
+    T.assert_equal(buckets[1].name, "Common", "densest bucket first")
+    T.assert_equal(buckets[1].entries[1].item, 5678)
+    T.assert_equal(buckets[2].name, "Uncommon")
+    T.assert_equal(buckets[3].name, "Very Rare")
+    T.assert_equal(#PropertiesState.loot_buckets(nil), 0, "no loot means no buckets, not a crash")
+end
+
+function M.test_loot_tab_paints_a_bucket_with_real_values()
+    local fake = render_view(npc_view(sample_npc_detail(), "loot"))
+    T.assert_true(fake:drew_text("Common (1)"), "a loot bucket header must reach the frame")
+    T.assert_true(fake:drew_text("Gold Coin"), "the item name must reach the frame")
+    T.assert_true(fake:drew_text("45.0%"), "the drop chance must reach the frame")
+end
+
+function M.test_the_loot_tab_reads_drop_chance_and_not_chance()
+    -- The regression verbatim: the panel used to read `entry.chance`, a name the wire never had.
+    local detail = sample_npc_detail()
+    detail.loot = { { item = 1234, name = "Silver Ring", chance = 15.5 } }
+    local fake = render_view(npc_view(detail, "loot"))
+    T.assert_false(fake:drew_text("15.5%"),
+        "a `chance` key is not `drop_chance`; reading it would re-lock the panel to its own fixtures")
+end
+
+function M.test_quests_split_by_role()
+    local starters, finishers, unknown = PropertiesState.split_quests(sample_npc_detail().quests)
+    T.assert_equal(#starters, 1)
+    T.assert_equal(starters[1].quest_id, 783)
+    T.assert_equal(#finishers, 1)
+    T.assert_equal(finishers[1].quest_id, 2158)
+    T.assert_equal(#unknown, 0)
+end
+
+function M.test_an_npc_that_both_starts_and_ends_a_quest_appears_in_both_lists()
+    local starters, finishers = PropertiesState.split_quests({
+        { quest_id = 42, title = "Loop", role = "starter" },
+        { quest_id = 42, title = "Loop", role = "finisher" },
+    })
+    T.assert_equal(#starters, 1, "two reasons to walk to the NPC are two rows, not one")
+    T.assert_equal(#finishers, 1)
+end
+
+function M.test_quests_tab_paints_starter_and_finisher_sections()
+    local fake = render_view(npc_view(sample_npc_detail(), "quests"))
+    T.assert_true(fake:drew_text("Starts (1)"), "the starter section must reach the frame")
+    T.assert_true(fake:drew_text("Turns In (1)"), "the finisher section must reach the frame")
+    T.assert_true(fake:drew_text("The Missing Diplomat"), "the quest title must reach the frame")
+    T.assert_true(fake:drew_text("783"), "NpcQuestRef.quest_id must reach the frame")
+end
+
+function M.test_a_quest_ref_with_an_unknown_role_is_still_shown()
+    local detail = sample_npc_detail()
+    detail.quests = { { quest_id = 99, title = "Orphaned", role = "escortee" } }
+    local fake = render_view(npc_view(detail, "quests"))
+    T.assert_true(fake:drew_text("Orphaned"),
+        "a role this panel does not know is still a quest the NPC is attached to")
 end
 
 return M

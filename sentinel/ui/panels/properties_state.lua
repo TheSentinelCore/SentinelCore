@@ -187,6 +187,112 @@ function PropertiesState:build()
 end
 
 -- ============================================================================
+-- Server-shape projections
+-- ============================================================================
+-- `NpcDetail`, `VendorInfo` and `ObjectInfo` are Rust types (SentinelQuesting/query-types) and
+-- reach Lua through serde, so their field names are fixed by the wire, not by this file.
+--
+-- Everything below reads the names serde ACTUALLY emits. The previous version read
+-- `loot_entry.chance` and `quest.id` -- names no server type has ever carried -- so the loot and
+-- quest tabs painted their header and then nothing, on every NPC, forever. A blank section under a
+-- filled header is the worst possible failure here: it reads as "this NPC drops nothing".
+--
+-- These are module functions, not methods, for exactly one reason: they are where the panel's
+-- decisions about server data live, and a test must be able to call them without a shell, a
+-- window, or a fetch.
+
+---`creature_template.Rank`, as the QueryServer maps it. FIVE values -- `rare elite` is ONE
+---classification and does not decompose into `rare` plus `elite`. A map (rather than two boolean
+---flags) is what stops a rare-elite from being reported as an elite.
+local CLASSIFICATION_LABEL = {
+    ["normal"]     = "Normal",
+    ["elite"]      = "Elite",
+    ["rare elite"] = "Rare Elite",
+    ["boss"]       = "Boss",
+    ["rare"]       = "Rare",
+}
+PropertiesState.CLASSIFICATION_LABEL = CLASSIFICATION_LABEL
+
+---@param raw string|nil the server's `classification`
+---@return string|nil display label, nil only when the server sent nothing
+function PropertiesState.classification_label(raw)
+    if raw == nil then return nil end
+    -- An unrecognised rank is shown VERBATIM rather than folded into "Normal". Answering the
+    -- least-dangerous label for a value the server added later is how an operator walks a boss.
+    return CLASSIFICATION_LABEL[tostring(raw):lower()] or tostring(raw)
+end
+
+---`NpcDetail.level` is `creature_template.MinLevel`. For a spawn with a level RANGE that is the
+---FLOOR, not the level you will meet. There is no range on the wire, and inventing one here would
+---be a fabricated fact about a pull; it is labelled as a minimum instead.
+function PropertiesState.level_label(level)
+    if level == nil then return nil end
+    return "Level " .. tostring(level) .. " (min)"
+end
+
+---`LootEntry.drop_chance` is a PERCENTAGE in 0..=100 (the QueryServer normalises mangos' negative
+---"reference loot" chances before serialising), so these bounds are read as percent, not fraction.
+local LOOT_BUCKETS = {
+    { name = "Guaranteed", min = 100 },
+    { name = "Common",     min = 25 },
+    { name = "Uncommon",   min = 5 },
+    { name = "Rare",       min = 1 },
+    { name = "Very Rare",  min = 0 },
+}
+PropertiesState.LOOT_BUCKETS = LOOT_BUCKETS
+
+---Group a server loot table into drop-chance buckets, densest first.
+---
+---Buckets rather than a flat list because a 40-row loot table sorted by item id tells an operator
+---nothing about what they will actually see; the question the panel is asked is "is this farmable".
+---@param loot table|nil Vec<LootEntry>
+---@return table [{ name, entries }] -- empty buckets are omitted, order is LOOT_BUCKETS order
+function PropertiesState.loot_buckets(loot)
+    local by_name = {}
+    for _, entry in ipairs(loot or {}) do
+        local chance = tonumber(entry.drop_chance) or 0
+        local bucket = LOOT_BUCKETS[#LOOT_BUCKETS].name
+        for _, b in ipairs(LOOT_BUCKETS) do
+            if chance >= b.min then
+                bucket = b.name
+                break
+            end
+        end
+        if not by_name[bucket] then by_name[bucket] = { name = bucket, entries = {} } end
+        local list = by_name[bucket].entries
+        list[#list + 1] = entry
+    end
+
+    local out = {}
+    for _, b in ipairs(LOOT_BUCKETS) do
+        if by_name[b.name] then out[#out + 1] = by_name[b.name] end
+    end
+    return out
+end
+
+---Split `NpcDetail.quests` on `NpcQuestRef.role` ("starter" | "finisher").
+---
+---An NPC that both starts and turns in a quest appears in BOTH lists, which is the truth: they are
+---two separate reasons to walk to it, at two different points in a guide.
+---@return table starters, table finishers, table unknown_role
+function PropertiesState.split_quests(quests)
+    local starters, finishers, other = {}, {}, {}
+    for _, q in ipairs(quests or {}) do
+        local role = tostring(q.role or ""):lower()
+        if role == "starter" then
+            starters[#starters + 1] = q
+        elseif role == "finisher" then
+            finishers[#finishers + 1] = q
+        else
+            -- Not silently dropped: a quest ref with a role this panel does not know is still a
+            -- quest this NPC is attached to, and hiding it is a missing step in a guide.
+            other[#other + 1] = q
+        end
+    end
+    return starters, finishers, other
+end
+
+-- ============================================================================
 -- Build plan — produce the draw items for one frame
 -- ============================================================================
 -- Every if/elseif/while the render layer cannot have lives here, where tests
@@ -277,7 +383,8 @@ function PropertiesState.build_plan(view, bounds)
         y = y + Theme.line_height.title + Theme.space.xs
 
         local info = "Entry: " .. tostring(d.entry or "?")
-        if d.level then info = info .. "  Level: " .. tostring(d.level) end
+        local level = PropertiesState.level_label(d.level)
+        if level then info = info .. "  " .. level end
         text_item("body", "text_secondary", fit(info, content_w))
         y = y + Theme.line_height.body + Theme.space.xs
 
@@ -306,19 +413,22 @@ function PropertiesState.build_plan(view, bounds)
 
         -- ---- Info tab ----
         if nv.tab == "info" then
+            local classification = PropertiesState.classification_label(d.classification)
+            if classification then
+                header("Classification")
+                text_item("body", "text_secondary", fit(classification, content_w), Theme.space.sm)
+                y = y + ROW_H + Theme.space.sm
+            end
             if d.roles and #d.roles > 0 then
                 header("Roles")
                 text_item("body", "text_secondary", fit(table.concat(d.roles, ", "), content_w), Theme.space.sm)
-                y = y + ROW_H + Theme.space.sm
-            end
-            if d.classification then
-                header("Classification")
-                text_item("body", "text_secondary", fit(d.classification, content_w), Theme.space.sm)
                 y = y + ROW_H
             end
 
         -- ---- Spawns tab ----
         elseif nv.tab == "spawns" then
+            -- `NpcDetail.positions` is Vec<WorldPos> {map,x,y,z}; `nv.spawns` is the same shape from
+            -- a separate lookup when one has been made.
             local spawns = nv.spawns or d.positions or {}
             if #spawns > 0 then
                 header("Spawns (" .. tostring(#spawns) .. ")")
@@ -336,30 +446,48 @@ function PropertiesState.build_plan(view, bounds)
 
         -- ---- Quests tab ----
         elseif nv.tab == "quests" then
-            local quests = d.quests or {}
-            if #quests > 0 then
-                header("Quests")
-                for _, q in ipairs(quests) do
-                    local qn = q.title or tostring(q.id or "?")
-                    text_item("body", "text_primary", fit("  " .. qn, content_w))
-                    y = y + ROW_H
+            local starters, finishers, unknown = PropertiesState.split_quests(d.quests)
+            local groups = {
+                { title = "Starts (" .. #starters .. ")", quests = starters },
+                { title = "Turns In (" .. #finishers .. ")", quests = finishers },
+                { title = "Unclassified (" .. #unknown .. ")", quests = unknown },
+            }
+            local drew = false
+            for _, group in ipairs(groups) do
+                if #group.quests > 0 then
+                    drew = true
+                    header(group.title)
+                    for _, q in ipairs(group.quests) do
+                        -- `NpcQuestRef` carries `quest_id`, never `id`.
+                        local label = string.format("  [%s] %s",
+                            tostring(q.quest_id or "?"), tostring(q.title or ""))
+                        text_item("body", "text_primary", fit(label, content_w))
+                        y = y + ROW_H
+                    end
+                    y = y + Theme.space.sm
                 end
-            else
+            end
+            if not drew then
                 text_item("body", "text_muted", "No quest data available")
                 y = y + ROW_H
             end
 
         -- ---- Loot tab ----
         elseif nv.tab == "loot" then
-            local loot = d.loot or {}
-            if #loot > 0 then
-                header("Loot Table")
-                for _, entry in ipairs(loot) do
-                    local chance = entry.chance and string.format("%.1f%%", entry.chance) or ""
-                    local label = string.format("  [%s] %s %s",
-                        tostring(entry.item or ""), entry.name or "", chance)
-                    text_item("body", "text_secondary", fit(label, content_w))
-                    y = y + ROW_H
+            local buckets = PropertiesState.loot_buckets(d.loot)
+            if #buckets > 0 then
+                for _, bucket in ipairs(buckets) do
+                    header(bucket.name .. " (" .. tostring(#bucket.entries) .. ")")
+                    for _, entry in ipairs(bucket.entries) do
+                        -- `LootEntry` carries `item` and `drop_chance` (percent), never `chance`.
+                        local chance = tonumber(entry.drop_chance)
+                        local label = string.format("  [%s] %s  %s",
+                            tostring(entry.item or "?"), tostring(entry.name or ""),
+                            chance and string.format("%.1f%%", chance) or "?")
+                        text_item("body", "text_secondary", fit(label, content_w))
+                        y = y + ROW_H
+                    end
+                    y = y + Theme.space.sm
                 end
             else
                 text_item("body", "text_muted", "No loot data available")
