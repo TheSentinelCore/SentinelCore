@@ -24,9 +24,9 @@ function EscortRecorder.new(opts)
         _sample_interval = opts.sample_interval or 1.0,  -- sample every second
         _last_sample_time = nil,
         -- Injectable so a test can walk a path in less than the wall-clock time the walk took.
-        -- `os.clock` rather than `core.time` because this measures ELAPSED recording, and the two
-        -- disagree about their epoch; the timeline's times are only ever read as differences.
-        _now = opts.now or os.clock,
+        -- The Sylvannas sandbox has NO `os` table, so `os.clock` crashes at load time.
+        -- `core.time()` is the sandbox-safe monotonic clock; tests inject via opts.now.
+        _now = opts.now or (type(core) == "table" and core.time) or (function() return 0 end),
     }, EscortRecorder)
 end
 
