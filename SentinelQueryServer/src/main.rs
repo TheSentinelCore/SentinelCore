@@ -9,6 +9,7 @@ mod db;
 mod handlers;
 mod resolve;
 mod search;
+mod zone_names;
 
 use db::Db;
 

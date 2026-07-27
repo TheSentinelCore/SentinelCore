@@ -179,6 +179,7 @@ step
         faction: "Alliance".to_string(),
         positions: vec![],
         roles: vec![],
+        ..Default::default()
     });
     let project = sentinel_importer::ProjectBuilder::build(&guide, "fp.lua", &client)
         .await
@@ -216,6 +217,7 @@ step
         faction: "Alliance".to_string(),
         positions: vec![],
         roles: vec![],
+        ..Default::default()
     });
     let project = sentinel_importer::ProjectBuilder::build(&guide, "train.lua", &client)
         .await
@@ -258,6 +260,7 @@ step
         faction: "Beast".to_string(),
         positions: vec![],
         roles: vec![],
+        ..Default::default()
     });
     let project = sentinel_importer::ProjectBuilder::build(&guide, "mob.lua", &client)
         .await
@@ -307,6 +310,7 @@ step
         faction: "Beast".to_string(),
         positions: vec![],
         roles: vec![],
+        ..Default::default()
     });
     let project = sentinel_importer::ProjectBuilder::build(&guide, "unitscan.lua", &client)
         .await

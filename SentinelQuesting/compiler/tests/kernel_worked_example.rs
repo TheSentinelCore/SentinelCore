@@ -217,6 +217,7 @@ fn verified_world() -> MemoryQueryClient {
         faction: "Beast".to_string(),
         positions: Vec::new(),
         roles: Vec::new(),
+        ..Default::default()
     };
     MemoryQueryClient::new()
         .with_npc(creature(2231, "Pygmy Tide Crawler"))

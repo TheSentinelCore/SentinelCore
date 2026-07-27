@@ -16,12 +16,19 @@ pub struct WorldPos {
     pub z: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct QuestSummary {
     pub id: u32,
     pub title: String,
     pub level: u8,
     pub min_level: u8,
+    /// Display name of the quest's zone, resolved from `quest_template.ZoneOrSort`.
+    ///
+    /// Empty when `ZoneOrSort <= 0`: mangos overloads that column, and a non-positive value is a
+    /// *sort* bucket (class/profession/seasonal), not an area id. The search panel renders the
+    /// empty string as "—" rather than inventing a zone.
+    #[serde(default)]
+    pub zone: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,7 +139,27 @@ pub struct NpcSummary {
     pub faction: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// One row of a creature's loot table.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LootEntry {
+    pub item: u32,
+    pub name: String,
+    /// Percentage chance. Mangos stores quest drops as a *negative* `ChanceOrQuestChance`; the
+    /// server normalises to the magnitude, so this is always in `0..=100`.
+    pub drop_chance: f32,
+}
+
+/// A quest an NPC takes part in, and which end of it they hold.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NpcQuestRef {
+    pub quest_id: u32,
+    pub title: String,
+    /// `"starter"` (`creature_questrelation`) or `"finisher"` (`creature_involvedrelation`).
+    /// An NPC that does both appears once per role.
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NpcDetail {
     pub entry: u32,
     pub name: String,
@@ -141,14 +168,36 @@ pub struct NpcDetail {
     pub positions: Vec<WorldPos>,
     #[serde(default)]
     pub roles: Vec<String>,
+    /// `creature_template.MinLevel`. Spawns of a level range report their floor.
+    #[serde(default)]
+    pub level: u8,
+    /// `"normal" | "elite" | "rare elite" | "boss" | "rare"`, from `creature_template.Rank`.
+    #[serde(default)]
+    pub classification: String,
+    #[serde(default)]
+    pub loot: Vec<LootEntry>,
+    #[serde(default)]
+    pub quests: Vec<NpcQuestRef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// One row of a vendor's inventory.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct VendorItem {
+    pub item_entry: u32,
+    pub name: String,
+    /// Copper. `0` when the item costs an `ExtendedCost` currency (honor, arena points, tokens)
+    /// that has no copper equivalent — the panel renders that as "special cost", not "free".
+    pub price: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct VendorInfo {
     pub entry: u32,
     pub name: String,
+    /// Resolved inventory rows. This replaced a bare `Vec<u32>` of item ids: the Properties panel
+    /// has no item lookup of its own, so ids alone rendered as numbers with no name or price.
     #[serde(default)]
-    pub sells: Vec<u32>,
+    pub sells: Vec<VendorItem>,
     #[serde(default)]
     pub repairs: bool,
 }

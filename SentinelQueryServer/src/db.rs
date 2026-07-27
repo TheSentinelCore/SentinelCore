@@ -4,6 +4,7 @@ use sentinel_query_types::*;
 use std::sync::{Arc, Mutex};
 
 use crate::search::{escape_like, SearchHit, SearchKind, SpawnPoint, SpawnType, MAX_SEARCH_LIMIT};
+use crate::zone_names::zone_name;
 
 #[derive(Clone)]
 pub struct Db(pub Arc<Mutex<Connection>>);
@@ -531,7 +532,7 @@ impl Db {
         let db = self.0.lock().unwrap();
         let like = format!("%{}%", query);
         let mut stmt = db.prepare(
-            "SELECT entry, Title, QuestLevel, MinLevel FROM quest_template WHERE Title LIKE ?1"
+            "SELECT entry, Title, QuestLevel, MinLevel, ZoneOrSort FROM quest_template WHERE Title LIKE ?1"
         )
         .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -541,6 +542,7 @@ impl Db {
                     title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                     level: row.get::<_, i64>(2)? as u8,
                     min_level: row.get::<_, i64>(3)? as u8,
+                    zone: zone_name(row.get::<_, i64>(4)?).to_string(),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -554,7 +556,8 @@ impl Db {
     pub fn get_npc(&self, entry: u32) -> Result<Option<NpcDetail>, String> {
         let db = self.0.lock().unwrap();
         let mut stmt = db.prepare(
-            "SELECT ct.Entry, ct.Name, ct.Faction, ct.NpcFlags, c.position_x, c.position_y, c.position_z, c.map \
+            "SELECT ct.Entry, ct.Name, ct.Faction, ct.NpcFlags, c.position_x, c.position_y, c.position_z, c.map, \
+                    ct.MinLevel, ct.Rank \
              FROM creature_template ct \
              LEFT JOIN creature c ON c.id = ct.Entry \
              WHERE ct.Entry = ?1"
@@ -570,6 +573,8 @@ impl Db {
                 row.get::<_, Option<f64>>(5)?,
                 row.get::<_, Option<f64>>(6)?,
                 row.get::<_, Option<i64>>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
             ))
         })
         .map_err(|e| e.to_string())?;
@@ -586,6 +591,8 @@ impl Db {
             pos_y,
             pos_z,
             map_val,
+            min_level,
+            rank,
         ) = row;
         let name = name_opt.unwrap_or_default();
         let map = map_val.unwrap_or(0) as u32;
@@ -622,6 +629,60 @@ impl Db {
         }
         // Note: Mailbox flag is typically not in NpcFlags; it's often a separate gameobject type
 
+        // `rows` borrows `stmt`, which borrows the connection guard; both must go before the
+        // loot/quest statements can be prepared on the same guard.
+        drop(rows);
+        drop(stmt);
+
+        let mut loot_stmt = db
+            .prepare(
+                "SELECT clt.item, it.name, clt.ChanceOrQuestChance \
+                 FROM creature_loot_template clt \
+                 LEFT JOIN item_template it ON it.entry = clt.item \
+                 WHERE clt.entry = ?1 \
+                 ORDER BY ABS(clt.ChanceOrQuestChance) DESC, clt.item",
+            )
+            .map_err(|e| e.to_string())?;
+        let loot_iter = loot_stmt
+            .query_map([entry], |row| {
+                Ok(LootEntry {
+                    item: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    // Quest drops are stored negative; the sign is a flag, not a chance.
+                    drop_chance: row.get::<_, f64>(2)?.abs() as f32,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut loot = Vec::new();
+        for row in loot_iter {
+            loot.push(row.map_err(|e| e.to_string())?);
+        }
+
+        let mut quest_stmt = db
+            .prepare(
+                "SELECT r.quest, qt.Title, r.role FROM ( \
+                     SELECT quest, 'starter' AS role FROM creature_questrelation WHERE id = ?1 \
+                     UNION ALL \
+                     SELECT quest, 'finisher' AS role FROM creature_involvedrelation WHERE id = ?1 \
+                 ) r \
+                 LEFT JOIN quest_template qt ON qt.entry = r.quest \
+                 ORDER BY r.role, r.quest",
+            )
+            .map_err(|e| e.to_string())?;
+        let quest_iter = quest_stmt
+            .query_map([entry], |row| {
+                Ok(NpcQuestRef {
+                    quest_id: row.get::<_, i64>(0)? as u32,
+                    title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    role: row.get::<_, String>(2)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut quests = Vec::new();
+        for row in quest_iter {
+            quests.push(row.map_err(|e| e.to_string())?);
+        }
+
         Ok(Some(NpcDetail {
             entry: entry_val as u32,
             name,
@@ -633,6 +694,10 @@ impl Db {
                 z: pos_z as f32,
             }],
             roles,
+            level: min_level.clamp(0, u8::MAX as i64) as u8,
+            classification: classification_from_rank(rank).to_string(),
+            loot,
+            quests,
         }))
     }
 
@@ -669,13 +734,35 @@ impl Db {
         let name = name_opt.unwrap_or_default();
 
         let mut stmt = db
-            .prepare("SELECT item FROM npc_vendor WHERE entry = ?1")
+            .prepare(
+                "SELECT nv.item, it.name, it.BuyPrice, nv.ExtendedCost \
+                 FROM npc_vendor nv \
+                 LEFT JOIN item_template it ON it.entry = nv.item \
+                 WHERE nv.entry = ?1 \
+                 ORDER BY nv.slot, nv.item",
+            )
             .map_err(|e| e.to_string())?;
         let mut items = Vec::new();
-        let mut iter = stmt.query_map([entry], |row| row.get::<_, i64>(0)).map_err(|e| e.to_string())?;
-        while let Some(item) = iter.next() {
-            items.push(item.map_err(|e| e.to_string())? as u32);
+        let iter = stmt
+            .query_map([entry], |row| {
+                let extended_cost: i64 = row.get(3)?;
+                Ok(VendorItem {
+                    item_entry: row.get::<_, i64>(0)? as u32,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    // An ExtendedCost item is bought with honor/arena/token currency. BuyPrice is
+                    // meaningless there, so price 0 means "not purchasable for copper".
+                    price: if extended_cost != 0 {
+                        0
+                    } else {
+                        row.get::<_, Option<i64>>(2)?.unwrap_or(0).max(0) as u32
+                    },
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for item in iter {
+            items.push(item.map_err(|e| e.to_string())?);
         }
+        drop(stmt);
 
         // Check repairs flag from NpcFlags
         let mut repairs_stmt = db
@@ -1209,6 +1296,20 @@ fn npc_context(subname: Option<&str>, min_level: i64, max_level: i64, map: Optio
     parts.join(" - ")
 }
 
+/// `creature_template.Rank` → the classification string the NPC inspector renders.
+///
+/// Mangos ranks are `0` normal, `1` elite, `2` rare elite, `3` world boss, `4` rare. Anything else
+/// is data the client cannot classify, and reads as normal rather than as a blank chip.
+fn classification_from_rank(rank: i64) -> &'static str {
+    match rank {
+        1 => "elite",
+        2 => "rare elite",
+        3 => "boss",
+        4 => "rare",
+        _ => "normal",
+    }
+}
+
 /// Merge the per-kind hits into one page: every score tier is exhausted before the next, but
 /// within a tier the kinds take turns.
 ///
@@ -1394,5 +1495,93 @@ mod tests {
         let db = open();
         assert!(db.spawns(SpawnType::Npc, 99_999_999).unwrap().is_empty());
         assert!(db.spawns(SpawnType::Object, 99_999_999).unwrap().is_empty());
+    }
+
+    #[test]
+    fn npc_detail_carries_level_classification_loot_and_quests() {
+        // Hogger: MinLevel 11, Rank 1 (elite), 30 loot rows. The panel rendered blanks for all of
+        // this because NpcDetail simply had no fields for it.
+        let db = open();
+        let hogger = db.get_npc(448).unwrap().expect("Hogger exists");
+        assert_eq!(hogger.level, 11);
+        assert_eq!(hogger.classification, "elite");
+        assert_eq!(hogger.loot.len(), 30);
+
+        // `ChanceOrQuestChance` is stored as -100.0 for the quest drop; the sign is a flag, and a
+        // panel that renders it raw shows "-100%".
+        let claw = hogger
+            .loot
+            .iter()
+            .find(|l| l.item == 1931)
+            .expect("Hogger drops the Huge Gnoll Claw");
+        assert_eq!(claw.name, "Huge Gnoll Claw");
+        assert!((claw.drop_chance - 100.0).abs() < 0.001, "{}", claw.drop_chance);
+        assert!(hogger.loot.iter().all(|l| l.drop_chance >= 0.0));
+
+        // Deputy Willem starts 5 quests and finishes 2 of them; both relation tables must be read.
+        let willem = db.get_npc(823).unwrap().expect("Deputy Willem exists");
+        let starters: Vec<u32> = willem
+            .quests
+            .iter()
+            .filter(|q| q.role == "starter")
+            .map(|q| q.quest_id)
+            .collect();
+        let finishers: Vec<u32> = willem
+            .quests
+            .iter()
+            .filter(|q| q.role == "finisher")
+            .map(|q| q.quest_id)
+            .collect();
+        assert_eq!(starters, vec![6, 18, 783, 3903, 5261]);
+        assert_eq!(finishers, vec![6, 18]);
+        assert!(willem.quests.iter().all(|q| !q.title.is_empty()));
+    }
+
+    #[test]
+    fn npc_classification_defaults_to_normal() {
+        let db = open();
+        let willem = db.get_npc(823).unwrap().expect("Deputy Willem exists");
+        assert_eq!(willem.classification, "normal");
+        assert_eq!(willem.level, 18);
+    }
+
+    #[test]
+    fn vendor_sells_resolved_items_and_prices_extended_cost_at_zero() {
+        // Coreiel sells 7 items, 2 of them for arena/honor currency (ExtendedCost != 0). Bare item
+        // ids rendered as numbers in the Properties panel; there is no item lookup on the Lua side.
+        let db = open();
+        let vendor = db.get_vendor(21474).unwrap().expect("Coreiel exists");
+        assert_eq!(vendor.sells.len(), 7);
+        assert!(vendor.sells.iter().all(|i| !i.name.is_empty()));
+
+        let cookie = vendor
+            .sells
+            .iter()
+            .find(|i| i.item_entry == 30568)
+            .expect("Coreiel sells The Sharp Cookie");
+        assert_eq!(cookie.name, "The Sharp Cookie");
+        assert_eq!(cookie.price, 22142);
+
+        // BuyPrice is 0 anyway for these two, but the rule is the ExtendedCost flag, not the price:
+        // a copper price on an ExtendedCost item would be a lie about how it is bought.
+        let talbuk = vendor
+            .sells
+            .iter()
+            .find(|i| i.item_entry == 28915)
+            .expect("Coreiel sells the Dark Riding Talbuk");
+        assert_eq!(talbuk.price, 0);
+    }
+
+    #[test]
+    fn quest_search_resolves_the_zone_name() {
+        let db = open();
+        let hits = db.search_quests("Report to Goldshire").unwrap();
+        let quest = hits.iter().find(|q| q.id == 54).expect("quest 54 matches");
+        assert_eq!(quest.zone, "Northshire Valley");
+
+        // ZoneOrSort -263 is a sort bucket (a class/profession group), not an area id.
+        let lesson = db.search_quests("A Lesson to Learn").unwrap();
+        let lesson = lesson.iter().find(|q| q.id == 26).expect("quest 26 matches");
+        assert_eq!(lesson.zone, "");
     }
 }
