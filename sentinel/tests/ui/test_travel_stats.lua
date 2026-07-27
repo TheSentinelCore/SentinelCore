@@ -762,7 +762,91 @@ function M.test_an_unchanged_graph_does_not_recompute()
 end
 
 -- ============================================================================
--- 10. Structural guards
+-- 10. The placeholder inventory (task 4.3)
+-- ============================================================================
+--
+-- Obs #225 inventoried the dispatch branches that answered `true` alongside a string admitting they
+-- had done nothing. PR11 closes the two it owns (`travel_add_waypoint`, and the travel editor's
+-- "the real implementation POSTs to the editor crate" note). The rest are ASSIGNED, not forgotten,
+-- and each one is a task in this change.
+--
+-- Pinning the list is stronger than asserting "some remain": a NEW placeholder fails immediately,
+-- and closing an old one requires deleting a line from the expectation below — which is a diff a
+-- reviewer sees rather than a count that quietly slides.
+
+local ASSIGNED_PLACEHOLDERS = {
+    add_condition       = "task 3.14 [PR8]",
+    add_condition_group = "task 3.14 [PR8]",
+    delete_condition    = "task 3.14 [PR8]",
+    add_inventory_rule  = "task 3.14 [PR8]",
+    add_as_kill         = "task 3.14 [PR8]",
+    edit_intent         = "task 3.11 [PR7]",
+    validate_graph      = "task 3.11 [PR7]",
+    compile_graph       = "task 3.11 [PR7]",
+    edit_grind_entry    = "task 3.21 [PR10]",
+    edit_grind_zone     = "task 3.21 [PR10]",
+}
+
+---Every dispatch branch in `source` that still answers with a placeholder string.
+---@return table seen `{ [command] = true }`, table unparsed lines the pattern could not name
+local function placeholder_commands(source)
+    -- Comments stripped: the audit fires on code, never on the prose explaining the code. An
+    -- explanatory comment naming the defect must not read as the defect.
+    source = source:gsub("%-%-%[%[.-%]%]", " "):gsub("%-%-[^\n]*", " ")
+    local seen, unparsed = {}, {}
+    for line in source:gmatch("[^\n]+") do
+        if line:find("not yet implemented", 1, true) or line:find("open editor", 1, true) then
+            local command = line:match('return%s+true,%s*"([%a_]+)')
+            if command then seen[command] = true
+            else unparsed[#unparsed + 1] = (line:gsub("^%s+", "")) end
+        end
+    end
+    return seen, unparsed
+end
+
+function M.test_the_placeholder_audit_actually_finds_a_placeholder()
+    -- Without this, an audit whose pattern stopped matching would report a clean file forever.
+    local found, unparsed = placeholder_commands([[
+        elseif command.kind == "invented" then
+            -- a comment saying (not yet implemented) must be invisible to the audit
+            return true, "invented (not yet implemented)"
+        end
+    ]])
+    T.assert_true(found.invented, "the scan must name the command behind the placeholder")
+    T.assert_equal(#unparsed, 0, "and it must not have been confused by the comment")
+end
+
+function M.test_every_remaining_placeholder_is_one_this_change_still_owes()
+    local handle = assert(io.open("sentinel/ui/ide_panels.lua", "r"))
+    local source = handle:read("*a")
+    handle:close()
+
+    local seen, unparsed = placeholder_commands(source)
+    T.assert_equal(#unparsed, 0,
+        "a placeholder the audit cannot name: " .. table.concat(unparsed, " | "))
+
+    local orphans = {}
+    for command in pairs(seen) do
+        if not ASSIGNED_PLACEHOLDERS[command] then orphans[#orphans + 1] = command end
+    end
+    T.assert_equal(#orphans, 0,
+        "a placeholder nobody has planned: " .. table.concat(orphans, ", "))
+
+    -- And the two PR11 owns are gone from the list entirely.
+    T.assert_nil(seen.travel_add_waypoint, "the travel capture is implemented")
+    T.assert_nil(seen.travel_estimate, "the travel estimate is implemented")
+end
+
+function M.test_the_travel_editor_no_longer_calls_its_own_route_add_a_placeholder()
+    local handle = assert(io.open("sentinel/ui/panels/travel_editor_state.lua", "r"))
+    local source = handle:read("*a")
+    handle:close()
+    T.assert_nil(source:find("placeholder — the real implementation", 1, true),
+        "the note admitting `add_route` does nothing must be gone or made true")
+end
+
+-- ============================================================================
+-- 11. Structural guards
 -- ============================================================================
 
 function M.test_the_capture_never_reads_the_object_manager_from_the_state()
