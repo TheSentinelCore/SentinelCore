@@ -359,12 +359,60 @@ local ExplorerBinding = {}
 ExplorerBinding.__index = ExplorerBinding
 
 ---@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
+---@param opts table|nil { query_client = table|nil, editor_client = table|nil,
+---                        campaign = function():string|nil, now = function():number|nil }
 function IdePanels.new_explorer(opts)
     opts = opts or {}
     local self = setmetatable({}, ExplorerBinding)
     self._state = ExplorerState.new()
     self._query_client = opts.query_client
+    -- The :3031 campaign client. Absent until PR7 builds it, and absent in-game whenever the editor
+    -- is down -- both of which have to READ as absent rather than as a write that quietly did
+    -- nothing (obs #225: both authoring commands answered "(not yet implemented)" and returned ok).
+    self._editor_client = opts.editor_client
+    -- A RESOLVER: the campaign is owned by the Graph panel and changes under this one.
+    self._campaign = opts.campaign or function() return nil end
+    self._now = opts.now or default_clock
     return self
+end
+
+---Write generated nodes to the open campaign.
+---@return boolean ok, string reason
+function ExplorerBinding:_commit_nodes(nodes, what)
+    local state = self._state
+    if #nodes == 0 then
+        state.error = what .. " produced no nodes"
+        return false, state.error
+    end
+
+    local editor = self._editor_client
+    if not editor or type(editor.add_nodes) ~= "function" then
+        state.error = "editor unavailable: " .. what .. " needs the campaign editor at :3031"
+        return false, state.error
+    end
+
+    local campaign = self._campaign()
+    if not campaign or campaign == "" then
+        state.error = "no campaign is open: " .. what .. " has nowhere to write"
+        return false, state.error
+    end
+
+    -- Contained: a client that raises must surface as a failed write, not take the whole dispatch
+    -- down with it. `called` is pcall's own verdict; `wrote` is the client's.
+    local called, wrote, why = pcall(editor.add_nodes, editor, campaign, nodes)
+    if not called then
+        state.error = what .. " failed: " .. tostring(wrote)
+        return false, state.error
+    end
+    -- A live editor REFUSING the write is not the same thing as no editor, and neither may be
+    -- reported as success.
+    if wrote == false then
+        state.error = what .. " was refused by the editor: " .. tostring(why or "no reason given")
+        return false, state.error
+    end
+
+    state.error = nil
+    return true, string.format("%s: %d node(s) added to '%s'", what, #nodes, campaign)
 end
 
 ---Access the panel state, exposed so tests can inspect it.
@@ -383,6 +431,16 @@ function ExplorerBinding:spec()
         end,
         on_tick = function()
             local state = binding._state
+            local now = binding._now()
+
+            -- BEFORE the dirty gate, on purpose. Typing happens inside a render callback, which can
+            -- mutate the buffer but cannot schedule anything; nothing else would ever notice a
+            -- keystroke, and the search bar would be typeable and still inert.
+            state:sync_search_input(now)
+            -- A debounce that has not elapsed still has to be looked at next tick, or the search
+            -- fires only if a later keystroke happens to re-arm the flag.
+            if state._search_waiting then state._dirty = true end
+
             if not state._dirty then return end
             state._dirty = false
 
@@ -409,11 +467,20 @@ function ExplorerBinding:spec()
                 if ok_obj == "ok" then state.objectives = objectives end
             end
 
-            if state.search_query ~= "" and #state.results == 0 then
+            -- The gate is the debounce, not "results are empty". The old condition could only ever
+            -- run one search per panel: a second query with results still on screen never fired.
+            if state:search_due(now) then
                 local query = state.search_query
                 local ok_search, results =
                     slots.search:poll(function() return qc:search_quests(query) end)
-                if ok_search == "ok" then state.results = results end
+                if ok_search == "ok" then
+                    state.results = results
+                    state:mark_search_served()
+                elseif ok_search ~= "pending" then
+                    -- Resolved to nothing. The slot has already named it in `state.error`; leaving
+                    -- the gate open would re-fire the same doomed query every tick forever.
+                    state:mark_search_served()
+                end
             end
         end,
         dispatch = function(command, ctx)
@@ -423,8 +490,21 @@ function ExplorerBinding:spec()
                 publish_selection(ctx, Explorer.id, "quest", command.id)
                 return true
             elseif command.kind == "clear_search" then
-                state:set_query("")
+                state.search_input:set_value("")
+                state:set_query("", binding._now())
                 state.results = {}
+                state:mark_search_served()
+                return true
+            elseif command.kind == "submit_search" then
+                -- Enter skips the wait: the operator has already said they are finished typing.
+                state:sync_search_input(binding._now())
+                state._query_changed_at = nil
+                state._dirty = true
+                return true
+            elseif command.kind == "cancel_search" then
+                -- Escape put the committed value back in the buffer; the query follows it, so a
+                -- half-typed string never reaches the server.
+                state:sync_search_input(binding._now())
                 return true
             elseif command.kind == "cycle_zone_filter" then
                 -- Cycle through zones: nil -> first available zone from results -> nil
@@ -457,11 +537,30 @@ function ExplorerBinding:spec()
                 state._dirty = true
                 return true
             elseif command.kind == "add_to_profile" then
-                -- Placeholder: would POST to the editor crate's campaign endpoints
-                return true, "add_to_profile: " .. tostring(command.quest_id) .. " (not yet implemented)"
+                -- The objectives are what turn a quest into a route, and they arrive on their own
+                -- slot. Generating Accept→TurnIn with the middle missing because the fetch had not
+                -- landed yet would write a quest the bot accepts and then stands still in.
+                if not state.objectives then
+                    state.error = "add to profile: objectives for quest "
+                        .. tostring(command.quest_id) .. " have not loaded yet"
+                    return false, state.error
+                end
+                local nodes, skipped = ExplorerState.build_quest_subgraph(
+                    command.quest_id, state.selected_detail, state.objectives)
+                local ok_write, reason = binding:_commit_nodes(nodes, "add to profile")
+                if ok_write and #skipped > 0 then
+                    return true, reason .. "; skipped unknown objective kind(s): "
+                        .. table.concat(skipped, ", ")
+                end
+                return ok_write, reason
             elseif command.kind == "add_chain" then
-                -- Placeholder: would POST chain to editor crate
-                return true, "add_chain: " .. tostring(command.quest_id) .. " (not yet implemented)"
+                if not state.chain_data then
+                    state.error = "add chain: the chain for quest "
+                        .. tostring(command.quest_id) .. " has not loaded yet"
+                    return false, state.error
+                end
+                return binding:_commit_nodes(
+                    ExplorerState.build_chain_subgraph(state.chain_data), "add chain")
             end
             return false, "unknown explorer command '" .. tostring(command.kind) .. "'"
         end,

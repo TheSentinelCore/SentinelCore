@@ -714,4 +714,248 @@ function M.test_a_properties_selection_reaches_the_client_on_the_next_tick()
     T.assert_equal(call.arg, 567, "and it must carry the selected entry")
 end
 
+-- ---------------------------------------------------------------------------
+-- The Explorer's search seam and its authoring commands
+-- ---------------------------------------------------------------------------
+--
+-- Typing happens inside a render callback. The binding's `on_tick` returns early unless `_dirty` is
+-- set, and the widget has no way to set it — so unless the tick reads the buffer BEFORE that gate,
+-- the search bar is typeable and still completely inert. These tests hold that seam.
+
+---A clock the test drives by hand, so a 300ms debounce takes no wall-clock time.
+local function fake_clock()
+    local clock = { t = 0 }
+    function clock.read() return clock.t end
+    function clock.advance(seconds) clock.t = clock.t + seconds end
+    return clock
+end
+
+---A query client that counts searches and answers a fixed, server-shaped result set.
+local function searching_client(results)
+    local qc = { searches = {} }
+    function qc.search_quests(_, q)
+        qc.searches[#qc.searches + 1] = q
+        return results
+    end
+    function qc.get_quest() return nil end
+    function qc.get_quest_chain() return nil end
+    function qc.get_quest_objectives() return nil end
+    return qc
+end
+
+local function explorer_with(opts)
+    local binding = IdePanels.new_explorer(opts)
+    return binding, binding:spec(), binding:state()
+end
+
+function M.test_rapid_typing_then_300ms_fires_exactly_one_search()
+    local clock = fake_clock()
+    local qc = searching_client({ { id = 783, title = "A Threat Within", level = 10,
+                                   zone = "Elwynn Forest" } })
+    local _, spec, state = explorer_with({ query_client = qc, now = clock.read })
+
+    -- Four keystrokes inside one debounce window, the way a person types "wolf".
+    for _, typed in ipairs({ "w", "wo", "wol", "wolf" }) do
+        state.search_input:focus()
+        state.search_input.buffer = typed
+        spec.on_tick()
+        clock.advance(0.05)
+    end
+    T.assert_equal(#qc.searches, 0, "nothing may go out while the operator is still typing")
+
+    clock.advance(0.30)
+    spec.on_tick()
+    T.assert_equal(#qc.searches, 1, "exactly one search after the wait, not one per keystroke")
+    T.assert_equal(qc.searches[1], "wolf", "and it carries the FINAL buffer, not an early prefix")
+    T.assert_equal(#state.results, 1, "the results land on the state")
+
+    spec.on_tick()
+    spec.on_tick()
+    T.assert_equal(#qc.searches, 1, "and the gate closes; a served query must not re-fire forever")
+end
+
+function M.test_a_second_query_searches_again_even_with_results_on_screen()
+    -- The old gate was `search_query ~= "" and #results == 0`, so a panel could only ever run one
+    -- search: with rows on screen, the next query was silently dropped.
+    local clock = fake_clock()
+    local qc = searching_client({ { id = 1, title = "Something", level = 1 } })
+    local _, spec, state = explorer_with({ query_client = qc, now = clock.read })
+
+    -- The tick that NOTICES the typing stamps the debounce, so the wait is measured from there.
+    state.search_input:set_value("wolf")
+    spec.on_tick()
+    clock.advance(0.40)
+    spec.on_tick()
+    T.assert_equal(#qc.searches, 1)
+
+    state.search_input:set_value("bear")
+    spec.on_tick()
+    clock.advance(0.40)
+    spec.on_tick()
+    T.assert_equal(#qc.searches, 2, "a second query must reach the server")
+    T.assert_equal(qc.searches[2], "bear")
+end
+
+function M.test_the_tick_reads_the_buffer_before_the_dirty_gate()
+    local clock = fake_clock()
+    local qc = searching_client({})
+    local _, spec, state = explorer_with({ query_client = qc, now = clock.read })
+
+    spec.on_tick()          -- consume the initial dirty flag
+    state._dirty = false
+    state.search_input:focus()
+    state.search_input.buffer = "wolf"
+
+    spec.on_tick()
+    T.assert_equal(state.search_query, "wolf",
+        "a keystroke must be noticed even though nothing marked the panel dirty")
+end
+
+function M.test_escape_never_sends_the_discarded_edit()
+    local clock = fake_clock()
+    local qc = searching_client({})
+    local _, spec, state = explorer_with({ query_client = qc, now = clock.read })
+
+    state.search_input:set_value("wolf")
+    clock.advance(0.40); spec.on_tick(); spec.on_tick()
+
+    state.search_input:focus()
+    state.search_input.buffer = "wolfsbane"
+    state.search_input:apply_key({ vk = require("ui/text_input_state").VK.ESCAPE })
+    spec.dispatch({ kind = "cancel_search" }, nil)
+    clock.advance(1.00)
+    spec.on_tick()
+
+    T.assert_equal(#qc.searches, 1, "the cancelled edit must not reach the server")
+    T.assert_equal(qc.searches[1], "wolf", "and what did go out was the committed value")
+    T.assert_equal(state.search_query, "wolf", "the query stays on the committed value")
+end
+
+-- ---- Add to Profile / Add Chain ------------------------------------------
+
+local function recording_editor()
+    local editor = { writes = {} }
+    function editor.add_nodes(_, campaign, nodes)
+        editor.writes[#editor.writes + 1] = { campaign = campaign, nodes = nodes }
+        return true
+    end
+    return editor
+end
+
+local function loaded_explorer(editor)
+    local binding, spec, state = explorer_with({
+        query_client = searching_client({}),
+        editor_client = editor,
+        campaign = function() return "stw" end,
+        now = function() return 0 end,
+    })
+    state.selected_id = 1234
+    state.selected_detail = { id = 1234, giver_entry = 823, finisher_entry = 197 }
+    state.objectives = { quest_id = 1234, objectives = {
+        { index = 1, kind = "kill", entry = 567, name = "Wolf", count = 10 },
+        { index = 2, kind = "collect", entry = 789, name = "Pelt", count = 5,
+          source_creatures = { 567 } },
+    } }
+    state.chain_data = { quest_id = 1234, title = "A Quest", prerequisites = {}, follow_ups = {} }
+    return binding, spec, state
+end
+
+function M.test_add_to_profile_writes_the_objective_subgraph_to_the_editor()
+    -- SPEC: quest 1234 with kill(567x10) and loot(789x5) yields AcceptQuest(1234), Kill(567,10),
+    -- Loot(789,5), TurnInQuest(1234). Previously this returned ok with "(not yet implemented)".
+    local editor = recording_editor()
+    local _, spec = loaded_explorer(editor)
+
+    local ok, reason = spec.dispatch({ kind = "add_to_profile", quest_id = 1234 }, nil)
+    T.assert_true(ok, "the write must succeed: " .. tostring(reason))
+    T.assert_equal(#editor.writes, 1, "exactly one write")
+    T.assert_equal(editor.writes[1].campaign, "stw", "into the open campaign")
+
+    local kinds = {}
+    for i, node in ipairs(editor.writes[1].nodes) do kinds[i] = node.type end
+    T.assert_equal(table.concat(kinds, ","),
+        "questing.AcceptQuest,questing.Kill,questing.Loot,questing.TurnInQuest",
+        "the exact subgraph the spec names, in order")
+end
+
+function M.test_add_chain_writes_the_chain_to_the_editor()
+    local editor = recording_editor()
+    local _, spec, state = loaded_explorer(editor)
+    state.chain_data = { quest_id = 1234, title = "A Quest",
+                         prerequisites = { { quest_id = 1, title = "First" } }, follow_ups = {} }
+
+    local ok = spec.dispatch({ kind = "add_chain", quest_id = 1234 }, nil)
+    T.assert_true(ok)
+    T.assert_equal(#editor.writes[1].nodes, 4, "two quests, accept and turn-in each")
+end
+
+function M.test_no_editor_client_is_reported_and_never_reported_as_done()
+    -- obs #225: both commands answered "(not yet implemented)" AND returned ok, so the operator
+    -- was told the write happened.
+    local _, spec, state = loaded_explorer(nil)
+
+    local ok, reason = spec.dispatch({ kind = "add_to_profile", quest_id = 1234 }, nil)
+    T.assert_false(ok, "a write with nowhere to go must not report success")
+    T.assert_true(tostring(reason):find("editor unavailable", 1, true) ~= nil,
+        "and must name the missing editor: " .. tostring(reason))
+    T.assert_equal(state.error, reason, "the panel paints the same fact it returned")
+end
+
+function M.test_no_open_campaign_is_reported()
+    local binding, spec, state = loaded_explorer(recording_editor())
+    binding._campaign = function() return nil end
+
+    local ok, reason = spec.dispatch({ kind = "add_to_profile", quest_id = 1234 }, nil)
+    T.assert_false(ok)
+    T.assert_true(tostring(reason):find("no campaign is open", 1, true) ~= nil, tostring(reason))
+    T.assert_equal(state.error, reason)
+end
+
+function M.test_unloaded_objectives_refuse_rather_than_write_a_hollow_quest()
+    -- Accept→TurnIn with the middle missing is a quest the bot accepts and then stands still in.
+    local editor = recording_editor()
+    local _, spec, state = loaded_explorer(editor)
+    state.objectives = nil
+
+    local ok, reason = spec.dispatch({ kind = "add_to_profile", quest_id = 1234 }, nil)
+    T.assert_false(ok)
+    T.assert_equal(#editor.writes, 0, "nothing may be written while the objectives are in flight")
+    T.assert_true(tostring(reason):find("have not loaded yet", 1, true) ~= nil, tostring(reason))
+end
+
+function M.test_an_editor_that_refuses_the_write_is_not_a_success()
+    local editor = recording_editor()
+    function editor.add_nodes() return false, "campaign is locked" end
+    local _, spec, state = loaded_explorer(editor)
+
+    local ok, reason = spec.dispatch({ kind = "add_to_profile", quest_id = 1234 }, nil)
+    T.assert_false(ok, "a live editor saying no is not the same as a write that landed")
+    T.assert_true(tostring(reason):find("campaign is locked", 1, true) ~= nil, tostring(reason))
+    T.assert_equal(state.error, reason)
+end
+
+function M.test_an_editor_that_raises_is_a_failed_write_not_a_dead_tick()
+    local editor = recording_editor()
+    function editor.add_nodes() error("connection reset") end
+    local _, spec = loaded_explorer(editor)
+
+    local ok, reason = spec.dispatch({ kind = "add_to_profile", quest_id = 1234 }, nil)
+    T.assert_false(ok)
+    T.assert_true(tostring(reason):find("connection reset", 1, true) ~= nil, tostring(reason))
+end
+
+function M.test_no_authoring_command_still_answers_not_yet_implemented()
+    -- The placeholder strings from obs #225, gone from this panel for good.
+    local handle = assert(io.open("sentinel/ui/ide_panels.lua", "r"))
+    local source = handle:read("*a")
+    handle:close()
+    local explorer_half = source:match("function IdePanels%.new_explorer.-function IdePanels%.new_properties")
+    T.assert_not_nil(explorer_half, "the Explorer binding must still be locatable in the source")
+    -- Comments stripped first. The comment explaining WHY the placeholders are gone quotes the very
+    -- string being banned, and an audit that fired on its own rationale would be untrue.
+    explorer_half = explorer_half:gsub("%-%-%[%[.-%]%]", " "):gsub("%-%-[^\n]*", " ")
+    T.assert_nil(explorer_half:find("not yet implemented", 1, true),
+        "the Explorer binding still carries a placeholder that reports success")
+end
+
 return M
