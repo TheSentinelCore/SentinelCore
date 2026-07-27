@@ -612,7 +612,157 @@ function M.test_the_installed_estimate_button_reaches_the_query_server()
 end
 
 -- ============================================================================
--- 8. Structural guards
+-- 8. The stats badges (F20-R1/R2)
+-- ============================================================================
+
+---A campaign holding one of each thing a badge counts, plus a duplicate of each.
+local function badge_campaign()
+    return {
+        name = "elwynn_full",
+        nodes = {
+            { id = "n1", type = "questing.AcceptQuest", intent = { quest_id = 33, npc_entry = 197 } },
+            { id = "n2", type = "questing.TurnInQuest", intent = { quest_id = 33, npc_entry = 197 } },
+            { id = "n3", type = "questing.AcceptQuest", intent = { quest_id = 76, npc_entry = 240 } },
+            { id = "n4", type = "questing.Travel",      intent = { x = 1, y = 2, z = 3 } },
+            { id = "n5", type = "questing.Travel",      intent = { x = 4, y = 5, z = 6 } },
+            { id = "n6", type = "questing.Vendor",      intent = { npc_entry = 1263 } },
+            { id = "n7", type = "questing.Flight",      intent = { npc_entry = 352, destination = "Ironforge, Dun Morogh" } },
+            { id = "n8", type = "questing.UseItem",     intent = { item = 5, target_entry = 3000 } },
+            { id = "n9", type = "questing.Loot",        intent = { object_entry = 3000, item_id = 5 } },
+            { id = "n10", type = "questing.Kill",       intent = { creature_entry = 299, count = 12 } },
+            { id = "n11", type = "questing.LearnFlightPath", intent = { npc_entry = 352 } },
+        },
+        edges = { { id = "e1", from = "n1", to = "n2" } },
+    }
+end
+
+function M.test_the_badges_count_what_the_graph_holds()
+    local sd = StatsDashboard.new()
+    sd:compute(badge_campaign())
+    local s = sd.stats
+    T.assert_equal(s.quest_count, 2,
+        "quest 33 has an Accept AND a TurnIn; counting nodes would report it twice")
+    T.assert_equal(s.waypoint_count, 2, "two Travel nodes with coordinates")
+    T.assert_equal(s.npc_count, 4,
+        "197, 240, 1263 and 352 — 352 appears twice and is one NPC")
+    T.assert_equal(s.object_count, 1,
+        "UseItem's target and Loot's object are the same game object")
+    T.assert_equal(s.vendor_count, 1, "only the Vendor node's npc_entry is a vendor")
+    T.assert_equal(s.flight_count, 1,
+        "LearnFlightPath buys a node and takes no flight, so it is not a flight")
+end
+
+function M.test_a_kill_target_is_not_counted_as_an_npc_to_visit()
+    -- A grind of forty wolves is not forty NPCs. `creature_entry` and `npc_entry` are different
+    -- axes and folding them together makes the badge useless for planning.
+    local sd = StatsDashboard.new()
+    sd:compute({ name = "grind", nodes = {
+        { id = "k1", type = "questing.Kill", intent = { creature_entry = 299, count = 40 } },
+    }, edges = {} })
+    T.assert_equal(sd.stats.npc_count, 0, "a kill target is not someone the route talks to")
+    T.assert_equal(sd.stats.total_kills, 40, "the kill count itself is unaffected")
+end
+
+function M.test_an_unfilled_intent_field_is_not_an_entity()
+    -- `default_intent` seeds every entry field to 0. A freshly added node is an unfilled form and
+    -- counting it would report a campaign that visits an NPC nobody chose.
+    local sd = StatsDashboard.new()
+    sd:compute({ name = "fresh", nodes = {
+        { id = "n1", type = "questing.Vendor", intent = { npc_entry = 0 } },
+        { id = "n2", type = "questing.AcceptQuest", intent = { quest_id = 0, npc_entry = 0 } },
+    }, edges = {} })
+    T.assert_equal(sd.stats.npc_count, 0)
+    T.assert_equal(sd.stats.quest_count, 0)
+    T.assert_equal(sd.stats.vendor_count, 0)
+    T.assert_equal(sd.stats.total_nodes, 2, "the nodes themselves are still counted")
+end
+
+function M.test_a_zero_badge_is_shown_rather_than_dropped()
+    local badges = StatsDashboard.badges({})
+    T.assert_equal(#badges, 6, "all six counts are always present")
+    for _, badge in ipairs(badges) do
+        T.assert_equal(badge.count, 0, badge.label .. " defaults to zero")
+    end
+end
+
+function M.test_the_badges_are_painted_as_chips_carrying_their_counts()
+    local sd = StatsDashboard.new()
+    sd:compute(badge_campaign())
+    sd.visible = true
+    local plan = StatsDashboard.build_plan(sd:build(), BOUNDS)
+
+    local chips = {}
+    for _, item in ipairs(plan.items) do
+        if item.kind == "chip" then chips[item.id] = item.label end
+    end
+    T.assert_equal(chips["stats_badge_quests"], "Quests 2", "the chip carries the number")
+    T.assert_equal(chips["stats_badge_npcs"], "NPCs 4")
+    T.assert_equal(chips["stats_badge_vendors"], "Vendors 1")
+    T.assert_equal(chips["stats_badge_flights"], "Flights 1")
+
+    local window = FakeWindow.new({ size = { x = BOUNDS.w, y = BOUNDS.h } })
+    local ok, err = pcall(StatsDashboard.render, window, plan)
+    T.assert_true(ok, "the chips must paint through the type-checking fake window: " .. tostring(err))
+end
+
+-- ============================================================================
+-- 9. The campaign reaching both extensions through the INSTALLED shell
+-- ============================================================================
+
+function M.test_editing_the_graph_recomputes_the_badges()
+    -- Neither `compute` nor `load_from_campaign` had a caller. The dashboard reported a campaign of
+    -- zero nodes whatever was loaded, and every test that proved otherwise called it directly.
+    local shell, bindings = installed_shell()
+    local graph = bindings.graph:state()
+    local plan = badge_campaign()
+    graph.campaign_name = plan.name
+    graph.nodes = plan.nodes
+    graph.edges = plan.edges
+    graph._dirty = true
+
+    shell:activate("graph")
+    shell:on_tick()
+
+    T.assert_equal(bindings.stats.stats.quest_count, 2,
+        "the installed dashboard must see the loaded campaign")
+    T.assert_equal(bindings.stats.campaign_name, plan.name)
+end
+
+function M.test_editing_the_graph_reloads_the_travel_routes()
+    local shell, bindings = installed_shell()
+    local graph = bindings.graph:state()
+    graph.campaign_name = "c"
+    graph.nodes = {
+        { id = "n1", type = "questing.Travel", intent = { x = 1, y = 2, z = 3, map = 0 } },
+        { id = "n2", type = "questing.Travel", intent = { x = 4, y = 5, z = 6, map = 0 } },
+    }
+    graph.edges = { { id = "e1", from = "n1", to = "n2" } }
+    graph._dirty = true
+
+    shell:activate("graph")
+    shell:on_tick()
+
+    T.assert_equal(#bindings.travel.routes, 1,
+        "the installed travel editor must see the campaign's Travel nodes")
+    T.assert_equal(bindings.travel.campaign_name, "c")
+end
+
+function M.test_an_unchanged_graph_does_not_recompute()
+    local shell, bindings = installed_shell()
+    local graph = bindings.graph:state()
+    graph.campaign_name = "c"
+    graph.nodes = { { id = "n1", type = "questing.Vendor", intent = { npc_entry = 1263 } } }
+    graph.edges = {}
+    graph._dirty = false
+
+    shell:activate("graph")
+    shell:on_tick()
+    T.assert_equal(bindings.stats.stats.vendor_count, 0,
+        "a tick with nothing to do must not walk the whole graph")
+end
+
+-- ============================================================================
+-- 10. Structural guards
 -- ============================================================================
 
 function M.test_the_capture_never_reads_the_object_manager_from_the_state()

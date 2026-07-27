@@ -6,9 +6,46 @@
 -- Does not render as a panel — rendered on top of the Runner panel content.
 
 local Theme = require("ui/theme")
+local Geometry = require("core/geometry")
 
 local StatsDashboard = {}
 StatsDashboard.__index = StatsDashboard
+
+-- ============================================================================
+-- What each badge counts, and where the count comes from
+-- ============================================================================
+--
+-- The spec asks for quest / waypoint / NPC / object / vendor / flight counts computed from the
+-- LOADED CAMPAIGN GRAPH. Every one of them is a `distinct` count over a field the graph already
+-- carries, so the number is a fact about the campaign rather than an estimate of one.
+--
+-- The distinctions below are deliberate and are the reason the badges are worth reading:
+--
+--  * QUESTS counts distinct `quest_id`, not Accept/TurnIn NODES. A quest with both is one quest;
+--    counting nodes reports every quest in the campaign twice.
+--  * NPCS counts distinct `npc_entry` — the characters the route TALKS to. A Kill target is a
+--    `creature_entry` and is not an NPC in this sense; folding the two together would report a
+--    grind of forty wolves as forty NPCs to visit.
+--  * OBJECTS counts distinct game-object entries: `UseItem.target_entry` and `Loot.object_entry`.
+--    `questing.Loot` executes at runtime but is absent from the Graph palette, so a campaign can
+--    legitimately contain one the editor cannot draw.
+--  * FLIGHTS counts `questing.Flight` nodes — hops TAKEN. `LearnFlightPath` buys a node and takes
+--    no flight, so it is not one.
+
+---Distinct-entry accumulator: `add(set, value)` ignores nil, 0 and anything non-numeric, because a
+---`default_intent` field left at 0 is an unfilled form and not an entity.
+local function add_entry(set, value)
+    local id = tonumber(value)
+    if not id or id == 0 then return set end
+    set[id] = true
+    return set
+end
+
+local function count_of(set)
+    local n = 0
+    for _ in pairs(set) do n = n + 1 end
+    return n
+end
 
 -- ============================================================================
 -- Construction
@@ -28,6 +65,11 @@ function StatsDashboard.new()
             distance_total_yds = 0,
             waypoint_count = 0,
             node_breakdown = {},    -- { { type, count, pct } }
+            quest_count = 0,
+            npc_count = 0,
+            object_count = 0,
+            vendor_count = 0,
+            flight_count = 0,
         },
         campaign_name = nil,
         _dirty = true,
@@ -74,8 +116,13 @@ function StatsDashboard:compute(campaign_plan)
     local vendor_count = 0
     local other_count = 0
 
+    -- The badge counts, each a distinct set over a field the graph already carries.
+    local quest_ids, npc_entries, object_entries, vendor_entries = {}, {}, {}, {}
+    local flight_count = 0
+
     for _, node in ipairs(nodes) do
         local nt = node.type or "unknown"
+        local intent = node.intent or {}
         node_types[nt] = (node_types[nt] or 0) + 1
 
         if nt == "questing.Kill" then
@@ -93,6 +140,14 @@ function StatsDashboard:compute(campaign_plan)
                 end
             end
         end
+
+        add_entry(quest_ids, intent.quest_id)
+        add_entry(npc_entries, intent.npc_entry)
+        add_entry(npc_entries, intent.innkeeper_entry)
+        add_entry(object_entries, intent.target_entry)
+        add_entry(object_entries, intent.object_entry)
+        if nt == "questing.Vendor" then add_entry(vendor_entries, intent.npc_entry) end
+        if nt == "questing.Flight" then flight_count = flight_count + 1 end
     end
 
     -- Type breakdown for display
@@ -160,11 +215,8 @@ function StatsDashboard:compute(campaign_plan)
         end
     end
     for i = 2, #travel_nodes do
-        local a, b = travel_nodes[i - 1], travel_nodes[i]
-        local dx = (a.x or 0) - (b.x or 0)
-        local dy = (a.y or 0) - (b.y or 0)
-        local dz = (a.z or 0) - (b.z or 0)
-        distance_total_yds = distance_total_yds + math.sqrt(dx * dx + dy * dy + dz * dz)
+        distance_total_yds = distance_total_yds
+            + Geometry.distance(travel_nodes[i - 1], travel_nodes[i])
     end
 
     -- Duration estimate: 30s per kill + 60s per quest + 10s per travel waypoint + 10s per wait
@@ -186,8 +238,37 @@ function StatsDashboard:compute(campaign_plan)
         distance_total_yds = math.floor(distance_total_yds + 0.5),
         waypoint_count = waypoint_count,
         node_breakdown = node_breakdown,
+        -- The badge counts (spec: F20-R1/R2).
+        quest_count = count_of(quest_ids),
+        npc_count = count_of(npc_entries),
+        object_count = count_of(object_entries),
+        vendor_count = count_of(vendor_entries),
+        flight_count = flight_count,
     }
     self._dirty = true
+end
+
+-- ============================================================================
+-- Badges — the header chips (spec: "render them as header badge chips")
+-- ============================================================================
+
+---The six counts, in a fixed order, as chips the header row draws.
+---
+---A count of ZERO is kept rather than dropped. "This campaign visits no vendors" is a fact an
+---operator planning a run needs; a chip row that silently shortens itself makes the absence
+---indistinguishable from a campaign that was never loaded.
+---@param stats table
+---@return table[] `{ { id, label, count } }`
+function StatsDashboard.badges(stats)
+    stats = stats or {}
+    return {
+        { id = "stats_badge_quests",    label = "Quests",   count = stats.quest_count or 0 },
+        { id = "stats_badge_waypoints", label = "Waypts",   count = stats.waypoint_count or 0 },
+        { id = "stats_badge_npcs",      label = "NPCs",     count = stats.npc_count or 0 },
+        { id = "stats_badge_objects",   label = "Objects",  count = stats.object_count or 0 },
+        { id = "stats_badge_vendors",   label = "Vendors",  count = stats.vendor_count or 0 },
+        { id = "stats_badge_flights",   label = "Flights",  count = stats.flight_count or 0 },
+    }
 end
 
 ---Reset stats to zero.
@@ -203,6 +284,11 @@ function StatsDashboard:reset()
         distance_total_yds = 0,
         waypoint_count = 0,
         node_breakdown = {},
+        quest_count = 0,
+        npc_count = 0,
+        object_count = 0,
+        vendor_count = 0,
+        flight_count = 0,
     }
     self.campaign_name = nil
     self._dirty = true
@@ -292,6 +378,28 @@ function StatsDashboard.build_plan(view, bounds)
         caption_item("Campaign: " .. tostring(view.campaign_name))
         y = y + 14
     end
+
+    -- The header badge chips: what the campaign CONTAINS, counted from the graph. Drawn first and
+    -- across the top because these are the six numbers an operator checks before starting a run;
+    -- everything below them is derived or estimated.
+    local chip_x = text_x
+    local chip_h = 18
+    for _, badge in ipairs(StatsDashboard.badges(stats)) do
+        local label = string.format("%s %d", badge.label, badge.count)
+        local chip_w = #label * CHAR_W + Theme.space.md
+        if chip_x + chip_w > text_x + content_w then
+            chip_x = text_x
+            y = y + chip_h + Theme.space.xs
+        end
+        push({
+            kind = "chip", id = badge.id,
+            bounds = { x = chip_x, y = y, w = chip_w, h = chip_h },
+            label = label,
+            token = (badge.count > 0) and "accent" or "text_muted",
+        })
+        chip_x = chip_x + chip_w + Theme.space.xs
+    end
+    y = y + chip_h + Theme.space.sm
 
     -- Stats grid: two columns
     local left_x = text_x
@@ -387,6 +495,15 @@ function StatsDashboard.render(window, plan)
                 v2(item.bounds.x, item.bounds.y),
                 v2(item.bounds.x + item.bounds.w, item.bounds.y + item.bounds.h),
                 Theme.color.border_strong(255), Theme.radius.md, Theme.metrics.border_thickness)
+
+        elseif item.kind == "chip" then
+            local b = item.bounds
+            window:render_rect_filled(
+                v2(b.x, b.y), v2(b.x + b.w, b.y + b.h),
+                Theme.color.surface_raised(255), Theme.radius.sm)
+            window:render_text(Theme.font.caption,
+                v2(b.x + Theme.space.xs, b.y + 2),
+                Theme.color[item.token](Theme.interaction.resting.text), item.label)
 
         elseif item.kind == "stats_bar" then
             local b = item.bar_bounds

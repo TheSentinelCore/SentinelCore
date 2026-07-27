@@ -1096,8 +1096,31 @@ function IdePanels.install(shell, deps)
         if event.panel_id ~= Properties.id then shell:activate(Properties.id) end
     end)
 
+    -- ====================================================================
+    -- Graph panel — the campaign both extensions read
+    -- ====================================================================
+    --
+    -- THE GAP THIS CLOSES. `StatsDashboard:compute` and `TravelEditorState:load_from_campaign` were
+    -- both real code with NO CALLER: the dashboard reported a campaign of zero nodes whatever was
+    -- loaded, and the travel editor listed no routes for a campaign full of Travel nodes. Both were
+    -- covered by tests that called them directly, which is exactly why nobody noticed.
+    --
+    -- The recompute hangs off the Graph state's `_dirty`, which every mutation sets — so it covers
+    -- the spec's "on save" and also every edit before one, and it needs nothing from the campaign
+    -- lifecycle the editor client will own. `_dirty` is read BEFORE the binding's own tick, because
+    -- that tick is what clears it.
     local graph = IdePanels.new_graph(deps)
-    local ok4, reason4 = shell:register_panel(graph:spec())
+    local graph_spec = graph:spec()
+    local graph_tick = graph_spec.on_tick
+    graph_spec.on_tick = function()
+        local state = graph:state()
+        local changed = state._dirty
+        if graph_tick then graph_tick() end
+        if not changed then return end
+        stats:compute({ name = state.campaign_name, nodes = state.nodes, edges = state.edges })
+        travel:load_from_campaign(state.campaign_name, state.nodes, state.edges)
+    end
+    local ok4, reason4 = shell:register_panel(graph_spec)
     if not ok4 then return nil, reason4 end
 
     local database = IdePanels.new_database(deps)
