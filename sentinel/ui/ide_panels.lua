@@ -627,15 +627,14 @@ function PropertiesBinding:spec()
                 local status, info = slot:poll(function() return qc:get_vendor(sid) end)
                 if status == "ok" then
                     state.vendor_info = info
+                    -- Local per-item RULE state only. `VendorItem` is `{item_entry, name, price}`:
+                    -- it has no `entry`, no `mode` and no `threshold`, and copying those invented
+                    -- names off the wire is what left every row unmatched and unrenderable.
                     state.vendor_items = {}
                     for _, item in ipairs(info.sells or {}) do
                         state.vendor_items[#state.vendor_items + 1] = {
-                            entry = item.entry,
-                            name = item.name,
-                            price = item.price,
+                            item_entry = item.item_entry,
                             enabled = true,
-                            mode = item.mode or "buy",
-                            threshold = item.threshold or 5,
                         }
                     end
                 end
@@ -654,26 +653,47 @@ function PropertiesBinding:spec()
                 state:set_npc_tab(command.tab)
                 return true
             elseif command.kind == "toggle_vendor_item" then
+                -- The rule is local until a campaign owns it; persisting it through the editor
+                -- client is PR7's `save_graph`, and reporting a write that has not happened is the
+                -- phantom success this change removes everywhere else.
                 if state.vendor_items then
                     for _, item in ipairs(state.vendor_items) do
-                        if item.entry == command.entry then
+                        if item.item_entry == command.item_entry then
                             item.enabled = not item.enabled
                             break
                         end
                     end
                 end
                 return true
-            elseif command.kind == "add_condition" then
-                return true, "add_condition (not yet implemented)"
-            elseif command.kind == "add_condition_group" then
-                return true, "add_condition_group " .. tostring(command.group_type) .. " (not yet implemented)"
-            elseif command.kind == "delete_condition" then
-                return true, "delete_condition (not yet implemented)"
-            elseif command.kind == "add_inventory_rule" then
-                return true, "add_inventory_rule (not yet implemented)"
-            elseif command.kind == "clear_inventory_rules" then
-                state.inventory_rules = {}
+            elseif command.kind == "begin_node_edit" then
+                return state:begin_node_edit(command.field)
+            elseif command.kind == "commit_node_edit" then
+                -- The change is applied to the node in hand and REPORTED. Writing it back through
+                -- `PUT /editor/campaigns/{name}/nodes/{id}` is the editor client's job (PR7); this
+                -- binding has no client to write with and does not pretend otherwise.
+                local applied, err = state:commit_node_edit()
+                if not applied then return false, err end
                 return true
+            elseif command.kind == "cancel_node_edit" then
+                state:cancel_node_edit()
+                return true
+            elseif command.kind == "select_condition" then
+                state:select_condition(command.path)
+                return true
+            -- The tree is mutated IN THE STATE and not written back: `POST .../validate` and the
+            -- node write that persist it belong to the editor client (PR7/PR8). These five branches
+            -- used to answer `true` with a placeholder string — a control that reports success and
+            -- changes nothing, which is the exact defect this change is removing.
+            elseif command.kind == "add_condition" then
+                return state:add_condition()
+            elseif command.kind == "add_condition_group" then
+                return state:add_condition_group(command.group_type)
+            elseif command.kind == "delete_condition" then
+                return state:delete_condition()
+            elseif command.kind == "add_inventory_rule" then
+                return state:add_inventory_rule(command.rule)
+            elseif command.kind == "clear_inventory_rules" then
+                return state:clear_inventory_rules()
             end
             return false, "unknown properties command '" .. tostring(command.kind) .. "'"
         end,
@@ -1422,11 +1442,28 @@ function IdePanels.install(shell, deps)
     -- Properties tab themselves is the same dead end as not routing the selection at all. A
     -- selection made INSIDE Properties does not re-activate it: the panel is already in front, and
     -- an activate() from its own dispatch would fight a tab the operator just switched away from.
+    --
+    -- NODE SUPPLY: there is no `/node/{id}` endpoint and there will never be one — a node lives in
+    -- the campaign the Graph panel holds, so the inspector cannot fetch what it was just told about.
+    -- The bus stays content-free (it carries `{kind, id}`), and the node itself arrives through this
+    -- separate door. Forward-declared because the subscriber closes over the Graph binding that is
+    -- registered a few lines below it.
+    local graph
     shell:on_selection(function(event)
         properties:state():set_context({
             selection_type = event.kind,
             selection_id = event.id,
         })
+        if event.kind == "node" then
+            local found = nil
+            for _, node in ipairs((graph and graph:state().nodes) or {}) do
+                if node.id == event.id then
+                    found = node
+                    break
+                end
+            end
+            properties:state():set_node(found)
+        end
         if event.panel_id ~= Properties.id then shell:activate(Properties.id) end
     end)
 
