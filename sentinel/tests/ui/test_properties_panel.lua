@@ -65,9 +65,10 @@ local function sample_vendor_info()
         name = "Darnell",
         repairs = true,
         sells = {
-            { entry = 123, name = "Refreshing Water", price = 5, mode = "buy", threshold = 5 },
-            { entry = 456, name = "Fresh Bread", price = 2, mode = "sell" },
-            { entry = 789, name = "Light Armor Kit", price = 50, mode = "ignore" },
+            { item_entry = 123, name = "Refreshing Water", price = 25 },
+            { item_entry = 456, name = "Fresh Bread",      price = 12345 },
+            -- price 0 is an ExtendedCost row (honor/arena/token), NOT a free item.
+            { item_entry = 789, name = "Light Armor Kit",  price = 0 },
         },
     }
 end
@@ -277,7 +278,7 @@ function M.test_reduce_vendor_toggle()
     local cmd = PropertiesState.reduce("vendor_toggle:1234")
     T.assert_not_nil(cmd, "vendor_toggle must produce a command")
     T.assert_equal(cmd.kind, "toggle_vendor_item")
-    T.assert_equal(cmd.entry, 1234)
+    T.assert_equal(cmd.item_entry, 1234, "the ITEM entry, never the vendor's own entry")
 end
 
 function M.test_reduce_condition_actions()
@@ -686,6 +687,83 @@ function M.test_quests_tab_paints_starter_and_finisher_sections()
     T.assert_true(fake:drew_text("Turns In (1)"), "the finisher section must reach the frame")
     T.assert_true(fake:drew_text("The Missing Diplomat"), "the quest title must reach the frame")
     T.assert_true(fake:drew_text("783"), "NpcQuestRef.quest_id must reach the frame")
+end
+
+-- ============================================================================
+-- 11. Vendor Editor on the SERVER's shape
+-- ============================================================================
+
+local function vendor_view(info, items)
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "database", selection_type = "vendor", selection_id = info.entry })
+    state.vendor_info = info
+    state.vendor_items = items
+    state.loading = false
+    return state:build()
+end
+
+function M.test_a_zero_price_is_a_special_cost_and_never_free()
+    -- mangos stores ExtendedCost purchases (honor, arena points, marks, badges) with no copper
+    -- equivalent, so the QueryServer sends price 0. "Free" would send an operator to buy something
+    -- they cannot afford in a currency the panel never named.
+    T.assert_equal(PropertiesState.price_label(0), "special cost")
+    T.assert_false(PropertiesState.price_label(0):lower():find("free") ~= nil,
+        "price 0 must never render as free")
+end
+
+function M.test_price_label_formats_copper()
+    T.assert_equal(PropertiesState.price_label(25), "25c")
+    T.assert_equal(PropertiesState.price_label(12345), "1g 23s 45c")
+    T.assert_equal(PropertiesState.price_label(10000), "1g")
+    T.assert_equal(PropertiesState.price_label(nil), "unknown cost",
+        "an absent price is unknown, not zero")
+end
+
+function M.test_vendor_rows_come_from_sells_objects()
+    local rows = PropertiesState.vendor_rows(sample_vendor_info(), nil)
+    T.assert_equal(#rows, 3, "one row per VendorItem")
+    T.assert_equal(rows[1].item_entry, 123, "VendorItem.item_entry, never `entry`")
+    T.assert_equal(rows[1].name, "Refreshing Water")
+    T.assert_equal(rows[3].price_label, "special cost")
+    T.assert_true(rows[1].enabled, "an item with no local rule defaults to on")
+end
+
+function M.test_vendor_rows_honour_a_local_rule()
+    local rows = PropertiesState.vendor_rows(sample_vendor_info(), {
+        { item_entry = 456, enabled = false },
+    })
+    T.assert_true(rows[1].enabled, "untouched items stay on")
+    T.assert_false(rows[2].enabled, "the disabled rule must reach the row")
+end
+
+function M.test_vendor_view_paints_item_names_and_prices()
+    local fake = render_view(vendor_view(sample_vendor_info()))
+    T.assert_true(fake:drew_text("Refreshing Water"), "the item name must reach the frame")
+    T.assert_true(fake:drew_text("1g 23s 45c"), "the price must reach the frame")
+    T.assert_true(fake:drew_text("special cost"), "the ExtendedCost row must say so")
+    T.assert_false(fake:drew_text("Ignore"),
+        "VendorItem has no `mode`; the old default painted every row as Ignore")
+end
+
+function M.test_every_vendor_row_carries_a_toggle_id()
+    local plan = PropertiesState.build_plan(vendor_view(sample_vendor_info()), BOUNDS)
+    local ids = {}
+    for _, item in ipairs(plan.items) do
+        if item.kind == "list_row" then ids[#ids + 1] = item.id end
+    end
+    T.assert_equal(#ids, 3, "each sells entry must be a clickable row, not a text line")
+    T.assert_equal(ids[1], "vendor_toggle:123")
+    -- The round trip that makes the toggle real: the row's id must reduce to the command.
+    local cmd = PropertiesState.reduce(ids[1])
+    T.assert_equal(cmd.kind, "toggle_vendor_item")
+    T.assert_equal(cmd.item_entry, 123)
+end
+
+function M.test_a_vendor_with_no_stock_says_so()
+    local info = sample_vendor_info()
+    info.sells = {}
+    local fake = render_view(vendor_view(info))
+    T.assert_true(fake:drew_text("No inventory data available"))
 end
 
 function M.test_a_quest_ref_with_an_unknown_role_is_still_shown()

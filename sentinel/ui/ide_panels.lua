@@ -528,15 +528,14 @@ function PropertiesBinding:spec()
                 local status, info = slot:poll(function() return qc:get_vendor(sid) end)
                 if status == "ok" then
                     state.vendor_info = info
+                    -- Local per-item RULE state only. `VendorItem` is `{item_entry, name, price}`:
+                    -- it has no `entry`, no `mode` and no `threshold`, and copying those invented
+                    -- names off the wire is what left every row unmatched and unrenderable.
                     state.vendor_items = {}
                     for _, item in ipairs(info.sells or {}) do
                         state.vendor_items[#state.vendor_items + 1] = {
-                            entry = item.entry,
-                            name = item.name,
-                            price = item.price,
+                            item_entry = item.item_entry,
                             enabled = true,
-                            mode = item.mode or "buy",
-                            threshold = item.threshold or 5,
                         }
                     end
                 end
@@ -555,9 +554,12 @@ function PropertiesBinding:spec()
                 state:set_npc_tab(command.tab)
                 return true
             elseif command.kind == "toggle_vendor_item" then
+                -- The rule is local until a campaign owns it; persisting it through the editor
+                -- client is PR7's `save_graph`, and reporting a write that has not happened is the
+                -- phantom success this change removes everywhere else.
                 if state.vendor_items then
                     for _, item in ipairs(state.vendor_items) do
-                        if item.entry == command.entry then
+                        if item.item_entry == command.item_entry then
                             item.enabled = not item.enabled
                             break
                         end

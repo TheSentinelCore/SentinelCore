@@ -120,7 +120,9 @@ function PropertiesState.reduce(action_id)
     -- Vendor item toggles
     local prefix, id_str = action_id:match("^(.-):(.+)$")
     if prefix == "vendor_toggle" then
-        return { kind = "toggle_vendor_item", entry = tonumber(id_str) }
+        -- `item_entry`, not `entry`: `VendorInfo.entry` is the VENDOR's creature entry, and one
+        -- field name meaning both is how a toggle ends up matching the wrong row.
+        return { kind = "toggle_vendor_item", item_entry = tonumber(id_str) }
     end
 
     -- Condition editor
@@ -292,6 +294,56 @@ function PropertiesState.split_quests(quests)
     return starters, finishers, other
 end
 
+---`VendorItem.price` is COPPER.
+---
+---A price of 0 is NOT free. It is an `ExtendedCost` row -- honor, arena points, a battleground
+---mark, a badge -- for which mangos stores no copper equivalent, so the QueryServer sends 0 and the
+---real cost is simply not on the wire. Painting "Free" there routes an operator to buy something
+---they cannot afford, in a currency the panel never mentioned.
+function PropertiesState.price_label(price)
+    local copper = tonumber(price)
+    if copper == nil then return "unknown cost" end
+    if copper <= 0 then return "special cost" end
+
+    local gold = math.floor(copper / 10000)
+    local silver = math.floor((copper % 10000) / 100)
+    local rest = copper % 100
+    local parts = {}
+    if gold > 0 then parts[#parts + 1] = gold .. "g" end
+    if silver > 0 then parts[#parts + 1] = silver .. "s" end
+    if rest > 0 or #parts == 0 then parts[#parts + 1] = rest .. "c" end
+    return table.concat(parts, " ")
+end
+
+---Merge the server's `sells` list with whatever local per-item rule state the binding has built.
+---
+---The rows are built from `VendorInfo.sells`, which is `Vec<VendorItem{item_entry, name, price}>`.
+---It is NOT `Vec<u32>` and it carries no `mode` and no `threshold`: the panel used to read both,
+---so every row fell to the `else` and reported "Ignore" for a vendor's entire stock.
+---@param info table|nil VendorInfo { entry, name, repairs, sells }
+---@param items table|nil local rules [{ item_entry, enabled }]
+---@return table [{ item_entry, name, price_label, enabled }]
+function PropertiesState.vendor_rows(info, items)
+    local rule_of = {}
+    for _, rule in ipairs(items or {}) do
+        if rule.item_entry ~= nil then rule_of[rule.item_entry] = rule end
+    end
+
+    local rows = {}
+    for _, item in ipairs((info and info.sells) or {}) do
+        local rule = rule_of[item.item_entry]
+        rows[#rows + 1] = {
+            item_entry = item.item_entry,
+            name = item.name,
+            price_label = PropertiesState.price_label(item.price),
+            -- No local rule means the item is simply on the vendor's list, so it defaults to ON.
+            -- Defaulting OFF would render a stocked vendor as one that sells nothing worth buying.
+            enabled = (rule == nil) or (rule.enabled ~= false),
+        }
+    end
+    return rows
+end
+
 -- ============================================================================
 -- Build plan — produce the draw items for one frame
 -- ============================================================================
@@ -304,6 +356,8 @@ local CONTROL_H = 28
 local SECTION_H = 20
 local ROW_H = 18
 local SMALL_H = 14
+-- A `list_row` with a `secondary` line stacks body over caption, so it needs the taller box.
+local ROW_TALL = 36
 
 local Theme = require("ui/theme")
 
@@ -516,22 +570,22 @@ function PropertiesState.build_plan(view, bounds)
                 info.repairs and "Yes" or "No"), content_w))
         y = y + Theme.line_height.body + Theme.space.md
 
-        local sell_items = info.sells or {}
-        if #sell_items > 0 then
-            header("Inventory (" .. tostring(#sell_items) .. ")")
-            for _, item in ipairs(sell_items) do
-                local mode_label = ""
-                if item.mode == "buy" then
-                    mode_label = "Buy " .. tostring(item.threshold or 0)
-                elseif item.mode == "sell" then
-                    mode_label = "Sell"
-                else
-                    mode_label = "Ignore"
-                end
-                local label = string.format("  [%s] %s    %s",
-                    tostring(item.entry or ""), fit(item.name or "", 20), mode_label)
-                text_item("body", "text_secondary", fit(label, content_w))
-                y = y + ROW_H
+        -- Rows, not text lines: the rule toggle only becomes reachable when something the operator
+        -- can click carries its id. `reduce` has understood `vendor_toggle:<id>` since the panel
+        -- was written, but nothing had ever pushed a control that emits one.
+        local rows = PropertiesState.vendor_rows(info, vv.items)
+        if #rows > 0 then
+            header("Sells (" .. tostring(#rows) .. ")")
+            for _, row in ipairs(rows) do
+                push({
+                    kind = "list_row",
+                    id = "vendor_toggle:" .. tostring(row.item_entry or "?"),
+                    bounds = { x = text_x, y = y, w = content_w, h = ROW_TALL },
+                    label = fit(row.name or ("Item " .. tostring(row.item_entry or "?")), content_w),
+                    secondary = row.price_label .. "    " .. (row.enabled and "Buy" or "Skip"),
+                    selected = row.enabled,
+                })
+                y = y + ROW_TALL + Theme.space.xs
             end
         else
             text_item("body", "text_muted", "No inventory data available")
