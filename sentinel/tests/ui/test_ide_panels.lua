@@ -1084,6 +1084,64 @@ function M.test_with_no_editor_client_the_panel_says_so_and_fetches_nothing()
     T.assert_false(state.loading, "and it is not pretending to load")
 end
 
+-- ---- Database add_as_kill ------------------------------------------------
+
+---A Database binding wired with the given opts.
+local function database_with(opts)
+    local binding = IdePanels.new_database(opts)
+    return binding, binding:spec(), binding:state()
+end
+
+function M.test_add_as_kill_with_no_editor_reports_the_missing_client()
+    -- 3.15: editor down for add_as_kill produces state.error naming the failed write,
+    -- no phantom node appears.
+    local editor = recording_editor()
+    local _, spec, state = database_with({
+        query_client = fake_query_client(),
+        editor_client = nil,
+        campaign = function() return "stw" end,
+    })
+
+    local ok, reason = spec.dispatch({ kind = "add_as_kill", entry = 567 }, nil)
+    T.assert_false(ok, "a kill node with nowhere to write must not report success")
+    T.assert_true(tostring(reason):find("editor unavailable", 1, true) ~= nil,
+        "and must name the missing editor: " .. tostring(reason))
+    T.assert_equal(state.error, reason, "the panel paints the same fact it returned")
+    T.assert_equal(#editor.writes, 0, "no phantom node was written anywhere")
+end
+
+function M.test_add_as_kill_with_no_campaign_is_reported()
+    local _, spec, state = database_with({
+        query_client = fake_query_client(),
+        editor_client = recording_editor(),
+        campaign = function() return nil end,
+    })
+
+    local ok, reason = spec.dispatch({ kind = "add_as_kill", entry = 567 }, nil)
+    T.assert_false(ok)
+    T.assert_true(tostring(reason):find("no campaign is open", 1, true) ~= nil,
+        tostring(reason))
+    T.assert_equal(state.error, reason)
+end
+
+function M.test_add_as_kill_writes_the_kill_node_to_the_open_campaign()
+    local editor = recording_editor()
+    local _, spec, state = database_with({
+        query_client = fake_query_client(),
+        editor_client = editor,
+        campaign = function() return "stw" end,
+    })
+
+    local ok, reason = spec.dispatch({ kind = "add_as_kill", entry = 567 }, nil)
+    T.assert_true(ok, "the write must succeed: " .. tostring(reason))
+    T.assert_equal(#editor.writes, 1, "exactly one write")
+    T.assert_equal(editor.writes[1].campaign, "stw", "into the open campaign")
+    T.assert_equal(editor.writes[1].nodes[1].type, "questing.Kill", "a Kill node")
+    T.assert_equal(editor.writes[1].nodes[1].intent.creature_entry, 567,
+        "carrying the NPC entry")
+    T.assert_nil(state.error, "no error was set on the state")
+end
+
 -- ---- The guard: editor down means an error, never a phantom node ----------
 
 function M.test_a_refused_node_write_leaves_an_error_and_no_node()

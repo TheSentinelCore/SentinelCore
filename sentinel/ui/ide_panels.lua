@@ -604,17 +604,75 @@ end
 local PropertiesBinding = {}
 PropertiesBinding.__index = PropertiesBinding
 
----@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
+---@param opts table|nil { query_client = table|nil, editor_client = table|nil,
+---                        campaign = function():string|nil } a QueryClient instance, not a resolver
 function IdePanels.new_properties(opts)
     opts = opts or {}
     local self = setmetatable({}, PropertiesBinding)
     self._state = PropertiesState.new()
     self._query_client = opts.query_client
+    -- The :3031 campaign client. Absent when the editor is down, exactly like the Explorer binding.
+    self._editor_client = opts.editor_client
+    -- A RESOLVER: the campaign is owned by the Graph panel and changes under this one.
+    self._campaign = opts.campaign or function() return nil end
     return self
 end
 
 ---Access the panel state, exposed so tests can inspect it.
 function PropertiesBinding:state() return self._state end
+
+---Persist a node field through the editor client after a state mutation.
+---
+---Writes the new value into the current node's intent (identified by
+---`state.context.selection_id`). Preserves existing intent fields so the node does not lose
+---unrelated payload.
+---@param field_name string the intent key, e.g. 'conditions'
+---@param value any the value to write
+---@param error_field string state key for the error, e.g. 'condition_error'
+---@return boolean ok, string|nil reason
+function PropertiesBinding:_save_node_field(field_name, value, error_field)
+    local state = self._state
+    local editor = self._editor_client
+    if not editor or type(editor.update_node) ~= "function" then
+        state[error_field] = "editor unavailable: saving " .. field_name .. " needs the campaign editor at :3031"
+        return false, state[error_field]
+    end
+
+    local campaign = self._campaign()
+    if not campaign or campaign == "" then
+        state[error_field] = "no campaign is open: " .. field_name .. " has nowhere to save"
+        return false, state[error_field]
+    end
+
+    local node_id = state.context and state.context.selection_id
+    if not node_id then
+        state[error_field] = "no node is selected: " .. field_name .. " belong to a graph node"
+        return false, state[error_field]
+    end
+
+    -- Build the node update. Preserve existing intent fields so we don't strip unrelated payload.
+    local intent = {}
+    if state.node_detail and type(state.node_detail.intent) == "table" then
+        for k, v in pairs(state.node_detail.intent) do intent[k] = v end
+    end
+    intent[field_name] = value
+
+    local node_type = (state.node_detail and state.node_detail.type) or "unknown"
+    local node_update = { id = node_id, type = node_type, intent = intent }
+
+    local called, wrote, refused = pcall(editor.update_node, editor, campaign, node_id, node_update)
+    if not called then
+        state[error_field] = tostring(wrote)
+        return false, state[error_field]
+    end
+    if wrote == false then
+        state[error_field] = tostring(refused or "save was refused by the editor")
+        return false, state[error_field]
+    end
+
+    state[error_field] = nil
+    return true
+end
 
 ---The panel spec the shell registers.
 function PropertiesBinding:spec()
@@ -714,16 +772,31 @@ function PropertiesBinding:spec()
             -- node write that persist it belong to the editor client (PR7/PR8). These five branches
             -- used to answer `true` with a placeholder string — a control that reports success and
             -- changes nothing, which is the exact defect this change is removing.
+            -- PR8: after each state mutation, persist through the editor client. A live editor saying
+            -- no is still a failure the panel reports, not a phantom success.
             elseif command.kind == "add_condition" then
-                return state:add_condition()
+                local ok_mut = state:add_condition()
+                if not ok_mut then return false, state.condition_error end
+                local ok_write, reason = binding:_save_node_field("conditions", state.condition_tree,
+                    "condition_error")
+                return ok_write, reason
             elseif command.kind == "add_condition_group" then
-                return state:add_condition_group(command.group_type)
+                local ok_mut = state:add_condition_group(command.group_type)
+                if not ok_mut then return false, state.condition_error end
+                return binding:_save_node_field("conditions", state.condition_tree, "condition_error")
             elseif command.kind == "delete_condition" then
-                return state:delete_condition()
+                local ok_mut = state:delete_condition()
+                if not ok_mut then return false, state.condition_error end
+                return binding:_save_node_field("conditions", state.condition_tree, "condition_error")
             elseif command.kind == "add_inventory_rule" then
-                return state:add_inventory_rule(command.rule)
+                local ok_mut = state:add_inventory_rule(command.rule)
+                if not ok_mut then return false, state.inventory_error end
+                return binding:_save_node_field("inventory_rules", state.inventory_rules,
+                    "inventory_error")
             elseif command.kind == "clear_inventory_rules" then
-                return state:clear_inventory_rules()
+                state:clear_inventory_rules()
+                return binding:_save_node_field("inventory_rules", state.inventory_rules,
+                    "inventory_error")
             end
             return false, "unknown properties command '" .. tostring(command.kind) .. "'"
         end,
@@ -1229,17 +1302,61 @@ end
 local DatabaseBinding = {}
 DatabaseBinding.__index = DatabaseBinding
 
----@param opts table|nil { query_client = table|nil } a QueryClient instance, not a resolver
+---@param opts table|nil { query_client = table|nil, editor_client = table|nil,
+---                        campaign = function():string|nil } a QueryClient instance, not a resolver
 function IdePanels.new_database(opts)
     opts = opts or {}
     local self = setmetatable({}, DatabaseBinding)
     self._state = DatabaseState.new()
     self._query_client = opts.query_client
+    -- The :3031 campaign client. Absent when the editor is down, exactly like the Explorer binding.
+    self._editor_client = opts.editor_client
+    -- A RESOLVER: the campaign is owned by the Graph panel and changes under this one.
+    self._campaign = opts.campaign or function() return nil end
     return self
 end
 
 ---Access the panel state, exposed so tests can inspect it.
 function DatabaseBinding:state() return self._state end
+
+---Add a Kill node for one NPC entry into the open campaign.
+---
+---Mirrors ExplorerBinding:_commit_nodes but for a single NPC entry rather than a subgraph.
+---@param entry number the NPC creature_template.entry
+---@return boolean ok, string|nil reason
+function DatabaseBinding:_add_kill_node(entry)
+    local state = self._state
+    local editor = self._editor_client
+    if not editor or type(editor.add_nodes) ~= "function" then
+        state.error = "editor unavailable: add_as_kill needs the campaign editor at :3031"
+        return false, state.error
+    end
+
+    local campaign = self._campaign()
+    if not campaign or campaign == "" then
+        state.error = "no campaign is open: add_as_kill has nowhere to write"
+        return false, state.error
+    end
+
+    local node = {
+        type = "questing.Kill",
+        id = nil,  -- let the editor mint a UUID
+        intent = { creature_entry = tonumber(entry) or 0, count = 1 },
+    }
+
+    local called, wrote, refused = pcall(editor.add_nodes, editor, campaign, { node })
+    if not called then
+        state.error = tostring(wrote)
+        return false, state.error
+    end
+    if wrote == false then
+        state.error = tostring(refused or "add_as_kill was refused by the editor")
+        return false, state.error
+    end
+
+    state.error = nil
+    return true
+end
 
 ---The panel spec the shell registers.
 function DatabaseBinding:spec()
@@ -1322,7 +1439,7 @@ function DatabaseBinding:spec()
                 publish_selection(ctx, Database.id, "npc", command.entry)
                 return true
             elseif command.kind == "add_as_kill" then
-                return true, "add_as_kill: " .. tostring(command.entry) .. " (not yet implemented)"
+                return binding:_add_kill_node(command.entry)
             elseif command.kind == "generate_grind" then
                 state:request_grind()
                 return true
@@ -1476,7 +1593,13 @@ function IdePanels.install(shell, deps)
     -- ====================================================================
     -- Regular panels (no extensions)
     -- ====================================================================
-    local properties = IdePanels.new_properties(deps)
+    -- Pass the campaign resolver so condition/inventory persistence knows which campaign is open.
+    -- Same pattern as the Explorer binding above: the resolver reads from the Graph binding, which
+    -- is registered a few lines below and forward-declared above.
+    local properties_deps = setmetatable({
+        campaign = deps.campaign or function() return graph and graph:campaign_name() or nil end,
+    }, { __index = deps })
+    local properties = IdePanels.new_properties(properties_deps)
     local ok3, reason3 = shell:register_panel(properties:spec())
     if not ok3 then return nil, reason3 end
 
@@ -1545,7 +1668,10 @@ function IdePanels.install(shell, deps)
     local ok4, reason4 = shell:register_panel(graph_spec)
     if not ok4 then return nil, reason4 end
 
-    local database = IdePanels.new_database(deps)
+    local database_deps = setmetatable({
+        campaign = deps.campaign or function() return graph and graph:campaign_name() or nil end,
+    }, { __index = deps })
+    local database = IdePanels.new_database(database_deps)
     local ok5, reason5 = shell:register_panel(database:spec())
     if not ok5 then return nil, reason5 end
 
