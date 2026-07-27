@@ -198,6 +198,319 @@ impl Db {
         }))
     }
 
+    /// Chain information for a quest: prerequisites, follow-ups, chain depth, and branches.
+    ///
+    /// Prerequisites are quests with PrevQuestId pointing to this quest (reversed link).
+    /// Follow-ups are the quest's NextQuestId and NextQuestInChain.
+    /// Branches are other quests sharing the same ExclusiveGroup.
+    /// Chain depth is computed by following PrevQuestId links backwards.
+    pub fn get_quest_chain(&self, id: u32) -> Result<Option<QuestChain>, String> {
+        // First, get the quest's own data
+        let quest_opt = self.query_map::<_, _>(
+            "SELECT entry, Title, PrevQuestId, NextQuestId, NextQuestInChain, ExclusiveGroup \
+             FROM quest_template WHERE entry = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            }
+        )?;
+
+        let Some((entry, title_opt, prev_quest_id, next_quest_id, next_quest_in_chain, exclusive_group)) = quest_opt.first().cloned() else {
+            return Ok(None);
+        };
+        let title = title_opt.unwrap_or_default();
+
+        // Helper: resolve a quest ID to a QuestChainLink
+        let resolve_link = |qid: i64| -> Option<QuestChainLink> {
+            if qid <= 0 { return None; }
+            let rows = self.query_map::<_, _>(
+                "SELECT Title, ExclusiveGroup FROM quest_template WHERE entry = ?1",
+                [qid],
+                |row| Ok((
+                    row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                    row.get::<_, i64>(1)?,
+                ))
+            ).ok()?;
+            rows.first().map(|(t, eg)| QuestChainLink {
+                quest_id: qid as u32,
+                title: t.clone(),
+                exclusive_group: *eg as i32,
+            })
+        };
+
+        // Prerequisites: quests that must be completed before this one.
+        // Standard MaNGOS interpretation — PrevQuestId on THIS quest = a prerequisite to do first.
+        let mut prerequisites: Vec<QuestChainLink> = Vec::new();
+        if prev_quest_id > 0 {
+            if let Some(link) = resolve_link(prev_quest_id) {
+                prerequisites.push(link);
+            }
+        }
+
+        // Also check if other quests list this quest as their follow-up (alternative prereq view).
+        let prereq_from_others: Vec<QuestChainLink> = self.query_map::<_, _>(
+            "SELECT entry, Title, ExclusiveGroup FROM quest_template WHERE NextQuestId = ?1 AND entry != ?2",
+            [id as i64, prev_quest_id],
+            |row| {
+                Ok(QuestChainLink {
+                    quest_id: row.get::<_, i64>(0)? as u32,
+                    title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    exclusive_group: row.get::<_, i64>(2)? as i32,
+                })
+            }
+        )?;
+        for link in prereq_from_others {
+            if !prerequisites.iter().any(|p| p.quest_id == link.quest_id) {
+                prerequisites.push(link);
+            }
+        }
+
+        // Follow-ups: this quest's NextQuestId and NextQuestInChain
+        let mut follow_ups: Vec<QuestChainLink> = Vec::new();
+        for qid in [next_quest_id, next_quest_in_chain] {
+            if let Some(link) = resolve_link(qid) {
+                if !follow_ups.iter().any(|f| f.quest_id == link.quest_id) {
+                    follow_ups.push(link);
+                }
+            }
+        }
+
+        // Branches: other quests sharing the same ExclusiveGroup (> 0 means exclusive group)
+        let mut branches: Vec<QuestChainLink> = Vec::new();
+        if exclusive_group > 0 {
+            branches = self.query_map::<_, _>(
+                "SELECT entry, Title, ExclusiveGroup FROM quest_template \
+                 WHERE ExclusiveGroup = ?1 AND entry != ?2",
+                [exclusive_group, id as i64],
+                |row| {
+                    Ok(QuestChainLink {
+                        quest_id: row.get::<_, i64>(0)? as u32,
+                        title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        exclusive_group: row.get::<_, i64>(2)? as i32,
+                    })
+                }
+            )?;
+        }
+
+        // Chain depth: follow PrevQuestId links backwards from this quest to the root
+        let chain_depth = self.compute_chain_depth(prev_quest_id);
+
+        Ok(Some(QuestChain {
+            quest_id: entry as u32,
+            title,
+            prerequisites,
+            follow_ups,
+            chain_depth,
+            branches,
+        }))
+    }
+
+    /// Recursively follow PrevQuestId to compute depth of the chain containing this quest.
+    /// Starts from the prerequisite (prev_quest_id) and counts each step back to root.
+    fn compute_chain_depth(&self, mut prev_quest_id: i64) -> u32 {
+        if prev_quest_id <= 0 {
+            return 1; // Just this quest itself
+        }
+        let mut depth: u32 = 1; // Count this quest
+        let db = self.0.lock().unwrap();
+        // Limit iterations to prevent infinite loops on bad data
+        for _ in 0..100 {
+            depth += 1;
+            let next_prev: Option<i64> = db
+                .query_row(
+                    "SELECT PrevQuestId FROM quest_template WHERE entry = ?1",
+                    [prev_quest_id],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+            match next_prev {
+                Some(id) if id > 0 => {
+                    prev_quest_id = id;
+                }
+                _ => break,
+            }
+        }
+        depth
+    }
+
+    /// Objects for a quest: parsed creature/GO/item requirements with names and sources.
+    ///
+    /// Returns parsed objectives from ReqCreatureOrGOId[1-4] and ReqItemId[1-4] fields,
+    /// cross-referenced with names and creature loot sources.
+    pub fn get_quest_objectives(&self, id: u32) -> Result<Option<QuestObjectivesResponse>, String> {
+        // Get quest title and composite objective text
+        let quest_opt = self.query_map::<_, _>(
+            "SELECT entry, Title, Objectives \
+             FROM quest_template WHERE entry = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            }
+        )?;
+
+        let Some((entry, title_opt, obj_text_opt)) = quest_opt.first().cloned() else {
+            return Ok(None);
+        };
+        let _title = title_opt.unwrap_or_default();
+        let quest_id = entry as u32;
+
+        // Resolve creature name from entry
+        let creature_name = |creature_entry: u32| -> String {
+            self.query_map::<_, _>(
+                "SELECT Name FROM creature_template WHERE Entry = ?1",
+                [creature_entry as i64],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .and_then(|v| v.into_iter().flatten().next())
+            .unwrap_or_else(|| format!("Creature {}", creature_entry))
+        };
+
+        // Resolve item name from entry
+        let item_name = |item_entry: u32| -> String {
+            self.query_map::<_, _>(
+                "SELECT name FROM item_template WHERE entry = ?1",
+                [item_entry as i64],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .and_then(|v| v.into_iter().flatten().next())
+            .unwrap_or_else(|| format!("Item {}", item_entry))
+        };
+
+        // Resolve gameobject name
+        let go_name = |go_entry: u32| -> String {
+            self.query_map::<_, _>(
+                "SELECT name FROM gameobject_template WHERE entry = ?1",
+                [go_entry as i64],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .and_then(|v| v.into_iter().flatten().next())
+            .unwrap_or_else(|| format!("Object {}", go_entry))
+        };
+
+        let mut objectives: Vec<ObjectiveResponseItem> = Vec::new();
+        let mut text_parts: Vec<String> = Vec::new();
+
+        // Creature/GO objectives from ReqCreatureOrGOId[1-4]
+        let cro_rows = self.query_map::<_, _>(
+            "SELECT ReqCreatureOrGOId1, ReqCreatureOrGOCount1, \
+                    ReqCreatureOrGOId2, ReqCreatureOrGOCount2, \
+                    ReqCreatureOrGOId3, ReqCreatureOrGOCount3, \
+                    ReqCreatureOrGOId4, ReqCreatureOrGOCount4 \
+             FROM quest_template WHERE entry = ?1",
+            [id],
+            |row| {
+                Ok([
+                    (row.get::<_, i64>(0)?, row.get::<_, i64>(1)?),
+                    (row.get::<_, i64>(2)?, row.get::<_, i64>(3)?),
+                    (row.get::<_, i64>(4)?, row.get::<_, i64>(5)?),
+                    (row.get::<_, i64>(6)?, row.get::<_, i64>(7)?),
+                ])
+            }
+        )?;
+
+        if let Some(slots) = cro_rows.first() {
+            for (i, &(target, count)) in slots.iter().enumerate() {
+                if target == 0 { continue; }
+                if count <= 0 { continue; }
+
+                let (kind, entry) = if target > 0 {
+                    ("kill".to_string(), target as u32)
+                } else {
+                    ("interact".to_string(), (-target) as u32)
+                };
+                let name = if target > 0 { creature_name(entry) } else { go_name(entry) };
+                let kind_label = if target > 0 { "Kill" } else { "Interact with" };
+
+                objectives.push(ObjectiveResponseItem {
+                    index: (i + 1) as u8,
+                    kind: kind.clone(),
+                    entry,
+                    name: name.clone(),
+                    count: count as u32,
+                    source_creatures: Vec::new(),
+                });
+
+                let count_label = if count > 1 { format!("{} ", count) } else { String::new() };
+                text_parts.push(format!("{kind_label} {count_label}{name}"));
+            }
+        }
+
+        // Item objectives from ReqItemId[1-4]
+        let item_rows = self.query_map::<_, _>(
+            "SELECT ReqItemId1, ReqItemCount1, ReqItemId2, ReqItemCount2, \
+                    ReqItemId3, ReqItemCount3, ReqItemId4, ReqItemCount4 \
+             FROM quest_template WHERE entry = ?1",
+            [id],
+            |row| {
+                Ok([
+                    (row.get::<_, i64>(0)?, row.get::<_, i64>(1)?),
+                    (row.get::<_, i64>(2)?, row.get::<_, i64>(3)?),
+                    (row.get::<_, i64>(4)?, row.get::<_, i64>(5)?),
+                    (row.get::<_, i64>(6)?, row.get::<_, i64>(7)?),
+                ])
+            }
+        )?;
+
+        if let Some(slots) = item_rows.first() {
+            // Compute starting index for item slots (after creature/GO slots)
+            let base_index = objectives.len() as u8;
+            for (i, &(item, count)) in slots.iter().enumerate() {
+                if item <= 0 || count <= 0 { continue; }
+
+                let name = item_name(item as u32);
+                let sources = self
+                    .query_map::<_, _>(
+                        "SELECT entry FROM creature_loot_template WHERE item = ?1",
+                        [item],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e as u32)
+                    .collect::<Vec<u32>>();
+
+                objectives.push(ObjectiveResponseItem {
+                    index: base_index + (i as u8) + 1,
+                    kind: "collect".to_string(),
+                    entry: item as u32,
+                    name: name.clone(),
+                    count: count as u32,
+                    source_creatures: sources,
+                });
+
+                let count_label = if count > 1 { format!("{} ", count) } else { String::new() };
+                text_parts.push(format!("Collect {count_label}{name}"));
+            }
+        }
+
+        let objective_text = if !text_parts.is_empty() {
+            text_parts.join(", ")
+        } else {
+            obj_text_opt.unwrap_or_default()
+        };
+
+        Ok(Some(QuestObjectivesResponse {
+            quest_id,
+            objectives,
+            objective_text,
+        }))
+    }
+
     /// Creature entries whose loot table yields `item`.
     ///
     /// Level-1 enrichment turns a bare `.collect item,n` gate into a Kill on these creatures. An

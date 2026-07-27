@@ -249,6 +249,42 @@ pub async fn travel_estimate(
     }
 }
 
+/// `GET /quest/{id}/chain` — quest chain information: prerequisites, follow-ups, branches.
+pub async fn get_quest_chain(
+    Extension(db): Extension<Db>,
+    Path(id): Path<u32>,
+) -> Result<AxumJson<QuestChain>, (StatusCode, Json<serde_json::Value>)> {
+    match db.get_quest_chain(id) {
+        Ok(Some(chain)) => Ok(AxumJson(chain)),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Quest not found: {}", id) })),
+        )),
+        Err(e) => {
+            let err = json!({ "error": e });
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(err)))
+        }
+    }
+}
+
+/// `GET /quest/{id}/objectives` — parsed objectives with creature/item cross-references.
+pub async fn get_quest_objectives(
+    Extension(db): Extension<Db>,
+    Path(id): Path<u32>,
+) -> Result<AxumJson<QuestObjectivesResponse>, (StatusCode, Json<serde_json::Value>)> {
+    match db.get_quest_objectives(id) {
+        Ok(Some(objectives)) => Ok(AxumJson(objectives)),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Quest not found: {}", id) })),
+        )),
+        Err(e) => {
+            let err = json!({ "error": e });
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(err)))
+        }
+    }
+}
+
 /// `GET /search?q=<text>&limit=<n>` — one federated, ranked, typed result list across
 /// npc / quest / item / object / area. The IDE's Smart Search calls this once per keystroke,
 /// so an empty or missing term is refused rather than answered with a full table sweep.

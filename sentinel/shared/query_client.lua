@@ -214,4 +214,12 @@ function QueryClient:creatures_in_polygon(polygon)
     return self:_get("/creatures/polygon?polygon=" .. tostring(polygon))
 end
 
+function QueryClient:get_quest_chain(quest_id)
+    return self:_get("/quest/" .. tostring(quest_id) .. "/chain")
+end
+
+function QueryClient:get_quest_objectives(quest_id)
+    return self:_get("/quest/" .. tostring(quest_id) .. "/objectives")
+end
+
 return QueryClient

@@ -64,6 +64,59 @@ pub struct QuestObjective {
     pub sources: Vec<u32>,
 }
 
+/// A single link in a quest chain — a prerequisite, follow-up, or branch quest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestChainLink {
+    pub quest_id: u32,
+    pub title: String,
+    /// > 0: mutually exclusive with other quests sharing this group.
+    /// 0: no exclusivity.
+    /// -1: only member (no exclusivity in practice).
+    pub exclusive_group: i32,
+}
+
+/// Chain information for a quest: what leads to it, what follows, and the computed chain depth.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestChain {
+    pub quest_id: u32,
+    pub title: String,
+    #[serde(default)]
+    pub prerequisites: Vec<QuestChainLink>,
+    #[serde(default)]
+    pub follow_ups: Vec<QuestChainLink>,
+    /// Total number of quests linked via PrevQuestId from root to this quest.
+    pub chain_depth: u32,
+    /// Other quests sharing an ExclusiveGroup that are not direct prerequisites.
+    #[serde(default)]
+    pub branches: Vec<QuestChainLink>,
+}
+
+/// A single resolved objective in the `/quest/{id}/objectives` response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObjectiveResponseItem {
+    pub index: u8,
+    /// "kill", "collect", or "interact".
+    pub kind: String,
+    /// Creature entry, item id, or gameobject entry depending on kind.
+    pub entry: u32,
+    pub name: String,
+    #[serde(default)]
+    pub count: u32,
+    /// For "collect": entries of creatures whose loot table yields this item.
+    #[serde(default)]
+    pub source_creatures: Vec<u32>,
+}
+
+/// The `/quest/{id}/objectives` response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestObjectivesResponse {
+    pub quest_id: u32,
+    #[serde(default)]
+    pub objectives: Vec<ObjectiveResponseItem>,
+    /// Human-readable objective text assembled from objective data.
+    pub objective_text: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum ObjectiveKind {

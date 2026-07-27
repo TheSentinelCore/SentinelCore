@@ -26,6 +26,8 @@ async fn main() {
     let app = Router::new()
         .route("/quests/search", get(handlers::search_quests))
         .route("/quest/:id", get(handlers::get_quest))
+        .route("/quest/:id/chain", get(handlers::get_quest_chain))
+        .route("/quest/:id/objectives", get(handlers::get_quest_objectives))
         .route("/npc/search", get(handlers::search_npcs))
         .route("/npc/:entry", get(handlers::get_npc))
         .route("/vendor/:entry", get(handlers::get_vendor))
