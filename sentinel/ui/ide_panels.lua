@@ -39,6 +39,7 @@ local TravelEditorState = require("ui/panels/travel_editor_state")
 local TravelEditor = require("ui/panels/travel_editor")
 local ValidationStatus = require("ui/panels/validation_status")
 local StatsDashboard = require("ui/panels/stats_dashboard")
+local RaceFaction = require("shared/race_faction")
 
 local IdePanels = {}
 
@@ -120,6 +121,35 @@ local function default_clock()
     local ok, now = pcall(core.time)
     if not ok then return nil end
     return tonumber(now)
+end
+
+---The map the character is standing on, or nil when there is nothing to ask.
+---
+---`core.get_map_id` (docs/SylvannasAPI/dev/api/core.md) is the only source for it: `get_position()`
+---answers a bare `{x,y,z}`, and the same coordinates name different places on different maps. Read
+---on the TICK, from `dispatch`, never from a render callback. nil is answered rather than 0 because
+---0 is Eastern Kingdoms, and a waypoint filed there by default is worse than one filed nowhere.
+local function current_map_id()
+    if type(core) ~= "table" or type(core.get_map_id) ~= "function" then return nil end
+    local ok, id = pcall(core.get_map_id)
+    if not ok then return nil end
+    return tonumber(id)
+end
+
+---The character's faction, or nil when it cannot be read.
+---
+---There is no faction API (ADR 07 §9 item 17); RACE is readable and determines it by a ten-entry
+---constant, which `shared/race_faction.lua` owns. The travel estimate needs it because a handful of
+---flight destinations exist once per side, and `TaxiNodes.resolve` refuses such a pair rather than
+---picking one. nil here means the refusal stands — it does not mean "Alliance".
+local function player_faction()
+    if type(core) ~= "table" or type(core.object_manager) ~= "table"
+        or type(core.object_manager.get_local_player) ~= "function" then return nil end
+    local ok, player = pcall(core.object_manager.get_local_player)
+    if not (ok and player and type(player.get_race_id) == "function") then return nil end
+    local read, race = pcall(player.get_race_id, player)
+    if not read then return nil end
+    return RaceFaction.resolve(race)
 end
 
 -- ============================================================================
@@ -1420,9 +1450,25 @@ function IdePanels.install(shell, deps)
             end
             return true
         elseif command.kind == "travel_add_waypoint" then
-            return true, "travel_add_waypoint (not yet implemented — requires player position)"
+            -- TICK CONTEXT. `ctx.player_position` was sampled by the shell on the tick preceding
+            -- this frame (ADR 09b §2.4 forbids an object-manager read inside a render callback), and
+            -- the map id is read here for the same reason.
+            return travel:add_waypoint(ctx and ctx.player_position, current_map_id())
+        elseif command.kind == "travel_estimate" then
+            -- Arms the request; the POST itself happens on the next tick, alongside every other
+            -- fetch this panel owns, so one code path owns the pending/re-arm contract.
+            travel:request_estimate()
+            return true
         end
         return explorer_dispatch(command, ctx)
+    end
+
+    -- The travel editor's own tick. Wrapped rather than folded into the Explorer binding because
+    -- the editor is a sub-panel this file composes in, and the binding must not learn about it.
+    local explorer_tick = explorer_spec.on_tick
+    explorer_spec.on_tick = function()
+        if explorer_tick then explorer_tick() end
+        travel:poll_estimate(deps and deps.query_client, player_faction())
     end
     local ok2, reason2 = shell:register_panel(explorer_spec)
     if not ok2 then return nil, reason2 end
@@ -1467,8 +1513,36 @@ function IdePanels.install(shell, deps)
         if event.panel_id ~= Properties.id then shell:activate(Properties.id) end
     end)
 
+    -- ====================================================================
+    -- Graph panel — the campaign both extensions read
+    -- ====================================================================
+    --
+    -- THE GAP THIS CLOSES. `StatsDashboard:compute` and `TravelEditorState:load_from_campaign` were
+    -- both real code with NO CALLER: the dashboard reported a campaign of zero nodes whatever was
+    -- loaded, and the travel editor listed no routes for a campaign full of Travel nodes. Both were
+    -- covered by tests that called them directly, which is exactly why nobody noticed.
+    --
+    -- The recompute hangs off the Graph state's `_dirty`, which every mutation sets — so it covers
+    -- the spec's "on save" and also every edit before one, and it needs nothing from the campaign
+    -- lifecycle the editor client will own. `_dirty` is read BEFORE the binding's own tick, because
+    -- that tick is what clears it.
+    --
+    -- NOTE (merge PR7 ∪ PR11): this assigns the `local graph` forward-declared above, and must NOT
+    -- re-declare it. The selection subscriber closes over that outer binding to resolve a selected
+    -- node; shadowing it here would leave the subscriber holding nil forever and node selection
+    -- would silently never resolve.
     graph = IdePanels.new_graph(deps)
-    local ok4, reason4 = shell:register_panel(graph:spec())
+    local graph_spec = graph:spec()
+    local graph_tick = graph_spec.on_tick
+    graph_spec.on_tick = function()
+        local state = graph:state()
+        local changed = state._dirty
+        if graph_tick then graph_tick() end
+        if not changed then return end
+        stats:compute({ name = state.campaign_name, nodes = state.nodes, edges = state.edges })
+        travel:load_from_campaign(state.campaign_name, state.nodes, state.edges)
+    end
+    local ok4, reason4 = shell:register_panel(graph_spec)
     if not ok4 then return nil, reason4 end
 
     local database = IdePanels.new_database(deps)

@@ -183,8 +183,8 @@ end
 Mock.http = {
     pending_ticks = 2,
     routes = {},     -- { { match = "/npc/567", body = "...", status = 200 } }
-    requests = {},   -- every url asked for, in order (GET and POST alike)
-    posts = {},      -- { { url, body } } -- only the POSTs, so a test can read what was WRITTEN
+    requests = {},   -- every url asked for, in order
+    posts = {},      -- { { url, headers, body } } — the request half of every POST
     _inflight = {},  -- { { url, callback, remaining } }
 }
 
@@ -239,47 +239,50 @@ end
 -- core.http_post  (the ASYNC signature the injector actually has)
 -- ============================================================================
 --
--- `core.http_post(url, [headers,] body, callback)` (docs/SylvannasAPI/dev/api/core.md:932). Same
--- held-callback model as `http_get` above and for the same reason: the editor client's mutations
--- can only report that a request was DISPATCHED, and the server's refusal arrives ticks later. A
--- mock that answered inline would let a binding claim a write succeeded in the frame it issued it,
--- which is the exact phantom-success shape this change exists to delete.
+-- `(url, [headers,] body, callback)` per docs/SylvannasAPI/dev/api/core.md, with the SAME pending
+-- model as `http_get` above: the callback lands `Mock.http.pending_ticks` harness ticks later, so a
+-- caller that assumes a synchronous answer fails here rather than in the injector.
 --
--- Routes are shared with `http_get` deliberately -- `set_http_response("/editor/campaigns", ...)`
--- answers whichever verb asks -- and an unrouted url resolves 404, never hangs.
-function Mock.core.http_post(url, headers_or_body, body_or_callback, callback)
-    url = tostring(url)
-
-    -- Both documented arities. The four-argument form carries headers; the three-argument form does
-    -- not. `QueryClient:post` tries the headers form FIRST, so getting this wrong would silently
-    -- push every offline POST down the fallback path production never takes.
-    local body, cb
-    if type(callback) == "function" then
-        body, cb = body_or_callback, callback
-    elseif type(body_or_callback) == "function" then
-        body, cb = headers_or_body, body_or_callback
+-- Bodies are recorded in `Mock.http.posts` because for a POST the request IS the interesting half:
+-- a route estimate is only honest if the segments that were sent are the segments the operator can
+-- see. Routing reuses `set_http_response`, so one registration answers a GET or a POST alike.
+function Mock.core.http_post(url, headers, body, callback)
+    -- The three-argument form `(url, body, callback)` is the documented fallback the query client
+    -- tries when the headers form is rejected; accepting both keeps the mock honest about which one
+    -- the caller actually used.
+    if type(body) == "function" and callback == nil then
+        callback, body, headers = body, headers, nil
     end
-
-    Mock.http.posts[#Mock.http.posts + 1] = { url = url, body = body }
+    url = tostring(url)
     Mock.http.requests[#Mock.http.requests + 1] = url
-
-    if type(cb) ~= "function" then
+    Mock.http.posts[#Mock.http.posts + 1] = { url = url, headers = headers, body = body }
+    if type(callback) ~= "function" then
         error("core.http_post expects (url, [headers,] body, callback)", 2)
     end
 
     local route = http_route_for(url)
     local entry = {
         url = url,
-        callback = cb,
+        callback = callback,
         remaining = tonumber(Mock.http.pending_ticks) or 0,
         status = route and route.status or 404,
         body = route and route.body or nil,
     }
     if entry.remaining <= 0 then
-        cb(entry.status, "application/json", entry.body)
+        callback(entry.status, "application/json", entry.body)
         return
     end
     Mock.http._inflight[#Mock.http._inflight + 1] = entry
+end
+
+---The body of the most recent POST, decoded, or nil when nothing was posted.
+function Mock.last_post_body()
+    local last = Mock.http.posts[#Mock.http.posts]
+    if not last or type(last.body) ~= "string" then return nil end
+    local ok, json = pcall(require, "core/JSON")
+    if not (ok and type(json) == "table" and json.decode) then return nil end
+    local decoded = json.decode(last.body)
+    return decoded
 end
 
 ---One harness tick of the network: fire every request whose wait has run out.

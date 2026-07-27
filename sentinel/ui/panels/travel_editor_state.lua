@@ -21,13 +21,141 @@ function TravelEditorState.new(opts)
         activated = false,         -- whether the editor is showing
         current_route_nodes = {},  -- node ids that form the selected route
         campaign_name = nil,
+        -- `error` and `loading` are the two fields every panel state carries and every `build_plan`
+        -- projects. They exist here so a refused capture and a refused estimate reach the screen
+        -- instead of being swallowed by a dispatch that answered `true` anyway.
+        error = nil,
+        loading = false,
+        -- The server's answer for the selected route: `{ route_id, segments[], total_s }`.
+        -- nil until `/travel/route` has answered; never a locally invented number.
+        estimate = nil,
+        estimate_requested = false,
+        _requests = {},
         _dirty = true,
     }, TravelEditorState)
+end
+
+---Drop any estimate and any in-flight request for it.
+---
+---Called whenever the route being measured CHANGES. An estimate left on screen after an edit is a
+---number that describes a route the operator can no longer see.
+function TravelEditorState:invalidate_estimate()
+    self.estimate = nil
+    self.estimate_requested = false
+    self._requests = {}
+    if self._slots and self._slots.estimate then self._slots.estimate:reset() end
+end
+
+---The currently selected route, or nil.
+function TravelEditorState:_selected()
+    if not self.selected_route then return nil end
+    for _, route in ipairs(self.routes) do
+        if route.id == self.selected_route then return route end
+    end
+    return nil
+end
+
+---Record a refusal on the state and answer it to the caller in one move.
+---@return boolean false, string reason
+function TravelEditorState:_refuse(reason)
+    self.loading = false
+    self.error = reason
+    self._dirty = true
+    return false, reason
+end
+
+-- ============================================================================
+-- Waypoint capture (spec: Travel Editor and Stats Wiring — F12-R1)
+-- ============================================================================
+--
+-- `travel_add_waypoint` used to answer `true, "(not yet implemented — requires player position)"`.
+-- The shell now hands `ctx.player_position` to `dispatch` (sampled on the TICK, never inside a
+-- render callback), so the capture is real. Every way it can fail is named:
+--
+--   * nil position  -- loading screen, between injections, dead object manager. A capture that
+--                      substituted `{0,0,0}` would silently drop a waypoint in the middle of the map.
+--   * no route      -- there is nowhere to put it.
+--
+-- The map id is RECORDED when the host has one and left nil when it does not. It is not required
+-- here because a waypoint is useful to the runtime without one; it is required by
+-- `build_segments`, which is where a missing map would otherwise become a fabricated `map = 0`.
+
+---Append the player's current position to the selected route.
+---@param position table|nil `ctx.player_position` — `{ x, y, z }` or nil when out of world
+---@param map_id number|nil `core.get_map_id()`, read by the host on the tick
+---@return boolean ok, string reason
+function TravelEditorState:add_waypoint(position, map_id)
+    local route = self:_selected()
+    if not route then
+        return self:_refuse("no route selected: a captured waypoint has nowhere to go")
+    end
+    if type(position) ~= "table" then
+        return self:_refuse("no player position: the character is not in world")
+    end
+    local x, y, z = tonumber(position.x), tonumber(position.y), tonumber(position.z)
+    if not (x and y and z) then
+        return self:_refuse("the player position is incomplete: x/y/z are required")
+    end
+
+    route.waypoints = route.waypoints or {}
+    route.waypoints[#route.waypoints + 1] = {
+        x = x, y = y, z = z,
+        map = tonumber(map_id),
+        movement = "walk",
+        destination = string.format("(%.0f, %.0f, %.0f)", x, y, z),
+        captured = true,
+    }
+
+    -- A route that just grew a leg has an estimate that is now about a different route.
+    self:invalidate_estimate()
+    self.error = nil
+    self.loading = false
+    self._dirty = true
+    return true, string.format("waypoint %d captured at (%.0f, %.0f, %.0f)",
+        #route.waypoints, x, y, z)
 end
 
 -- ============================================================================
 -- Loading
 -- ============================================================================
+
+---Turn one campaign node into a waypoint, or nil when it is not a leg of a route.
+---
+---Two node types are legs. `questing.Travel` carries coordinates and, on the Travel node,
+---`allow_flight` — which means the runtime may use its OWN flight form for the leg, not that a
+---flight master is involved. `questing.Flight` is the flight master's hop: it carries a destination
+---NAME and no coordinates at all, so its position comes from the taxi catalog at estimate time.
+---
+---`map` is READ from the intent and left nil when the node does not carry one. `questing.Travel`'s
+---`default_intent` has no `map` field today, so a campaign-derived waypoint normally has none — and
+---`build_segments` refuses to measure it rather than defaulting to map 0, which would price a leg in
+---Outland as if it were in Elwynn.
+---@param node table|nil `{ id, type, intent }`
+---@return table|nil waypoint
+local function waypoint_from_node(node)
+    if not node or not node.intent then return nil end
+    local intent = node.intent
+
+    if node.type == "questing.Flight" then
+        return {
+            x = 0, y = 0, z = 0,
+            map = nil,
+            movement = "taxi",
+            destination = intent.destination or "",
+            node_id = node.id,
+        }
+    end
+
+    if node.type ~= "questing.Travel" then return nil end
+    return {
+        x = intent.x or 0, y = intent.y or 0, z = intent.z or 0,
+        map = tonumber(intent.map),
+        movement = intent.allow_flight and "flight" or "walk",
+        destination = intent.destination
+            or string.format("(%.0f, %.0f, %.0f)", intent.x or 0, intent.y or 0, intent.z or 0),
+        node_id = node.id,
+    }
+end
 
 ---Load route data from campaign nodes and edges.
 ---Scans edges for Travel-type connections and builds route entries.
@@ -38,6 +166,7 @@ function TravelEditorState:load_from_campaign(campaign_name, nodes, edges)
     self.campaign_name = campaign_name or self.campaign_name
     self.routes = {}
     self.selected_route = nil
+    self:invalidate_estimate()
 
     nodes = nodes or {}
     edges = edges or {}
@@ -57,29 +186,11 @@ function TravelEditorState:load_from_campaign(campaign_name, nodes, edges)
             local waypoints = {}
 
             -- Extract waypoint data from Travel nodes
-            if from_node.type == "questing.Travel" and from_node.intent then
-                local pos = from_node.intent
-                local dest = pos.destination or string.format("(%.0f, %.0f, %.0f)", pos.x or 0, pos.y or 0, pos.z or 0)
-                local movement = pos.allow_flight and "flight" or "walk"
-                table.insert(waypoints, {
-                    x = pos.x or 0, y = pos.y or 0, z = pos.z or 0,
-                    movement = movement,
-                    destination = dest,
-                    node_id = from_node.id,
-                })
-            end
+            local from_wp = waypoint_from_node(from_node)
+            if from_wp then table.insert(waypoints, from_wp) end
 
-            if to_node.type == "questing.Travel" and to_node.intent then
-                local pos = to_node.intent
-                local dest = pos.destination or string.format("(%.0f, %.0f, %.0f)", pos.x or 0, pos.y or 0, pos.z or 0)
-                local movement = pos.allow_flight and "flight" or "walk"
-                table.insert(waypoints, {
-                    x = pos.x or 0, y = pos.y or 0, z = pos.z or 0,
-                    movement = movement,
-                    destination = dest,
-                    node_id = to_node.id,
-                })
-            end
+            local to_wp = waypoint_from_node(to_node)
+            if to_wp then table.insert(waypoints, to_wp) end
 
             table.insert(self.routes, {
                 id = route_id,
@@ -105,6 +216,7 @@ function TravelEditorState:select_route(id)
     if not id or id == "" then
         self.selected_route = nil
         self.editing_waypoints = false
+        self:invalidate_estimate()
         self._dirty = true
         return
     end
@@ -126,6 +238,7 @@ function TravelEditorState:select_route(id)
         self.selected_route = id
         self.editing_waypoints = false
     end
+    self:invalidate_estimate()
     self._dirty = true
 end
 
@@ -159,6 +272,9 @@ function TravelEditorState:reorder_waypoint(route_id, from_idx, to_idx)
 
             local wp = table.remove(wps, from_idx)
             table.insert(wps, to_idx, wp)
+            -- Reordering changes which legs exist, so the previous times measure a route that is
+            -- no longer on screen.
+            self:invalidate_estimate()
             self._dirty = true
             return true
         end
@@ -182,12 +298,17 @@ function TravelEditorState:toggle()
     if not self.activated then
         self.selected_route = nil
         self.editing_waypoints = false
+        self:invalidate_estimate()
     end
     self._dirty = true
     return self.activated
 end
 
----Add a new route (placeholder — the real implementation POSTs to the editor crate).
+---Append a LOCAL route so waypoints can be captured into it.
+---
+---Local on purpose: routes are derived from the campaign's Travel nodes, and persisting one is the
+---editor client's job (`POST /editor/campaigns/{name}`), which the Graph panel owns. This is the
+---scratch route a capture session builds; nothing here claims it was saved.
 function TravelEditorState:add_route(from_id, to_id)
     local route_id = "route_new_" .. tostring(#self.routes + 1)
     table.insert(self.routes, {
@@ -200,6 +321,250 @@ function TravelEditorState:add_route(from_id, to_id)
     })
     self._dirty = true
     return route_id
+end
+
+-- ============================================================================
+-- The `POST /travel/route` request (spec: Travel Editor and Stats Wiring — F12-R2)
+-- ============================================================================
+--
+-- The server measures the route; this file only decides which legs to ask about. Nothing here
+-- computes a time, a speed or a distance, because a number produced locally and rendered next to
+-- the server's would be indistinguishable from one the server returned.
+--
+-- TWO REFUSALS, AND WHY NEITHER IS PAPERED OVER
+-- ---------------------------------------------
+--  1. A WAYPOINT WITH NO MAP. `questing.Travel`'s intent carries `x/y/z` and no map, and the same
+--     coordinates name different places on different maps. Defaulting to 0 would price a leg in
+--     Outland as if it were in Elwynn and the total would still look computed.
+--  2. A FLIGHT LEG WITH NO TAXI NODE. `/travel/route` has no taxi tables — it refuses a taxi segment
+--     that arrives without positions rather than inventing a per-hop constant (see the QueryServer's
+--     `plan_route`). The runtime owns those positions in `kernel/catalogs/taxi_nodes.lua`, so a
+--     flight leg is only sent as `type = "taxi"` once its destination has RESOLVED to exactly one
+--     node there. An unresolved or ambiguous destination is reported, never guessed: `resolve`
+--     answers `needs_faction` for a faction-complement pair, and silently picking one of them would
+--     fly the character to the wrong continent.
+
+local TaxiNodes = require("kernel/catalogs/taxi_nodes")
+
+---Look a flight waypoint's destination up in the taxi catalog.
+---@param waypoint table
+---@param faction string|nil "Alliance" | "Horde" | nil
+---@return number|nil node_id, table|nil node, string|nil err
+local function resolve_taxi_node(waypoint, faction)
+    if waypoint.taxi_node then
+        return waypoint.taxi_node, TaxiNodes.nodes[waypoint.taxi_node]
+    end
+    local id, err = TaxiNodes.resolve(waypoint.destination, faction)
+    if not id then return nil, nil, err end
+    return id, TaxiNodes.nodes[id]
+end
+
+---Build the segment list for one route's `POST /travel/route` body.
+---@param route table
+---@param faction string|nil the character's faction, when the host knows it
+---@return table|nil segments, string|nil reason
+function TravelEditorState.build_segments(route, faction)
+    local waypoints = route and route.waypoints or {}
+    if #waypoints < 2 then
+        return nil, "a route needs at least two waypoints before it can be estimated"
+    end
+
+    local segments = {}
+    for i = 2, #waypoints do
+        local from, to = waypoints[i - 1], waypoints[i]
+        -- `flight` is NOT `taxi`. A Travel node's `allow_flight` means the runtime may use its own
+        -- flight form or mount for a leg it walks otherwise; a taxi leg is a flight master's hop, and
+        -- only `questing.Flight` produces one.
+        local taxi = (to.movement == "taxi")
+
+        local to_map, to_pos = tonumber(to.map), nil
+        if taxi then
+            local node_id, node, err = resolve_taxi_node(to, faction)
+            if not node then
+                return nil, string.format(
+                    "waypoint %d is a flight to %q that resolves to no taxi node (%s); "
+                    .. "the server has no taxi tables and will not guess the hop",
+                    i, tostring(to.destination), tostring(err or "unknown_destination"))
+            end
+            to_map = node.map
+            to_pos = { map = node.map, x = node.x, y = node.y, z = node.z }
+            to.taxi_node = node_id
+        end
+
+        local from_map = tonumber(from.map)
+        if from_map == nil then
+            return nil, string.format(
+                "waypoint %d carries no map id, so its leg cannot be measured", i - 1)
+        end
+        if to_map == nil then
+            return nil, string.format(
+                "waypoint %d carries no map id, so its leg cannot be measured", i)
+        end
+
+        segments[#segments + 1] = {
+            type = taxi and "taxi" or nil,
+            from_node = taxi and from.taxi_node or nil,
+            to_node = taxi and to.taxi_node or nil,
+            from = { map = from_map, x = from.x or 0, y = from.y or 0, z = from.z or 0 },
+            to = to_pos or { map = to_map, x = to.x or 0, y = to.y or 0, z = to.z or 0 },
+        }
+    end
+    return segments
+end
+
+-- ============================================================================
+-- Asking the server (spec: "estimate segments via POST /travel/route")
+-- ============================================================================
+--
+-- `QueryClient:post` is fire-and-callback, so the answer lands some ticks after the request. That is
+-- the same shape `AsyncSlot` exists for, and it is used here for the one line that matters: a
+-- pending answer RE-ARMS the owner's `_dirty`, so the tick that collects the answer actually runs.
+-- Without it the panel freezes on its first request and shows an idle view forever (the PR2 defect,
+-- through a different door).
+--
+-- The slot's own failure message is deliberately overwritten with the SERVER's. A 400 from
+-- `/travel/route` names the offending segment, and "travel route estimate failed" would throw that
+-- away — which is exactly how a refused taxi hop would come to look like a network glitch.
+
+local AsyncSlot = require("ui/async_slot")
+
+local ESTIMATE_PATH = "/travel/route"
+
+local Json = (function()
+    local ok, mod = pcall(require, "core/JSON")
+    if ok and type(mod) == "table" and mod.encode and mod.decode then return mod end
+    return nil
+end)()
+
+---The `error` field out of a QueryServer failure body, or the body itself when it is not one.
+local function server_reason(response)
+    if type(response) ~= "string" or response == "" then return "no response body" end
+    if Json then
+        local decoded = Json.decode(response)
+        if type(decoded) == "table" and type(decoded.error) == "string" then return decoded.error end
+    end
+    return response
+end
+
+---Ask for an estimate of the selected route. The request itself happens on the next tick's poll.
+function TravelEditorState:request_estimate()
+    self.estimate_requested = true
+    self._dirty = true
+end
+
+---Drive one tick of the route estimate. TICK CONTEXT ONLY — this posts.
+---@param client table|nil a QueryClient (needs `post`)
+---@param faction string|nil the character's faction, when the host knows it
+---@return string status "idle" | "ok" | "pending" | "failed" | "timeout"
+function TravelEditorState:poll_estimate(client, faction)
+    self._slots = self._slots or { estimate = AsyncSlot.new({ label = "travel route estimate", owner = self }) }
+    if not self.estimate_requested then return "idle" end
+
+    local route = self:_selected()
+    if not route then
+        self:invalidate_estimate()
+        return "idle"
+    end
+
+    local segments, why = TravelEditorState.build_segments(route, faction)
+    if not segments then
+        self._slots.estimate:reset()
+        self.estimate = nil
+        self.estimate_requested = false
+        self:_refuse(why)
+        return "failed"
+    end
+
+    if type(client) ~= "table" or type(client.post) ~= "function" then
+        self._slots.estimate:reset()
+        self.estimate = nil
+        self.estimate_requested = false
+        self:_refuse("travel estimate unavailable: no query server")
+        return "failed"
+    end
+
+    local key = tostring(route.id) .. "@" .. TravelEditorState.request_key(segments)
+    local record = self._requests[key]
+    if record == nil then
+        -- Any request for a DIFFERENT route or a different shape of this one is abandoned rather
+        -- than left to answer later over the top of this one.
+        self._requests = {}
+        self._slots.estimate:reset()
+        record = { status = "pending" }
+        self._requests[key] = record
+        self:_dispatch_estimate(client, record, segments)
+    end
+
+    local status = self._slots.estimate:poll(function()
+        if record.status == "ok" then return record.data end
+        if record.status == "pending" then return nil, true end
+        return nil, nil
+    end)
+
+    if status == "ok" then
+        self.estimate = {
+            route_id = route.id,
+            segments = record.data.segments or {},
+            total_s = record.data.total_s or 0,
+        }
+        self.estimate_requested = false
+        self.error = nil
+    elseif status ~= "pending" then
+        self.estimate = nil
+        self.estimate_requested = false
+        -- The server's own words, not the slot's summary of them.
+        if record.error then self.error = record.error end
+    end
+    return status
+end
+
+---Fire the POST and record its answer against `record`.
+function TravelEditorState:_dispatch_estimate(client, record, segments)
+    if not Json then
+        record.status = "failed"
+        record.error = "travel estimate unavailable: no JSON encoder in this sandbox"
+        return
+    end
+    local body = Json.encode({ segments = segments })
+    if type(body) ~= "string" or body == "" then
+        record.status = "failed"
+        record.error = "the travel route request could not be encoded"
+        return
+    end
+
+    local dispatched, refused = client:post(ESTIMATE_PATH, body, function(code, response)
+        if code == 200 then
+            local decoded = Json.decode(response or "")
+            if type(decoded) == "table" and type(decoded.segments) == "table" then
+                record.status = "ok"
+                record.data = decoded
+                return
+            end
+            record.status = "failed"
+            record.error = "the route answer could not be read"
+            return
+        end
+        record.status = "failed"
+        record.error = string.format("%s refused the route (HTTP %s): %s",
+            ESTIMATE_PATH, tostring(code), server_reason(response))
+    end)
+    if not dispatched then
+        record.status = "failed"
+        record.error = "travel estimate unavailable: " .. tostring(refused)
+    end
+end
+
+---A stable signature for a segment list, so an unchanged route is not re-requested every tick and a
+---changed one is never answered from the previous route's cache.
+function TravelEditorState.request_key(segments)
+    local parts = {}
+    for i, seg in ipairs(segments) do
+        parts[i] = string.format("%s|%d,%.2f,%.2f,%.2f|%d,%.2f,%.2f,%.2f",
+            seg.type or "walk",
+            seg.from.map, seg.from.x, seg.from.y, seg.from.z,
+            seg.to.map, seg.to.x, seg.to.y, seg.to.z)
+    end
+    return table.concat(parts, ";")
 end
 
 -- ============================================================================
@@ -240,6 +605,10 @@ function TravelEditorState:build()
         editing_waypoints = self.editing_waypoints,
         active_waypoints = active_waypoints,
         campaign_name = self.campaign_name,
+        error = self.error,
+        loading = self.loading,
+        estimate = self.estimate,
+        estimate_requested = self.estimate_requested,
     }
 end
 
@@ -263,6 +632,61 @@ local function fit_label(text, width)
     if #text <= max_chars then return text end
     if max_chars <= 3 then return text:sub(1, max_chars) end
     return text:sub(1, max_chars - 3) .. "..."
+end
+
+---Format a whole number of seconds the way an operator reads a route: `4m 05s`, or `18s`.
+local function duration_label(seconds)
+    seconds = math.floor(tonumber(seconds) or 0)
+    if seconds < 60 then return string.format("%ds", seconds) end
+    return string.format("%dm %02ds", math.floor(seconds / 60), seconds % 60)
+end
+
+---How tall the estimate block is, so the caller can advance past it.
+local function estimate_height(view)
+    local estimate = view.estimate
+    if not estimate then return 0 end
+    return SECTION_H + Theme.space.xs + ROW_H * (#(estimate.segments or {}) + 1)
+end
+
+---The estimate block: one row per segment the SERVER reported, then its total.
+---
+---Rendered only from `view.estimate`, which is only ever set from a 200. There is no "estimating..."
+---row with a number in it and no fallback total, because a placeholder number in a column of real
+---ones is the defect this whole change exists to remove.
+local function estimate_items(view, text_x, content_w, y)
+    local estimate = view.estimate
+    if not estimate then return {} end
+
+    local items = {
+        {
+            kind = "section_header",
+            bounds = { x = text_x, y = y, w = content_w, h = SECTION_H },
+            title = "Route Estimate",
+        },
+    }
+    y = y + SECTION_H + Theme.space.xs
+
+    for i, segment in ipairs(estimate.segments or {}) do
+        local distance = segment.distance_m
+            and string.format("%.0f yds", segment.distance_m) or "—"
+        items[#items + 1] = {
+            kind = "text", x = text_x + Theme.space.md, y = y,
+            font = Theme.font.body, token = "text_secondary",
+            alpha = Theme.interaction.resting.text,
+            text = string.format("  %d. %-6s %-12s %s",
+                i, tostring(segment.type or "walk"), distance,
+                duration_label(segment.estimated_s)),
+        }
+        y = y + ROW_H
+    end
+
+    items[#items + 1] = {
+        kind = "text", x = text_x + Theme.space.md, y = y,
+        font = Theme.font.body, token = "text_primary",
+        alpha = Theme.interaction.resting.text,
+        text = string.format("  Total  %s", duration_label(estimate.total_s)),
+    }
+    return items
 end
 
 ---Build the draw plan items for the travel editor sub-panel.
@@ -316,6 +740,13 @@ function TravelEditorState.build_plan(view, bounds)
         label = toggle_label, variant = view.activated and "primary" or "secondary",
     })
     y = y + CONTROL_H + Theme.space.sm
+
+    -- Whatever was last refused, in the operator's line of sight. A capture that failed silently is
+    -- what this panel shipped with.
+    if view.error then
+        text_item(fit_label(view.error, content_w), "danger")
+        y = y + ROW_H
+    end
 
     -- If not activated, stop here
     if not view.activated then
@@ -399,13 +830,27 @@ function TravelEditorState.build_plan(view, bounds)
                     end
 
                     -- Add waypoint at current position button
+                    local action_w = math.min(160, content_w - Theme.space.md)
                     push({
                         kind = "button", id = "travel_add_waypoint",
                         bounds = { x = text_x + Theme.space.md, y = y,
-                                  w = math.min(160, content_w - Theme.space.md), h = CONTROL_H },
+                                  w = action_w, h = CONTROL_H },
                         label = "Capture Position", variant = "primary",
                     })
+                    push({
+                        kind = "button", id = "travel_estimate",
+                        bounds = { x = text_x + Theme.space.md + action_w + Theme.space.sm, y = y,
+                                  w = action_w, h = CONTROL_H },
+                        label = view.loading and "Estimating..." or "Estimate Route",
+                        variant = "secondary",
+                    })
                     y = y + CONTROL_H + Theme.space.sm
+
+                    -- The server's answer, and nothing that was not in it.
+                    for _, item in ipairs(estimate_items(view, text_x, content_w, y)) do
+                        push(item)
+                    end
+                    y = y + estimate_height(view)
                 end
 
                 y = y + Theme.space.xs
@@ -438,6 +883,9 @@ function TravelEditorState.reduce(action_id)
     end
     if action_id == "travel_add_waypoint" then
         return { kind = "travel_add_waypoint" }
+    end
+    if action_id == "travel_estimate" then
+        return { kind = "travel_estimate" }
     end
 
     -- Route selection
