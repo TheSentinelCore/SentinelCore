@@ -13,7 +13,8 @@ local T = require("tests/test_util")
 
 local M = {}
 
-local UI_MODULES = { "ui/theme", "ui/widgets", "ui/ide_panels", "ui/panels/graph", "ui/panels/graph_state",
+local UI_MODULES = { "ui/theme", "ui/widgets", "ui/text_input_state", "ui/ide_panels",
+    "ui/panels/graph", "ui/panels/graph_state",
     "ui/panels/escort_recorder", "tests/harness/fake_window" }
 
 --- Load `module_name` from source with `_G.core` and the `common/*` libraries absent.

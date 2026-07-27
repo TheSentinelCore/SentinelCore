@@ -521,6 +521,11 @@ local test_modules = {
     -- immediate-mode UI can be observed outside the injector.
     "tests/ui/test_theme",
     "tests/ui/test_widgets",
+    -- The one widget with no stock element behind it: it reads `core.input` directly, and two of
+    -- the calls it needs are undocumented. Registered right after `test_widgets` because a break
+    -- here must read as a widget bug, not as an Explorer search that stopped working. The widget half
+    -- follows in its own suite.
+    "tests/ui/test_text_input",
     -- ADR 09b U2: the shell. `test_shell_state` is the whole of the unit's decision-making;
     -- `test_shell` drives the real render path and counts `core.menu.*` constructions per phase,
     -- which is the only offline signal for a Sylvannas rule that otherwise fails in the injector
