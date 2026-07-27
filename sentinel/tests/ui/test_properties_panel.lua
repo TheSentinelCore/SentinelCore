@@ -73,14 +73,15 @@ local function sample_vendor_info()
     }
 end
 
+-- `ObjectInfo` is `{entry, name, kind, position}` and nothing else. The old fixture also carried
+-- `respawn` and `skill`, which the panel dutifully rendered — two numbers no endpoint has ever
+-- sent, visible only because the fixture invented them.
 local function sample_object_info()
     return {
         entry = 1735,
         name = "Silver Vein",
         kind = "Mining",
         position = { map = 0, x = -8932, y = -137, z = 82 },
-        respawn = 120,
-        skill = "Mining (125)",
     }
 end
 
@@ -772,6 +773,43 @@ function M.test_a_quest_ref_with_an_unknown_role_is_still_shown()
     local fake = render_view(npc_view(detail, "quests"))
     T.assert_true(fake:drew_text("Orphaned"),
         "a role this panel does not know is still a quest the NPC is attached to")
+end
+
+-- ============================================================================
+-- 12. Object view — only what the server actually sends
+-- ============================================================================
+
+local function object_view(info)
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "database", selection_type = "object", selection_id = info.entry })
+    state.object_info = info
+    state.loading = false
+    return state:build()
+end
+
+function M.test_object_view_paints_type_and_spawn()
+    local fake = render_view(object_view(sample_object_info()))
+    T.assert_true(fake:drew_text("Silver Vein"))
+    T.assert_true(fake:drew_text("Mining"), "ObjectInfo.kind is the type")
+    T.assert_true(fake:drew_text("Spawns (1)"), "the single WorldPos is one spawn")
+end
+
+function M.test_object_view_renders_no_field_the_server_does_not_send()
+    -- The spec's rule verbatim: fields absent from server types must not be rendered from fixtures.
+    -- A respawn timer an operator can read but the server never sent is worse than a gap, because
+    -- a gap is visibly a gap.
+    local info = sample_object_info()
+    info.respawn = 120
+    info.skill = "Mining (125)"
+    local fake = render_view(object_view(info))
+    T.assert_false(fake:drew_text("Respawn"), "ObjectInfo has no respawn field")
+    T.assert_false(fake:drew_text("Mining (125)"), "ObjectInfo has no skill field")
+end
+
+function M.test_object_loot_absence_is_stated_not_blank()
+    local fake = render_view(object_view(sample_object_info()))
+    T.assert_true(fake:drew_text("Loot is not served"),
+        "'we were never told' is a different fact from 'there is nothing in it'")
 end
 
 return M

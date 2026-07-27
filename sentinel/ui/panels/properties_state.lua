@@ -605,6 +605,11 @@ function PropertiesState.build_plan(view, bounds)
             return { items = items }
         end
 
+        -- `ObjectInfo` is `{entry, name, kind, position}` and nothing else. The `respawn` and `skill`
+        -- lines that used to render here had no source on the wire at all -- they came from the
+        -- panel's own fixture, which is exactly the "field absent from server types" the spec
+        -- forbids rendering. A number an operator can read but the server never sent is worse than
+        -- a gap, because a gap is visibly a gap.
         local obj = ov.detail
         text_item("title", "text_primary", fit(obj.name or "Object", content_w))
         y = y + Theme.line_height.title + Theme.space.xs
@@ -612,20 +617,39 @@ function PropertiesState.build_plan(view, bounds)
             string.format("Entry: %s    Type: %s", tostring(obj.entry or "?"), obj.kind or "?"), content_w))
         y = y + Theme.line_height.body + Theme.space.md
 
-        if obj.position then
-            local p = obj.position
-            text_item("body", "text_secondary", fit(
-                string.format("Map %s ( %.0f, %.0f, %.0f )",
-                    tostring(p.map or 0), p.x or 0, p.y or 0, p.z or 0), content_w))
-            y = y + ROW_H
+        local spawns = obj.positions or (obj.position and { obj.position }) or {}
+        if #spawns > 0 then
+            header("Spawns (" .. tostring(#spawns) .. ")")
+            for _, p in ipairs(spawns) do
+                text_item("body", "text_secondary", fit(
+                    string.format("  Map %s ( %.0f, %.0f, %.0f )",
+                        tostring(p.map or 0), p.x or 0, p.y or 0, p.z or 0), content_w))
+                y = y + ROW_H
+            end
+            y = y + Theme.space.sm
+        else
+            text_item("body", "text_muted", "No spawn data available")
+            y = y + ROW_H + Theme.space.sm
         end
 
-        if obj.respawn then
-            text_item("caption", "text_muted", fit("Respawn: " .. tostring(obj.respawn) .. "s", content_w))
-            y = y + SMALL_H
-        end
-        if obj.skill then
-            text_item("caption", "text_muted", fit("Skill: " .. tostring(obj.skill), content_w))
+        -- Tolerant of a `loot` field the endpoint does not serve TODAY, and explicit about its
+        -- absence rather than silent: a lootable object with a blank loot section reads as "empty",
+        -- and "we were never told" is a different fact from "there is nothing in it".
+        local buckets = PropertiesState.loot_buckets(obj.loot)
+        if #buckets > 0 then
+            for _, bucket in ipairs(buckets) do
+                header(bucket.name .. " (" .. tostring(#bucket.entries) .. ")")
+                for _, entry in ipairs(bucket.entries) do
+                    local chance = tonumber(entry.drop_chance)
+                    text_item("body", "text_secondary", fit(string.format("  [%s] %s  %s",
+                        tostring(entry.item or "?"), tostring(entry.name or ""),
+                        chance and string.format("%.1f%%", chance) or "?"), content_w))
+                    y = y + ROW_H
+                end
+                y = y + Theme.space.sm
+            end
+        else
+            text_item("caption", "text_muted", fit("Loot is not served by /object/{entry}", content_w))
             y = y + SMALL_H
         end
 
