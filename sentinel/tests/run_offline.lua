@@ -561,6 +561,10 @@ local test_modules = {
     -- Phase 5: shell extensions (F12 Travel Editor, F19 Auto Validation, F20 Profile Statistics).
     -- Registered after the IDE panels suite because the extensions integrate with it.
     "tests/ui/test_shell_extensions",
+    -- The WIRING of two of those extensions (F12 travel capture/estimate, F20 stats counts).
+    -- Separate from the suite above because that one drives the view-models directly and stayed
+    -- green while `IdePanels.install` reached neither of them; these cases drive the installed shell.
+    "tests/ui/test_travel_stats",
     -- The guard on ui/* staying loadable with no Sylvannas API present. It blanks `_G.core` for
     -- the duration, so it is registered AFTER the suites that consume the real mocked surface.
     "tests/ui/test_offline_loadable",

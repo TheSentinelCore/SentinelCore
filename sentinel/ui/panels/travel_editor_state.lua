@@ -21,8 +21,98 @@ function TravelEditorState.new(opts)
         activated = false,         -- whether the editor is showing
         current_route_nodes = {},  -- node ids that form the selected route
         campaign_name = nil,
+        -- `error` and `loading` are the two fields every panel state carries and every `build_plan`
+        -- projects. They exist here so a refused capture and a refused estimate reach the screen
+        -- instead of being swallowed by a dispatch that answered `true` anyway.
+        error = nil,
+        loading = false,
+        -- The server's answer for the selected route: `{ route_id, segments[], total_s }`.
+        -- nil until `/travel/route` has answered; never a locally invented number.
+        estimate = nil,
+        estimate_requested = false,
+        _requests = {},
         _dirty = true,
     }, TravelEditorState)
+end
+
+---Drop any estimate and any in-flight request for it.
+---
+---Called whenever the route being measured CHANGES. An estimate left on screen after an edit is a
+---number that describes a route the operator can no longer see.
+function TravelEditorState:invalidate_estimate()
+    self.estimate = nil
+    self.estimate_requested = false
+    self._requests = {}
+    if self._slots and self._slots.estimate then self._slots.estimate:reset() end
+end
+
+---The currently selected route, or nil.
+function TravelEditorState:_selected()
+    if not self.selected_route then return nil end
+    for _, route in ipairs(self.routes) do
+        if route.id == self.selected_route then return route end
+    end
+    return nil
+end
+
+---Record a refusal on the state and answer it to the caller in one move.
+---@return boolean false, string reason
+function TravelEditorState:_refuse(reason)
+    self.loading = false
+    self.error = reason
+    self._dirty = true
+    return false, reason
+end
+
+-- ============================================================================
+-- Waypoint capture (spec: Travel Editor and Stats Wiring — F12-R1)
+-- ============================================================================
+--
+-- `travel_add_waypoint` used to answer `true, "(not yet implemented — requires player position)"`.
+-- The shell now hands `ctx.player_position` to `dispatch` (sampled on the TICK, never inside a
+-- render callback), so the capture is real. Every way it can fail is named:
+--
+--   * nil position  -- loading screen, between injections, dead object manager. A capture that
+--                      substituted `{0,0,0}` would silently drop a waypoint in the middle of the map.
+--   * no route      -- there is nowhere to put it.
+--
+-- The map id is RECORDED when the host has one and left nil when it does not. It is not required
+-- here because a waypoint is useful to the runtime without one; it is required by
+-- `build_segments`, which is where a missing map would otherwise become a fabricated `map = 0`.
+
+---Append the player's current position to the selected route.
+---@param position table|nil `ctx.player_position` — `{ x, y, z }` or nil when out of world
+---@param map_id number|nil `core.get_map_id()`, read by the host on the tick
+---@return boolean ok, string reason
+function TravelEditorState:add_waypoint(position, map_id)
+    local route = self:_selected()
+    if not route then
+        return self:_refuse("no route selected: a captured waypoint has nowhere to go")
+    end
+    if type(position) ~= "table" then
+        return self:_refuse("no player position: the character is not in world")
+    end
+    local x, y, z = tonumber(position.x), tonumber(position.y), tonumber(position.z)
+    if not (x and y and z) then
+        return self:_refuse("the player position is incomplete: x/y/z are required")
+    end
+
+    route.waypoints = route.waypoints or {}
+    route.waypoints[#route.waypoints + 1] = {
+        x = x, y = y, z = z,
+        map = tonumber(map_id),
+        movement = "walk",
+        destination = string.format("(%.0f, %.0f, %.0f)", x, y, z),
+        captured = true,
+    }
+
+    -- A route that just grew a leg has an estimate that is now about a different route.
+    self:invalidate_estimate()
+    self.error = nil
+    self.loading = false
+    self._dirty = true
+    return true, string.format("waypoint %d captured at (%.0f, %.0f, %.0f)",
+        #route.waypoints, x, y, z)
 end
 
 -- ============================================================================
@@ -38,6 +128,7 @@ function TravelEditorState:load_from_campaign(campaign_name, nodes, edges)
     self.campaign_name = campaign_name or self.campaign_name
     self.routes = {}
     self.selected_route = nil
+    self:invalidate_estimate()
 
     nodes = nodes or {}
     edges = edges or {}
@@ -105,6 +196,7 @@ function TravelEditorState:select_route(id)
     if not id or id == "" then
         self.selected_route = nil
         self.editing_waypoints = false
+        self:invalidate_estimate()
         self._dirty = true
         return
     end
@@ -126,6 +218,7 @@ function TravelEditorState:select_route(id)
         self.selected_route = id
         self.editing_waypoints = false
     end
+    self:invalidate_estimate()
     self._dirty = true
 end
 
@@ -159,6 +252,9 @@ function TravelEditorState:reorder_waypoint(route_id, from_idx, to_idx)
 
             local wp = table.remove(wps, from_idx)
             table.insert(wps, to_idx, wp)
+            -- Reordering changes which legs exist, so the previous times measure a route that is
+            -- no longer on screen.
+            self:invalidate_estimate()
             self._dirty = true
             return true
         end
@@ -182,12 +278,17 @@ function TravelEditorState:toggle()
     if not self.activated then
         self.selected_route = nil
         self.editing_waypoints = false
+        self:invalidate_estimate()
     end
     self._dirty = true
     return self.activated
 end
 
----Add a new route (placeholder — the real implementation POSTs to the editor crate).
+---Append a LOCAL route so waypoints can be captured into it.
+---
+---Local on purpose: routes are derived from the campaign's Travel nodes, and persisting one is the
+---editor client's job (`POST /editor/campaigns/{name}`), which the Graph panel owns. This is the
+---scratch route a capture session builds; nothing here claims it was saved.
 function TravelEditorState:add_route(from_id, to_id)
     local route_id = "route_new_" .. tostring(#self.routes + 1)
     table.insert(self.routes, {
@@ -240,6 +341,10 @@ function TravelEditorState:build()
         editing_waypoints = self.editing_waypoints,
         active_waypoints = active_waypoints,
         campaign_name = self.campaign_name,
+        error = self.error,
+        loading = self.loading,
+        estimate = self.estimate,
+        estimate_requested = self.estimate_requested,
     }
 end
 

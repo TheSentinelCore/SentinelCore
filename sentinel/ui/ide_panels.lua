@@ -122,6 +122,19 @@ local function default_clock()
     return tonumber(now)
 end
 
+---The map the character is standing on, or nil when there is nothing to ask.
+---
+---`core.get_map_id` (docs/SylvannasAPI/dev/api/core.md) is the only source for it: `get_position()`
+---answers a bare `{x,y,z}`, and the same coordinates name different places on different maps. Read
+---on the TICK, from `dispatch`, never from a render callback. nil is answered rather than 0 because
+---0 is Eastern Kingdoms, and a waypoint filed there by default is worse than one filed nowhere.
+local function current_map_id()
+    if type(core) ~= "table" or type(core.get_map_id) ~= "function" then return nil end
+    local ok, id = pcall(core.get_map_id)
+    if not ok then return nil end
+    return tonumber(id)
+end
+
 -- ============================================================================
 -- Paths
 -- ============================================================================
@@ -1020,7 +1033,10 @@ function IdePanels.install(shell, deps)
             end
             return true
         elseif command.kind == "travel_add_waypoint" then
-            return true, "travel_add_waypoint (not yet implemented — requires player position)"
+            -- TICK CONTEXT. `ctx.player_position` was sampled by the shell on the tick preceding
+            -- this frame (ADR 09b §2.4 forbids an object-manager read inside a render callback), and
+            -- the map id is read here for the same reason.
+            return travel:add_waypoint(ctx and ctx.player_position, current_map_id())
         end
         return explorer_dispatch(command, ctx)
     end
