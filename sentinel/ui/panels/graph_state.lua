@@ -129,6 +129,9 @@ function GraphState.new(opts)
         diagnostics = nil,
         compile_message = nil,
 
+        -- The one intent field being edited, if any: { node_id, field }.
+        editing = nil,
+
         -- Loading / error
         loading = false,
         error = nil,
@@ -139,6 +142,7 @@ function GraphState.new(opts)
     -- every buffer in this tree is: a buffer owned by a render callback is a buffer no offline test
     -- can read (ADR 09b §2.1).
     state.name_input = TextInputState.new({ id = "graph_campaign_name", value = "", max_length = 64 })
+    state.edit_input = TextInputState.new({ id = "graph_intent_value", value = "", max_length = 128 })
 
     -- Graph was the one data binding PR2 did NOT route through a slot, because its `_dirty` branch
     -- was a comment reading "in a real deployment this would refresh from /editor/campaigns/{name}"
@@ -283,6 +287,76 @@ end
 function GraphState:diagnostic_node(index)
     local d = (self.diagnostics or {})[tonumber(index) or 0]
     return d and d.node_id or nil
+end
+
+-- ============================================================================
+-- Intent field editing (F7-R1..R5)
+-- ============================================================================
+
+function GraphState:node_by_id(id)
+    id = tostring(id or "")
+    for _, node in ipairs(self.nodes or {}) do
+        if node.id == id then return node end
+    end
+    return nil
+end
+
+---Open the inline editor on one intent field, seeded with what is there now.
+---@return boolean opened
+function GraphState:begin_edit(node_id, field)
+    field = tostring(field or "")
+    local node = self:node_by_id(node_id)
+    if not node or field == "" then return false end
+    local current = (node.intent or {})[field]
+    if type(current) == "table" then
+        -- A list or a nested table is not editable as one line of text, and letting the operator
+        -- type over one would replace a structure with a string the resolver cannot read.
+        return false
+    end
+    self.editing = { node_id = node.id, field = field }
+    self.edit_input:set_value(current == nil and "" or tostring(current))
+    self.edit_input:focus()
+    self._dirty = true
+    return true
+end
+
+function GraphState:cancel_edit()
+    self.editing = nil
+    self.edit_input:set_value("")
+    self._dirty = true
+end
+
+---Coerce a typed string back to the type the field already had.
+---
+---`IntentValue` is deserialized from the JSON type: a `count` sent as "12" arrives as Text, not
+---Int, and the resolver then reads a field of the wrong shape with nothing raising anywhere. The
+---current value is the schema this has, so it is the schema used.
+function GraphState.coerce_intent_value(current, typed)
+    typed = tostring(typed or "")
+    if type(current) == "number" then
+        local n = tonumber(typed)
+        if n == nil then return nil, "'" .. typed .. "' is not a number" end
+        return n
+    end
+    if type(current) == "boolean" then
+        local lowered = typed:lower()
+        if lowered == "true" or lowered == "yes" or lowered == "1" then return true end
+        if lowered == "false" or lowered == "no" or lowered == "0" then return false end
+        return nil, "'" .. typed .. "' is not true or false"
+    end
+    return typed
+end
+
+---The value the operator typed, coerced to the field's type.
+---@return any value, string|nil reason
+function GraphState:edited_value()
+    local editing = self.editing
+    if not editing then return nil, "nothing is being edited" end
+    local node = self:node_by_id(editing.node_id)
+    if not node then return nil, "the node being edited is gone" end
+    local input = self.edit_input
+    local typed = input.focused and input.buffer or input.value
+    return GraphState.coerce_intent_value((node.intent or {})[editing.field], typed)
 end
 
 ---A validate or compile answer no longer describes the graph on screen.
@@ -585,6 +659,8 @@ function GraphState:build()
         name_input = self.name_input,
         diagnostics = self.diagnostics,
         compile_message = self.compile_message,
+        editing = self.editing,
+        edit_input = self.edit_input,
         nodes = visible_nodes,
         all_nodes = self.nodes,
         edges = edge_refs,
@@ -1014,8 +1090,21 @@ function GraphState.build_plan(view, bounds)
                     })
                     y = y + SMALL_H
 
-                    -- For editable fields, add a small edit button
-                    if type(field.value) ~= "table" and field.key ~= "" then
+                    local editing = view.editing
+                    local under_edit = editing and editing.node_id == node.id
+                                       and editing.field == field.key
+                    if under_edit then
+                        -- The field being edited swaps its label row for a real typeable box, so
+                        -- "Edit" leads somewhere instead of only announcing an intention.
+                        push({
+                            kind = "text_input", id = "edit_value",
+                            bounds = { x = text_x + Theme.space.md, y = y,
+                                       w = math.max(80, content_w - Theme.space.md), h = CONTROL_H },
+                            model = view.edit_input,
+                            placeholder = field.label,
+                        })
+                        y = y + CONTROL_H + Theme.space.xs
+                    elseif type(field.value) ~= "table" and field.key ~= "" then
                         local edit_id = string.format("edit_intent:%s:%s", node.id, field.key)
                         push({
                             kind = "button", id = edit_id,
@@ -1102,6 +1191,14 @@ function GraphState.reduce(action_id)
     end
     if action_id == "compile" then
         return { kind = "compile_graph" }
+    end
+
+    -- The inline intent editor. Enter writes the field through the editor; Escape abandons it.
+    if action_id == "edit_value_submit" then
+        return { kind = "commit_intent" }
+    end
+    if action_id == "edit_value_cancel" then
+        return { kind = "cancel_intent" }
     end
 
     -- A diagnostic navigates to the node it blames (F19-R3).

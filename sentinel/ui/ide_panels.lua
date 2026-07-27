@@ -778,6 +778,67 @@ function GraphBinding:_write_node(node_type)
     return true, "added " .. info.label .. " to '" .. campaign .. "'"
 end
 
+---Write the edited intent field through the editor and re-read the graph.
+---
+---The local node is NOT patched. `PUT|POST .../nodes/{id}` replaces the whole node, and the copy
+---worth believing afterwards is the one the editor answers with.
+---@return boolean handled, string reason
+function GraphBinding:_commit_intent()
+    local state = self._state
+    local editing = state.editing
+    if not editing then return true, "nothing is being edited" end
+
+    local value, why = state:edited_value()
+    if value == nil and why then
+        -- A field typed as the wrong type is refused HERE. Sent, it would arrive as an IntentValue
+        -- of the wrong variant -- a count as Text rather than Int -- and the resolver would read a
+        -- field of the wrong shape with nothing raising anywhere along the way.
+        state.error = editing.field .. ": " .. why
+        return true, state.error
+    end
+
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: the edit has nowhere to go"
+        return true, state.error
+    end
+
+    local node = state:node_by_id(editing.node_id)
+    if not node then
+        state.error = "the node being edited is no longer in the graph"
+        return true, state.error
+    end
+
+    local intent = {}
+    for k, v in pairs(node.intent or {}) do intent[k] = v end
+    intent[editing.field] = value
+
+    local called, wrote, refused = pcall(ec.update_node, ec, campaign, node.id,
+        { id = node.id, type = node.type, intent = intent, context = node.context }, state.graph_id)
+    if not called then
+        state.error = "edit " .. editing.field .. " failed: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "edit " .. editing.field .. " was refused: "
+                      .. tostring(refused or "no reason given")
+        return true, state.error
+    end
+
+    state:cancel_edit()
+    state.error = nil
+    state:invalidate_validation()
+    self._revalidate = true
+    state._slots.campaign:reset()
+    state._dirty = true
+    return true, "wrote " .. editing.field .. " to '" .. campaign .. "'"
+end
+
 ---Start a validate or compile. Both are POSTs whose ANSWER is the point, so the dispatch only
 ---ARMS them and the tick collects the answer through a slot.
 ---@param which string "validate" | "compile"
@@ -987,8 +1048,17 @@ function GraphBinding:spec()
                 -- the editor stored, and that is how the last cycle shipped phantom authoring.
                 return binding:_write_node("questing.Kill")
             elseif command.kind == "edit_intent" then
-                -- Placeholder: would prompt for a new value via the editor crate
-                return true, "edit_intent " .. tostring(command.node_id) .. ":" .. tostring(command.field) .. " (open editor)"
+                if not state:begin_edit(command.node_id, command.field) then
+                    state.error = "cannot edit " .. tostring(command.field) ..
+                                  " on " .. tostring(command.node_id)
+                    return true, state.error
+                end
+                return true, "editing " .. tostring(command.field)
+            elseif command.kind == "cancel_intent" then
+                state:cancel_edit()
+                return true
+            elseif command.kind == "commit_intent" then
+                return binding:_commit_intent()
             elseif command.kind == "toggle_waypoint" then
                 state:toggle_waypoint_mode()
                 return true

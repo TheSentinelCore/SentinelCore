@@ -1299,6 +1299,133 @@ function M.test_validate_with_no_campaign_open_is_refused_not_sent()
         tostring(state.error))
 end
 
+-- ---- edit_intent (spec: Graph Node Editing) -------------------------------
+
+local KILL_ID = "cccccccc-0000-4000-8000-00000000000c"
+
+local function editing_graph()
+    local editor = fake_editor({
+        campaign = editor_campaign_doc("stw", "graph-1", {
+            { id = KILL_ID, type = "questing.Kill",
+              intent = { creature_entry = 567, count = 10, loot = false } },
+        }),
+    })
+    editor.updates = {}
+    function editor.update_node(_, campaign, node_id, node, graph_id)
+        editor.updates[#editor.updates + 1] =
+            { campaign = campaign, node_id = node_id, node = node, graph_id = graph_id }
+        if editor.update_result ~= nil then return editor.update_result, editor.update_reason end
+        return true
+    end
+    function editor.validate() return {} end
+    function editor.forget() end
+
+    local binding, spec, state = graph_with(editor)
+    spec.dispatch({ kind = "open_campaign", name = "stw" }, nil)
+    spec.on_tick()
+    return binding, spec, state, editor
+end
+
+function M.test_editing_a_field_opens_a_real_box_and_writes_through_the_editor()
+    -- obs #225: edit_intent answered "(open editor)" and returned ok, opening nothing.
+    local _, spec, state, editor = editing_graph()
+    state:select_node(KILL_ID)
+    state:toggle_expand_node(KILL_ID)
+
+    spec.dispatch({ kind = "edit_intent", node_id = KILL_ID, field = "count" }, nil)
+    T.assert_not_nil(state.editing, "the edit actually opens something")
+    T.assert_equal(state.edit_input.value, "10", "seeded with what is there now")
+
+    local plan = GraphState.build_plan(state:build(), { x = 0, y = 0, w = 900, h = 600 })
+    local box = nil
+    for _, item in ipairs(plan.items) do
+        if item.kind == "text_input" and item.id == "edit_value" then box = item end
+    end
+    T.assert_not_nil(box, "and it is a typeable box on screen, not a state flag nobody can reach")
+    T.assert_equal(box.model, state.edit_input, "carrying the state's buffer")
+
+    state.edit_input.buffer = "12"
+    spec.dispatch(GraphState.reduce("edit_value_submit"), nil)
+    T.assert_equal(#editor.updates, 1, "Enter writes it")
+    T.assert_equal(editor.updates[1].node_id, KILL_ID, "to the node being edited")
+    T.assert_equal(editor.updates[1].graph_id, "graph-1", "in the graph the campaign has")
+    T.assert_equal(editor.updates[1].node.intent.count, 12, "with the new value")
+    T.assert_equal(editor.updates[1].node.intent.creature_entry, 567,
+        "and every other field intact -- the route REPLACES the node, so a partial intent deletes "
+        .. "the fields it omits")
+end
+
+function M.test_a_number_field_stays_a_number()
+    local _, spec, state, editor = editing_graph()
+    spec.dispatch({ kind = "edit_intent", node_id = KILL_ID, field = "count" }, nil)
+    state.edit_input.buffer = "12"
+    spec.dispatch({ kind = "commit_intent" }, nil)
+
+    T.assert_equal(type(editor.updates[1].node.intent.count), "number",
+        "IntentValue is deserialized from the JSON type: a count sent as \"12\" arrives as Text "
+        .. "rather than Int, and the resolver then reads a field of the wrong shape in silence")
+end
+
+function M.test_a_boolean_field_stays_a_boolean()
+    local _, spec, state, editor = editing_graph()
+    spec.dispatch({ kind = "edit_intent", node_id = KILL_ID, field = "loot" }, nil)
+    state.edit_input.buffer = "true"
+    spec.dispatch({ kind = "commit_intent" }, nil)
+    T.assert_equal(editor.updates[1].node.intent.loot, true, "and it is a boolean, not the string")
+end
+
+function M.test_a_value_of_the_wrong_type_is_refused_before_it_reaches_the_editor()
+    local _, spec, state, editor = editing_graph()
+    spec.dispatch({ kind = "edit_intent", node_id = KILL_ID, field = "count" }, nil)
+    state.edit_input.buffer = "twelve"
+
+    local _, reason = spec.dispatch({ kind = "commit_intent" }, nil)
+    T.assert_equal(#editor.updates, 0, "nothing was written")
+    T.assert_true(tostring(reason):find("not a number", 1, true) ~= nil, tostring(reason))
+    T.assert_not_nil(state.editing, "and the box stays open on the value that was rejected")
+end
+
+function M.test_escape_closes_the_editor_without_writing()
+    local _, spec, state, editor = editing_graph()
+    spec.dispatch({ kind = "edit_intent", node_id = KILL_ID, field = "count" }, nil)
+    state.edit_input.buffer = "99"
+
+    spec.dispatch(GraphState.reduce("edit_value_cancel"), nil)
+    T.assert_nil(state.editing, "the editor closed")
+    T.assert_equal(#editor.updates, 0, "and nothing was written")
+    T.assert_equal(state:node_by_id(KILL_ID).intent.count, 10, "the field is untouched")
+end
+
+function M.test_a_refused_edit_leaves_the_old_value_on_screen()
+    local _, spec, state, editor = editing_graph()
+    editor.update_result, editor.update_reason = false, "campaign is locked"
+    spec.dispatch({ kind = "edit_intent", node_id = KILL_ID, field = "count" }, nil)
+    state.edit_input.buffer = "12"
+
+    spec.dispatch({ kind = "commit_intent" }, nil)
+    T.assert_true(tostring(state.error):find("campaign is locked", 1, true) ~= nil,
+        tostring(state.error))
+    T.assert_equal(state:node_by_id(KILL_ID).intent.count, 10,
+        "the local node is never patched: the copy worth believing is the one the editor answers "
+        .. "with, and it refused")
+end
+
+function M.test_a_list_valued_field_refuses_to_open_a_one_line_editor()
+    local editor = fake_editor({
+        campaign = editor_campaign_doc("stw", "graph-1", {
+            { id = "p1", type = "questing.Patrol", intent = { waypoints = {}, loop = false } },
+        }),
+    })
+    local _, spec, state = graph_with(editor)
+    spec.dispatch({ kind = "open_campaign", name = "stw" }, nil)
+    spec.on_tick()
+
+    spec.dispatch({ kind = "edit_intent", node_id = "p1", field = "waypoints" }, nil)
+    T.assert_nil(state.editing,
+        "typing over a list replaces a structure with a string the resolver cannot read")
+    T.assert_true(tostring(state.error):find("cannot edit", 1, true) ~= nil, tostring(state.error))
+end
+
 function M.test_no_authoring_command_still_answers_not_yet_implemented()
     -- The placeholder strings from obs #225, gone from this panel for good.
     local handle = assert(io.open("sentinel/ui/ide_panels.lua", "r"))
@@ -1311,6 +1438,16 @@ function M.test_no_authoring_command_still_answers_not_yet_implemented()
     explorer_half = explorer_half:gsub("%-%-%[%[.-%]%]", " "):gsub("%-%-[^\n]*", " ")
     T.assert_nil(explorer_half:find("not yet implemented", 1, true),
         "the Explorer binding still carries a placeholder that reports success")
+
+    -- The Graph binding's four: edit_intent, validate_graph, compile_graph, and the Add Node that
+    -- inserted locally instead of writing.
+    local graph_half = source:match("function IdePanels%.new_graph.-function IdePanels%.new_database")
+    T.assert_not_nil(graph_half, "the Graph binding must still be locatable in the source")
+    graph_half = graph_half:gsub("%-%-%[%[.-%]%]", " "):gsub("%-%-[^\n]*", " ")
+    T.assert_nil(graph_half:find("not yet implemented", 1, true),
+        "the Graph binding still carries a placeholder that reports success")
+    T.assert_nil(graph_half:find("(open editor)", 1, true),
+        "edit_intent must open an editor rather than announce that it would")
 end
 
 return M
