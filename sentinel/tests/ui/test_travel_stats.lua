@@ -202,7 +202,174 @@ function M.test_no_source_claims_the_capture_is_unimplemented()
 end
 
 -- ============================================================================
--- 3. Structural guards
+-- 3. Campaign-derived routes carry what the campaign carries, and no more
+-- ============================================================================
+
+---Two Travel nodes joined by one edge — the smallest campaign that yields a route.
+local function two_node_campaign()
+    return {
+        name = "elwynn_1_12",
+        nodes = {
+            { id = "n1", type = "questing.Travel",
+              intent = { x = -8940, y = -140, z = 84, destination = "Northshire" } },
+            { id = "n2", type = "questing.Travel",
+              intent = { x = -8900, y = -100, z = 82, destination = "Abbey" } },
+        },
+        edges = { { id = "e1", from = "n1", to = "n2" } },
+    }
+end
+
+function M.test_a_campaign_travel_node_with_no_map_yields_a_waypoint_with_no_map()
+    local te = TravelEditorState.new()
+    local plan = two_node_campaign()
+    T.assert_equal(te:load_from_campaign(plan.name, plan.nodes, plan.edges), 1,
+        "one edge between two Travel nodes is one route")
+    local wps = te.routes[1].waypoints
+    T.assert_equal(#wps, 2, "both ends of the edge are Travel nodes")
+    T.assert_nil(wps[1].map,
+        "`questing.Travel`'s intent has no map field, and the waypoint must not invent one")
+    T.assert_equal(wps[1].x, -8940, "the coordinates it does carry are read verbatim")
+end
+
+function M.test_a_travel_node_that_does_carry_a_map_has_it_read()
+    local te = TravelEditorState.new()
+    local plan = two_node_campaign()
+    plan.nodes[1].intent.map = 530
+    plan.nodes[2].intent.map = 530
+    te:load_from_campaign(plan.name, plan.nodes, plan.edges)
+    T.assert_equal(te.routes[1].waypoints[1].map, 530,
+        "read, not fabricated: the field is honoured the moment the graph carries it")
+end
+
+function M.test_allow_flight_is_not_a_taxi_hop()
+    -- `allow_flight` says the runtime may use its own flight form for a leg it would otherwise walk.
+    -- Reporting it as a flight master's hop would price it at taxi speed against a route no flight
+    -- master serves.
+    local te = TravelEditorState.new()
+    local plan = two_node_campaign()
+    plan.nodes[2].intent.allow_flight = true
+    te:load_from_campaign(plan.name, plan.nodes, plan.edges)
+    T.assert_equal(te.routes[1].waypoints[2].movement, "flight",
+        "the node's own flag is reported as flight")
+    T.assert_nil(te.routes[1].waypoints[2].taxi_node, "and it resolves to no taxi node")
+end
+
+function M.test_a_flight_node_becomes_a_taxi_leg_named_by_its_destination()
+    local te = TravelEditorState.new()
+    local plan = two_node_campaign()
+    plan.nodes[2] = { id = "n2", type = "questing.Flight",
+                      intent = { npc_entry = 352, destination = "Ironforge, Dun Morogh" } }
+    te:load_from_campaign(plan.name, plan.nodes, plan.edges)
+    local wp = te.routes[1].waypoints[2]
+    T.assert_equal(wp.movement, "taxi", "a Flight node IS a flight master's hop")
+    T.assert_equal(wp.destination, "Ironforge, Dun Morogh")
+    T.assert_equal(wp.x, 0, "a Flight node carries no coordinates of its own")
+end
+
+-- ============================================================================
+-- 4. The `/travel/route` request (F12-R2)
+-- ============================================================================
+
+function M.test_a_route_of_one_waypoint_has_nothing_to_measure()
+    local te = route_with_waypoints(1)
+    local segments, reason = TravelEditorState.build_segments(te.routes[1])
+    T.assert_nil(segments, "one point is not a leg")
+    T.assert_true(reason:find("at least two waypoints", 1, true) ~= nil, tostring(reason))
+end
+
+function M.test_consecutive_waypoints_become_consecutive_walk_segments()
+    local te = route_with_waypoints(3, 0)
+    local segments = TravelEditorState.build_segments(te.routes[1])
+    T.assert_not_nil(segments, "three waypoints are two legs")
+    T.assert_equal(#segments, 2)
+    T.assert_nil(segments[1].type, "a ground leg carries no type; the server defaults it to walk")
+    T.assert_equal(segments[1].from.x, 100, "leg 1 runs from waypoint 1")
+    T.assert_equal(segments[1].to.x, 200, "to waypoint 2")
+    T.assert_equal(segments[2].from.x, 200, "and leg 2 continues from there")
+    T.assert_equal(segments[1].from.map, 0, "each end names the map it is on")
+end
+
+function M.test_nothing_local_computes_a_distance_or_a_time()
+    -- The whole point of POSTing the route: a number produced here and rendered next to the
+    -- server's would be indistinguishable from one the server returned.
+    local te = route_with_waypoints(3, 0)
+    local segments = TravelEditorState.build_segments(te.routes[1])
+    for i, seg in ipairs(segments) do
+        T.assert_nil(seg.distance_m, "segment " .. i .. " must not carry a locally measured distance")
+        T.assert_nil(seg.estimated_s, "segment " .. i .. " must not carry a locally computed time")
+    end
+end
+
+function M.test_a_waypoint_with_no_map_is_refused_rather_than_filed_on_map_zero()
+    local te = route_with_waypoints(2, 0)
+    te.routes[1].waypoints[2].map = nil
+    local segments, reason = TravelEditorState.build_segments(te.routes[1])
+    T.assert_nil(segments, "map 0 is Eastern Kingdoms, not 'unknown'")
+    T.assert_true(reason:find("waypoint 2 carries no map id", 1, true) ~= nil, tostring(reason))
+end
+
+function M.test_a_resolved_flight_destination_becomes_a_taxi_segment_at_the_nodes_position()
+    local TaxiNodes = require("kernel/catalogs/taxi_nodes")
+    local te = route_with_waypoints(1, 0)
+    table.insert(te.routes[1].waypoints,
+        { movement = "taxi", destination = "Ironforge, Dun Morogh", x = 0, y = 0, z = 0 })
+
+    local segments, reason = TravelEditorState.build_segments(te.routes[1])
+    T.assert_not_nil(segments, "a resolvable destination is a measurable hop: " .. tostring(reason))
+    T.assert_equal(segments[1].type, "taxi", "and it is labelled as one")
+
+    local expected = TaxiNodes.nodes[TaxiNodes.resolve("Ironforge, Dun Morogh")]
+    T.assert_equal(segments[1].to.map, expected.map,
+        "the taxi node's own position is what the server is given")
+    T.assert_near(segments[1].to.x, expected.x, 0.01)
+    T.assert_equal(segments[1].to_node, TaxiNodes.resolve("Ironforge, Dun Morogh"),
+        "the node id travels with it so the server's refusal can name it")
+end
+
+function M.test_an_unresolvable_flight_destination_is_reported_not_guessed()
+    -- The server has NO taxi tables: `/travel/route` refuses a taxi segment that arrives without
+    -- positions rather than inventing a per-hop constant. Supplying a made-up position here would
+    -- move that invention one layer up and hide it.
+    local te = route_with_waypoints(1, 0)
+    table.insert(te.routes[1].waypoints,
+        { movement = "taxi", destination = "Nowhere In Particular", x = 0, y = 0, z = 0 })
+
+    local segments, reason = TravelEditorState.build_segments(te.routes[1])
+    T.assert_nil(segments, "an unknown flight master is not a hop we may price")
+    T.assert_true(reason:find("Nowhere In Particular", 1, true) ~= nil,
+        "the refusal must name the destination: " .. tostring(reason))
+    T.assert_true(reason:find("unknown_destination", 1, true) ~= nil, tostring(reason))
+end
+
+function M.test_a_faction_ambiguous_destination_is_refused_until_a_faction_is_given()
+    -- "arathi" is Refuge Pointe (Alliance) or Hammerfall (Horde). Silently picking one flies the
+    -- character across a continent on a guess.
+    local te = route_with_waypoints(1, 0)
+    table.insert(te.routes[1].waypoints,
+        { movement = "taxi", destination = "arathi", x = 0, y = 0, z = 0 })
+
+    local segments, reason = TravelEditorState.build_segments(te.routes[1])
+    T.assert_nil(segments, "a faction-complement pair is not a resolution")
+    T.assert_true(reason:find("needs_faction", 1, true) ~= nil, tostring(reason))
+
+    local resolved = TravelEditorState.build_segments(te.routes[1], "Alliance")
+    T.assert_not_nil(resolved, "and the same route resolves once the faction is known")
+    T.assert_equal(resolved[1].type, "taxi")
+end
+
+function M.test_the_request_key_changes_with_the_route_and_not_otherwise()
+    local te = route_with_waypoints(3, 0)
+    local first = TravelEditorState.request_key(TravelEditorState.build_segments(te.routes[1]))
+    local again = TravelEditorState.request_key(TravelEditorState.build_segments(te.routes[1]))
+    T.assert_equal(first, again, "an unchanged route must not be re-requested every tick")
+
+    te.routes[1].waypoints[3].x = 999
+    local moved = TravelEditorState.request_key(TravelEditorState.build_segments(te.routes[1]))
+    T.assert_true(moved ~= first, "a moved waypoint must not be answered from the old cache")
+end
+
+-- ============================================================================
+-- 5. Structural guards
 -- ============================================================================
 
 function M.test_the_capture_never_reads_the_object_manager_from_the_state()

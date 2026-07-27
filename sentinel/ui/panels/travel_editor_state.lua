@@ -119,6 +119,44 @@ end
 -- Loading
 -- ============================================================================
 
+---Turn one campaign node into a waypoint, or nil when it is not a leg of a route.
+---
+---Two node types are legs. `questing.Travel` carries coordinates and, on the Travel node,
+---`allow_flight` — which means the runtime may use its OWN flight form for the leg, not that a
+---flight master is involved. `questing.Flight` is the flight master's hop: it carries a destination
+---NAME and no coordinates at all, so its position comes from the taxi catalog at estimate time.
+---
+---`map` is READ from the intent and left nil when the node does not carry one. `questing.Travel`'s
+---`default_intent` has no `map` field today, so a campaign-derived waypoint normally has none — and
+---`build_segments` refuses to measure it rather than defaulting to map 0, which would price a leg in
+---Outland as if it were in Elwynn.
+---@param node table|nil `{ id, type, intent }`
+---@return table|nil waypoint
+local function waypoint_from_node(node)
+    if not node or not node.intent then return nil end
+    local intent = node.intent
+
+    if node.type == "questing.Flight" then
+        return {
+            x = 0, y = 0, z = 0,
+            map = nil,
+            movement = "taxi",
+            destination = intent.destination or "",
+            node_id = node.id,
+        }
+    end
+
+    if node.type ~= "questing.Travel" then return nil end
+    return {
+        x = intent.x or 0, y = intent.y or 0, z = intent.z or 0,
+        map = tonumber(intent.map),
+        movement = intent.allow_flight and "flight" or "walk",
+        destination = intent.destination
+            or string.format("(%.0f, %.0f, %.0f)", intent.x or 0, intent.y or 0, intent.z or 0),
+        node_id = node.id,
+    }
+end
+
 ---Load route data from campaign nodes and edges.
 ---Scans edges for Travel-type connections and builds route entries.
 ---@param campaign_name string
@@ -148,29 +186,11 @@ function TravelEditorState:load_from_campaign(campaign_name, nodes, edges)
             local waypoints = {}
 
             -- Extract waypoint data from Travel nodes
-            if from_node.type == "questing.Travel" and from_node.intent then
-                local pos = from_node.intent
-                local dest = pos.destination or string.format("(%.0f, %.0f, %.0f)", pos.x or 0, pos.y or 0, pos.z or 0)
-                local movement = pos.allow_flight and "flight" or "walk"
-                table.insert(waypoints, {
-                    x = pos.x or 0, y = pos.y or 0, z = pos.z or 0,
-                    movement = movement,
-                    destination = dest,
-                    node_id = from_node.id,
-                })
-            end
+            local from_wp = waypoint_from_node(from_node)
+            if from_wp then table.insert(waypoints, from_wp) end
 
-            if to_node.type == "questing.Travel" and to_node.intent then
-                local pos = to_node.intent
-                local dest = pos.destination or string.format("(%.0f, %.0f, %.0f)", pos.x or 0, pos.y or 0, pos.z or 0)
-                local movement = pos.allow_flight and "flight" or "walk"
-                table.insert(waypoints, {
-                    x = pos.x or 0, y = pos.y or 0, z = pos.z or 0,
-                    movement = movement,
-                    destination = dest,
-                    node_id = to_node.id,
-                })
-            end
+            local to_wp = waypoint_from_node(to_node)
+            if to_wp then table.insert(waypoints, to_wp) end
 
             table.insert(self.routes, {
                 id = route_id,
@@ -301,6 +321,108 @@ function TravelEditorState:add_route(from_id, to_id)
     })
     self._dirty = true
     return route_id
+end
+
+-- ============================================================================
+-- The `POST /travel/route` request (spec: Travel Editor and Stats Wiring — F12-R2)
+-- ============================================================================
+--
+-- The server measures the route; this file only decides which legs to ask about. Nothing here
+-- computes a time, a speed or a distance, because a number produced locally and rendered next to
+-- the server's would be indistinguishable from one the server returned.
+--
+-- TWO REFUSALS, AND WHY NEITHER IS PAPERED OVER
+-- ---------------------------------------------
+--  1. A WAYPOINT WITH NO MAP. `questing.Travel`'s intent carries `x/y/z` and no map, and the same
+--     coordinates name different places on different maps. Defaulting to 0 would price a leg in
+--     Outland as if it were in Elwynn and the total would still look computed.
+--  2. A FLIGHT LEG WITH NO TAXI NODE. `/travel/route` has no taxi tables — it refuses a taxi segment
+--     that arrives without positions rather than inventing a per-hop constant (see the QueryServer's
+--     `plan_route`). The runtime owns those positions in `kernel/catalogs/taxi_nodes.lua`, so a
+--     flight leg is only sent as `type = "taxi"` once its destination has RESOLVED to exactly one
+--     node there. An unresolved or ambiguous destination is reported, never guessed: `resolve`
+--     answers `needs_faction` for a faction-complement pair, and silently picking one of them would
+--     fly the character to the wrong continent.
+
+local TaxiNodes = require("kernel/catalogs/taxi_nodes")
+
+---Look a flight waypoint's destination up in the taxi catalog.
+---@param waypoint table
+---@param faction string|nil "Alliance" | "Horde" | nil
+---@return number|nil node_id, table|nil node, string|nil err
+local function resolve_taxi_node(waypoint, faction)
+    if waypoint.taxi_node then
+        return waypoint.taxi_node, TaxiNodes.nodes[waypoint.taxi_node]
+    end
+    local id, err = TaxiNodes.resolve(waypoint.destination, faction)
+    if not id then return nil, nil, err end
+    return id, TaxiNodes.nodes[id]
+end
+
+---Build the segment list for one route's `POST /travel/route` body.
+---@param route table
+---@param faction string|nil the character's faction, when the host knows it
+---@return table|nil segments, string|nil reason
+function TravelEditorState.build_segments(route, faction)
+    local waypoints = route and route.waypoints or {}
+    if #waypoints < 2 then
+        return nil, "a route needs at least two waypoints before it can be estimated"
+    end
+
+    local segments = {}
+    for i = 2, #waypoints do
+        local from, to = waypoints[i - 1], waypoints[i]
+        -- `flight` is NOT `taxi`. A Travel node's `allow_flight` means the runtime may use its own
+        -- flight form or mount for a leg it walks otherwise; a taxi leg is a flight master's hop, and
+        -- only `questing.Flight` produces one.
+        local taxi = (to.movement == "taxi")
+
+        local to_map, to_pos = tonumber(to.map), nil
+        if taxi then
+            local node_id, node, err = resolve_taxi_node(to, faction)
+            if not node then
+                return nil, string.format(
+                    "waypoint %d is a flight to %q that resolves to no taxi node (%s); "
+                    .. "the server has no taxi tables and will not guess the hop",
+                    i, tostring(to.destination), tostring(err or "unknown_destination"))
+            end
+            to_map = node.map
+            to_pos = { map = node.map, x = node.x, y = node.y, z = node.z }
+            to.taxi_node = node_id
+        end
+
+        local from_map = tonumber(from.map)
+        if from_map == nil then
+            return nil, string.format(
+                "waypoint %d carries no map id, so its leg cannot be measured", i - 1)
+        end
+        if to_map == nil then
+            return nil, string.format(
+                "waypoint %d carries no map id, so its leg cannot be measured", i)
+        end
+
+        segments[#segments + 1] = {
+            type = taxi and "taxi" or nil,
+            from_node = taxi and from.taxi_node or nil,
+            to_node = taxi and to.taxi_node or nil,
+            from = { map = from_map, x = from.x or 0, y = from.y or 0, z = from.z or 0 },
+            to = to_pos or { map = to_map, x = to.x or 0, y = to.y or 0, z = to.z or 0 },
+        }
+    end
+    return segments
+end
+
+---A stable signature for a segment list, so an unchanged route is not re-requested every tick and a
+---changed one is never answered from the previous route's cache.
+function TravelEditorState.request_key(segments)
+    local parts = {}
+    for i, seg in ipairs(segments) do
+        parts[i] = string.format("%s|%d,%.2f,%.2f,%.2f|%d,%.2f,%.2f,%.2f",
+            seg.type or "walk",
+            seg.from.map, seg.from.x, seg.from.y, seg.from.z,
+            seg.to.map, seg.to.x, seg.to.y, seg.to.z)
+    end
+    return table.concat(parts, ";")
 end
 
 -- ============================================================================
