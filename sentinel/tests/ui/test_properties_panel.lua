@@ -936,6 +936,53 @@ function M.test_cancel_discards_the_draft()
     T.assert_equal(state.node_detail.intent.count, 3, "cancelling must not write")
 end
 
+-- ============================================================================
+-- 14. Node SUPPLY — the wiring, driven through the real shell
+-- ============================================================================
+-- A view fed by nothing is the defect this cycle exists to delete, so the door the node arrives
+-- through is held by a test that opens it the way the injector does: queue the Graph's command,
+-- run the tick, read the inspector.
+
+local Shell = require("ui/shell")
+local IdePanels = require("ui/ide_panels")
+
+local function installed_shell()
+    local shell = Shell.new({ window = FakeWindow.new(), elements = nil })
+    local bindings, reason = IdePanels.install(shell, { questing = function() return nil end })
+    T.assert_not_nil(bindings, "install must succeed: " .. tostring(reason))
+    shell:show()
+    return shell, bindings
+end
+
+function M.test_selecting_a_graph_node_hands_the_node_itself_to_the_inspector()
+    local shell, bindings = installed_shell()
+    local node = bindings.graph:state():add_node("questing.Kill")
+    T.assert_not_nil(node, "the fixture needs a real node")
+    node.intent.creature_entry = 567
+
+    shell:_queue_command("graph", { kind = "select_node", node_id = node.id })
+    shell:on_tick()
+
+    local properties = bindings.properties:state()
+    T.assert_equal(properties.context.selection_type, "node", "the bus still carries only the kind")
+    T.assert_not_nil(properties.node_detail, "the node itself must arrive through its own door")
+    T.assert_equal(properties.node_detail.intent.creature_entry, 567)
+end
+
+function M.test_an_unknown_node_id_hands_over_nothing_rather_than_a_stale_node()
+    local shell, bindings = installed_shell()
+    local node = bindings.graph:state():add_node("questing.Kill")
+    shell:_queue_command("graph", { kind = "select_node", node_id = node.id })
+    shell:on_tick()
+
+    -- A node removed between selection and lookup must clear the inspector, not leave the previous
+    -- node on screen under the new id.
+    bindings.graph:state():remove_node(node.id)
+    shell:_queue_command("graph", { kind = "select_node", node_id = "node_gone" })
+    shell:on_tick()
+    T.assert_nil(bindings.properties:state().node_detail)
+end
+
 function M.test_changing_selection_drops_the_node_and_its_edit()
     local _, state = node_view(sample_node(), "count", "12")
     state:set_context({ panel_id = "database", selection_type = "npc", selection_id = 823 })

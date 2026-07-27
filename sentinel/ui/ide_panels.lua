@@ -957,15 +957,32 @@ function IdePanels.install(shell, deps)
     -- Properties tab themselves is the same dead end as not routing the selection at all. A
     -- selection made INSIDE Properties does not re-activate it: the panel is already in front, and
     -- an activate() from its own dispatch would fight a tab the operator just switched away from.
+    --
+    -- NODE SUPPLY: there is no `/node/{id}` endpoint and there will never be one — a node lives in
+    -- the campaign the Graph panel holds, so the inspector cannot fetch what it was just told about.
+    -- The bus stays content-free (it carries `{kind, id}`), and the node itself arrives through this
+    -- separate door. Forward-declared because the subscriber closes over the Graph binding that is
+    -- registered a few lines below it.
+    local graph
     shell:on_selection(function(event)
         properties:state():set_context({
             selection_type = event.kind,
             selection_id = event.id,
         })
+        if event.kind == "node" then
+            local found = nil
+            for _, node in ipairs((graph and graph:state().nodes) or {}) do
+                if node.id == event.id then
+                    found = node
+                    break
+                end
+            end
+            properties:state():set_node(found)
+        end
         if event.panel_id ~= Properties.id then shell:activate(Properties.id) end
     end)
 
-    local graph = IdePanels.new_graph(deps)
+    graph = IdePanels.new_graph(deps)
     local ok4, reason4 = shell:register_panel(graph:spec())
     if not ok4 then return nil, reason4 end
 
