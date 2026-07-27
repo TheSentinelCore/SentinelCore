@@ -27,6 +27,20 @@ local NODE_TYPES = {
     { type = "questing.TurnInQuest",    label = "TurnInQuest",   color = "#FBBF24", icon = "T",
       token = "warning",
       default_intent = { quest_id = 0, npc_entry = 0, choose_reward = 0 } },
+    -- `questing.Loot` EXECUTES (`runtime_action.lua:329` -> `execute_loot`) and was absent from
+    -- this palette, so the Graph had no icon, colour or default intent for a node the runtime
+    -- happily runs -- and `explorer_state.build_quest_subgraph` generates one. A node the editor
+    -- cannot draw is a node nobody can find or fix.
+    --
+    -- The fields are the ones `execute_loot` actually READS: `object_entry` is a GAMEOBJECT it
+    -- interacts with, and `item_id` is what it checks the bags for afterwards. KNOWN GAP: a Loot
+    -- node generated from a `collect` objective carries the ITEM id in `object_entry` and a
+    -- `source_creatures` list the runtime does not read, because the lowering
+    -- (collect + source_creatures -> Kill with loot = true) does not exist in the compiler yet.
+    -- Such a node is drawable and editable here, and is NOT executable until that lands.
+    { type = "questing.Loot",           label = "Loot",          color = "#FCD34D", icon = "L",
+      token = "warning",
+      default_intent = { object_entry = 0, item_id = 0, count = 1 } },
     { type = "questing.Wait",           label = "Wait",          color = "#A6ADBF", icon = "W",
       token = "text_muted",
       default_intent = { duration = 5 } },

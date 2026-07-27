@@ -774,8 +774,76 @@ function GraphBinding:_write_node(node_type)
     self._revalidate = true
     -- The graph on screen is the editor's, so re-read it rather than patching the local copy.
     state._slots.campaign:reset()
+    self._reload = true
     state._dirty = true
     return true, "added " .. info.label .. " to '" .. campaign .. "'"
+end
+
+---The player's position from the object manager, or nil. Nil-safe through two pcalls: a raising
+---object manager is still just no position.
+function GraphBinding:_player_position()
+    if type(core) ~= "table" or type(core.object_manager) ~= "table" then return nil end
+    local ok, player = pcall(core.object_manager.get_local_player)
+    if not ok or not player or type(player.get_position) ~= "function" then return nil end
+    local read, position = pcall(player.get_position, player)
+    if not read then return nil end
+    return position
+end
+
+---Turn the recorded escort path into Waypoint/Wait nodes IN THE CAMPAIGN (F15).
+---
+---The nodes are written through the editor and the graph is re-read, which is what makes them
+---"editable like any other sequence": they come back with the editor's own ids, so `edit_intent`
+---addresses them the same way it addresses a node that was authored by hand. Generated into a
+---local list instead, they would be a recording the operator could look at and nothing else.
+---@return boolean handled, string reason
+function GraphBinding:_commit_escort()
+    local state = self._state
+    local recorder = self._recorder
+
+    -- Read BEFORE stopping: `stop()` hands back the timeline and clears it.
+    local nodes = recorder:generate_nodes()
+    local samples = #recorder.timeline
+    recorder:stop()
+    state:set_escort_mode(false)
+    state.escort_timeline = {}
+
+    if #nodes == 0 then
+        state.error = samples == 0
+            and "nothing was recorded: the escort produced no player positions"
+            or "the recording produced no nodes"
+        return true, state.error
+    end
+
+    local ec, unavailable = self:_editor()
+    if not ec then
+        state.error = unavailable
+        return true, unavailable
+    end
+    local campaign = self:campaign_name()
+    if not campaign then
+        state.error = "no campaign is open: the recorded path has nowhere to go"
+        return true, state.error
+    end
+
+    local called, wrote, refused = pcall(ec.add_nodes, ec, campaign, nodes)
+    if not called then
+        state.error = "escort recording failed to write: " .. tostring(wrote)
+        return true, state.error
+    end
+    if wrote == false then
+        state.error = "escort recording was refused: " .. tostring(refused or "no reason given")
+        return true, state.error
+    end
+
+    state.error = nil
+    state:invalidate_validation()
+    self._revalidate = true
+    state._slots.campaign:reset()
+    self._reload = true
+    state._dirty = true
+    return true, string.format("wrote %d node(s) from %d sample(s) to '%s'",
+        #nodes, samples, campaign)
 end
 
 ---Write the edited intent field through the editor and re-read the graph.
@@ -835,6 +903,7 @@ function GraphBinding:_commit_intent()
     state:invalidate_validation()
     self._revalidate = true
     state._slots.campaign:reset()
+    self._reload = true
     state._dirty = true
     return true, "wrote " .. editing.field .. " to '" .. campaign .. "'"
 end
@@ -912,35 +981,29 @@ function GraphBinding:spec()
         title = Graph.title,
         order = Graph.order,
         render = function(window, bounds, ctx)
-            -- Pass current player position from tick context to the state
             local state = binding._state
-            if ctx and ctx.player_position then
-                if state.waypoint_mode then
-                    state:capture_position(ctx.player_position)
-                end
-                if state.escort_mode then
-                    state:tick_escort_position(ctx.player_position)
-                end
+            -- Waypoint capture only. Escort recording used to sample HERE, once per frame, which
+            -- made a two-minute walk sixty times longer than the path it was meant to describe;
+            -- it now samples on the tick, at the recorder's own interval.
+            if ctx and ctx.player_position and state.waypoint_mode then
+                state:capture_position(ctx.player_position)
             end
 
             local view = state:build()
             return Graph.render(window, bounds, view)
         end,
-        on_tick = function()
+        on_tick = function(ctx)
             local state = binding._state
             local recorder = binding._recorder
 
-            -- Tick the recorder (independent mode)
             if recorder.recording then
-                local ctx = { player_position = nil }
-                if type(core) == "table" and type(core.object_manager) == "table" then
-                    local player = core.object_manager.get_local_player()
-                    if player and type(player.get_position) == "function" then
-                        local ok, pos = pcall(player.get_position, player)
-                        if ok then ctx.player_position = pos end
-                    end
-                end
-                recorder:tick(ctx)
+                -- `ctx.player_position` is the shell's own tick reading (ADR 09b §2.4). The direct
+                -- object-manager read stays as a fallback for a binding ticked without a shell.
+                recorder:tick({ player_position = (ctx and ctx.player_position)
+                                                  or binding:_player_position() })
+                -- The indicator counts SAMPLES, so it has to read the recorder's timeline rather
+                -- than a second one the panel keeps beside it.
+                state.escort_timeline = recorder.timeline
             end
 
             -- Anything the editor refused since the last tick, whatever issued it.
@@ -967,28 +1030,37 @@ function GraphBinding:spec()
                     binding._creating = nil
                     if type(ec.forget_create) == "function" then ec:forget_create(name) end
                     state:set_campaign(tostring((summary or {}).name or name))
+                    binding._reload = true
                 elseif status ~= "pending" then
                     binding._creating = nil
                 end
                 return
             end
 
-            if binding:_poll_ask(ec) then return end
-
             if state.campaign_name and state.campaign_name ~= "" then
-                local name = state.campaign_name
-                local status, loaded = state._slots.campaign:poll(function()
-                    return ec:load_campaign(name)
-                end)
-                if status == "ok" then
-                    state:apply_campaign(loaded)
+                -- Re-reading the graph comes FIRST, and only when something asked for it. A
+                -- validate left armed from a previous write would otherwise own every tick and the
+                -- reload after the NEXT write would never run -- the panel would keep showing the
+                -- graph from before the edit while cheerfully re-validating it.
+                if binding._reload then
+                    local name = state.campaign_name
+                    local status, loaded = state._slots.campaign:poll(function()
+                        return ec:load_campaign(name)
+                    end)
+                    if status == "pending" then return end
+                    binding._reload = nil
+                    if status == "ok" then state:apply_campaign(loaded) end
                     if binding._revalidate then
                         binding._revalidate = nil
                         binding:_ask_editor("validate")
                     end
+                    return
                 end
+                binding:_poll_ask(ec)
                 return
             end
+
+            if binding:_poll_ask(ec) then return end
 
             if not state.campaigns_loaded then
                 local status, list = state._slots.list:poll(function() return ec:list_campaigns() end)
@@ -1028,6 +1100,7 @@ function GraphBinding:spec()
                     return true, unavailable
                 end
                 state:set_campaign(command.name)
+                binding._reload = true
                 return true, "opening campaign '" .. tostring(command.name) .. "'"
             elseif command.kind == "close_campaign" then
                 state:close_campaign()
@@ -1066,15 +1139,19 @@ function GraphBinding:spec()
                 state:commit_waypoint()
                 return true
             elseif command.kind == "toggle_escort" then
+                -- One switch, two objects: the recorder owns the samples, the state owns what the
+                -- panel paints. They were previously started independently and drifted apart.
                 if state.escort_mode then
+                    binding._recorder:stop()
                     state:set_escort_mode(false)
                 else
+                    binding._recorder:start()
                     state:set_escort_mode(true)
+                    state.escort_timeline = binding._recorder.timeline
                 end
                 return true
             elseif command.kind == "generate_escort_nodes" then
-                state:generate_escort_nodes()
-                return true
+                return binding:_commit_escort()
             elseif command.kind == "set_filter" then
                 state:set_filter(command.node_type)
                 return true

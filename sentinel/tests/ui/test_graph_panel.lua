@@ -977,6 +977,23 @@ function M.test_opening_a_second_campaign_abandons_the_first_ones_fetch()
         "and its tick count must not expire the fetch this open is about to start")
 end
 
+function M.test_the_palette_can_draw_every_action_the_runtime_executes()
+    -- obs #237: `questing.Loot` executes (runtime_action.lua:329) and was missing from the palette,
+    -- so `explorer_state.build_quest_subgraph` generated a node the Graph could not draw -- and a
+    -- node the editor cannot draw is a node nobody can find or fix.
+    local info = GraphState.node_type_info("questing.Loot")
+    T.assert_not_nil(info, "questing.Loot must be in the palette")
+    T.assert_equal(info.label, "Loot", "with a label")
+
+    -- The fields `execute_loot` actually reads: `object_entry` is the GAMEOBJECT it interacts with
+    -- and `item_id` is what it then checks the bags for. Drawing a different set would give the
+    -- operator an editor for fields the runtime ignores.
+    for _, field in ipairs({ "object_entry", "item_id" }) do
+        T.assert_true(info.default_intent[field] ~= nil,
+            "execute_loot reads " .. field .. ", so the palette has to offer it")
+    end
+end
+
 function M.test_node_type_info_fills_all_types()
     -- Verify every node type has default_intent fields
     local types = GraphState.all_node_types()

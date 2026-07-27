@@ -562,6 +562,10 @@ local test_modules = {
     -- meaningful once the shell and the panel are each known good -- U2 and U5 were individually
     -- green while nothing registered the panel and every control on it was inert.
     "tests/ui/test_ide_panels",
+    -- F15 end to end: a walked path becomes editable Waypoint/Wait nodes in a campaign. After the
+    -- IDE panels suite, because it drives the real Graph binding and only means anything once the
+    -- binding itself is known good.
+    "tests/ui/test_escort_round_trip",
     -- Phase 5: shell extensions (F12 Travel Editor, F19 Auto Validation, F20 Profile Statistics).
     -- Registered after the IDE panels suite because the extensions integrate with it.
     "tests/ui/test_shell_extensions",
