@@ -201,6 +201,9 @@ function PropertiesState.reduce(action_id)
     if prefix == "edit_node_field" then
         return { kind = "begin_node_edit", field = id_str }
     end
+    if prefix == "select_condition" then
+        return { kind = "select_condition", path = id_str }
+    end
 
     -- Node payload editing
     if action_id == "commit_node_edit" then return { kind = "commit_node_edit" } end
@@ -263,11 +266,14 @@ function PropertiesState:build()
     elseif ctype == "condition" then
         view.condition_view = {
             tree = self.condition_tree,
+            path = self.condition_path,
+            error = self.condition_error,
         }
     elseif ctype == "inventory" then
         view.inventory_view = {
             rules = self.inventory_rules,
             default = self.inventory_default,
+            error = self.inventory_error,
         }
     end
 
@@ -428,6 +434,141 @@ function PropertiesState.vendor_rows(info, items)
         }
     end
     return rows
+end
+
+-- ============================================================================
+-- Condition tree
+-- ============================================================================
+-- Conditions are `RuntimeCondition` values and reach the runtime ADJACENTLY TAGGED as
+-- `{type, payload}` — every node built here carries a `type`, because an untagged one is the
+-- fail-open `true` that made condition gating stop gating (see the repo's known-state notes).
+
+local CONDITION_LABEL = {
+    all            = function() return "ALL of:" end,
+    any            = function() return "ANY of:" end,
+    ["not"]        = function() return "NOT:" end,
+    quest_accepted = function(c) return "QuestAccepted (" .. tostring(c.quest_id or "?") .. ")" end,
+    quest_completed = function(c) return "QuestCompleted (" .. tostring(c.quest_id or "?") .. ")" end,
+    quest_rewarded = function(c) return "QuestRewarded (" .. tostring(c.quest_id or "?") .. ")" end,
+    has_item       = function(c) return "HasItem (" .. tostring(c.item_id or "?") .. ") x" .. tostring(c.count or 1) end,
+    level_at_least = function(c) return "LevelAtLeast " .. tostring(c.level or "?") end,
+    level_below    = function(c) return "LevelBelow " .. tostring(c.level or "?") end,
+    class_is       = function(c) return "ClassIs " .. tostring(c.class or "?") end,
+    race_is        = function(c) return "RaceIs " .. tostring(c.race or "?") end,
+    faction_is     = function(c) return "FactionIs " .. tostring(c.faction or "?") end,
+    always_true    = function() return "AlwaysTrue" end,
+}
+
+---One condition's display label. An unknown type renders its own tag rather than a blank row: a
+---condition the panel cannot name is still a condition the runtime will evaluate.
+function PropertiesState.condition_label(cond)
+    if type(cond) ~= "table" then return "?" end
+    local render = CONDITION_LABEL[cond.type]
+    if render then return render(cond) end
+    return tostring(cond.type or "?") .. " ("
+        .. tostring(cond.quest_id or cond.item_id or cond.level or "?") .. ")"
+end
+
+---A tree position as a dotted index path into nested `conditions` lists. "" is the root.
+local function resolve_condition(tree, path)
+    if type(tree) ~= "table" then return nil end
+    local node, parent, index = tree, nil, nil
+    for part in tostring(path or ""):gmatch("[^%.]+") do
+        local i = tonumber(part)
+        local children = node and node.conditions
+        if i == nil or type(children) ~= "table" or children[i] == nil then return nil end
+        parent, index, node = node, i, children[i]
+    end
+    return node, parent, index
+end
+
+function PropertiesState:select_condition(path)
+    self.condition_path = (path == "root") and "" or tostring(path or "")
+    self.condition_error = nil
+    self._dirty = true
+end
+
+function PropertiesState:_insert_condition(child)
+    self.condition_error = nil
+    if self.condition_tree == nil then
+        -- The first condition becomes the tree. Wrapping it in an implicit ALL group would put a
+        -- level of nesting on screen that the operator never asked for.
+        self.condition_tree = child
+        self.condition_path = ""
+        self._dirty = true
+        return true
+    end
+
+    local target = resolve_condition(self.condition_tree, self.condition_path) or self.condition_tree
+    if type(target.conditions) ~= "table" then
+        -- A LEAF cannot hold children, and silently promoting it to an AND group would change the
+        -- meaning of a condition the operator did not touch.
+        self.condition_error = "select an ALL or ANY group to add into"
+        self._dirty = true
+        return false, self.condition_error
+    end
+    target.conditions[#target.conditions + 1] = child
+    self._dirty = true
+    return true
+end
+
+function PropertiesState:add_condition()
+    return self:_insert_condition({ type = "always_true" })
+end
+
+function PropertiesState:add_condition_group(group_type)
+    if group_type ~= "all" and group_type ~= "any" then
+        self.condition_error = "a condition group is ALL or ANY"
+        return false, self.condition_error
+    end
+    return self:_insert_condition({ type = group_type, conditions = {} })
+end
+
+function PropertiesState:delete_condition()
+    self.condition_error = nil
+    local node, parent, index = resolve_condition(self.condition_tree, self.condition_path)
+    if node == nil then
+        self.condition_error = "select a condition to delete"
+        self._dirty = true
+        return false, self.condition_error
+    end
+    if parent == nil then
+        self.condition_tree = nil
+    else
+        table.remove(parent.conditions, index)
+    end
+    self.condition_path = ""
+    self._dirty = true
+    return true
+end
+
+-- ============================================================================
+-- Inventory rules
+-- ============================================================================
+
+---@param rule table|nil { entry, name, action }
+function PropertiesState:add_inventory_rule(rule)
+    if type(rule) ~= "table" or rule.entry == nil then
+        -- A rule needs an ITEM, and this panel has no item picker: the Database is where items are
+        -- found. Appending a blank row would put a rule in the list that matches nothing and reads
+        -- like one that does.
+        self.inventory_error = "pick an item in the Database to add a rule for"
+        return false, self.inventory_error
+    end
+    self.inventory_error = nil
+    self.inventory_rules = self.inventory_rules or {}
+    self.inventory_rules[#self.inventory_rules + 1] = {
+        entry = rule.entry, name = rule.name, action = rule.action or "sell",
+    }
+    self._dirty = true
+    return true
+end
+
+function PropertiesState:clear_inventory_rules()
+    self.inventory_rules = {}
+    self.inventory_error = nil
+    self._dirty = true
+    return true
 end
 
 -- ============================================================================
@@ -902,60 +1043,38 @@ function PropertiesState.build_plan(view, bounds)
         header("Condition: " .. (cv and cv.tree and (cv.tree.type or "?") or "None"), Theme.space.md)
 
         if cv and cv.tree then
-            local function render_cond(cond, depth)
+            -- ROWS, not text lines. `add`/`delete` act on a SELECTED node, and a tree drawn as
+            -- unclickable text is a tree with no selection -- which is why those three buttons had
+            -- nothing they could possibly do.
+            local function render_cond(cond, depth, path)
                 if not cond then return end
-                local indent_str = string.rep("  ", depth)
-                local label_prefix = (depth > 0) and "  " .. indent_str or ""
-                local t = cond.type
-
-                if t == "all" or t == "any" then
-                    local heading = (t == "all") and "ALL of:" or "ANY of:"
-                    text_item("body", "text_primary", fit(label_prefix .. heading, content_w))
-                    y = y + ROW_H
-                    for _, c in ipairs(cond.conditions or {}) do render_cond(c, depth + 1) end
-                elseif t == "not" then
-                    text_item("body", "text_primary", fit(label_prefix .. "NOT:", content_w))
-                    y = y + ROW_H
-                    if cond.condition then render_cond(cond.condition, depth + 1) end
-                elseif t == "quest_accepted" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "QuestAccepted (" .. tostring(cond.quest_id or "?") .. ")", content_w))
-                    y = y + ROW_H
-                elseif t == "quest_completed" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "QuestCompleted (" .. tostring(cond.quest_id or "?") .. ")", content_w))
-                    y = y + ROW_H
-                elseif t == "quest_rewarded" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "QuestRewarded (" .. tostring(cond.quest_id or "?") .. ")", content_w))
-                    y = y + ROW_H
-                elseif t == "has_item" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "HasItem (" .. tostring(cond.item_id or "?") .. ") x" .. tostring(cond.count or 1), content_w))
-                    y = y + ROW_H
-                elseif t == "level_at_least" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "LevelAtLeast " .. tostring(cond.level or "?"), content_w))
-                    y = y + ROW_H
-                elseif t == "level_below" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "LevelBelow " .. tostring(cond.level or "?"), content_w))
-                    y = y + ROW_H
-                elseif t == "class_is" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "ClassIs " .. tostring(cond.class or "?"), content_w))
-                    y = y + ROW_H
-                elseif t == "race_is" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "RaceIs " .. tostring(cond.race or "?"), content_w))
-                    y = y + ROW_H
-                elseif t == "faction_is" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "FactionIs " .. tostring(cond.faction or "?"), content_w))
-                    y = y + ROW_H
-                elseif t == "always_true" then
-                    text_item("body", "text_secondary", fit(label_prefix .. "AlwaysTrue", content_w))
-                    y = y + ROW_H
-                else
-                    text_item("body", "text_secondary", fit(label_prefix .. tostring(t or "?") .. " (" .. tostring(cond.quest_id or cond.item_id or cond.level or "?") .. ")", content_w))
-                    y = y + ROW_H
+                push({
+                    kind = "list_row",
+                    id = "select_condition:" .. (path == "" and "root" or path),
+                    bounds = { x = text_x + depth * Theme.space.md, y = y,
+                               w = math.max(0, content_w - depth * Theme.space.md), h = CONTROL_H },
+                    label = PropertiesState.condition_label(cond),
+                    selected = (cv.path or "") == path,
+                })
+                y = y + CONTROL_H + Theme.space.xs
+                for i, child in ipairs(cond.conditions or {}) do
+                    render_cond(child, depth + 1, (path == "") and tostring(i) or (path .. "." .. i))
+                end
+                -- `not` holds ONE child under a different key; it is still a child and still needs
+                -- a row, or a negated condition renders as a bare "NOT" with nothing under it.
+                if cond.condition then
+                    render_cond(cond.condition, depth + 1, (path == "") and "1" or (path .. ".1"))
                 end
             end
-            render_cond(cv.tree, 0)
+            render_cond(cv.tree, 0, "")
         else
             text_item("body", "text_muted", "No condition defined")
             y = y + ROW_H
+        end
+
+        if cv and cv.error then
+            text_item("caption", "danger", fit(tostring(cv.error), content_w))
+            y = y + SMALL_H
         end
 
         y = y + Theme.space.md
@@ -1004,7 +1123,13 @@ function PropertiesState.build_plan(view, bounds)
         local sell_str = (def.sell_grey ~= false) and "Sell grey" or "Keep grey"
         local white_str = def.ignore_white and "Ignore white+" or "Keep white+"
         text_item("body", "text_secondary", fit(sell_str .. "    " .. white_str, content_w))
-        y = y + ROW_H + Theme.space.md
+        y = y + ROW_H + Theme.space.sm
+
+        if iv and iv.error then
+            text_item("caption", "danger", fit(tostring(iv.error), content_w))
+            y = y + SMALL_H
+        end
+        y = y + Theme.space.sm
 
         local half = (content_w - Theme.space.sm) * 0.5
         push({ kind = "button", id = "add_inventory_rule",

@@ -990,4 +990,148 @@ function M.test_changing_selection_drops_the_node_and_its_edit()
     T.assert_nil(state.node_edit, "nor an edit against it")
 end
 
+-- ============================================================================
+-- 15. Condition tree — selection is what makes add/delete mean anything
+-- ============================================================================
+
+local function condition_state(tree)
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "graph", selection_type = "condition", selection_id = 1 })
+    state.condition_tree = tree
+    state.loading = false
+    return state
+end
+
+function M.test_condition_label_names_every_type_it_knows()
+    T.assert_equal(PropertiesState.condition_label({ type = "all" }), "ALL of:")
+    T.assert_equal(PropertiesState.condition_label({ type = "quest_completed", quest_id = 783 }),
+        "QuestCompleted (783)")
+    T.assert_equal(PropertiesState.condition_label({ type = "has_item", item_id = 2589, count = 5 }),
+        "HasItem (2589) x5")
+    T.assert_true(PropertiesState.condition_label({ type = "seasonal" }):find("seasonal", 1, true) ~= nil,
+        "an unknown type must render its own tag, not a blank row")
+end
+
+function M.test_every_condition_in_the_tree_is_a_selectable_row()
+    local plan = PropertiesState.build_plan(condition_state(sample_condition_tree()):build(), BOUNDS)
+    local ids = {}
+    for _, item in ipairs(plan.items) do
+        if item.kind == "list_row" then ids[#ids + 1] = item.id end
+    end
+    -- root + 3 children + 2 grandchildren
+    T.assert_equal(#ids, 6, "a tree drawn as unclickable text is a tree with no selection")
+    T.assert_equal(ids[1], "select_condition:root")
+    T.assert_equal(ids[4], "select_condition:3")
+    T.assert_equal(ids[5], "select_condition:3.1", "nesting must reach the path")
+    local cmd = PropertiesState.reduce(ids[5])
+    T.assert_equal(cmd.kind, "select_condition")
+    T.assert_equal(cmd.path, "3.1")
+end
+
+function M.test_add_condition_appends_into_the_selected_group()
+    local state = condition_state(sample_condition_tree())
+    state:select_condition("3")  -- the nested ANY group
+    T.assert_true(state:add_condition())
+    local group = state.condition_tree.conditions[3]
+    T.assert_equal(#group.conditions, 3, "the leaf lands in the SELECTED group")
+    T.assert_equal(group.conditions[3].type, "always_true",
+        "every condition carries a type: an untagged one is the fail-open true that stopped gating")
+end
+
+function M.test_add_condition_refuses_a_leaf_out_loud()
+    local state = condition_state(sample_condition_tree())
+    state:select_condition("1")  -- a quest_completed leaf
+    local ok, err = state:add_condition()
+    T.assert_false(ok, "a leaf cannot hold children")
+    T.assert_equal(err, "select an ALL or ANY group to add into")
+    T.assert_equal(#state.condition_tree.conditions, 3, "and nothing was added anywhere else")
+    T.assert_true(render_view(state:build()):drew_text("select an ALL or ANY group"),
+        "the refusal must be on screen, not only on the state")
+end
+
+function M.test_the_first_condition_becomes_the_tree()
+    local state = condition_state(nil)
+    T.assert_true(state:add_condition_group("any"))
+    T.assert_equal(state.condition_tree.type, "any")
+    T.assert_equal(#state.condition_tree.conditions, 0,
+        "an implicit wrapper group would nest what the operator never asked to nest")
+end
+
+function M.test_a_group_is_all_or_any_and_nothing_else()
+    local state = condition_state(nil)
+    local ok, err = state:add_condition_group("maybe")
+    T.assert_false(ok)
+    T.assert_equal(err, "a condition group is ALL or ANY")
+    T.assert_nil(state.condition_tree)
+end
+
+function M.test_delete_removes_the_selected_condition()
+    local state = condition_state(sample_condition_tree())
+    state:select_condition("2")  -- has_item
+    T.assert_true(state:delete_condition())
+    T.assert_equal(#state.condition_tree.conditions, 2)
+    T.assert_equal(state.condition_tree.conditions[2].type, "any", "the tail shifted up")
+end
+
+function M.test_delete_with_nothing_selected_deletes_the_root()
+    local state = condition_state(sample_condition_tree())
+    T.assert_true(state:delete_condition(), "the empty path IS the root")
+    T.assert_nil(state.condition_tree)
+end
+
+function M.test_delete_of_a_stale_path_refuses_rather_than_guessing()
+    local state = condition_state(sample_condition_tree())
+    state:select_condition("9")
+    local ok, err = state:delete_condition()
+    T.assert_false(ok)
+    T.assert_equal(err, "select a condition to delete")
+    T.assert_equal(#state.condition_tree.conditions, 3, "nothing was deleted in its place")
+end
+
+-- ============================================================================
+-- 16. Inventory rules
+-- ============================================================================
+
+function M.test_an_inventory_rule_needs_an_item()
+    local state = PropertiesState.new()
+    local ok, err = state:add_inventory_rule(nil)
+    T.assert_false(ok, "a blank row would be a rule that matches nothing and reads like one that does")
+    T.assert_equal(err, "pick an item in the Database to add a rule for")
+    T.assert_nil(state.inventory_rules)
+end
+
+function M.test_an_inventory_rule_with_an_item_is_appended()
+    local state = PropertiesState.new()
+    T.assert_true(state:add_inventory_rule({ entry = 2589, name = "Linen Cloth" }))
+    T.assert_equal(#state.inventory_rules, 1)
+    T.assert_equal(state.inventory_rules[1].action, "sell", "an unspecified action defaults to sell")
+    T.assert_true(state:clear_inventory_rules())
+    T.assert_equal(#state.inventory_rules, 0)
+end
+
+function M.test_the_inventory_refusal_reaches_the_frame()
+    local state = PropertiesState.new()
+    state:set_context({ panel_id = "graph", selection_type = "inventory", selection_id = 1 })
+    state.loading = false
+    state:add_inventory_rule(nil)
+    T.assert_true(render_view(state:build()):drew_text("pick an item in the Database"))
+end
+
+-- ============================================================================
+-- 17. The stub replies are gone
+-- ============================================================================
+
+function M.test_no_properties_command_reports_a_phantom_success()
+    -- Five dispatch branches used to answer `true, "... (not yet implemented)"`: a control that
+    -- reports success and changes nothing. The guard is on the SOURCE because the strings were the
+    -- only evidence they were stubs.
+    local handle = assert(io.open("sentinel/ui/ide_panels.lua", "r"))
+    local source = handle:read("*a")
+    handle:close()
+    local properties_block = source:match("function IdePanels%.new_properties(.-)function IdePanels%.new_graph")
+    T.assert_not_nil(properties_block, "the audit must actually find the Properties binding")
+    T.assert_nil(properties_block:find("not yet implemented", 1, true),
+        "the Properties binding still answers a command with a phantom success")
+end
+
 return M

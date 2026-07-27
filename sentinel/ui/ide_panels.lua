@@ -578,17 +578,23 @@ function PropertiesBinding:spec()
             elseif command.kind == "cancel_node_edit" then
                 state:cancel_node_edit()
                 return true
-            elseif command.kind == "add_condition" then
-                return true, "add_condition (not yet implemented)"
-            elseif command.kind == "add_condition_group" then
-                return true, "add_condition_group " .. tostring(command.group_type) .. " (not yet implemented)"
-            elseif command.kind == "delete_condition" then
-                return true, "delete_condition (not yet implemented)"
-            elseif command.kind == "add_inventory_rule" then
-                return true, "add_inventory_rule (not yet implemented)"
-            elseif command.kind == "clear_inventory_rules" then
-                state.inventory_rules = {}
+            elseif command.kind == "select_condition" then
+                state:select_condition(command.path)
                 return true
+            -- The tree is mutated IN THE STATE and not written back: `POST .../validate` and the
+            -- node write that persist it belong to the editor client (PR7/PR8). These five branches
+            -- used to answer `true` with a placeholder string — a control that reports success and
+            -- changes nothing, which is the exact defect this change is removing.
+            elseif command.kind == "add_condition" then
+                return state:add_condition()
+            elseif command.kind == "add_condition_group" then
+                return state:add_condition_group(command.group_type)
+            elseif command.kind == "delete_condition" then
+                return state:delete_condition()
+            elseif command.kind == "add_inventory_rule" then
+                return state:add_inventory_rule(command.rule)
+            elseif command.kind == "clear_inventory_rules" then
+                return state:clear_inventory_rules()
             end
             return false, "unknown properties command '" .. tostring(command.kind) .. "'"
         end,
