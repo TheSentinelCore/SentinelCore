@@ -1,7 +1,7 @@
 # Apply Progress: questing-ide-remediation
 
 **Mode**: Standard (strict_tdd false) | **Store**: hybrid | **Delivery**: force-chained, `stacked-to-main`
-**Scope of this run**: Phase 0 (B5–B7) + PR1 only. PR2–PR12 not started.
+**Scope so far**: Phase 0 + PR1 (batch 1) + PR2 (batch 2). PR3–PR12 not started.
 **Base**: `99bb8d7` (pre-existing HEAD before any of this work)
 
 ## Completed
@@ -34,7 +34,42 @@ Branch `qir/pr1-query-client-wiring` off `master`, one commit `e2e8b4f`.
 | 1.2 | Done |
 | 1.3 | Done, plus a host-side guard the task did not ask for |
 
-## Work Unit Evidence
+### PR2 — AsyncSlot primitive + pending-mock harness + per-panel re-arm — COMPLETE (4/4)
+
+Branch `qir/pr2-async-slot` off `qir/pr1-query-client-wiring`, two commits.
+
+| Task | Status |
+|---|---|
+| 1.4 | Done — `sentinel/ui/async_slot.lua` |
+| 1.5 | Done for Explorer/Properties/Database; **Graph deferred to PR7** (see Deviations) |
+| 1.6 | Done — `core.http_get` in the harness mock, holding the callback for `Mock.http.pending_ticks` |
+| 1.7 | Done — one re-arm test per data panel, plus a 10-case slot suite |
+
+| Commit | Subject |
+|---|---|
+| `20a5915` | feat(ui): add a poll-until-resolved slot and let the harness hold a request |
+| `beb17e1` | fix(ui): poll every panel fetch until it resolves instead of once |
+
+**The contract** (`ui/async_slot.lua`): `AsyncSlot.new({ label, owner, max_ticks = 120 })`,
+`slot:poll(fn)` → `(status, data)` with status `ok | pending | failed | timeout`. `fn` returns
+exactly what `QueryClient:_get` returns. Pending re-arms `owner._dirty` and holds `owner.loading`;
+`ok` stores and clears; `failed`/`timeout` write `owner.error` naming the label and clear.
+`slot:reset()` abandons a request whose selection was replaced, so the abandoned tick count cannot
+expire the fetch that replaced it. A slot only clears an `owner.error` it wrote itself, so two slots
+on one state fail independently.
+
+## Work Unit Evidence — PR2
+
+| Evidence | Value |
+|---|---|
+| Focused test command / result | `luajit sentinel/tests/run_offline.lua` from repo root — **1883 passed, 0 failed**, 21 opaque suites 21 ok / 0 failed. Pre-PR2 baseline was 1870/0; +13 = 10 slot cases + 3 panel re-arm cases. |
+| First commit verified alone | Detached worktree at `20a5915`: **1880 passed, 0 failed**. The primitive plus its harness stands on its own without the panel routing. |
+| Mutation check | Deleting `owner._dirty = true` from `AsyncSlot:poll`'s pending branch turns **5 cases red** (1878/5): `test_a_pending_fetch_re_arms_the_owner_and_leaves_it_loading`, `test_a_slot_driven_by_the_real_client_re_arms_then_resolves`, and one per data panel — explorer, properties, database. The re-arm is held by a test at both the unit and the seam level. |
+| Runtime harness | **N/A by design** — the offline pending mock now reproduces the runtime fetch model (held callback, `(nil, true)` first answer). The in-game confirmation still outstanding from PR1 is unchanged. |
+| Rollback boundary | Revert `beb17e1` to drop the panel routing while keeping the primitive; revert both to drop PR2 entirely. No file is shared with an unlanded slice. |
+| Review budget | **742 changed lines — OVER the 400 budget.** `20a5915` = 435 (async_slot 128 + slot suite 208 + mock 95 + runner 4), `beb17e1` = 307. Split point is the commit boundary: branching at `20a5915` yields two reviewable PRs with zero rework. Flagged, not silently absorbed. |
+
+## Work Unit Evidence — PR1
 
 | Evidence | Value |
 |---|---|
@@ -44,6 +79,20 @@ Branch `qir/pr1-query-client-wiring` off `master`, one commit `e2e8b4f`.
 | Runtime harness | **Not run.** Requires launching the IDE in the injector with QueryServer down and confirming the "query server unavailable" render. The offline path is exercised through the real `Shell` + `FakeWindow`, but the in-game confirmation is outstanding. |
 | Rollback boundary | PR1: revert `e2e8b4f` (5 files, none shared with a later slice). Phase 0: reset `master` to `99bb8d7` and restore from the scratchpad snapshot. |
 | Review budget | PR1 diff = 271 additions + 10 deletions = **281 changed lines**, under the 400 budget. |
+
+## Files Changed (PR2)
+
+| File | Action | What |
+|---|---|---|
+| `sentinel/ui/async_slot.lua` | Created | The poll-until-resolved primitive |
+| `sentinel/tests/harness/mocks/sylvannas_api.lua` | Modified | `core.http_get` with the live async signature, held callbacks, `Mock.http_advance`, `set_http_response`, `reset_http` |
+| `sentinel/tests/ui/test_async_slot.lua` | Created | 10 cases: slot contract + real `QueryClient` over the new mock |
+| `sentinel/tests/run_offline.lua` | Modified | Registers the slot suite BEFORE the panels |
+| `sentinel/ui/ide_panels.lua` | Modified | Explorer (detail/chain/objectives/search) and Properties (npc/vendor/object) fetches routed through slots |
+| `sentinel/ui/panels/explorer_state.lua` | Modified | `_slots` + reset on `select` |
+| `sentinel/ui/panels/properties_state.lua` | Modified | `_slots.detail` + reset on `set_context` |
+| `sentinel/ui/panels/database_state.lua` | Modified | `_slots` + `execute_scan`/`execute_load_detail`/`execute_grind` gated on resolution |
+| `sentinel/tests/ui/test_ide_panels.lua` | Modified | +3 re-arm cases, one per data panel |
 
 ## Files Changed (PR1)
 
@@ -61,20 +110,28 @@ Branch `qir/pr1-query-client-wiring` off `master`, one commit `e2e8b4f`.
 2. **Database scan exempted from the unavailable gate.** The spec's unavailable state is about the query server. `execute_scan` reads the object manager, an unrelated source, so gating it on a missing HTTP client would be false. Its `_pending_detail`/`_pending_grind` ARE dropped, which also makes `_mock_grind_result` unreachable from the installed panel ahead of the PR3 mock-data sweep (task 1.12).
 3. **`properties_state.lua` touched in PR1.** Not in the task text. Task 1.2's requirement ("panels MUST render an explicit unavailable state") was unsatisfiable for Properties without it: `build()` hard-coded `error = nil` whenever nothing was selected, and `build_plan`'s no-context branch returned before the error check. Found by the test in 1.3, which failed on Properties alone.
 4. **Extra test file.** `test_main_diagnostics.lua` is outside task 1.3's named file. A test that only drives `IdePanels` cannot see the original defect, because the defect was in the caller.
+5. **PR2: Graph excluded from task 1.5's "all four data bindings".** The Graph binding issues no fetch — its `on_tick` dirty branch is `-- In a real deployment, this would refresh from /editor/campaigns/{name}` — and `new_graph` takes no client at all. A slot with nothing behind it cannot be held honest by any test, and PR7 (task 3.9) is where the editor client and the campaign lifecycle arrive together. The three query-server panels are fully routed.
+6. **PR2: `owner` is a `new()` option, not a `poll()` argument.** Design pins `AsyncSlot.new({label, max_ticks=120})` and `slot:poll(fn)`. The slot must reach the owner's `_dirty` to re-arm it, so the owner is passed in the same options table rather than widening `poll`'s signature, which keeps the design's call shape exactly.
+7. **PR2: `poll` returns a status, not just data.** The design says "on data it stores + clears". A slot that only returned data could not tell a caller apart from `pending` and `failed` — and the Database needs that distinction, because "Entry N not found" is only correct for `failed`. `slot.data` still caches the value.
+8. **PR2: over the review budget.** 742 changed lines against a 400 budget. The unit is a primitive plus its only consumers; a primitive with no call sites is not independently reviewable, so the split was made at the commit boundary instead (see PR2 evidence).
 
 ## Issues Found
 
 - **B3–B6 per-commit greenness is vacuous.** The suite holds flat at 1574 across B3–B6 and jumps to 1864 only at B7, because `run_offline.lua` — which registers the new suites — is itself part of B7. Those four commits prove loadability, not coverage. Real, and consistent with the design's orphan-module plan, but it should not be read as four independently verified slices.
 - **`PropertiesState:build()` could not report any error before a selection existed.** See Deviation 3. Latent bug found by the new test, fixed here.
 - Task 1.1 and task 3.8 are ordered inconsistently in `tasks.md`. Recorded above.
+- **PR2: the harness had no `core.http_get` at all.** Confirmed by reading the mock, not inferred. Every offline suite therefore exercised only `QueryClient:_get`'s synchronous-mock fallback; the `(nil, true)` branch the injector always takes first was unreachable dead code. That is the mechanical reason a green suite shipped panels that froze in-game, and it is now closed at the harness, not only at the call sites.
+- **PR2: `DatabaseState:execute_grind(nil)` still fabricates a mock result.** Left as-is — task 1.12 (PR3) owns the mock-data sweep, and PR1 already made that branch unreachable from the installed panel by dropping `_pending_grind` when the client is absent.
+- **PR2: the Properties inspector could be left spinning on a context nothing fetches.** `set_context` sets `loading = true` for every context kind, but only npc/vendor/object issue a request; node/condition/inventory contexts fell through the `if` chain with `loading` still true. Fixed with an explicit `else` that clears it.
 
 ## Remaining
 
-Phase 1 tasks 1.4–1.12 (PR2, PR3), Phase 2 (PR4, PR5), Phase 3 (PR6–PR10), Phase 4 (PR11, PR12). Nothing after PR1 was started.
+Phase 1 tasks 1.8–1.12 (PR3), Phase 2 (PR4, PR5), Phase 3 (PR6–PR10), Phase 4 (PR11, PR12). Nothing after PR2 was started.
 
 ## Chain State
 
 - `master` → `b20c2f0` (baseline) then `6bb1f69` (SDD artifacts)
-- `qir/pr1-query-client-wiring` → `e2e8b4f`, one commit ahead of `master`
+- `qir/pr1-query-client-wiring` → `e2e8b4f`, `8bf2fbe`
+- `qir/pr2-async-slot` → `20a5915`, `beb17e1` (+ this docs commit), branched off `qir/pr1-query-client-wiring` per `stacked-to-main`
 - Nothing pushed. No PR opened.
-- PR2 branches from `qir/pr1-query-client-wiring` per `stacked-to-main`.
+- PR3 branches from `qir/pr2-async-slot`.
