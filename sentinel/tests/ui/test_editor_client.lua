@@ -393,4 +393,64 @@ function M.test_a_dead_editor_reads_as_a_transport_failure_not_as_a_refusal()
     end)
 end
 
+-- ---------------------------------------------------------------------------
+-- Validate / compile: POSTs whose answer is the point
+-- ---------------------------------------------------------------------------
+
+function M.test_validate_polls_like_a_get_and_yields_diagnostics()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 2
+        Mock.set_http_response("/editor/campaigns/stw/validate", {
+            { code = "MISSING_ACCEPT", message = "TurnInQuest(9) has no AcceptQuest(9)",
+              node_id = "n_turnin" },
+        })
+        local ec = EditorClient:new("127.0.0.1", 3031)
+
+        local data, pending = ec:validate("stw")
+        T.assert_nil(data, "a POST is async too")
+        T.assert_true(pending, "so validate reports pending and an AsyncSlot re-arms the panel")
+        T.assert_equal(#Mock.http.posts, 1, "one request")
+        T.assert_true(select(2, ec:validate("stw")) == true, "polling again does not re-issue it")
+        T.assert_equal(#Mock.http.posts, 1, "still one request")
+
+        Mock.http_advance(2)
+        local diags = ec:validate("stw")
+        T.assert_equal(#diags, 1, "the diagnostic came back")
+        T.assert_equal(diags[1].code, "MISSING_ACCEPT", "with its code")
+        T.assert_equal(diags[1].node_id, "n_turnin", "and the node it blames")
+    end)
+end
+
+function M.test_forget_makes_a_second_validate_actually_ask_again()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        Mock.set_http_response("/editor/campaigns/stw/validate", {})
+        local ec = EditorClient:new("127.0.0.1", 3031)
+
+        ec:validate("stw")
+        T.assert_equal(#Mock.http.posts, 1, "asked once")
+        ec:validate("stw")
+        T.assert_equal(#Mock.http.posts, 1, "and the cached answer is reused")
+
+        ec:forget("validate 'stw'")
+        ec:validate("stw")
+        T.assert_equal(#Mock.http.posts, 2,
+            "validate is an ACTION: after an edit, clicking it again must ask the server again")
+    end)
+end
+
+function M.test_compile_returns_the_editors_result_object()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        Mock.set_http_response("/editor/campaigns/stw/compile", {
+            campaign_name = "stw", graph_count = 1, node_count = 4, edge_count = 3,
+            message = "Campaign compile — full pipeline available in a later phase",
+        })
+        local ec = EditorClient:new("127.0.0.1", 3031)
+        local result = ec:compile("stw")
+        T.assert_not_nil(result, "the compile answered")
+        T.assert_equal(result.node_count, 4, "carrying the counts the editor computed")
+    end)
+end
+
 return M

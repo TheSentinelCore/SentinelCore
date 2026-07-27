@@ -158,6 +158,65 @@ function EditorClient:_mutate(what, path, payload)
     return true
 end
 
+--- Fire a POST whose ANSWER is the point, and poll it like a GET.
+---
+--- `QueryClient:_get` cannot be reused here: it caches by path, and a POST's answer depends on the
+--- body it carried. This keeps its own one-slot-per-key state instead.
+---@return any data, boolean|nil pending
+function EditorClient:_ask(key, path, payload)
+    local slot = self._posts[key]
+    if slot and slot.done then
+        return slot.value
+    end
+    if slot and slot.inflight then
+        return nil, true
+    end
+
+    local body, why = encode(payload or {})
+    if not body then
+        self._errors[#self._errors + 1] = key .. " failed: " .. why
+        return nil
+    end
+
+    slot = { inflight = true, done = false, value = nil }
+    self._posts[key] = slot
+
+    local client = self
+    local sent, reason = self._qc:post(path, body, function(http_code, response)
+        slot.inflight = false
+        slot.done = true
+        if http_code < 200 or http_code >= 300 then
+            client:_record_error(key, http_code, response)
+            slot.value = nil
+            return
+        end
+        if type(response) ~= "string" or response == "" then
+            -- A 2xx with no body is a real answer: "nothing to report".
+            slot.value = {}
+            return
+        end
+        local decoded
+        if JsonLib and JsonLib.decode then
+            local ok, v = pcall(JsonLib.decode, response)
+            if ok then decoded = v end
+        end
+        slot.value = decoded
+    end)
+    if not sent then
+        self._posts[key] = nil
+        self._errors[#self._errors + 1] = key .. " failed: " .. tostring(reason)
+        return nil
+    end
+    if slot.done then return slot.value end
+    return nil, true
+end
+
+--- Forget a polled POST so the next call asks again. Validate and compile are ACTIONS: asking twice
+--- must mean asking twice, or the second click after an edit would replay the first answer.
+function EditorClient:forget(key)
+    self._posts[key] = nil
+end
+
 -- ---------------------------------------------------------------------------
 -- Reads
 -- ---------------------------------------------------------------------------
@@ -328,6 +387,26 @@ function EditorClient:update_node(name, node_id, node, graph_id)
             context = node.context,
         },
     })
+end
+
+-- ---------------------------------------------------------------------------
+-- Validate / compile — POSTs whose answer is the point
+-- ---------------------------------------------------------------------------
+
+--- `POST /editor/campaigns/{name}/validate` -> `Vec<Diagnostic{code, message, node_id?}>`.
+---@return table|nil diagnostics, boolean|nil pending
+function EditorClient:validate(name)
+    name = tostring(name or "")
+    if name == "" then return nil end
+    return self:_ask("validate '" .. name .. "'", ROOT .. "/" .. name .. "/validate")
+end
+
+--- `POST /editor/campaigns/{name}/compile` -> a compile result object.
+---@return table|nil result, boolean|nil pending
+function EditorClient:compile(name)
+    name = tostring(name or "")
+    if name == "" then return nil end
+    return self:_ask("compile '" .. name .. "'", ROOT .. "/" .. name .. "/compile")
 end
 
 return EditorClient
