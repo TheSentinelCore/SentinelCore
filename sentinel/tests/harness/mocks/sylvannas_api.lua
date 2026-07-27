@@ -184,6 +184,7 @@ Mock.http = {
     pending_ticks = 2,
     routes = {},     -- { { match = "/npc/567", body = "...", status = 200 } }
     requests = {},   -- every url asked for, in order
+    posts = {},      -- { { url, headers, body } } — the request half of every POST
     _inflight = {},  -- { { url, callback, remaining } }
 }
 
@@ -234,6 +235,56 @@ function Mock.core.http_get(url, callback)
     Mock.http._inflight[#Mock.http._inflight + 1] = entry
 end
 
+-- ============================================================================
+-- core.http_post  (the ASYNC signature the injector actually has)
+-- ============================================================================
+--
+-- `(url, [headers,] body, callback)` per docs/SylvannasAPI/dev/api/core.md, with the SAME pending
+-- model as `http_get` above: the callback lands `Mock.http.pending_ticks` harness ticks later, so a
+-- caller that assumes a synchronous answer fails here rather than in the injector.
+--
+-- Bodies are recorded in `Mock.http.posts` because for a POST the request IS the interesting half:
+-- a route estimate is only honest if the segments that were sent are the segments the operator can
+-- see. Routing reuses `set_http_response`, so one registration answers a GET or a POST alike.
+function Mock.core.http_post(url, headers, body, callback)
+    -- The three-argument form `(url, body, callback)` is the documented fallback the query client
+    -- tries when the headers form is rejected; accepting both keeps the mock honest about which one
+    -- the caller actually used.
+    if type(body) == "function" and callback == nil then
+        callback, body, headers = body, headers, nil
+    end
+    url = tostring(url)
+    Mock.http.requests[#Mock.http.requests + 1] = url
+    Mock.http.posts[#Mock.http.posts + 1] = { url = url, headers = headers, body = body }
+    if type(callback) ~= "function" then
+        error("core.http_post expects (url, [headers,] body, callback)", 2)
+    end
+
+    local route = http_route_for(url)
+    local entry = {
+        url = url,
+        callback = callback,
+        remaining = tonumber(Mock.http.pending_ticks) or 0,
+        status = route and route.status or 404,
+        body = route and route.body or nil,
+    }
+    if entry.remaining <= 0 then
+        callback(entry.status, "application/json", entry.body)
+        return
+    end
+    Mock.http._inflight[#Mock.http._inflight + 1] = entry
+end
+
+---The body of the most recent POST, decoded, or nil when nothing was posted.
+function Mock.last_post_body()
+    local last = Mock.http.posts[#Mock.http.posts]
+    if not last or type(last.body) ~= "string" then return nil end
+    local ok, json = pcall(require, "core/JSON")
+    if not (ok and type(json) == "table" and json.decode) then return nil end
+    local decoded = json.decode(last.body)
+    return decoded
+end
+
 ---One harness tick of the network: fire every request whose wait has run out.
 function Mock.http_advance(ticks)
     for _ = 1, (tonumber(ticks) or 1) do
@@ -254,6 +305,7 @@ function Mock.reset_http()
     Mock.http.pending_ticks = 2
     Mock.http.routes = {}
     Mock.http.requests = {}
+    Mock.http.posts = {}
     Mock.http._inflight = {}
 end
 

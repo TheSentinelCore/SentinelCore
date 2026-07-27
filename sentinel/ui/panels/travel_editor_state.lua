@@ -412,6 +412,148 @@ function TravelEditorState.build_segments(route, faction)
     return segments
 end
 
+-- ============================================================================
+-- Asking the server (spec: "estimate segments via POST /travel/route")
+-- ============================================================================
+--
+-- `QueryClient:post` is fire-and-callback, so the answer lands some ticks after the request. That is
+-- the same shape `AsyncSlot` exists for, and it is used here for the one line that matters: a
+-- pending answer RE-ARMS the owner's `_dirty`, so the tick that collects the answer actually runs.
+-- Without it the panel freezes on its first request and shows an idle view forever (the PR2 defect,
+-- through a different door).
+--
+-- The slot's own failure message is deliberately overwritten with the SERVER's. A 400 from
+-- `/travel/route` names the offending segment, and "travel route estimate failed" would throw that
+-- away — which is exactly how a refused taxi hop would come to look like a network glitch.
+
+local AsyncSlot = require("ui/async_slot")
+
+local ESTIMATE_PATH = "/travel/route"
+
+local Json = (function()
+    local ok, mod = pcall(require, "core/JSON")
+    if ok and type(mod) == "table" and mod.encode and mod.decode then return mod end
+    return nil
+end)()
+
+---The `error` field out of a QueryServer failure body, or the body itself when it is not one.
+local function server_reason(response)
+    if type(response) ~= "string" or response == "" then return "no response body" end
+    if Json then
+        local decoded = Json.decode(response)
+        if type(decoded) == "table" and type(decoded.error) == "string" then return decoded.error end
+    end
+    return response
+end
+
+---Ask for an estimate of the selected route. The request itself happens on the next tick's poll.
+function TravelEditorState:request_estimate()
+    self.estimate_requested = true
+    self._dirty = true
+end
+
+---Drive one tick of the route estimate. TICK CONTEXT ONLY — this posts.
+---@param client table|nil a QueryClient (needs `post`)
+---@param faction string|nil the character's faction, when the host knows it
+---@return string status "idle" | "ok" | "pending" | "failed" | "timeout"
+function TravelEditorState:poll_estimate(client, faction)
+    self._slots = self._slots or { estimate = AsyncSlot.new({ label = "travel route estimate", owner = self }) }
+    if not self.estimate_requested then return "idle" end
+
+    local route = self:_selected()
+    if not route then
+        self:invalidate_estimate()
+        return "idle"
+    end
+
+    local segments, why = TravelEditorState.build_segments(route, faction)
+    if not segments then
+        self._slots.estimate:reset()
+        self.estimate = nil
+        self.estimate_requested = false
+        self:_refuse(why)
+        return "failed"
+    end
+
+    if type(client) ~= "table" or type(client.post) ~= "function" then
+        self._slots.estimate:reset()
+        self.estimate = nil
+        self.estimate_requested = false
+        self:_refuse("travel estimate unavailable: no query server")
+        return "failed"
+    end
+
+    local key = tostring(route.id) .. "@" .. TravelEditorState.request_key(segments)
+    local record = self._requests[key]
+    if record == nil then
+        -- Any request for a DIFFERENT route or a different shape of this one is abandoned rather
+        -- than left to answer later over the top of this one.
+        self._requests = {}
+        self._slots.estimate:reset()
+        record = { status = "pending" }
+        self._requests[key] = record
+        self:_dispatch_estimate(client, record, segments)
+    end
+
+    local status = self._slots.estimate:poll(function()
+        if record.status == "ok" then return record.data end
+        if record.status == "pending" then return nil, true end
+        return nil, nil
+    end)
+
+    if status == "ok" then
+        self.estimate = {
+            route_id = route.id,
+            segments = record.data.segments or {},
+            total_s = record.data.total_s or 0,
+        }
+        self.estimate_requested = false
+        self.error = nil
+    elseif status ~= "pending" then
+        self.estimate = nil
+        self.estimate_requested = false
+        -- The server's own words, not the slot's summary of them.
+        if record.error then self.error = record.error end
+    end
+    return status
+end
+
+---Fire the POST and record its answer against `record`.
+function TravelEditorState:_dispatch_estimate(client, record, segments)
+    if not Json then
+        record.status = "failed"
+        record.error = "travel estimate unavailable: no JSON encoder in this sandbox"
+        return
+    end
+    local body = Json.encode({ segments = segments })
+    if type(body) ~= "string" or body == "" then
+        record.status = "failed"
+        record.error = "the travel route request could not be encoded"
+        return
+    end
+
+    local dispatched, refused = client:post(ESTIMATE_PATH, body, function(code, response)
+        if code == 200 then
+            local decoded = Json.decode(response or "")
+            if type(decoded) == "table" and type(decoded.segments) == "table" then
+                record.status = "ok"
+                record.data = decoded
+                return
+            end
+            record.status = "failed"
+            record.error = "the route answer could not be read"
+            return
+        end
+        record.status = "failed"
+        record.error = string.format("%s refused the route (HTTP %s): %s",
+            ESTIMATE_PATH, tostring(code), server_reason(response))
+    end)
+    if not dispatched then
+        record.status = "failed"
+        record.error = "travel estimate unavailable: " .. tostring(refused)
+    end
+end
+
 ---A stable signature for a segment list, so an unchanged route is not re-requested every tick and a
 ---changed one is never answered from the previous route's cache.
 function TravelEditorState.request_key(segments)

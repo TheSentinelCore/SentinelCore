@@ -369,7 +369,142 @@ function M.test_the_request_key_changes_with_the_route_and_not_otherwise()
 end
 
 -- ============================================================================
--- 5. Structural guards
+-- 5. Asking the server, and living with its answer
+-- ============================================================================
+
+local QueryClient = require("shared/query_client")
+
+---A route estimate answered exactly as `/travel/route` answers it.
+local ROUTE_OK = {
+    segments = {
+        { type = "walk", distance_m = 140.0, estimated_s = 20 },
+        { type = "taxi", distance_m = 3200.0, estimated_s = 100 },
+    },
+    total_s = 120,
+}
+
+---Run `fn` against the harness's async `core.http_get`/`core.http_post`, exactly as the injector
+---presents them: the callback lands `pending_ticks` harness ticks after the call, never inside it.
+local function with_http(fn)
+    local saved = _G.core
+    Mock.setup_globals()
+    Mock.reset_http()
+    local ok, err = pcall(fn)
+    Mock.reset_http()
+    _G.core = saved
+    if not ok then error(err, 0) end
+end
+
+function M.test_a_pending_estimate_re_arms_the_panel_and_the_next_tick_collects_it()
+    with_http(function()
+        Mock.set_http_response("/travel/route", ROUTE_OK)
+        local te = route_with_waypoints(3, 0)
+        te:request_estimate()
+        local client = QueryClient:new()
+
+        te._dirty = false
+        T.assert_equal(te:poll_estimate(client), "pending",
+            "the first poll fires the request and has nothing yet")
+        T.assert_true(te._dirty,
+            "a pending answer must re-arm the panel or the tick that collects it never runs")
+        T.assert_true(te.loading, "and the operator must be told something is in flight")
+        T.assert_nil(te.estimate, "with no number on screen until there is one")
+
+        Mock.http_advance(2)
+        T.assert_equal(te:poll_estimate(client), "ok", "the answer lands and is collected")
+        T.assert_equal(te.estimate.total_s, 120, "the server's total, verbatim")
+        T.assert_equal(#te.estimate.segments, 2)
+        T.assert_equal(te.estimate.segments[2].type, "taxi")
+        T.assert_false(te.estimate_requested, "and the request is not repeated")
+    end)
+end
+
+function M.test_the_posted_body_is_the_route_the_operator_can_see()
+    with_http(function()
+        Mock.set_http_response("/travel/route", ROUTE_OK)
+        local te = route_with_waypoints(3, 0)
+        te:request_estimate()
+        te:poll_estimate(QueryClient:new())
+
+        local body = Mock.last_post_body()
+        T.assert_not_nil(body, "the estimate must actually POST")
+        T.assert_equal(#body.segments, 2, "three waypoints are two legs")
+        T.assert_equal(body.segments[1].from.x, 100, "and the legs are the ones on screen")
+        T.assert_equal(body.segments[1].to.x, 200)
+        T.assert_equal(Mock.http.posts[1].url, "http://127.0.0.1:3030/travel/route",
+            "posted to the endpoint the spec names")
+    end)
+end
+
+function M.test_a_server_refusal_is_reported_in_the_servers_own_words()
+    -- The taxi gap: `/travel/route` refuses a segment it cannot place and names it. Replacing that
+    -- with "estimate failed" would make a documented refusal read as a network glitch.
+    with_http(function()
+        Mock.set_http_response("/travel/route",
+            '{"error":"segment 1: a taxi segment needs from/to positions for its nodes"}', 400)
+        local te = route_with_waypoints(2, 0)
+        te:request_estimate()
+        local client = QueryClient:new()
+        te:poll_estimate(client)
+        Mock.http_advance(2)
+        T.assert_equal(te:poll_estimate(client), "failed")
+
+        T.assert_nil(te.estimate, "a refused route has no total")
+        T.assert_true(te.error:find("segment 1", 1, true) ~= nil,
+            "the server's own words must reach the panel: " .. tostring(te.error))
+        T.assert_true(te.error:find("400", 1, true) ~= nil, tostring(te.error))
+    end)
+end
+
+function M.test_an_unroutable_url_fails_rather_than_hanging()
+    with_http(function()
+        -- No route registered: the harness resolves 404, as a dead endpoint does.
+        local te = route_with_waypoints(2, 0)
+        te:request_estimate()
+        local client = QueryClient:new()
+        te:poll_estimate(client)
+        Mock.http_advance(2)
+        T.assert_equal(te:poll_estimate(client), "failed")
+        T.assert_true(te.error:find("404", 1, true) ~= nil, tostring(te.error))
+    end)
+end
+
+function M.test_no_query_server_is_said_out_loud_rather_than_estimated_anyway()
+    local te = route_with_waypoints(2, 0)
+    te:request_estimate()
+    T.assert_equal(te:poll_estimate(nil), "failed")
+    T.assert_nil(te.estimate)
+    T.assert_true(te.error:find("no query server", 1, true) ~= nil, tostring(te.error))
+end
+
+function M.test_an_unmeasurable_route_never_reaches_the_wire()
+    with_http(function()
+        Mock.set_http_response("/travel/route", ROUTE_OK)
+        local te = route_with_waypoints(2, 0)
+        te.routes[1].waypoints[2].map = nil
+        te:request_estimate()
+        T.assert_equal(te:poll_estimate(QueryClient:new()), "failed")
+        T.assert_equal(#Mock.http.posts, 0,
+            "a request we know the server must refuse is not worth sending")
+        T.assert_true(te.error:find("no map id", 1, true) ~= nil, tostring(te.error))
+    end)
+end
+
+function M.test_an_unchanged_route_is_not_re_requested_every_tick()
+    with_http(function()
+        Mock.set_http_response("/travel/route", ROUTE_OK)
+        local te = route_with_waypoints(3, 0)
+        te:request_estimate()
+        local client = QueryClient:new()
+        te:poll_estimate(client)
+        te:poll_estimate(client)
+        te:poll_estimate(client)
+        T.assert_equal(#Mock.http.posts, 1, "one route, one request")
+    end)
+end
+
+-- ============================================================================
+-- 6. Structural guards
 -- ============================================================================
 
 function M.test_the_capture_never_reads_the_object_manager_from_the_state()
