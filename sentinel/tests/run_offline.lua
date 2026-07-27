@@ -578,6 +578,10 @@ local test_modules = {
     -- Separate from the suite above because that one drives the view-models directly and stayed
     -- green while `IdePanels.install` reached neither of them; these cases drive the installed shell.
     "tests/ui/test_travel_stats",
+    -- Fixture-shape verification: every Lua fixture MUST mirror Rust serde field names (PR12).
+    -- Registered after the panel suites (so panel fixtures are all loaded and known) and
+    -- before the offline-loadable guard (so fixture drift is caught before the surface is blanked).
+    "tests/ui/test_fixture_shapes",
     -- The guard on ui/* staying loadable with no Sylvannas API present. It blanks `_G.core` for
     -- the duration, so it is registered AFTER the suites that consume the real mocked surface.
     "tests/ui/test_offline_loadable",
