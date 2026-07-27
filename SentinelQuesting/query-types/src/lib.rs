@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A world coordinate as returned by the QueryServer (map + world xyz).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorldPos {
     pub map: u32,
     pub x: f32,
@@ -275,4 +275,106 @@ pub struct TravelEstimateRequest {
 pub struct TravelEstimateResponse {
     /// Estimated travel time in seconds.
     pub seconds: u64,
+}
+
+/// One leg of a `POST /travel/route` request.
+///
+/// Deliberately permissive on the wire and strict in the handler: a walk carries `from`/`to` and
+/// no `type`, a taxi carries `type: "taxi"` plus its node ids. An untagged enum would reject a
+/// malformed body with serde's "data did not match any variant", which names neither the segment
+/// nor the missing field — and the travel editor's whole job is telling the author what is wrong.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TravelRouteSegmentRequest {
+    /// `"taxi"`, or absent/`"walk"` for a ground leg.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<WorldPos>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<WorldPos>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_node: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_node: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TravelRouteRequest {
+    #[serde(default)]
+    pub segments: Vec<TravelRouteSegmentRequest>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TravelRouteSegment {
+    /// `"walk"` or `"taxi"`, echoed so the editor can label the row without re-deriving it.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Straight-line yards. Absent only if a future segment kind has no distance to report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance_m: Option<f32>,
+    pub estimated_s: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TravelRouteResponse {
+    #[serde(default)]
+    pub segments: Vec<TravelRouteSegment>,
+    /// Always the sum of the segment estimates, so the editor never has to add them up itself and
+    /// then disagree with the server about the total.
+    pub total_s: u64,
+}
+
+/// One creature entry aggregated over the spawns of it that matched a query.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SpawnGroup {
+    pub entry: u32,
+    pub name: String,
+    pub spawn_count: u32,
+    /// Midpoint of `creature_template.MinLevel`/`MaxLevel` — a single creature entry is a level
+    /// *range* in mangos, and the grind planner needs one number to sort on.
+    pub avg_level: u8,
+    pub classification: String,
+    /// What a character of the creature's own level earns for the kill. See the QueryServer's
+    /// `xp_reward` for the mangos formula it reproduces.
+    pub xp_reward: u32,
+    /// Yards from the query centre to the closest of this entry's matching spawns. Absent for
+    /// zone-wide aggregation, which has no centre.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nearest_distance: Option<f32>,
+    /// Matching spawn positions, nearest first. Bounded by the server; the grind generator turns
+    /// these into waypoints, so it needs coordinates and not just a count.
+    #[serde(default)]
+    pub positions: Vec<WorldPos>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NearbySpawnsResponse {
+    pub map: u32,
+    pub center: WorldPos,
+    /// Yards, as requested.
+    pub radius: f32,
+    #[serde(default)]
+    pub creatures: Vec<SpawnGroup>,
+}
+
+/// One gameobject entry aggregated over its spawns in a zone.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ZoneObject {
+    pub entry: u32,
+    pub name: String,
+    pub spawn_count: u32,
+    /// `gameobject_template.type` (chest, door, herb node, …), raw rather than named: the client
+    /// already owns the enum, and inventing names here would be a second authority for them.
+    #[serde(rename = "type")]
+    pub kind: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ZoneSpawns {
+    pub zone_id: u32,
+    pub zone_name: String,
+    #[serde(default)]
+    pub creatures: Vec<SpawnGroup>,
+    #[serde(default)]
+    pub objects: Vec<ZoneObject>,
 }

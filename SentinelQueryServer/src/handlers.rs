@@ -331,6 +331,95 @@ pub async fn get_spawns(
     }
 }
 
+/// `POST /travel/route` — a mixed walk/taxi route in, per-segment and total times out.
+///
+/// Extends `/travel/estimate`; that endpoint keeps its own shape and its own callers.
+pub async fn travel_route(
+    AxumJson(req): AxumJson<TravelRouteRequest>,
+) -> Result<AxumJson<TravelRouteResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Every failure here is the caller's malformed segment (missing positions, mismatched maps),
+    // never a server fault, so it is a 400 naming the segment index rather than a 500.
+    crate::db::plan_route(req)
+        .map(AxumJson)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))
+}
+
+/// `GET /spawns/nearby?map=&x=&y=&radius=[&limit=]` — creature spawns around a point, grouped by
+/// entry, nearest first.
+///
+/// The grind planner's primary source (F13). An empty result is a 200 with an empty array: "there
+/// is nothing to grind here" is an answer the planner must be able to render, not an error.
+pub async fn spawns_nearby(
+    Extension(db): Extension<Db>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<AxumJson<NearbySpawnsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let map: u32 = required_param(&params, "map")?;
+    let x: f32 = required_param(&params, "x")?;
+    let y: f32 = required_param(&params, "y")?;
+    let radius: f32 = required_param(&params, "radius")?;
+    if !(radius.is_finite() && radius > 0.0) || radius > MAX_NEARBY_RADIUS {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!("'radius' must be between 0 and {MAX_NEARBY_RADIUS} yards")
+            })),
+        ));
+    }
+    let limit = parse_limit(params.get("limit").map(String::as_str))
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
+
+    match db.spawns_nearby(map, x, y, radius, limit) {
+        Ok(creatures) => Ok(AxumJson(NearbySpawnsResponse {
+            map,
+            center: WorldPos { map, x, y, z: 0.0 },
+            radius,
+            creatures,
+        })),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })))),
+    }
+}
+
+/// `GET /zone/{id}/spawns` — everything spawned in a zone, grouped by entry.
+///
+/// Served from the committed spawn→zone index, because `creature` has no zone column and
+/// `creature_zone` is empty. See `crate::spawn_zones`.
+pub async fn zone_spawns(
+    Extension(db): Extension<Db>,
+    Path(zone): Path<u32>,
+) -> Result<AxumJson<ZoneSpawns>, (StatusCode, Json<serde_json::Value>)> {
+    match db.zone_spawns(zone) {
+        Ok(Some(spawns)) => Ok(AxumJson(spawns)),
+        // A real but empty zone is a 200 above; this 404 means the id is in no zone catalog.
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Zone not found: {}", zone) })),
+        )),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e })))),
+    }
+}
+
+/// Yards. A grind radius is a walking radius; beyond this the response stops being a plan and
+/// starts being the whole continent.
+const MAX_NEARBY_RADIUS: f32 = 2000.0;
+
+fn required_param<T: std::str::FromStr>(
+    params: &HashMap<String, String>,
+    name: &str,
+) -> Result<T, (StatusCode, Json<serde_json::Value>)> {
+    let raw = params.get(name).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Missing '{name}' parameter") })),
+        )
+    })?;
+    raw.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Invalid '{name}' parameter: {raw}") })),
+        )
+    })
+}
+
 /// `POST /resolve` — a Campaign (ADR 09a §1.3) in, `{ plan, diagnostics }` out.
 ///
 /// A transport over `sentinel-resolver`, with no lowering rule of its own (ADR 09 §5). Two things
@@ -607,6 +696,213 @@ mod tests {
             .expect_err("only npc and object are spawn tables");
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1 .0.get("error").is_some());
+    }
+
+    /// Deputy Willem (823) stands here in Elwynn Forest. Every nearby-spawn assertion below is
+    /// anchored on a real row rather than a synthetic fixture, for the same reason the ground-height
+    /// tests are: the radius query only means anything against the snapshot's real geometry.
+    const WILLEM: (u32, f32, f32) = (0, -8933.5, -136.5);
+
+    fn nearby_params(radius: &str) -> Query<HashMap<String, String>> {
+        params(&[
+            ("map", &WILLEM.0.to_string()),
+            ("x", &WILLEM.1.to_string()),
+            ("y", &WILLEM.2.to_string()),
+            ("radius", radius),
+        ])
+    }
+
+    #[tokio::test]
+    async fn spawns_nearby_groups_real_spawns_by_entry_nearest_first() {
+        let response = spawns_nearby(Extension(open()), nearby_params("100"))
+            .await
+            .expect("Northshire is not empty")
+            .0;
+        assert_eq!(response.map, 0);
+        assert!(!response.creatures.is_empty(), "100 yards of Northshire has spawns");
+
+        let willem = response
+            .creatures
+            .iter()
+            .find(|c| c.entry == 823)
+            .expect("Deputy Willem stands at the query centre");
+        assert_eq!(willem.name, "Deputy Willem");
+        assert!(willem.spawn_count >= 1);
+        assert!(
+            willem.nearest_distance.unwrap() < 1.0,
+            "the centre IS his position, distance was {:?}",
+            willem.nearest_distance
+        );
+        assert!(!willem.positions.is_empty(), "the grind planner needs coordinates");
+
+        // Nearest first is the answer, not presentation: the planner reads top-down.
+        let distances: Vec<f32> = response
+            .creatures
+            .iter()
+            .map(|c| c.nearest_distance.unwrap_or(f32::MAX))
+            .collect();
+        assert!(
+            distances.windows(2).all(|w| w[0] <= w[1]),
+            "groups are not ordered by distance: {distances:?}"
+        );
+        for creature in &response.creatures {
+            assert!(
+                creature.nearest_distance.unwrap() <= 100.0,
+                "{} is outside the radius — the bounding box was not narrowed to the circle",
+                creature.name
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn spawns_nearby_refuses_a_missing_or_unusable_radius() {
+        let err = spawns_nearby(Extension(open()), params(&[("x", "0"), ("y", "0")]))
+            .await
+            .expect_err("a query with no map must not sweep every map");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        for radius in ["0", "-5", "1000000", "wide"] {
+            let err = spawns_nearby(Extension(open()), nearby_params(radius))
+                .await
+                .expect_err("radius {radius} must be refused");
+            assert_eq!(err.0, StatusCode::BAD_REQUEST, "radius {radius}");
+            assert!(err.1 .0.get("error").is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn spawns_nearby_of_empty_space_is_an_empty_answer_not_an_error() {
+        // "Nothing to grind here" is something the planner must be able to render.
+        let empty = spawns_nearby(
+            Extension(open()),
+            params(&[("map", "0"), ("x", "16000"), ("y", "16000"), ("radius", "50")]),
+        )
+        .await
+        .expect("empty space is a 200")
+        .0;
+        assert!(empty.creatures.is_empty());
+    }
+
+    #[tokio::test]
+    async fn zone_spawns_aggregates_a_real_zone() {
+        let zone = zone_spawns(Extension(open()), Path(12))
+            .await
+            .expect("Elwynn Forest is a zone")
+            .0;
+        assert_eq!(zone.zone_id, 12);
+        assert_eq!(zone.zone_name, "Elwynn Forest");
+
+        let hogger = zone
+            .creatures
+            .iter()
+            .find(|c| c.entry == 448)
+            .expect("Hogger is spawned in Elwynn Forest");
+        assert!(hogger.spawn_count >= 1);
+        assert_eq!(hogger.classification, "elite");
+        // Elite XP is 2.5x base in mangos; a plain multiplier bug shows up as a same-level normal.
+        assert!(hogger.xp_reward > 0, "an elite must be worth XP");
+        assert!(
+            !zone.objects.is_empty(),
+            "objects are grouped separately and Elwynn has them"
+        );
+        assert!(
+            zone.creatures.windows(2).all(|w| w[0].spawn_count >= w[1].spawn_count),
+            "creatures are ordered by how many of them there are"
+        );
+    }
+
+    #[tokio::test]
+    async fn zone_spawns_of_an_unknown_zone_is_a_not_found_naming_the_id() {
+        let err = zone_spawns(Extension(open()), Path(99_999_999))
+            .await
+            .expect_err("there is no zone 99999999");
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+        let message = err.1 .0.get("error").unwrap().to_string();
+        assert!(
+            message.contains("99999999"),
+            "the 404 must name the id it refused: {message}"
+        );
+    }
+
+    fn pos(x: f32, y: f32) -> WorldPos {
+        WorldPos { map: 0, x, y, z: 0.0 }
+    }
+
+    #[tokio::test]
+    async fn travel_route_reports_each_segment_and_their_sum() {
+        let route = travel_route(AxumJson(TravelRouteRequest {
+            segments: vec![
+                TravelRouteSegmentRequest {
+                    from: Some(pos(0.0, 0.0)),
+                    to: Some(pos(70.0, 0.0)),
+                    ..Default::default()
+                },
+                TravelRouteSegmentRequest {
+                    kind: Some("taxi".to_string()),
+                    from_node: Some(2),
+                    to_node: Some(6),
+                    from: Some(pos(0.0, 0.0)),
+                    to: Some(pos(320.0, 0.0)),
+                    ..Default::default()
+                },
+            ],
+        }))
+        .await
+        .expect("a well-formed mixed route is a 200")
+        .0;
+
+        assert_eq!(route.segments.len(), 2);
+        assert_eq!(route.segments[0].kind, "walk");
+        assert_eq!(route.segments[0].estimated_s, 10, "70 yards at 7 yd/s");
+        assert_eq!(route.segments[1].kind, "taxi");
+        assert_eq!(route.segments[1].estimated_s, 10, "320 yards at 32 yd/s");
+        assert_eq!(
+            route.total_s,
+            route.segments.iter().map(|s| s.estimated_s).sum::<u64>(),
+            "the total must never disagree with the segments it is made of"
+        );
+    }
+
+    #[tokio::test]
+    async fn travel_route_refuses_segments_it_cannot_honestly_time() {
+        // A taxi hop with node ids and no positions: this server has no taxi tables, and the
+        // runtime owns taxi_nodes.lua, so the caller supplies the coordinates or gets a refusal —
+        // never a made-up per-hop constant folded silently into the editor's total.
+        let err = travel_route(AxumJson(TravelRouteRequest {
+            segments: vec![TravelRouteSegmentRequest {
+                kind: Some("taxi".to_string()),
+                from_node: Some(2),
+                to_node: Some(6),
+                ..Default::default()
+            }],
+        }))
+        .await
+        .expect_err("a taxi segment without positions cannot be timed");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1 .0.get("error").unwrap().to_string().contains("segment 0"));
+
+        // Two maps have unrelated coordinate systems; a straight line between them is not a
+        // distance, so it is refused rather than measured.
+        let err = travel_route(AxumJson(TravelRouteRequest {
+            segments: vec![TravelRouteSegmentRequest {
+                from: Some(pos(0.0, 0.0)),
+                to: Some(WorldPos { map: 1, x: 0.0, y: 0.0, z: 0.0 }),
+                ..Default::default()
+            }],
+        }))
+        .await
+        .expect_err("a cross-map walk is not a straight line");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn travel_route_of_nothing_is_zero_rather_than_an_error() {
+        let route = travel_route(AxumJson(TravelRouteRequest::default()))
+            .await
+            .expect("an empty route is a 200")
+            .0;
+        assert!(route.segments.is_empty());
+        assert_eq!(route.total_s, 0);
     }
 
     #[tokio::test]

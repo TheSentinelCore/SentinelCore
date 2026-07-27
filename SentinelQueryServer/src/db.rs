@@ -4,7 +4,8 @@ use sentinel_query_types::*;
 use std::sync::{Arc, Mutex};
 
 use crate::search::{escape_like, SearchHit, SearchKind, SpawnPoint, SpawnType, MAX_SEARCH_LIMIT};
-use crate::zone_names::zone_name;
+use crate::spawn_zones;
+use crate::zone_names::{zone_exists, zone_name};
 
 #[derive(Clone)]
 pub struct Db(pub Arc<Mutex<Connection>>);
@@ -1022,6 +1023,171 @@ let exists = self.query_map::<bool, _>(
         Ok(TravelEstimateResponse { seconds })
     }
 
+    /// Creature spawns within `radius` yards of a point, grouped by entry, nearest group first.
+    ///
+    /// The primary data source for the grind planner (F13). It is a **position** query and not a
+    /// zone query on purpose: `creature` has map and position columns and no zone, so every one of
+    /// the snapshot's 11,922 spawned entries is reachable this way, and the planner's real question
+    /// — "what can I pull from where I am standing" — is a radius, not an administrative boundary.
+    ///
+    /// Distance is horizontal. The request carries no `z` (a caller standing on a bridge would
+    /// otherwise exclude everything under it), and a grind radius is a walking radius.
+    pub fn spawns_nearby(
+        &self,
+        map: u32,
+        x: f32,
+        y: f32,
+        radius: f32,
+        limit: usize,
+    ) -> Result<Vec<SpawnGroup>, String> {
+        // The bounding box is what SQLite can filter on; the exact circle is applied below. Doing
+        // it the other way round means computing a square root for every one of 109k rows.
+        let rows = self.query_map::<(u32, String, i64, i64, i64, i64, f64, f32, f32, f32), _>(
+            "SELECT c.id, t.Name, t.MinLevel, t.MaxLevel, t.Rank, t.Expansion, \
+                    t.ExperienceMultiplier, c.position_x, c.position_y, c.position_z \
+             FROM creature c JOIN creature_template t ON t.Entry = c.id \
+             WHERE c.map = ?1 AND c.position_x BETWEEN ?2 AND ?3 \
+               AND c.position_y BETWEEN ?4 AND ?5",
+            rusqlite::params![
+                map,
+                (x - radius) as f64,
+                (x + radius) as f64,
+                (y - radius) as f64,
+                (y + radius) as f64
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u32,
+                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get::<_, f64>(7)? as f32,
+                    row.get::<_, f64>(8)? as f32,
+                    row.get::<_, f64>(9)? as f32,
+                ))
+            },
+        )?;
+
+        let mut groups: Vec<SpawnGroup> = Vec::new();
+        let mut index: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        for (entry, name, min, max, rank, expansion, xp_mult, px, py, pz) in rows {
+            let distance = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
+            if distance > radius {
+                continue;
+            }
+            let slot = *index.entry(entry).or_insert_with(|| {
+                groups.push(SpawnGroup {
+                    entry,
+                    name,
+                    spawn_count: 0,
+                    avg_level: average_level(min, max),
+                    classification: classification_from_rank(rank).to_string(),
+                    xp_reward: xp_reward(average_level(min, max), rank, expansion, xp_mult),
+                    nearest_distance: None,
+                    positions: Vec::new(),
+                });
+                groups.len() - 1
+            });
+            let group = &mut groups[slot];
+            group.spawn_count += 1;
+            if group.nearest_distance.map_or(true, |d| distance < d) {
+                group.nearest_distance = Some(distance);
+            }
+            if group.positions.len() < MAX_SAMPLE_POSITIONS {
+                group.positions.push(WorldPos {
+                    map,
+                    x: px,
+                    y: py,
+                    z: pz,
+                });
+            }
+        }
+
+        // Nearest first: the grind planner walks the list top-down looking for the closest viable
+        // pull, so the ordering is the answer and not presentation.
+        groups.sort_by(|a, b| {
+            a.nearest_distance
+                .unwrap_or(f32::MAX)
+                .partial_cmp(&b.nearest_distance.unwrap_or(f32::MAX))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.entry.cmp(&b.entry))
+        });
+        groups.truncate(limit);
+        Ok(groups)
+    }
+
+    /// Everything spawned in a zone, grouped by entry, from the committed spawn→zone index.
+    ///
+    /// `Ok(None)` means the zone id is not in the zone catalog at all — the caller turns that into
+    /// a 404. A real zone with nothing in it is `Ok(Some(..))` with empty arrays, because "nothing
+    /// spawns in Ironforge's bank" and "there is no zone 99999" are different answers.
+    pub fn zone_spawns(&self, zone: u32) -> Result<Option<ZoneSpawns>, String> {
+        if !zone_exists(zone) {
+            return Ok(None);
+        }
+        let index = spawn_zones::index();
+        let creature_counts = index.creatures.get(&zone);
+        let object_counts = index.objects.get(&zone);
+
+        let mut creatures = Vec::new();
+        if let Some(counts) = creature_counts {
+            // The entry ids come from a committed catalog of integers, never from caller text, so
+            // an inlined IN list is safe here and saves 250 round trips through the statement.
+            let sql = format!(
+                "SELECT Entry, Name, MinLevel, MaxLevel, Rank, Expansion, ExperienceMultiplier \
+                 FROM creature_template WHERE Entry IN ({})",
+                id_list(counts.keys().copied())
+            );
+            creatures = self.query_map::<SpawnGroup, _>(&sql, [], |row| {
+                let entry = row.get::<_, i64>(0)? as u32;
+                let min: i64 = row.get(2)?;
+                let max: i64 = row.get(3)?;
+                let rank: i64 = row.get(4)?;
+                let expansion: i64 = row.get(5)?;
+                let level = average_level(min, max);
+                Ok(SpawnGroup {
+                    entry,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    spawn_count: counts.get(&entry).copied().unwrap_or(0),
+                    avg_level: level,
+                    classification: classification_from_rank(rank).to_string(),
+                    xp_reward: xp_reward(level, rank, expansion, row.get(6)?),
+                    nearest_distance: None,
+                    positions: Vec::new(),
+                })
+            })?;
+            creatures.sort_by(|a, b| b.spawn_count.cmp(&a.spawn_count).then(a.entry.cmp(&b.entry)));
+        }
+
+        let mut objects = Vec::new();
+        if let Some(counts) = object_counts {
+            let sql = format!(
+                "SELECT entry, name, type FROM gameobject_template WHERE entry IN ({})",
+                id_list(counts.keys().copied())
+            );
+            objects = self.query_map::<ZoneObject, _>(&sql, [], |row| {
+                let entry = row.get::<_, i64>(0)? as u32;
+                Ok(ZoneObject {
+                    entry,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    spawn_count: counts.get(&entry).copied().unwrap_or(0),
+                    kind: row.get::<_, i64>(2)? as u32,
+                })
+            })?;
+            objects.sort_by(|a, b| b.spawn_count.cmp(&a.spawn_count).then(a.entry.cmp(&b.entry)));
+        }
+
+        Ok(Some(ZoneSpawns {
+            zone_id: zone,
+            zone_name: zone_name(zone as i64).to_string(),
+            creatures,
+            objects,
+        }))
+    }
+
     /// Federated fuzzy search across npc / quest / item / object / area, ranked exact > prefix >
     /// substring. Backs the IDE's Smart Search, where one term is expected to surface every kind
     /// of entity at once.
@@ -1308,6 +1474,107 @@ fn npc_context(subname: Option<&str>, min_level: i64, max_level: i64, map: Optio
         None => parts.push("not spawned".to_string()),
     }
     parts.join(" - ")
+}
+
+/// How many sample positions a spawn group carries. The grind generator turns these into
+/// waypoints; a route wants a handful of anchors, not all 264 Elwynn deer.
+const MAX_SAMPLE_POSITIONS: usize = 8;
+
+/// Yards per second on foot. The same 7.0 `travel_estimate` has always assumed — mangos
+/// `baseMoveSpeed[MOVE_RUN]` (`src/game/Entities/Unit.cpp`), i.e. unmounted running.
+const RUN_SPEED: f32 = 7.0;
+
+/// Yards per second on a taxi. mangos `TAXI_FLIGHT_SPEED`
+/// (`src/game/MotionGenerators/PathMovementGenerator.cpp`), the velocity the flight spline is
+/// initialised with.
+const TAXI_SPEED: f32 = 32.0;
+
+/// A creature entry is a level *range*; the planner needs one number.
+fn average_level(min: i64, max: i64) -> u8 {
+    let (min, max) = (min.max(0), max.max(0));
+    let level = if max >= min { (min + max) / 2 } else { min };
+    level.clamp(0, u8::MAX as i64) as u8
+}
+
+/// XP a character of the creature's own level earns for killing it.
+///
+/// mangos `MaNGOS::XP::BaseGain` + `Gain` (`src/game/Tools/Formulas.h`), evaluated at
+/// `unit_level == mob_level` so the answer is a property of the creature rather than of whoever is
+/// asking: `level * 5 + 45` for vanilla content, `+ 235` for Burning Crusade content, times 2.5
+/// for an elite on a non-raid map, times `creature_template.ExperienceMultiplier`.
+///
+/// The content tier comes from `creature_template.Expansion`, not from the level: a level-60 mob
+/// in an Outland instance and a level-60 mob in Silithus pay very differently, and guessing from
+/// the level gets every Hellfire mob below 61 wrong.
+///
+/// "Elite" follows mangos `Creature::IsElite`: any rank except normal (0) and rare (4) — so rare
+/// *elite* (2) counts, which is the tier a four-value classification enum loses.
+fn xp_reward(level: u8, rank: i64, expansion: i64, xp_multiplier: f64) -> u32 {
+    let base = f64::from(level) * 5.0 + if expansion >= 1 { 235.0 } else { 45.0 };
+    let elite = if rank != 0 && rank != 4 { 2.5 } else { 1.0 };
+    (base * elite * xp_multiplier).round().max(0.0) as u32
+}
+
+/// A comma-separated SQL integer list. Only ever called with ids from a committed catalog.
+fn id_list(ids: impl Iterator<Item = u32>) -> String {
+    let mut ids: Vec<u32> = ids.collect();
+    ids.sort_unstable();
+    ids.iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// `POST /travel/route` — per-segment and total time for a mixed walk/taxi route.
+///
+/// Touches no database: it is arithmetic over the positions the caller already holds, and it lives
+/// here beside [`Db::travel_estimate`], which it extends rather than replaces. `/travel/estimate`
+/// still answers the single-hop question in its own shape; nothing calling it has to change.
+///
+/// A taxi segment must carry `from`/`to` positions as well as its node ids. This server has no
+/// taxi tables at all (`get_flight` returns an empty destination list for the same reason), and
+/// `TaxiPathNode.dbc` — the flight geometry — is deliberately not in any committed catalog. The
+/// runtime *does* own node positions, in `sentinel/kernel/catalogs/taxi_nodes.lua`, so the caller
+/// that knows the node ids also knows where they are. Refusing the segment is the honest answer;
+/// inventing a per-hop constant would put a made-up number in the editor's total.
+pub fn plan_route(req: TravelRouteRequest) -> Result<TravelRouteResponse, String> {
+    let mut segments = Vec::with_capacity(req.segments.len());
+    for (i, seg) in req.segments.iter().enumerate() {
+        let taxi = seg.kind.as_deref() == Some("taxi");
+        match seg.kind.as_deref() {
+            None | Some("walk") | Some("taxi") => {}
+            Some(other) => return Err(format!("segment {i}: unknown type {other:?}")),
+        }
+        let (from, to) = match (seg.from, seg.to) {
+            (Some(from), Some(to)) => (from, to),
+            _ if taxi => {
+                return Err(format!(
+                    "segment {i}: a taxi segment needs from/to positions for its nodes \
+                     ({:?} -> {:?}); this server has no taxi tables",
+                    seg.from_node, seg.to_node
+                ))
+            }
+            _ => return Err(format!("segment {i}: a walk segment needs both from and to")),
+        };
+        // Cross-map legs have no meaningful straight line — the two coordinate systems are
+        // unrelated — so they are refused rather than measured as if they shared one.
+        if from.map != to.map {
+            return Err(format!(
+                "segment {i}: from and to are on different maps ({} and {})",
+                from.map, to.map
+            ));
+        }
+        let distance = ((to.x - from.x).powi(2) + (to.y - from.y).powi(2) + (to.z - from.z).powi(2))
+            .sqrt();
+        let speed = if taxi { TAXI_SPEED } else { RUN_SPEED };
+        segments.push(TravelRouteSegment {
+            kind: if taxi { "taxi" } else { "walk" }.to_string(),
+            distance_m: Some(distance),
+            estimated_s: (distance / speed).ceil() as u64,
+        });
+    }
+    let total_s = segments.iter().map(|s| s.estimated_s).sum();
+    Ok(TravelRouteResponse { segments, total_s })
 }
 
 /// `creature_template.Rank` → the classification string the NPC inspector renders.
