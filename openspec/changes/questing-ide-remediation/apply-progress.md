@@ -241,6 +241,18 @@ through `editor_client:add_nodes`. Both previously returned **ok** next to "(not
 17. **PR6: a `collect` objective lowers to `questing.Loot`, not `questing.Kill`.** The spec's scenario names `Loot(789,5)` for an objective whose item drops from creature 567. The node carries `source_creatures` so the compiler can lower it to a Kill-with-loot without a second lookup. These are authoring nodes a human reviews before compiling (F3-R4/R6), not runtime actions — but see Issues: `questing.Loot` is missing from the Graph palette.
 18. **PR6: the Explorer binding takes a `campaign` resolver.** Task 3.6 says "POST via editor client" and names no campaign. The campaign is owned by the Graph panel and changes underneath the Explorer, so it is resolved per call rather than captured. With none open the write is refused by name — there is genuinely nowhere to put the nodes until PR7 lands the lifecycle.
 
+19. **PR7: the editor client has TWO verb families, not one.** The design says "thin wrapper over QueryClient(:3031)". The SDK has `core.http_get` and `core.http_post` and both are asynchronous, so a mutation genuinely cannot answer "the server accepted this" in the frame it is issued. Reads and validate/compile are POLLED (`data | (nil,true) | (nil,nil)`, AsyncSlot-compatible); `add_nodes`/`update_node`/`save_graph` are DISPATCHED and answer only that the request left, with the server's refusal queued for `take_error()` and drained on a later tick. Collapsing the two would mean inventing a verdict.
+20. **PR7: `create_campaign` is polled, not dispatched.** It began as a dispatch, like the other writes. Opening the campaign the moment the request left asks the editor for one it has not finished making, and `QueryClient` caches the resulting 404 — so the create waits for its 201 instead of racing it.
+21. **PR7: `POST /editor/campaigns` takes the name in the BODY.** The spec described `POST /editor/campaigns/{name}` (create-or-save). The mounted route is `POST /editor/campaigns` with `{name}`, answering `CampaignSummary`. The client speaks the route that exists.
+22. **PR7: a POST alias was added for node update.** Task 3.11 names `PUT /editor/campaigns/{name}/nodes/{id}`. The SDK has no PUT and no DELETE (`docs/SylvannasAPI/dev/api/core.md`: only `http_get` and `http_post`), so that route was unreachable from the one client it exists for. `campaign_handlers.rs` now answers `put(...).post(...)` on it; PUT stays for every other caller. One line of routing, not a contract change.
+23. **PR7: campaign validation was IMPLEMENTED in Rust, not just rendered.** `handle_validate_campaign` returned an empty Vec unconditionally. Wiring the Lua side to it would have produced a Validate button that reports every campaign clean forever — the same "looks like it works" defect this change is about. `validate_campaign` now implements MISSING_ACCEPT with 5 Rust tests. V2–V11 still need the campaign-aware validator and are not reported as clean by anything here.
+24. **PR7: `add_nodes` reads before it writes.** `Campaign::new` gives a fresh campaign ZERO graphs and `POST .../nodes` answers "Graph not found" against one. The client resolves the graph id from the cached campaign, and when there is none it mints the graph WITH the nodes in a single `POST .../graphs` — a create followed by N adds would need the id the create has not returned.
+25. **PR7: node ids are minted client-side and the authoring id moves to `context`.** `platform::Node.id` is a `Uuid`, so the Explorer's `q1234_accept` is a 400. The authoring id rides in `context`, the field the platform model keeps for provenance it must not interpret, so a duplicate add stays recognisable after the editor assigns real ids.
+26. **PR7: `edit_intent` coerces the typed value back to the field's existing type.** `IntentValue` is deserialized from the JSON type, so a `count` sent as `"12"` arrives as `Text` rather than `Int` and the resolver reads a field of the wrong shape with nothing raising anywhere. A value that will not coerce is refused before the wire.
+27. **PR7: escort sampling moved off the render path.** The binding sampled `ctx.player_position` into `state.escort_timeline` once per FRAME. `EscortRecorder` already sampled correctly on the tick at one second and its `generate_nodes` had no caller. The recorder is now the only sampler, driven from the shell's tick ctx, and its nodes are written through the editor rather than inserted locally.
+28. **PR7: `apply_campaign`/`set_campaigns` do not re-arm `_dirty`.** Every other GraphState mutator does, but these two are called BY the tick with the answer in hand; setting the tick's own gate from inside it makes the panel re-poll its own cached data every frame forever.
+29. **PR7: the tick gained an explicit `_reload` flag.** Without it an armed validate owned every tick and the reload after the NEXT write never ran, so the panel kept showing the pre-edit graph while re-validating it. Found by the escort round-trip test, which is the only test that exercises write → reload → edit → reload in sequence.
+
 ## Issues Found
 
 - **B3–B6 per-commit greenness is vacuous.** The suite holds flat at 1574 across B3–B6 and jumps to 1864 only at B7, because `run_offline.lua` — which registers the new suites — is itself part of B7. Those four commits prove loadability, not coverage. Real, and consistent with the design's orphan-module plan, but it should not be read as four independently verified slices.
@@ -258,10 +270,30 @@ through `editor_client:add_nodes`. Both previously returned **ok** next to "(not
 - **PR6: the `Loot` intent shape is a compiler contract, not a runtime one.** `execute_loot` reads `{ object_entry, item_id }` and treats `object_entry` as a gameobject. A `collect` node carries the ITEM in both fields plus `source_creatures`, which is correct for authoring and wrong if compiled verbatim. The lowering (collect + source_creatures → Kill with `loot = true`) does not exist yet. Flagged loudly because a node that looks executable and is not is exactly this change's recurring defect.
 - **PR6: two commits are over the 400-line budget.** 428 and 432, against 400. Each is one new module plus the suite that holds it; a module with no tests and tests with no module are both worse review units than an 8% overage. The split was made as the work landed, per PR3's lesson, not retrofitted.
 
+- **PR7: the escort round-trip was BROKEN, not merely unverified.** Task 3.13 is a verification task and the verification failed on its first run. Three pieces, each individually green: frame-rate sampling in the render callback, a correctly-sampling `EscortRecorder` whose `generate_nodes` had no caller, and a `generate_escort_nodes` that inserted into the local node list so the recording never left the panel. Fixed and pinned by `tests/ui/test_escort_round_trip.lua` (6 cases), which walks a path through the shell's tick ctx, stops, and then EDITS one of the nodes that came back — the only way "editable like any other sequence" can be asserted rather than assumed.
+- **PR7: `questing.Loot` is now drawable but a `collect`-lowered Loot node is still not runnable.** Added to `NODE_TYPES` with the fields `execute_loot` actually reads (`object_entry` as a GAMEOBJECT, `item_id` for bag verification). A hand-authored Loot node is fully executable and editable. A Loot node generated from a `collect` objective carries the ITEM id in `object_entry` plus a `source_creatures` list the runtime ignores, and is NOT executable until the compiler's collect → `Kill(loot = true)` lowering exists. It was added rather than left out because an undrawable node is one nobody can find or fix; the breakage is now visible instead of invisible. **Compiler follow-up still owed.**
+- **PR7: the first draft of `EditorClient.uuid4` called `math.randomseed`.** `modules/questing/recorder.lua` already writes down why that is forbidden in this tree — it moves the draws every other module and every offline suite gets. Rewritten to a private LCG mirroring the recorder's. Caught by reading the recorder, not by a test.
+- **PR7: `core/JSON` exports plain FUNCTIONS, not methods.** `encode(value, pretty)` called colon-style encodes the module table with the real payload read as `pretty`, and still returns a string — a well-formed request carrying the wrong document, with nothing raising. Cost one debugging cycle; `query_client.lua` already used the dot form.
+- **PR7: harness routes match by SUBSTRING.** `set_http_response("/editor/campaigns/stw", ...)` also answers `/editor/campaigns/stw/nodes`. A test that wants the node write to fail has to register the longer path explicitly.
+- **PR7: one observed flake, not reproduced.** During a mutation run, `tests/modules/questing/test_recorder.test_generated_ids_are_uuid_shaped_and_unique` failed with "node ids are never reused". Not reproducible: 200 isolated runs and 5 full-suite runs after are clean, and the recorder mints from its own LCG which nothing in PR7 touches. Recorded rather than chased — it is outside this slice, and it suggests a seed-dependent short cycle in that LCG worth a look.
+- **PR7: two Rust routes remain unreachable from Lua.** `DELETE .../nodes/{id}` and `DELETE .../campaigns/{name}` need a verb the SDK does not have. `remove_node` is therefore still local-only. Out of scope here; it needs the same POST-alias treatment `update_node` got, or an explicit decision that deletion is not an in-game verb.
+
 ## Remaining
 
-Phase 2 (PR4, PR5 — concurrent Rust track), Phase 3 (PR7–PR10), Phase 4 (PR11, PR12), plus the
-in-game confirmation owed by task 3.2. The Lua/UI track stopped at PR6 by instruction.
+Phase 2 (PR4, PR5 — concurrent Rust track), Phase 3 (PR8, PR9, PR10), Phase 4 (PR11, PR12), plus
+the in-game confirmation owed by task 3.2 and the compiler's collect → Kill(loot) lowering owed by
+PR7's `questing.Loot` finding. The Lua/UI track stopped at PR7 by instruction.
+
+**Std after PR7: 2017 passed, 0 failed** (21 opaque suites, 21 ok), against a 1958/0 baseline —
++59 cases across `test_editor_client.lua` (16, new), `test_escort_round_trip.lua` (6, new),
+`test_graph_panel.lua` (+10), `test_ide_panels.lua` (+24), `test_main_diagnostics.lua` (+1 opaque
+assertion block). Rust: `cargo test -p sentinel-editor` green, 57 unit tests including 5 new
+campaign-validation cases.
+
+**Guards proven to bite** (each mutation reverted after the run):
+1. `_write_node` inserting a node after a REFUSED write → `test_a_refused_node_write_leaves_an_error_and_no_node` red ("expected 0, got 1").
+2. `_commit_escort` drawing the path after a REFUSED write → `test_a_refused_write_loses_no_nodes_to_a_phantom_success` red ("expected 0, got 7").
+3. Dropping `editor_client` from `main.lua`'s install deps → `test_main_installs_the_ide_panels_with_a_live_query_client` red.
 
 ## Chain State
 
@@ -273,3 +305,5 @@ in-game confirmation owed by task 3.2. The Lua/UI track stopped at PR6 by instru
 - Concurrent Rust track in an isolated worktree: `qir/pr4-rust-types`, `qir/pr5-zone-catalog`. No file overlap with the Lua track.
 - Nothing pushed. No PR opened.
 - PR6 branches from `qir/pr3-selection-bus`.
+- `qir/pr7-editor-client-graph` → `10cce44`, `410d311`, `250661e`, `95d4f61`, `dae63f9`, `08ad266`, `3cc39e7`, `25300f6`, `aedde78`, `117bda1` (+ this docs commit), branched off `qir/pr6-text-input-explorer`
+
