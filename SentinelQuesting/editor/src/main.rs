@@ -12,5 +12,5 @@ use sentinel_editor::server;
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    server::start_server(None).await;
+    server::start_server(None, None).await;
 }

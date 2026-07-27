@@ -18,6 +18,7 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
+use crate::campaign_handlers::CampaignSession;
 use crate::history::{self, CommandHistory};
 use crate::{CompileResult, EditorApi, EditorError, ProjectSummary};
 
@@ -36,13 +37,17 @@ pub struct ProjectSession {
 pub struct AppState {
     pub projects_dir: PathBuf,
     pub project_store: Arc<RwLock<HashMap<String, ProjectSession>>>,
+    pub campaigns_dir: PathBuf,
+    pub campaign_store: Arc<RwLock<HashMap<String, CampaignSession>>>,
 }
 
 impl AppState {
-    pub fn new(projects_dir: PathBuf) -> Self {
+    pub fn new(projects_dir: PathBuf, campaigns_dir: PathBuf) -> Self {
         Self {
             projects_dir,
             project_store: Arc::new(RwLock::new(HashMap::new())),
+            campaigns_dir,
+            campaign_store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -757,7 +762,7 @@ pub fn build_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let router = Router::new()
         .route("/health", get(health))
         // Project CRUD
         .route(
@@ -782,7 +787,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/editor/projects/{name}/history", get(handle_get_history))
         // Directory-format
         .route("/editor/projects/{name}/save-dir", put(handle_save_project_dir))
-        .route("/editor/projects/{name}/load-dir", get(handle_load_project_dir))
+        .route("/editor/projects/{name}/load-dir", get(handle_load_project_dir));
+
+    // Mount campaign routes.
+    let router = crate::campaign_handlers::mount(router);
+
+    router
         .layer(cors)
         .with_state(state)
 }
@@ -793,19 +803,29 @@ pub fn build_router(state: AppState) -> Router {
 
 /// Start the editor HTTP API server. Binds to `0.0.0.0:{port}` where the port
 /// is read from `SENTINEL_EDITOR_PORT` env var (default 3031).
-pub async fn start_server(projects_dir: Option<PathBuf>) {
+///
+/// `projects_dir` controls where questing projects are stored; `campaigns_dir`
+/// controls where campaign files are stored. Both default when `None`.
+pub async fn start_server(
+    projects_dir: Option<PathBuf>,
+    campaigns_dir: Option<PathBuf>,
+) {
     let port: u16 = std::env::var("SENTINEL_EDITOR_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3031);
 
-    let dir = projects_dir.unwrap_or_else(crate::default_projects_dir);
-    let state = AppState::new(dir.clone());
+    let proj_dir = projects_dir.unwrap_or_else(crate::default_projects_dir);
+    let camp_dir = campaigns_dir.unwrap_or_else(crate::default_campaigns_dir);
+    let state = AppState::new(proj_dir.clone(), camp_dir.clone());
 
     let app = build_router(state);
 
     let addr = format!("0.0.0.0:{}", port);
-    info!("Starting Sentinel Editor API server on {} (projects: {:?})", addr, dir);
+    info!(
+        "Starting Sentinel Editor API server on {} (projects: {:?}, campaigns: {:?})",
+        addr, proj_dir, camp_dir
+    );
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

@@ -6,9 +6,17 @@
 //!
 //! The library API handles all filesystem operations:
 //! - Project CRUD (list, create, load, save, rename, delete, duplicate)
+//! - Campaign CRUD (list, create, load, save, delete) — see `campaign_store`
+//! - Undo/redo command history for projects (`history`) and campaigns (`campaign_history`)
 //! - Compilation (load project → compiler → return RuntimeProfile JSON)
 //! - Validation (load project → validator → return diagnostics)
+//!
+//! Campaign types live in `sentinel_models::platform` and are managed through
+//! `CampaignApi` or the HTTP handlers in `campaign_handlers`.
 
+pub mod campaign_handlers;
+pub mod campaign_history;
+pub mod campaign_store;
 pub mod history;
 pub mod server;
 
@@ -79,6 +87,20 @@ pub fn default_projects_dir() -> PathBuf {
         return PathBuf::from(dir);
     }
     PathBuf::from(".questing/projects")
+}
+
+/// Default directory name for campaign files, configurable via env var
+/// `SENTINEL_CAMPAIGNS_DIR`. Falls back to `<projects_dir>/../campaigns`.
+pub fn default_campaigns_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("SENTINEL_CAMPAIGNS_DIR") {
+        return PathBuf::from(dir);
+    }
+    let projects = default_projects_dir();
+    if let Some(parent) = projects.parent() {
+        parent.join("campaigns")
+    } else {
+        PathBuf::from(".questing/campaigns")
+    }
 }
 
 // ---------------------------------------------------------------------------
