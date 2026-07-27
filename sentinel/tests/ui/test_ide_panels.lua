@@ -160,6 +160,8 @@ function M.test_installing_registers_the_runner_without_the_shell_naming_it()
     local bindings, reason = IdePanels.install(shell, { questing = function() return nil end })
     T.assert_not_nil(bindings, "install must succeed: " .. tostring(reason))
     T.assert_not_nil(shell:state():panel("runner"), "and leave the runner registered on the shell")
+    T.assert_not_nil(shell:state():panel("explorer"), "and the explorer must be registered too")
+    T.assert_not_nil(bindings.explorer, "the explorer binding must be returned")
 end
 
 -- ---------------------------------------------------------------------------

@@ -24,6 +24,21 @@
 --     silently dropped is a control that looks live and is not — the exact defect this unit closes.
 
 local Runner = require("ui/panels/runner")
+local Explorer = require("ui/panels/explorer")
+local ExplorerState = require("ui/panels/explorer_state")
+local Properties = require("ui/panels/properties")
+local PropertiesState = require("ui/panels/properties_state")
+local Graph = require("ui/panels/graph")
+local GraphState = require("ui/panels/graph_state")
+local EscortRecorder = require("ui/panels/escort_recorder")
+local Database = require("ui/panels/database")
+local DatabaseState = require("ui/panels/database_state")
+
+-- Phase 5 shell extensions
+local TravelEditorState = require("ui/panels/travel_editor_state")
+local TravelEditor = require("ui/panels/travel_editor")
+local ValidationStatus = require("ui/panels/validation_status")
+local StatsDashboard = require("ui/panels/stats_dashboard")
 
 local IdePanels = {}
 
@@ -288,21 +303,596 @@ function RunnerBinding:spec()
 end
 
 -- ============================================================================
+-- The Explorer binding (U6 — Quest Browser)
+-- ============================================================================
+
+local ExplorerBinding = {}
+ExplorerBinding.__index = ExplorerBinding
+
+---@param opts table|nil { query_client = function():table|nil }
+function IdePanels.new_explorer(opts)
+    opts = opts or {}
+    local self = setmetatable({}, ExplorerBinding)
+    self._state = ExplorerState.new()
+    self._query_client = opts.query_client
+    return self
+end
+
+---Access the panel state, exposed so tests can inspect it.
+function ExplorerBinding:state() return self._state end
+
+---The panel spec the shell registers.
+function ExplorerBinding:spec()
+    local binding = self
+    return {
+        id = Explorer.id,
+        title = Explorer.title,
+        order = Explorer.order,
+        render = function(window, bounds, _ctx)
+            local view = binding._state:build()
+            return Explorer.render(window, bounds, view)
+        end,
+        on_tick = function()
+            local state = binding._state
+            if not state._dirty then return end
+            state._dirty = false
+
+            local qc = binding._query_client
+            if not qc then return end
+
+            -- Only fire queries when there's an active selection or search
+            if state.selected_id then
+                local detail = qc:get_quest(state.selected_id)
+                if detail then
+                    state.selected_detail = detail
+                end
+
+                local chain = qc:get_quest_chain(state.selected_id)
+                if chain then
+                    state.chain_data = chain
+                end
+
+                local objectives = qc:get_quest_objectives(state.selected_id)
+                if objectives then
+                    state.objectives = objectives
+                end
+            end
+
+            if state.search_query ~= "" and #state.results == 0 then
+                local results = qc:search_quests(state.search_query)
+                if results then
+                    state.results = results
+                end
+            end
+        end,
+        dispatch = function(command)
+            local state = binding._state
+            if command.kind == "select_quest" then
+                state:select(command.id)
+                return true
+            elseif command.kind == "clear_search" then
+                state:set_query("")
+                state.results = {}
+                return true
+            elseif command.kind == "cycle_zone_filter" then
+                -- Cycle through zones: nil -> first available zone from results -> nil
+                if state.zone_filter == nil then
+                    local zones = {}
+                    for _, r in ipairs(state.results) do
+                        if r.zone and not zones[r.zone] then
+                            zones[r.zone] = true
+                            state.zone_filter = r.zone
+                            break
+                        end
+                    end
+                else
+                    state.zone_filter = nil
+                end
+                state._dirty = true
+                return true
+            elseif command.kind == "cycle_level_filter" then
+                -- Simple toggle: nil -> 1-20 -> 20-40 -> nil
+                if state.level_min == nil then
+                    state.level_min = 1
+                    state.level_max = 20
+                elseif state.level_min == 1 then
+                    state.level_min = 20
+                    state.level_max = 40
+                else
+                    state.level_min = nil
+                    state.level_max = nil
+                end
+                state._dirty = true
+                return true
+            elseif command.kind == "add_to_profile" then
+                -- Placeholder: would POST to the editor crate's campaign endpoints
+                return true, "add_to_profile: " .. tostring(command.quest_id) .. " (not yet implemented)"
+            elseif command.kind == "add_chain" then
+                -- Placeholder: would POST chain to editor crate
+                return true, "add_chain: " .. tostring(command.quest_id) .. " (not yet implemented)"
+            end
+            return false, "unknown explorer command '" .. tostring(command.kind) .. "'"
+        end,
+    }
+end
+
+-- ============================================================================
+-- The Properties binding (U7 — NPC Inspector, Vendor/Condition/Inventory editors)
+-- ============================================================================
+
+local PropertiesBinding = {}
+PropertiesBinding.__index = PropertiesBinding
+
+---@param opts table|nil { query_client = function():table|nil }
+function IdePanels.new_properties(opts)
+    opts = opts or {}
+    local self = setmetatable({}, PropertiesBinding)
+    self._state = PropertiesState.new()
+    self._query_client = opts.query_client
+    return self
+end
+
+---Access the panel state, exposed so tests can inspect it.
+function PropertiesBinding:state() return self._state end
+
+---The panel spec the shell registers.
+function PropertiesBinding:spec()
+    local binding = self
+    return {
+        id = Properties.id,
+        title = Properties.title,
+        order = Properties.order,
+        render = function(window, bounds, _ctx)
+            local view = binding._state:build()
+            return Properties.render(window, bounds, view)
+        end,
+        on_tick = function()
+            local state = binding._state
+            if not state._dirty then return end
+            state._dirty = false
+
+            local ctx = state.context
+            if not ctx then return end
+
+            local qc = binding._query_client
+            if not qc then return end
+
+            local ctype = ctx.selection_type
+            local sid = ctx.selection_id
+
+            if ctype == "npc" and sid then
+                local detail = qc:get_npc(sid)
+                if detail then state.npc_detail = detail end
+                state.loading = false
+            elseif ctype == "vendor" and sid then
+                local info = qc:get_vendor(sid)
+                if info then
+                    state.vendor_info = info
+                    state.vendor_items = {}
+                    for _, item in ipairs(info.sells or {}) do
+                        state.vendor_items[#state.vendor_items + 1] = {
+                            entry = item.entry,
+                            name = item.name,
+                            price = item.price,
+                            enabled = true,
+                            mode = item.mode or "buy",
+                            threshold = item.threshold or 5,
+                        }
+                    end
+                end
+                state.loading = false
+            elseif ctype == "object" and sid then
+                local obj = qc:get_object(sid)
+                if obj then state.object_info = obj end
+                state.loading = false
+            end
+        end,
+        dispatch = function(command)
+            local state = binding._state
+            if command.kind == "set_npc_tab" then
+                state:set_npc_tab(command.tab)
+                return true
+            elseif command.kind == "toggle_vendor_item" then
+                if state.vendor_items then
+                    for _, item in ipairs(state.vendor_items) do
+                        if item.entry == command.entry then
+                            item.enabled = not item.enabled
+                            break
+                        end
+                    end
+                end
+                return true
+            elseif command.kind == "add_condition" then
+                return true, "add_condition (not yet implemented)"
+            elseif command.kind == "add_condition_group" then
+                return true, "add_condition_group " .. tostring(command.group_type) .. " (not yet implemented)"
+            elseif command.kind == "delete_condition" then
+                return true, "delete_condition (not yet implemented)"
+            elseif command.kind == "add_inventory_rule" then
+                return true, "add_inventory_rule (not yet implemented)"
+            elseif command.kind == "clear_inventory_rules" then
+                state.inventory_rules = {}
+                return true
+            end
+            return false, "unknown properties command '" .. tostring(command.kind) .. "'"
+        end,
+    }
+end
+
+-- ============================================================================
+-- The Graph binding (Phase 3 — Campaign graph editor, waypoint/escort/combat tools)
+-- ============================================================================
+
+local GraphBinding = {}
+GraphBinding.__index = GraphBinding
+
+---@param opts table|nil { }
+function IdePanels.new_graph(opts)
+    opts = opts or {}
+    local self = setmetatable({}, GraphBinding)
+    self._state = GraphState.new()
+    self._recorder = EscortRecorder.new()
+    self._campaign_name = nil
+    return self
+end
+
+---Access the panel state, exposed so tests can inspect it.
+function GraphBinding:state() return self._state end
+
+---Access the recorder, exposed for test inspection.
+function GraphBinding:recorder() return self._recorder end
+
+---The panel spec the shell registers.
+function GraphBinding:spec()
+    local binding = self
+    return {
+        id = Graph.id,
+        title = Graph.title,
+        order = Graph.order,
+        render = function(window, bounds, ctx)
+            -- Pass current player position from tick context to the state
+            local state = binding._state
+            if ctx and ctx.player_position then
+                if state.waypoint_mode then
+                    state:capture_position(ctx.player_position)
+                end
+                if state.escort_mode then
+                    state:tick_escort_position(ctx.player_position)
+                end
+            end
+
+            local view = state:build()
+            return Graph.render(window, bounds, view)
+        end,
+        on_tick = function()
+            local state = binding._state
+            local recorder = binding._recorder
+
+            -- Tick the recorder (independent mode)
+            if recorder.recording then
+                local ctx = { player_position = nil }
+                if type(core) == "table" and type(core.object_manager) == "table" then
+                    local player = core.object_manager.get_local_player()
+                    if player and type(player.get_position) == "function" then
+                        local ok, pos = pcall(player.get_position, player)
+                        if ok then ctx.player_position = pos end
+                    end
+                end
+                recorder:tick(ctx)
+            end
+
+            -- Respond to dirty state
+            if state._dirty then
+                state._dirty = false
+                -- In a real deployment, this would refresh from /editor/campaigns/{name}
+            end
+        end,
+        dispatch = function(command)
+            local state = binding._state
+            local recorder = binding._recorder
+
+            if command.kind == "select_node" then
+                state:select_node(command.node_id)
+                return true
+            elseif command.kind == "toggle_expand" then
+                state:toggle_expand_node(command.node_id)
+                return true
+            elseif command.kind == "remove_node" then
+                state:remove_node(command.node_id)
+                return true
+            elseif command.kind == "show_add_node_menu" then
+                -- For v1, add a Kill node as a default template
+                state:add_node("questing.Kill")
+                state._dirty = true
+                return true
+            elseif command.kind == "edit_intent" then
+                -- Placeholder: would prompt for a new value via the editor crate
+                return true, "edit_intent " .. tostring(command.node_id) .. ":" .. tostring(command.field) .. " (open editor)"
+            elseif command.kind == "toggle_waypoint" then
+                state:toggle_waypoint_mode()
+                return true
+            elseif command.kind == "commit_waypoint" then
+                state:commit_waypoint()
+                return true
+            elseif command.kind == "toggle_escort" then
+                if state.escort_mode then
+                    state:set_escort_mode(false)
+                else
+                    state:set_escort_mode(true)
+                end
+                return true
+            elseif command.kind == "generate_escort_nodes" then
+                state:generate_escort_nodes()
+                return true
+            elseif command.kind == "set_filter" then
+                state:set_filter(command.node_type)
+                return true
+            elseif command.kind == "validate_graph" then
+                return true, "validate_graph (not yet implemented)"
+            elseif command.kind == "compile_graph" then
+                return true, "compile_graph (not yet implemented)"
+            end
+            return false, "unknown graph command '" .. tostring(command.kind) .. "'"
+        end,
+    }
+end
+
+-- ============================================================================
+-- The Database binding (Phase 4 — Spawn Scanner, Grinding Area Generator)
+-- ============================================================================
+
+local DatabaseBinding = {}
+DatabaseBinding.__index = DatabaseBinding
+
+---@param opts table|nil { query_client = function():table|nil }
+function IdePanels.new_database(opts)
+    opts = opts or {}
+    local self = setmetatable({}, DatabaseBinding)
+    self._state = DatabaseState.new()
+    self._query_client = opts.query_client
+    return self
+end
+
+---Access the panel state, exposed so tests can inspect it.
+function DatabaseBinding:state() return self._state end
+
+---The panel spec the shell registers.
+function DatabaseBinding:spec()
+    local binding = self
+    return {
+        id = Database.id,
+        title = Database.title,
+        order = Database.order,
+        render = function(window, bounds, _ctx)
+            local view = binding._state:build()
+            return Database.render(window, bounds, view)
+        end,
+        on_tick = function()
+            local state = binding._state
+            if not state._dirty then return end
+            state._dirty = false
+
+            local qc = binding._query_client
+
+            -- Execute pending scan
+            if state._pending_scan then
+                state:execute_scan(qc)
+            end
+
+            -- Load detail for selected entry
+            if state._pending_detail then
+                state:execute_load_detail(qc)
+            end
+
+            -- Execute grinding generation
+            if state._pending_grind then
+                state:execute_grind(qc)
+            end
+        end,
+        dispatch = function(command)
+            local state = binding._state
+            if command.kind == "set_tab" then
+                state:set_tab(command.tab)
+                return true
+            elseif command.kind == "scan" then
+                state:request_scan()
+                return true
+            elseif command.kind == "cycle_scan_mode" then
+                state:set_scan_mode(state.scan_mode == "nearby" and "manual" or "nearby")
+                return true
+            elseif command.kind == "cycle_range" then
+                local ranges = { 25, 50, 75, 100 }
+                for i, r in ipairs(ranges) do
+                    if r == state.scan_range then
+                        state:set_scan_range(ranges[(i % #ranges) + 1])
+                        return true
+                    end
+                end
+                state:set_scan_range(50)
+                return true
+            elseif command.kind == "set_filter" then
+                state:set_scan_filter(command.filter)
+                state:request_scan()
+                return true
+            elseif command.kind == "select_entry" then
+                state:select_entry(command.entry)
+                return true
+            elseif command.kind == "view_detail" then
+                state:select_entry(command.entry)
+                return true
+            elseif command.kind == "add_as_kill" then
+                return true, "add_as_kill: " .. tostring(command.entry) .. " (not yet implemented)"
+            elseif command.kind == "generate_grind" then
+                state:request_grind()
+                return true
+            elseif command.kind == "edit_grind_entry" then
+                return true, "edit_grind_entry (open editor placeholder)"
+            elseif command.kind == "edit_grind_zone" then
+                return true, "edit_grind_zone (open editor placeholder)"
+            end
+            return false, "unknown database command '" .. tostring(command.kind) .. "'"
+        end,
+    }
+end
+
+-- ============================================================================
 -- Installation
 -- ============================================================================
 
 ---Register every panel the IDE ships with onto `shell`.
 ---
 ---This is the registration site U3-U7 extend — one line each, in a file neither the shell nor any
----panel reads. It is the only place where "which panels exist" and "what each one drives" meet.
+---panel reads. It is the only place where "which panels exist" and "what each one meets" meet.
+---
+---Phase 5 extensions (F12, F19, F20) are also created here and wired into panel specs. The shell
+---renders whatever the panel's render function returns; wrapping the spec at install time is how
+---the validation bar, stats dashboard, and travel editor compose with existing panels.
 ---@param shell table the IDE shell
 ---@param deps table|nil forwarded to each binding
 ---@return table|nil bindings, string|nil reason
 function IdePanels.install(shell, deps)
+    -- ====================================================================
+    -- Create Phase 5 extension instances
+    -- ====================================================================
+    local validation = ValidationStatus.new()
+    local stats = StatsDashboard.new()
+    local travel = TravelEditorState.new()
+
+    -- Store for getter access
+    IdePanels._validation_bar = validation
+    IdePanels._stats_dashboard = stats
+    IdePanels._travel_editor = travel
+
+    -- ====================================================================
+    -- Validation bar — set on shell for footer rendering
+    -- ====================================================================
+    shell:set_validation_bar(function(window, bounds)
+        local view = validation:build()
+        local plan = ValidationStatus.build_plan(view, bounds)
+        local activated = ValidationStatus.render(window, plan)
+        if activated then
+            local _, check_id = activated:match("^validation_expand:(.+)$")
+            if check_id then
+                validation:toggle_expand(check_id)
+            end
+        end
+    end)
+
+    -- ====================================================================
+    -- Runner panel — wrap render/dispatch to include stats dashboard
+    -- ====================================================================
     local runner = IdePanels.new_runner(deps)
-    local ok, reason = shell:register_panel(runner:spec())
+    local runner_spec = runner:spec()
+    local runner_render = runner_spec.render
+    local runner_dispatch = runner_spec.dispatch
+    runner_spec.render = function(window, bounds, ctx)
+        local command = runner_render(window, bounds, ctx)
+        if stats.visible then
+            local view = stats:build()
+            local plan = StatsDashboard.build_plan(view, bounds)
+            StatsDashboard.render(window, plan)
+        end
+        return command
+    end
+    runner_spec.dispatch = function(command, ctx)
+        if command.kind == "toggle_stats" then
+            stats:toggle()
+            return true
+        end
+        return runner_dispatch(command, ctx)
+    end
+    local ok, reason = shell:register_panel(runner_spec)
     if not ok then return nil, reason end
-    return { runner = runner }
+
+    -- ====================================================================
+    -- Explorer panel — wrap render/dispatch to include travel editor
+    -- ====================================================================
+    local explorer = IdePanels.new_explorer(deps)
+    local explorer_spec = explorer:spec()
+    local explorer_render = explorer_spec.render
+    local explorer_dispatch = explorer_spec.dispatch
+    explorer_spec.render = function(window, bounds, ctx)
+        local command = explorer_render(window, bounds, ctx)
+        if travel.activated then
+            local view = travel:build()
+            local plan = TravelEditorState.build_plan(view, bounds)
+            local editor_cmd = TravelEditor.render(window, bounds, view)
+            -- Merge editor commands into the returned command
+            if editor_cmd and not command then
+                command = editor_cmd
+            end
+        end
+        return command
+    end
+    explorer_spec.dispatch = function(command, ctx)
+        if command.kind == "travel_toggle" then
+            travel:toggle()
+            return true
+        elseif command.kind == "travel_select_route" then
+            travel:select_route(command.route_id)
+            return true
+        elseif command.kind == "travel_toggle_edit" then
+            travel:set_editing(not travel.editing_waypoints)
+            return true
+        elseif command.kind == "travel_move_waypoint" then
+            if command.direction == "up" then
+                travel:move_waypoint_up(command.route_id, command.index)
+            else
+                travel:move_waypoint_down(command.route_id, command.index)
+            end
+            return true
+        elseif command.kind == "travel_add_waypoint" then
+            return true, "travel_add_waypoint (not yet implemented — requires player position)"
+        end
+        return explorer_dispatch(command, ctx)
+    end
+    local ok2, reason2 = shell:register_panel(explorer_spec)
+    if not ok2 then return nil, reason2 end
+
+    -- ====================================================================
+    -- Regular panels (no extensions)
+    -- ====================================================================
+    local properties = IdePanels.new_properties(deps)
+    local ok3, reason3 = shell:register_panel(properties:spec())
+    if not ok3 then return nil, reason3 end
+
+    local graph = IdePanels.new_graph(deps)
+    local ok4, reason4 = shell:register_panel(graph:spec())
+    if not ok4 then return nil, reason4 end
+
+    local database = IdePanels.new_database(deps)
+    local ok5, reason5 = shell:register_panel(database:spec())
+    if not ok5 then return nil, reason5 end
+
+    return {
+        runner = runner,
+        explorer = explorer,
+        properties = properties,
+        graph = graph,
+        database = database,
+        validation = validation,
+        stats = stats,
+        travel = travel,
+    }
+end
+
+-- ============================================================================
+-- Phase 5 extension accessors (F12, F19, F20)
+-- ============================================================================
+
+---Return the ValidationStatus instance, or nil if install hasn't run.
+function IdePanels.get_validation_bar()
+    return IdePanels._validation_bar
+end
+
+---Return the StatsDashboard instance, or nil if install hasn't run.
+function IdePanels.get_stats_dashboard()
+    return IdePanels._stats_dashboard
+end
+
+---Return the TravelEditorState instance, or nil if install hasn't run.
+function IdePanels.get_travel_editor()
+    return IdePanels._travel_editor
 end
 
 return IdePanels

@@ -531,10 +531,25 @@ local test_modules = {
     -- ADR 09b U5: the Runner panel. Registered after the widget suites because it is built
     -- entirely out of them -- a widget regression must fail as a widget bug, not as this panel's.
     "tests/ui/test_runner_panel",
+    -- ADR 09b U6: the Explorer panel (quest browser). Registered after the widget suites and
+    -- the Runner panel because it follows the same architecture pattern and shares the widgets.
+    "tests/ui/test_explorer_panel",
+    -- ADR 09b U7: the Properties panel (NPC Inspector, Vendor/Condition/Inventory editors).
+    -- Registered after the Explorer because it shares the same widget and test patterns.
+    "tests/ui/test_properties_panel",
+    -- Phase 3: the Graph panel (campaign graph editor, waypoint/escort/combat tools).
+    -- Registered after the Properties panel; follows the same panel architecture pattern.
+    "tests/ui/test_graph_panel",
+    -- Phase 4: the Database panel (Spawn Scanner F9, Grinding Area Generator F13).
+    -- Registered after the Graph panel; follows the same panel architecture pattern.
+    "tests/ui/test_database_panel",
     -- ADR 09b U2b: the seam between them. Registered after BOTH, because a failure here is only
     -- meaningful once the shell and the panel are each known good -- U2 and U5 were individually
     -- green while nothing registered the panel and every control on it was inert.
     "tests/ui/test_ide_panels",
+    -- Phase 5: shell extensions (F12 Travel Editor, F19 Auto Validation, F20 Profile Statistics).
+    -- Registered after the IDE panels suite because the extensions integrate with it.
+    "tests/ui/test_shell_extensions",
     -- The guard on ui/* staying loadable with no Sylvannas API present. It blanks `_G.core` for
     -- the duration, so it is registered AFTER the suites that consume the real mocked surface.
     "tests/ui/test_offline_loadable",

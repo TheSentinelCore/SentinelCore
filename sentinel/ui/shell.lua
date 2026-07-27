@@ -207,6 +207,7 @@ function Shell.new(opts)
     self._window_visible = nil
     self._pending = {}
     self._last_dispatch = nil
+    self._validation_render = nil  -- set by ide_panels for the validation footer bar
 
     -- Restore BEFORE any panel registers. `ShellState` holds the restored choice until the panel
     -- that owns it exists, which is the only ordering that honours a persisted tab.
@@ -248,6 +249,15 @@ function Shell:pending_commands() return self._pending end
 ---Kept because the failure mode this whole seam exists to fix — a control that looks live and does
 ---nothing — is silent by construction. Something has to be able to say a command went nowhere.
 function Shell:last_dispatch() return self._last_dispatch end
+
+---Install a validation bar render function.
+---@param render_fn function|nil function(window, bounds) that draws the bar
+function Shell:set_validation_bar(render_fn)
+    self._validation_render = render_fn
+end
+
+---Access the validation bar render function, if any.
+function Shell:validation_bar() return self._validation_render end
 
 -- ============================================================================
 -- Tick context — the ONLY place anything is constructed
@@ -552,16 +562,28 @@ function Shell:_on_render_window()
     -- model after the switcher would leave the active marker pointing at the old tab while the
     -- new panel's body was already drawn beneath it, and an inconsistent frame is far more
     -- visible at 60Hz than a 16ms delay nobody can perceive.
+    --
+    -- COORDINATE SYSTEM: `window:begin()` operates in WINDOW-RELATIVE space where (0,0) is the
+    -- window's own top-left corner. `window:get_position()` returns the window's SCREEN position,
+    -- NOT its client-area offset — using it inside `begin()` makes every rect shift by the
+    -- window's position on the monitor, so dragging the IDE to a different screen location moves
+    -- the content away from where the operator expects it.
     local vm = self._state:view()
-    local origin = window:get_position()
     local size = window:get_size()
 
-    local strip = { x = origin.x, y = origin.y, w = size.x, h = Theme.metrics.toolbar_height }
+    local strip = { x = 0, y = 0, w = size.x, h = Theme.metrics.toolbar_height }
+
+    -- Room for validation bar footer (Phase 5, F19)
+    local validation_h = 0
+    if self._validation_render and self._state:is_visible() then
+        validation_h = Theme.metrics.control_height + Theme.space.sm
+    end
+
     local content = {
-        x = origin.x + Theme.space.md,
-        y = strip.y + strip.h + Theme.space.md,
+        x = Theme.space.md,
+        y = strip.h + Theme.space.md,
         w = size.x - Theme.space.md * 2,
-        h = size.y - strip.h - Theme.space.md * 2,
+        h = size.y - strip.h - Theme.space.md * 2 - validation_h,
     }
 
     window:begin(
@@ -573,6 +595,17 @@ function Shell:_on_render_window()
         function()
             self:_draw_switcher(window, vm, strip)
             self:_draw_body(window, vm, content)
+
+            -- Draw validation bar below the body (Phase 5, F19)
+            if self._validation_render then
+                local vb = {
+                    x = content.x,
+                    y = content.y + content.h + Theme.space.sm,
+                    w = content.w,
+                    h = Theme.metrics.control_height,
+                }
+                self._validation_render(window, vb)
+            end
         end
     )
 

@@ -13,7 +13,8 @@ local T = require("tests/test_util")
 
 local M = {}
 
-local UI_MODULES = { "ui/theme", "ui/widgets", "ui/ide_panels", "tests/harness/fake_window" }
+local UI_MODULES = { "ui/theme", "ui/widgets", "ui/ide_panels", "ui/panels/graph", "ui/panels/graph_state",
+    "ui/panels/escort_recorder", "tests/harness/fake_window" }
 
 --- Load `module_name` from source with `_G.core` and the `common/*` libraries absent.
 --- Restores `package.loaded` exactly, because the suites that already hold references to these
@@ -98,6 +99,25 @@ function M.test_fake_window_loads_with_no_sylvannas_api_present()
     local ok, result = require_without_sdk("tests/harness/fake_window")
     T.assert_true(ok, "the fake window failed to load offline: " .. tostring(result))
     T.assert_equal(type(result.new), "function", "the fake window must expose a constructor")
+end
+
+function M.test_graph_panel_loads_and_renders_with_no_sylvannas_api_present()
+    local ok, graph = require_without_sdk("ui/panels/graph")
+    T.assert_true(ok, "ui/panels/graph failed to load offline: " .. tostring(graph))
+
+    local ok2, graph_state = require_without_sdk("ui/panels/graph_state")
+    T.assert_true(ok2, "ui/panels/graph_state must load offline: " .. tostring(graph_state))
+
+    local FakeWindow = require("tests/harness/fake_window")
+    local fake = FakeWindow.new()
+    local rendered = pcall(graph.render, fake, { x = 0, y = 0, w = 800, h = 600 }, graph_state.build({}))
+    T.assert_true(rendered, "graph panel must render with no SDK present")
+end
+
+function M.test_escort_recorder_loads_with_no_sylvannas_api_present()
+    local ok, recorder = require_without_sdk("ui/panels/escort_recorder")
+    T.assert_true(ok, "ui/panels/escort_recorder failed to load offline: " .. tostring(recorder))
+    T.assert_equal(type(recorder.new), "function", "escort_recorder must expose a constructor")
 end
 
 function M.test_the_sdk_is_restored_after_these_cases()

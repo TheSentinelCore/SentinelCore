@@ -159,6 +159,7 @@ local ACTIONS = {
     skip_step  = function() return { kind = "skip_step" } end,
     rescan     = function() return { kind = "rescan" } end,
     record     = function() return { kind = "record" } end,
+    stats      = function() return { kind = "toggle_stats" } end,
     ["guard:deaths"] = function(model) return cycle_guardrail(model, "stop_after_deaths", DEATH_LADDER) end,
     ["guard:stuck"]  = function(model) return cycle_guardrail(model, "stop_if_stuck_s", STUCK_LADDER) end,
 }
@@ -579,10 +580,27 @@ function RunnerPanelState.build(model, bounds)
         button_x = button_x + spec.bounds.w + S.sm
     end
 
+    local right_x = bar.x + bar.w - S.sm
+
+    -- Stats button (Phase 5, F20)
+    local stats = { id = "stats", label = "Stats", disabled = false }
+    local stats_w = math.max(BUTTON_MIN_W, #stats.label * CHAR_W + S.xl)
+    right_x = right_x - stats_w
+    stats.bounds = {
+        x = right_x, y = button_y,
+        w = stats_w, h = MET.control_height,
+    }
+    push({
+        kind = "button", id = stats.id, bounds = stats.bounds,
+        label = stats.label, variant = "ghost",
+    })
+    controls[#controls + 1] = stats
+
     local rescan = { id = "rescan", label = "Rescan", disabled = false }
     local rescan_w = math.max(BUTTON_MIN_W, #rescan.label * CHAR_W + S.xl)
+    right_x = right_x - rescan_w - S.sm
     rescan.bounds = {
-        x = bar.x + bar.w - S.sm - rescan_w, y = button_y,
+        x = right_x, y = button_y,
         w = rescan_w, h = MET.control_height,
     }
     push({
