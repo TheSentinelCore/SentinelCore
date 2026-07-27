@@ -8,13 +8,25 @@
 --- add-as-kill, validate, compile -- answered a success string and wrote nothing. This is the
 --- transport those commands were missing.
 ---
---- READS ANSWER THE PENDING CONTRACT
---- --------------------------------
+--- TWO VERB FAMILIES, AND THE REASON THEY DIFFER
+--- ---------------------------------------------
 --- The Sylvannas SDK has exactly two HTTP verbs, `core.http_get` and `core.http_post`
---- (docs/SylvannasAPI/dev/api/core.md:872,932), and BOTH are asynchronous. So every read here
---- answers exactly what `QueryClient:_get` answers -- `data` | `(nil, true)` pending |
---- `(nil, nil)` resolved-to-nothing -- and a caller drives it straight through `ui/async_slot.lua`
---- with no adapter.
+--- (docs/SylvannasAPI/dev/api/core.md:872,932), and BOTH are asynchronous. Nothing here can answer
+--- "the server accepted this" in the frame the request is issued, so the client does not pretend to:
+---
+---   POLLED (`list_campaigns`, `load_campaign`, `validate`, `compile`)
+---     Answer exactly what `QueryClient:_get` answers -- `data` | `(nil, true)` pending |
+---     `(nil, nil)` resolved-to-nothing -- so a caller can drive them straight through
+---     `ui/async_slot.lua` with no adapter.
+---
+---   DISPATCHED (`create_campaign`, `add_nodes`, `update_node`, `save_graph`)
+---     Answer `true` when the request left, or `(false, reason)` when it could not be built or sent
+---     AT ALL. A refusal from a live editor arrives ticks later and is queued; the caller drains it
+---     with `take_error()` on a tick and shows it. A mutation NEVER reports the server's verdict
+---     inline, because inline it does not exist yet.
+---
+--- Callers must not treat a dispatched `true` as "the graph now contains this". Re-read the campaign
+--- (`load_campaign` after `invalidate`) and render what the server returned.
 
 local QueryClient = require("shared/query_client")
 
@@ -123,6 +135,29 @@ local function encode(value)
     return body
 end
 
+--- Fire a mutation. Returns `true` once the request is on the wire.
+---@return boolean ok, string|nil reason
+function EditorClient:_mutate(what, path, payload)
+    local body, why = encode(payload)
+    if not body then return false, what .. " failed: " .. why end
+
+    local client = self
+    local sent, reason = self._qc:post(path, body, function(http_code, response)
+        if http_code < 200 or http_code >= 300 then
+            client:_record_error(what, http_code, response)
+            return
+        end
+        -- A write invalidates every campaign read, not just this campaign's: creating one changes
+        -- the LIST, and adding a node changes a graph another panel may already be showing.
+        client._qc:invalidate(ROOT)
+    end)
+    if not sent then return false, what .. " failed: " .. tostring(reason) end
+    -- Optimism is not permitted about the answer, only about the send. The cache is dropped here as
+    -- well as in the callback so a poll issued before the answer lands cannot serve pre-write data.
+    self._qc:invalidate(ROOT)
+    return true
+end
+
 -- ---------------------------------------------------------------------------
 -- Reads
 -- ---------------------------------------------------------------------------
@@ -153,6 +188,146 @@ function EditorClient:graph_id_for(name)
     local graphs = campaign.graphs
     if type(graphs) ~= "table" or #graphs == 0 then return nil, nil end
     return tostring(graphs[1].id or ""), nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Writes
+-- ---------------------------------------------------------------------------
+
+--- `POST /editor/campaigns` with `{name}`.
+---
+--- NOTE the shape: the spec described `POST /editor/campaigns/{name}`, but the mounted route takes
+--- the name in the BODY (`campaign_handlers.rs::mount`). This client speaks the route that exists.
+function EditorClient:create_campaign(name)
+    name = tostring(name or "")
+    if name == "" then return false, "create campaign failed: a campaign needs a name" end
+    return self:_mutate("create campaign '" .. name .. "'", ROOT, { name = name })
+end
+
+--- Convert one authoring node descriptor into the platform `Node` the editor deserializes.
+---@return table|nil node, string|nil reason
+function EditorClient.to_platform_node(node)
+    if type(node) ~= "table" then return nil, "a node must be a table" end
+    local node_type = tostring(node.type or "")
+    if node_type == "" then return nil, "a node must carry a type" end
+
+    local intent = node.intent
+    if type(intent) ~= "table" then return nil, node_type .. " has no intent" end
+    if next(intent) == nil then
+        -- `Intent` is a map and an empty Lua table encodes as `[]`, which serde rejects with a 400
+        -- the operator would read as "the editor is broken". Refuse here, where the reason is
+        -- still in scope.
+        return nil, node_type .. " has an empty intent, which encodes as a JSON array, not an object"
+    end
+
+    return {
+        id = EditorClient.uuid4(),
+        type = node_type,
+        intent = intent,
+        -- `context` is raw JSON the platform model carries through untouched. The authoring id lives
+        -- here so a duplicate add is still recognisable after the editor mints real UUIDs.
+        context = { authoring_id = tostring(node.id or ""), preview = tostring(node.preview or "") },
+    }
+end
+
+--- Add nodes to a campaign's first graph, minting that graph when the campaign has none.
+---
+--- A freshly created campaign has ZERO graphs (`Campaign::new`), and `POST .../nodes` 400s with
+--- "Graph not found" against one. That is the whole reason this method reads before it writes.
+---@param name string campaign name
+---@param nodes table array of `{ type, intent, id?, preview? }`
+---@return boolean ok, string|nil reason
+function EditorClient:add_nodes(name, nodes)
+    name = tostring(name or "")
+    if name == "" then return false, "add nodes failed: no campaign was named" end
+    if type(nodes) ~= "table" or #nodes == 0 then
+        return false, "add nodes failed: there were no nodes to add"
+    end
+
+    local platform = {}
+    for i, node in ipairs(nodes) do
+        local converted, why = EditorClient.to_platform_node(node)
+        if not converted then
+            return false, "add nodes failed: node " .. i .. " " .. tostring(why)
+        end
+        platform[#platform + 1] = converted
+    end
+
+    local graph_id, blocked = self:graph_id_for(name)
+    if blocked then return false, "add nodes failed: " .. blocked end
+
+    if not graph_id or graph_id == "" then
+        -- No graph yet: one request that both creates the graph and carries the nodes, rather than
+        -- a create followed by N adds that would each need the id the first one has not returned.
+        return self:save_graph(name, platform, {})
+    end
+
+    local what = string.format("add %d node(s) to '%s'", #platform, name)
+    for _, node in ipairs(platform) do
+        local ok, why = self:_mutate(what, ROOT .. "/" .. name .. "/nodes",
+            { graph_id = graph_id, node = node })
+        if not ok then return false, why end
+    end
+    return true
+end
+
+--- `POST /editor/campaigns/{name}/graphs` with a whole graph.
+---
+--- `entry_node` is required and is the id of the first node, so a graph saved with no nodes still
+--- has to name one; a nil UUID is the honest "there is no entry yet".
+function EditorClient:save_graph(name, nodes, edges, graph_name)
+    name = tostring(name or "")
+    if name == "" then return false, "save graph failed: no campaign was named" end
+    nodes = nodes or {}
+    local entry = (nodes[1] and nodes[1].id) or "00000000-0000-0000-0000-000000000000"
+    return self:_mutate("save graph in '" .. name .. "'", ROOT .. "/" .. name .. "/graphs", {
+        graph = {
+            id = EditorClient.uuid4(),
+            name = tostring(graph_name or "main"),
+            entry_node = entry,
+            nodes = nodes,
+            edges = edges or {},
+        },
+    })
+end
+
+--- Replace one node.
+---
+--- The mounted route is `PUT|POST /editor/campaigns/{name}/nodes/{node_id}`. POST is not a
+--- stylistic choice: the Sylvannas SDK has `http_get` and `http_post` and NOTHING else, so a
+--- PUT-only route is unreachable from in-game Lua. The alias was added for exactly this call.
+---@param name string campaign
+---@param node_id string the server's UUID for the node
+---@param node table the full replacement node `{ id, type, intent, ... }`
+---@param graph_id string the graph the node lives in
+function EditorClient:update_node(name, node_id, node, graph_id)
+    name = tostring(name or "")
+    node_id = tostring(node_id or "")
+    if name == "" or node_id == "" then
+        return false, "update node failed: the campaign and node must both be named"
+    end
+    if type(node) ~= "table" or type(node.intent) ~= "table" or next(node.intent) == nil then
+        return false, "update node failed: node " .. node_id .. " has no intent to write"
+    end
+    graph_id = tostring(graph_id or "")
+    if graph_id == "" then
+        local resolved, blocked = self:graph_id_for(name)
+        if blocked then return false, "update node failed: " .. blocked end
+        if not resolved or resolved == "" then
+            return false, "update node failed: campaign '" .. name .. "' has no graph"
+        end
+        graph_id = resolved
+    end
+
+    return self:_mutate("update node " .. node_id, ROOT .. "/" .. name .. "/nodes/" .. node_id, {
+        graph_id = graph_id,
+        node = {
+            id = node_id,
+            type = tostring(node.type or ""),
+            intent = node.intent,
+            context = node.context,
+        },
+    })
 end
 
 return EditorClient

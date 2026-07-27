@@ -674,10 +674,17 @@ pub fn mount(router: Router<crate::server::AppState>) -> Router<crate::server::A
             get(handle_load_campaign).delete(handle_delete_campaign),
         )
         // Node mutations
+        //
+        // Update is reachable by POST as well as PUT. The Sylvannas SDK the in-game IDE runs on
+        // exposes `core.http_get` and `core.http_post` and no other verb
+        // (docs/SylvannasAPI/dev/api/core.md), so a PUT-only route is unreachable from the one
+        // client this endpoint exists for. PUT stays for every other caller.
         .route("/editor/campaigns/{name}/nodes", post(handle_add_node))
         .route(
             "/editor/campaigns/{name}/nodes/{node_id}",
-            put(handle_update_node).delete(handle_remove_node),
+            put(handle_update_node)
+                .post(handle_update_node)
+                .delete(handle_remove_node),
         )
         // Edge mutations
         .route("/editor/campaigns/{name}/edges", post(handle_add_edge))

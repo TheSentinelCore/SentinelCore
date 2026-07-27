@@ -8,6 +8,7 @@
 
 local EditorClient = require("shared/editor_client")
 local Mock = require("tests/harness/mocks/sylvannas_api")
+local JSON = require("core/JSON")
 local T = require("tests/test_util")
 
 local M = {}
@@ -37,6 +38,13 @@ local function campaign(name, graph_id, nodes)
             edges = {},
         } },
     }
+end
+
+--- The body of the nth POST, decoded.
+local function post_body(n)
+    local entry = Mock.http.posts[n]
+    if not entry then return nil end
+    return JSON.decode(entry.body)
 end
 
 local GRAPH_ID = "22222222-2222-4222-8222-222222222222"
@@ -186,6 +194,202 @@ function M.test_invalidate_frees_an_in_flight_path_to_be_asked_again()
         T.assert_equal(#Mock.http.requests, 2,
             "a read already in flight when a write landed will resolve with pre-write data, so the "
             .. "next poll has to be free to issue a fresh one rather than wait on it")
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Create -> list -> open round-trip (the spec's scenario, verbatim)
+-- ---------------------------------------------------------------------------
+
+function M.test_create_then_list_then_open_round_trip()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0   -- one tick per step keeps the sequence readable
+        local ec = EditorClient:new("127.0.0.1", 3031)
+
+        -- GIVEN no campaign "stw": the list is empty and the open is a 404.
+        Mock.set_http_response("/editor/campaigns", {})
+        T.assert_equal(#ec:list_campaigns(), 0, "nothing exists yet")
+
+        -- WHEN the client creates it.
+        Mock.set_http_response("/editor/campaigns", { name = "stw", id = "z", updated_at = "",
+                                                      node_count = 0, edge_count = 0 }, 201)
+        local ok, why = ec:create_campaign("stw")
+        T.assert_true(ok, "the create must reach the wire: " .. tostring(why))
+        T.assert_equal(Mock.http.posts[1].url, "http://127.0.0.1:3031/editor/campaigns",
+            "POST /editor/campaigns -- the name rides in the BODY, which is the route that exists")
+        T.assert_equal(post_body(1).name, "stw", "and the body names the campaign")
+        T.assert_nil(ec:take_error(), "a 201 is not an error")
+
+        -- THEN the list contains it and the open returns that exact graph. The create must have
+        -- dropped the cached empty list, or this read would serve the pre-write answer forever.
+        Mock.set_http_response("/editor/campaigns", {
+            { name = "stw", id = "z", updated_at = "", node_count = 1, edge_count = 0 },
+        })
+        local list = ec:list_campaigns()
+        T.assert_equal(#list, 1, "the list is re-read after a write, not served from cache")
+        T.assert_equal(list[1].name, "stw", "and it is the campaign that was just created")
+
+        Mock.set_http_response("/editor/campaigns/stw", campaign("stw", GRAPH_ID,
+            { { id = "n1", type = "questing.Kill", intent = { creature_entry = 567 } } }))
+        local opened = ec:load_campaign("stw")
+        T.assert_equal(opened.name, "stw", "the open returns the campaign")
+        T.assert_equal(#opened.graphs[1].nodes, 1, "with node_count 1's node in it")
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Writes
+-- ---------------------------------------------------------------------------
+
+function M.test_add_nodes_posts_one_node_per_request_into_the_loaded_graph()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        Mock.set_http_response("/editor/campaigns/stw", campaign("stw", GRAPH_ID, {}))
+        local ec = EditorClient:new("127.0.0.1", 3031)
+        ec:load_campaign("stw")   -- the graph id comes from the loaded campaign, not from thin air
+
+        local ok, why = ec:add_nodes("stw", {
+            { id = "q1234_accept", type = "questing.AcceptQuest", preview = "AcceptQuest 1234",
+              intent = { quest_id = 1234, npc_entry = 9, auto_complete_dialog = false } },
+            { id = "q1234_turnin", type = "questing.TurnInQuest", preview = "TurnInQuest 1234",
+              intent = { quest_id = 1234, npc_entry = 9, choose_reward = 0 } },
+        })
+        T.assert_true(ok, "both nodes must reach the wire: " .. tostring(why))
+        T.assert_equal(#Mock.http.posts, 2, "one POST .../nodes per node")
+
+        local body = post_body(1)
+        T.assert_equal(body.graph_id, GRAPH_ID, "addressed to the graph the campaign actually has")
+        T.assert_equal(body.node.type, "questing.AcceptQuest", "carrying the node type")
+        T.assert_equal(body.node.intent.quest_id, 1234, "and its intent")
+        T.assert_equal(#tostring(body.node.id), 36,
+            "with a minted UUID -- 'q1234_accept' is not a Uuid and serde would 400")
+        T.assert_equal(body.node.context.authoring_id, "q1234_accept",
+            "the authoring id is preserved in context, the field the platform model keeps for it")
+    end)
+end
+
+function M.test_add_nodes_into_a_campaign_with_no_graph_mints_one()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        -- A freshly CREATED campaign: Campaign::new gives it zero graphs.
+        local fresh = campaign("stw", GRAPH_ID, {})
+        fresh.graphs = {}
+        Mock.set_http_response("/editor/campaigns/stw", fresh)
+        local ec = EditorClient:new("127.0.0.1", 3031)
+        ec:load_campaign("stw")
+
+        local ok, why = ec:add_nodes("stw", {
+            { id = "n1", type = "questing.Kill", intent = { creature_entry = 567, count = 10 } },
+        })
+        T.assert_true(ok, "the write must still land: " .. tostring(why))
+        T.assert_equal(#Mock.http.posts, 1,
+            "ONE request -- POST .../nodes against a graphless campaign is a 400 'Graph not found', "
+            .. "so the graph and its nodes go up together")
+        T.assert_true(Mock.http.posts[1].url:find("/graphs", 1, true) ~= nil,
+            "and it is the graphs route, got " .. Mock.http.posts[1].url)
+        local body = post_body(1)
+        T.assert_equal(#body.graph.nodes, 1, "the minted graph carries the node")
+        T.assert_equal(body.graph.entry_node, body.graph.nodes[1].id,
+            "and names it as the entry, since entry_node is required")
+    end)
+end
+
+function M.test_add_nodes_refuses_before_the_wire_when_the_campaign_is_not_readable()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        local ec = EditorClient:new("127.0.0.1", 3031)   -- nothing routed: the load 404s
+
+        local ok, why = ec:add_nodes("ghost", {
+            { id = "n1", type = "questing.Kill", intent = { creature_entry = 1 } },
+        })
+        T.assert_false(ok, "a write into a campaign the editor does not have is not a write")
+        T.assert_true(why:find("could not be read", 1, true) ~= nil,
+            "and the reason names it, got " .. tostring(why))
+        T.assert_equal(#Mock.http.posts, 0, "nothing was posted")
+    end)
+end
+
+function M.test_an_empty_intent_is_refused_rather_than_encoded_as_an_array()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        Mock.set_http_response("/editor/campaigns/stw", campaign("stw", GRAPH_ID, {}))
+        local ec = EditorClient:new("127.0.0.1", 3031)
+        ec:load_campaign("stw")
+
+        local ok, why = ec:add_nodes("stw", { { id = "n1", type = "questing.Kill", intent = {} } })
+        T.assert_false(ok, "an empty Lua table encodes as [], and Intent is a map")
+        T.assert_true(why:find("empty intent", 1, true) ~= nil,
+            "the reason has to say so here, where it is still in scope; a 400 in-game reads as "
+            .. "'the editor is broken'. Got " .. tostring(why))
+        T.assert_equal(#Mock.http.posts, 0, "and the request never leaves")
+    end)
+end
+
+function M.test_update_node_posts_because_the_sdk_has_no_put()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        Mock.set_http_response("/editor/campaigns/stw", campaign("stw", GRAPH_ID, {}))
+        local ec = EditorClient:new("127.0.0.1", 3031)
+        ec:load_campaign("stw")
+
+        local node_id = "33333333-3333-4333-8333-333333333333"
+        local ok, why = ec:update_node("stw", node_id,
+            { type = "questing.Kill", intent = { creature_entry = 567, count = 12 } }, GRAPH_ID)
+        T.assert_true(ok, "the edit must reach the wire: " .. tostring(why))
+        T.assert_true(Mock.http.posts[1].url:find("/nodes/" .. node_id, 1, true) ~= nil,
+            "addressed to the node, got " .. Mock.http.posts[1].url)
+        local body = post_body(1)
+        T.assert_equal(body.node.id, node_id, "the id in the body is the SERVER's id, not a fresh one")
+        T.assert_equal(body.node.intent.count, 12, "carrying the edited field")
+        T.assert_equal(body.graph_id, GRAPH_ID, "and the graph it lives in")
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- The editor refusing, and the editor being down
+-- ---------------------------------------------------------------------------
+
+function M.test_a_refused_write_is_queued_as_an_error_and_never_reported_inline()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 2
+        Mock.set_http_response("/editor/campaigns/stw", campaign("stw", GRAPH_ID, {}))
+        local ec = EditorClient:new("127.0.0.1", 3031)
+        ec:load_campaign("stw")
+        Mock.http_advance(2)
+        ec:load_campaign("stw")
+
+        -- The editor answers the node write with a 404. Registered explicitly because routes match
+        -- by substring and the campaign route above is a prefix of this one.
+        Mock.set_http_response("/editor/campaigns/stw/nodes", "", 404)
+        local ok = ec:add_nodes("stw", {
+            { id = "n1", type = "questing.Kill", intent = { creature_entry = 567 } },
+        })
+        T.assert_true(ok, "dispatch succeeded -- that is ALL a dispatch can honestly claim")
+        T.assert_nil(ec:take_error(), "and the refusal has not arrived yet")
+
+        Mock.http_advance(2)
+        local err = ec:take_error()
+        T.assert_not_nil(err, "the refusal lands on a later tick and must be sayable")
+        T.assert_true(err:find("404", 1, true) ~= nil, "naming the status, got " .. tostring(err))
+        T.assert_nil(ec:take_error(), "drained, not repeated")
+    end)
+end
+
+function M.test_a_dead_editor_reads_as_a_transport_failure_not_as_a_refusal()
+    with_mock_http(function()
+        Mock.http.pending_ticks = 0
+        Mock.set_http_response("/editor/campaigns/stw", campaign("stw", GRAPH_ID, {}))
+        local ec = EditorClient:new("127.0.0.1", 3031)
+        ec:load_campaign("stw")
+        -- http_code 0 is the only way the SDK distinguishes "not running" from "said no".
+        Mock.set_http_response("/editor/campaigns/stw/nodes", "", 0)
+
+        ec:add_nodes("stw", { { id = "n1", type = "questing.Kill", intent = { creature_entry = 1 } } })
+        local err = ec:take_error()
+        T.assert_not_nil(err, "a dead editor is still an error the operator must see")
+        T.assert_true(err:find("did not answer", 1, true) ~= nil,
+            "and it names the port rather than a status, got " .. tostring(err))
+        T.assert_true(err:find("3031", 1, true) ~= nil, "the port is in the message")
     end)
 end
 

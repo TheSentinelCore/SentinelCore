@@ -183,7 +183,8 @@ end
 Mock.http = {
     pending_ticks = 2,
     routes = {},     -- { { match = "/npc/567", body = "...", status = 200 } }
-    requests = {},   -- every url asked for, in order
+    requests = {},   -- every url asked for, in order (GET and POST alike)
+    posts = {},      -- { { url, body } } -- only the POSTs, so a test can read what was WRITTEN
     _inflight = {},  -- { { url, callback, remaining } }
 }
 
@@ -234,6 +235,53 @@ function Mock.core.http_get(url, callback)
     Mock.http._inflight[#Mock.http._inflight + 1] = entry
 end
 
+-- ============================================================================
+-- core.http_post  (the ASYNC signature the injector actually has)
+-- ============================================================================
+--
+-- `core.http_post(url, [headers,] body, callback)` (docs/SylvannasAPI/dev/api/core.md:932). Same
+-- held-callback model as `http_get` above and for the same reason: the editor client's mutations
+-- can only report that a request was DISPATCHED, and the server's refusal arrives ticks later. A
+-- mock that answered inline would let a binding claim a write succeeded in the frame it issued it,
+-- which is the exact phantom-success shape this change exists to delete.
+--
+-- Routes are shared with `http_get` deliberately -- `set_http_response("/editor/campaigns", ...)`
+-- answers whichever verb asks -- and an unrouted url resolves 404, never hangs.
+function Mock.core.http_post(url, headers_or_body, body_or_callback, callback)
+    url = tostring(url)
+
+    -- Both documented arities. The four-argument form carries headers; the three-argument form does
+    -- not. `QueryClient:post` tries the headers form FIRST, so getting this wrong would silently
+    -- push every offline POST down the fallback path production never takes.
+    local body, cb
+    if type(callback) == "function" then
+        body, cb = body_or_callback, callback
+    elseif type(body_or_callback) == "function" then
+        body, cb = headers_or_body, body_or_callback
+    end
+
+    Mock.http.posts[#Mock.http.posts + 1] = { url = url, body = body }
+    Mock.http.requests[#Mock.http.requests + 1] = url
+
+    if type(cb) ~= "function" then
+        error("core.http_post expects (url, [headers,] body, callback)", 2)
+    end
+
+    local route = http_route_for(url)
+    local entry = {
+        url = url,
+        callback = cb,
+        remaining = tonumber(Mock.http.pending_ticks) or 0,
+        status = route and route.status or 404,
+        body = route and route.body or nil,
+    }
+    if entry.remaining <= 0 then
+        cb(entry.status, "application/json", entry.body)
+        return
+    end
+    Mock.http._inflight[#Mock.http._inflight + 1] = entry
+end
+
 ---One harness tick of the network: fire every request whose wait has run out.
 function Mock.http_advance(ticks)
     for _ = 1, (tonumber(ticks) or 1) do
@@ -254,6 +302,7 @@ function Mock.reset_http()
     Mock.http.pending_ticks = 2
     Mock.http.routes = {}
     Mock.http.requests = {}
+    Mock.http.posts = {}
     Mock.http._inflight = {}
 end
 
